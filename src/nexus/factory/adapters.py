@@ -166,8 +166,8 @@ def _get_parsed_text_sync(
             return None
 
     try:
-        cached = nx._kernel.metastore_get_file_metadata(path, "parsed_text")
-        cached_hash = nx._kernel.metastore_get_file_metadata(path, "parsed_text_hash")
+        cached = nx._kernel.get_xattr(path, "parsed_text")
+        cached_hash = nx._kernel.get_xattr(path, "parsed_text_hash")
         if cached_hash == raw_hash and cached is not None:
             cached_str = (
                 cached if isinstance(cached, str) else cached.decode("utf-8", errors="ignore")
@@ -302,10 +302,10 @@ class _NexusFSFileReader:
         ran against the current bytes.
         """
         try:
-            cached_hash = self._nx._kernel.metastore_get_file_metadata(path, "parsed_text_hash")
+            cached_hash = self._nx._kernel.get_xattr(path, "parsed_text_hash")
             if not cached_hash or cached_hash != content_id:
                 return False
-            cached_text = self._nx._kernel.metastore_get_file_metadata(path, "parsed_text")
+            cached_text = self._nx._kernel.get_xattr(path, "parsed_text")
         except Exception:
             return False
         return cached_text is not None

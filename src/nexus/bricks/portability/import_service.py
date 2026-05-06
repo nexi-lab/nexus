@@ -602,18 +602,11 @@ class ZoneImportService:
             created_at: Original creation time
             updated_at: Original modification time
         """
-        try:
-            kernel = getattr(self.nexus_fs, "_kernel", None)
-            if kernel is None:
-                return
-            from nexus.kernel_helpers import metastore_set_file_metadata
-
-            if created_at:
-                metastore_set_file_metadata(kernel, path, "created_at", created_at.isoformat())
-            if updated_at:
-                metastore_set_file_metadata(kernel, path, "modified_at", updated_at.isoformat())
-        except Exception as e:
-            logger.warning("Failed to update timestamps for %s: %s", path, e)
+        # created_at / modified_at live on the inode (FileMetadata.created_at_ms /
+        # modified_at_ms) — no xattr write needed. sys_write already sets
+        # modified_at_ms; callers that need to override timestamps should use
+        # sys_setattr(modified_at_ms=...) instead.
+        pass
 
     @staticmethod
     def validate_permission_graph(

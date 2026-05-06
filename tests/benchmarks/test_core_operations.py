@@ -432,22 +432,20 @@ class TestMetadataBenchmarks:
 
         def set_meta():
             counter[0] += 1
-            nx._kernel.metastore_set_file_metadata(
-                "/test_small.bin", f"key_{counter[0]}", f"value_{counter[0]}"
-            )
+            nx._kernel.set_xattr("/test_small.bin", f"key_{counter[0]}", f"value_{counter[0]}")
 
         benchmark(set_meta)
         # Verify the last written value is readable
-        val = nx._kernel.metastore_get_file_metadata("/test_small.bin", f"key_{counter[0]}")
+        val = nx._kernel.get_xattr("/test_small.bin", f"key_{counter[0]}")
         assert val == f"value_{counter[0]}"
 
     def test_get_file_metadata(self, benchmark, populated_nexus):
         """Benchmark getting file metadata key-value."""
         nx = populated_nexus
-        nx._kernel.metastore_set_file_metadata("/test_small.bin", "bench_key", "bench_value")
+        nx._kernel.set_xattr("/test_small.bin", "bench_key", "bench_value")
 
         def get_meta():
-            return nx._kernel.metastore_get_file_metadata("/test_small.bin", "bench_key")
+            return nx._kernel.get_xattr("/test_small.bin", "bench_key")
 
         result = benchmark(get_meta)
         assert result == "bench_value"

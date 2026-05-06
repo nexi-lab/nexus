@@ -1720,32 +1720,7 @@ class MetadataMixin:
                     ]
                 return [p for p, _ in _virt]
 
-        # ── /__sys__/locks/ virtual namespace (like /proc/locks) ──
-        # Gated to admin/system: lock holdings disclose tenant activity
-        # (path frequency, holder ids) that a federation token must not
-        # see.  Issue #3786 / Codex Round 7 finding #1 + Round 8 #3:
-        # callers MUST pass an explicit context — None is no longer
-        # treated as privileged because external HTTP routers used to
-        # forget to propagate it, defeating the gate.
-        sys_locks_prefix = "/__sys__/locks"
-        stripped = path.rstrip("/")
-        if stripped == sys_locks_prefix or stripped.startswith(sys_locks_prefix + "/"):
-            _is_priv = context is not None and (
-                getattr(context, "is_admin", False) or getattr(context, "is_system", False)
-            )
-            if not _is_priv:
-                from nexus.contracts.exceptions import PermissionDeniedError as _PDE
-
-                raise _PDE(
-                    f"sys_readdir denied: {sys_locks_prefix} is admin-only",
-                    path=path,
-                )
-            prefix = stripped[len(sys_locks_prefix) :]
-            lock_limit = limit or 1024
-            locks = self._kernel.metastore_list_locks(prefix, lock_limit)
-            if details:
-                return locks
-            return [lk["path"] for lk in locks]
+        # /__sys__/locks intercept moved to Rust readdir_paged (C3/C7).
 
         # §12d Phase 2: Rust readdir merges backend list_dir for all
         # backends (CAS, path-local, external connectors) uniformly.

@@ -86,6 +86,7 @@ pub mod vfs_proto {
 // Each submodule carries an `impl Kernel` block over a method subset.
 // Every method remains a member of `Kernel` and is invoked the same
 // way.
+pub mod convenience;
 mod dispatch;
 mod federation;
 mod io;
@@ -317,6 +318,16 @@ pub struct StatResult {
     /// the link compose with the kernel's transparent-follow paths
     /// or call sys_stat on `link_target` directly.
     pub link_target: Option<String>,
+}
+
+/// Result of paginated readdir: children + cursor for next page.
+pub struct ReadDirResult {
+    /// (child_path, entry_type) tuples for this page.
+    pub items: Vec<(String, u8)>,
+    /// Opaque cursor for the next page. `None` when no more entries.
+    pub next_cursor: Option<String>,
+    /// True when more entries exist beyond this page.
+    pub has_more: bool,
 }
 
 // ── ZonesProcfsEntry — procfs virtual namespace ──────────────────────

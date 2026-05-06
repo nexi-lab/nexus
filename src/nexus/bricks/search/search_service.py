@@ -1808,12 +1808,18 @@ class SearchService:
         )
 
         # Sort by mtime (newest first) (Issue #538)
+        # Use sys_stat's "modified_at" field (ISO string — lexicographically sortable).
         if matches:
             try:
-                metadata_map = self._kernel.metastore_get_file_metadata_bulk(matches, "modified_at")
+                stats = self._kernel.stat_batch(matches)
+                mtime_map: dict[str, str] = {}
+                for path, stat in zip(matches, stats, strict=True):
+                    if stat is not None and stat.get("modified_at"):
+                        mtime_map[path] = stat["modified_at"]
                 return sorted(
                     matches,
-                    key=lambda p: (-(metadata_map.get(p, 0) or 0), p),
+                    key=lambda p: (mtime_map.get(p, ""), p),
+                    reverse=True,
                 )
             except Exception as e:
                 logger.debug(f"[GLOB] mtime sort failed ({e}), falling back to alphabetical")
@@ -2385,7 +2391,7 @@ class SearchService:
                 continue
 
             # Fetch md_structure metadata for this file.
-            raw = self._kernel.metastore_get_file_metadata(file_path, MD_STRUCTURE_KEY)
+            raw = self._kernel.get_xattr(file_path, MD_STRUCTURE_KEY)
             if raw is None:
                 # Issue #3720 (Codex R6): recognized markdown without
                 # metadata → fail closed.

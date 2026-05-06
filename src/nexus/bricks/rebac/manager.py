@@ -74,7 +74,6 @@ from nexus.bricks.rebac.tuples.repository import TupleRepository
 from nexus.bricks.rebac.tuples.writer import TupleWriter
 from nexus.bricks.rebac.utils.fast import (
     check_permissions_bulk_with_fallback,
-    is_rust_available,
 )
 from nexus.bricks.rebac.zone_graph_loader import ZoneGraphLoader
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -1004,7 +1003,7 @@ class ReBACManager:
                 check_permission_single_rust,
             )
 
-            if is_rust_available() and context is None:
+            if context is None:
                 # Fetch tuples and namespace configs for Rust.
                 # CROSS-ZONE FIX: Pass subject to include cross-zone shares.
                 tuples = self._fetch_tuples_for_rust(zone_id, subject=subject)
@@ -2216,7 +2215,6 @@ class ReBACManager:
             ... )
         """
         from nexus.bricks.rebac.utils.fast import (
-            RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )
 
@@ -2246,27 +2244,24 @@ class ReBACManager:
         )
 
         # Try Rust implementation first (much faster)
-        if RUST_AVAILABLE:
-            try:
-                result = list_objects_for_subject_rust(
-                    subject_type=subject_type,
-                    subject_id=subject_id,
-                    permission=permission,
-                    object_type=object_type,
-                    tuples=tuples,
-                    namespace_configs=namespace_configs,
-                    path_prefix=path_prefix,
-                    limit=limit,
-                    offset=offset,
-                )
-                elapsed = (time.perf_counter() - start_time) * 1000
-                logger.debug(
-                    f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
-                )
-                return result
-            except (RuntimeError, ValueError) as e:
-                logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
-                # Fall through to Python implementation
+        try:
+            result = list_objects_for_subject_rust(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                permission=permission,
+                object_type=object_type,
+                tuples=tuples,
+                namespace_configs=namespace_configs,
+                path_prefix=path_prefix,
+                limit=limit,
+                offset=offset,
+            )
+            elapsed = (time.perf_counter() - start_time) * 1000
+            logger.debug(f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms")
+            return result
+        except (RuntimeError, ValueError) as e:
+            logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
+            # Fall through to Python implementation
 
         # Python fallback implementation
         return self._rebac_list_objects_python(
@@ -3554,74 +3549,37 @@ class ReBACManager:
                 uncached_checks.append((i, (subject, permission, obj)))
 
         logger.debug(
-            f"🚀 Batch check: {len(checks)} total, {len(results)} cached, "
-            f"{len(uncached_checks)} to compute (Rust={'enabled' if use_rust and is_rust_available() else 'disabled'})"
+            f"Batch check: {len(checks)} total, {len(results)} cached, "
+            f"{len(uncached_checks)} to compute (Rust=enabled)"
         )
 
-        # Phase 2: Compute uncached checks
+        # Phase 2: Compute uncached checks using Rust
         if uncached_checks:
-            if use_rust and is_rust_available() and len(uncached_checks) >= 10:
-                # Use Rust for bulk computation (efficient for 10+ checks)
-                logger.debug(
-                    f"⚡ Using Rust acceleration for {len(uncached_checks)} uncached checks"
-                )
-                try:
-                    start_time = time.perf_counter()
-                    rust_results = self._compute_batch_rust([check for _, check in uncached_checks])
-                    total_delta = time.perf_counter() - start_time
-                    # Approximate per-check delta (Rust computes in bulk)
-                    avg_delta = total_delta / len(uncached_checks) if uncached_checks else 0.0
+            logger.debug(f"Using Rust acceleration for {len(uncached_checks)} uncached checks")
+            start_time = time.perf_counter()
+            rust_results = self._compute_batch_rust([check for _, check in uncached_checks])
+            total_delta = time.perf_counter() - start_time
+            # Approximate per-check delta (Rust computes in bulk)
+            avg_delta = total_delta / len(uncached_checks) if uncached_checks else 0.0
 
-                    for idx, (i, _) in enumerate(uncached_checks):
-                        result = rust_results[idx]
-                        results[i] = result
-                        # Cache the result with XFetch delta (Issue #718)
-                        subject, permission, obj = uncached_checks[idx][1]
-                        subject_entity = Entity(subject[0], subject[1])
-                        object_entity = Entity(obj[0], obj[1])
-                        self._cache_check_result(
-                            subject_entity,
-                            permission,
-                            object_entity,
-                            result,
-                            zone_id=None,
-                            delta=avg_delta,
-                        )
-                except Exception as e:  # fail-safe: Rust fallback to Python computation
-                    logger.warning(f"Rust batch computation failed, falling back to Python: {e}")
-                    # Fall back to Python computation
-                    self._compute_batch_python(uncached_checks, results)
-            else:
-                # Use Python for small batches or when Rust is unavailable
-                reason = (
-                    "batch too small (<10)" if len(uncached_checks) < 10 else "Rust not available"
+            for idx, (i, _) in enumerate(uncached_checks):
+                result = rust_results[idx]
+                results[i] = result
+                # Cache the result with XFetch delta (Issue #718)
+                subject, permission, obj = uncached_checks[idx][1]
+                subject_entity = Entity(subject[0], subject[1])
+                object_entity = Entity(obj[0], obj[1])
+                self._cache_check_result(
+                    subject_entity,
+                    permission,
+                    object_entity,
+                    result,
+                    zone_id=None,
+                    delta=avg_delta,
                 )
-                logger.debug(
-                    f"🐍 Using Python computation for {len(uncached_checks)} checks ({reason})"
-                )
-                self._compute_batch_python(uncached_checks, results)
 
         # Return results in original order
         return [results[i] for i in range(len(checks))]
-
-    def _compute_batch_python(
-        self,
-        uncached_checks: list[tuple[int, tuple[tuple[str, str], str, tuple[str, str]]]],
-        results: dict[int, bool],
-    ) -> None:
-        """Compute uncached checks using Python (original implementation)."""
-        for i, (subject, permission, obj) in uncached_checks:
-            subject_entity = Entity(subject[0], subject[1])
-            object_entity = Entity(obj[0], obj[1])
-            start_time = time.perf_counter()
-            result = self._compute_permission(
-                subject_entity, permission, object_entity, visited=set(), depth=0
-            )
-            delta = time.perf_counter() - start_time
-            self._cache_check_result(
-                subject_entity, permission, object_entity, result, zone_id=None, delta=delta
-            )
-            results[i] = result
 
     def _compute_batch_rust(
         self,

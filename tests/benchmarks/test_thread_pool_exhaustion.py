@@ -392,12 +392,9 @@ async def test_async_thread_exhaustion(
 
         print("Created 100 test files")
 
-        # FORCE WORST CASE: Disable Rust acceleration to simulate slow Python path
-        import nexus.bricks.rebac.utils.fast as rebac_fast
-
-        _original_rust_available = rebac_fast.RUST_AVAILABLE  # noqa: F841
-        rebac_fast.RUST_AVAILABLE = False
-        print("*** DISABLED RUST ACCELERATION (simulating worst case) ***")
+        # NOTE: Rust acceleration is always enabled (RUST_AVAILABLE dead code removed).
+        # This benchmark now measures realistic Rust-accelerated performance.
+        print("*** Rust acceleration is always enabled ***")
 
         # Clear caches
         if hasattr(nx, "_rebac_manager"):

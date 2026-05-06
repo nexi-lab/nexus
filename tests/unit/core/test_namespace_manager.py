@@ -631,17 +631,16 @@ class TestPermissionEnforcerNamespaceIntegration:
 
 
 class TestNamespaceManagerDualPath:
-    """Test with both Rust and Python paths for rebac_list_objects."""
+    """Test rebac_list_objects via Rust acceleration (always enabled)."""
 
-    @pytest.fixture(params=[True, False], ids=["rust", "python"])
-    def ns_manager_dual(self, request, enhanced_rebac_manager):
-        """NamespaceManager with RUST_AVAILABLE patched to True or False."""
-        with patch("nexus.bricks.rebac.utils.fast.RUST_AVAILABLE", request.param):
-            ns = NamespaceManager(
-                rebac_manager=enhanced_rebac_manager,
-                revision_window=100,
-            )
-            yield ns
+    @pytest.fixture()
+    def ns_manager_dual(self, enhanced_rebac_manager):
+        """NamespaceManager for permission testing."""
+        ns = NamespaceManager(
+            rebac_manager=enhanced_rebac_manager,
+            revision_window=100,
+        )
+        yield ns
 
     def test_visibility_both_paths(self, enhanced_rebac_manager, ns_manager_dual):
         """is_visible() produces same results regardless of Rust/Python path."""

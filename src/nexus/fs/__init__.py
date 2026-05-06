@@ -233,9 +233,11 @@ async def mount(
         # DT_EXTERNAL_STORAGE so the router returns ExternalRouteResult and reads go
         # directly to backend.read_content() instead of through the kernel.
         # Mirrors the logic in nexus.bricks.mount.mount_service (mount_service.py:608).
-        for mp, backend, spec in backends:
-            metastore.metastore_put(
-                _make_mount_entry(mp, backend.name, entry_type=_resolve_entry_type(spec))
+        for mp, _backend, spec in backends:
+            metastore.sys_setattr(
+                mp,
+                _resolve_entry_type(spec),
+                mime_type="inode/directory",
             )
     except Exception:
         for _, be, _ in backends:

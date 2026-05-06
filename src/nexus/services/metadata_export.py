@@ -239,16 +239,18 @@ class MetadataExportService:
                 result.updated += 1
                 return
 
-            file_meta = FileMetadata(
-                path=path,
-                size=metadata_dict["size"],
+            _mod_dt = modified_at or existing.modified_at
+            _cre_dt = created_at or existing.created_at
+            self._kernel.sys_setattr(
+                path,
+                0,  # UPDATE existing entry
                 content_id=imported_content_id,
+                size=metadata_dict["size"],
                 mime_type=metadata_dict.get("mime_type"),
-                created_at=created_at or existing.created_at,
-                modified_at=modified_at or existing.modified_at,
                 version=metadata_dict.get("version", existing.version),
+                modified_at_ms=int(_mod_dt.timestamp() * 1000) if _mod_dt else None,
+                created_at_ms=int(_cre_dt.timestamp() * 1000) if _cre_dt else None,
             )
-            self._kernel.metastore_put(file_meta)
             self._import_custom_metadata(path, metadata_dict)
             result.updated += 1
             return
@@ -326,16 +328,17 @@ class MetadataExportService:
             )
             return
 
-        file_meta = FileMetadata(
-            path=path,
-            size=metadata_dict["size"],
+        _cre_dt = created_at or existing.created_at
+        self._kernel.sys_setattr(
+            path,
+            0,  # UPDATE existing entry
             content_id=imported_content_id,
+            size=metadata_dict["size"],
             mime_type=metadata_dict.get("mime_type"),
-            created_at=created_at or existing.created_at,
-            modified_at=modified_at,
             version=metadata_dict.get("version", existing.version + 1),
+            modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
+            created_at_ms=int(_cre_dt.timestamp() * 1000) if _cre_dt else None,
         )
-        self._kernel.metastore_put(file_meta)
         self._import_custom_metadata(path, metadata_dict)
         result.updated += 1
         result.collisions.append(
@@ -433,16 +436,17 @@ class MetadataExportService:
                 )
                 return
 
-            file_meta = FileMetadata(
-                path=path,
-                size=metadata_dict["size"],
+            _cre_dt = created_at or existing.created_at
+            self._kernel.sys_setattr(
+                path,
+                0,  # UPDATE existing entry
                 content_id=imported_content_id,
+                size=metadata_dict["size"],
                 mime_type=metadata_dict.get("mime_type"),
-                created_at=created_at or existing.created_at,
-                modified_at=modified_at,
                 version=metadata_dict.get("version", existing.version + 1),
+                modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
+                created_at_ms=int(_cre_dt.timestamp() * 1000) if _cre_dt else None,
             )
-            self._kernel.metastore_put(file_meta)
             self._import_custom_metadata(path, metadata_dict)
             result.updated += 1
             result.collisions.append(

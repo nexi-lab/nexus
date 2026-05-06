@@ -621,6 +621,10 @@ class MetadataMixin:
             capacity=capacity,
             mime_type=mime_type,
             modified_at_ms=modified_at_ms,
+            content_id=attrs.get("content_id"),
+            size=attrs.get("size"),
+            version=attrs.get("version"),
+            created_at_ms=attrs.get("created_at_ms"),
             read_fd=attrs.get("read_fd"),
             write_fd=attrs.get("write_fd"),
         )

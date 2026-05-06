@@ -317,10 +317,8 @@ class MountService:
         # Create directory entries for mount point AND parent directories
         # via sync metadata_put.
         if self.nexus_fs is not None and hasattr(self.nexus_fs, "metadata"):
-            from datetime import UTC, datetime
-
             from nexus.contracts.constants import ROOT_ZONE_ID
-            from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
+            from nexus.contracts.metadata import DT_DIR, DT_MOUNT
             from nexus.lib.context_utils import get_zone_id
 
             if entry_type is None:
@@ -335,19 +333,12 @@ class MountService:
                     existing = self.nexus_fs._kernel.access(dir_path, ROOT_ZONE_ID)
                     if existing:
                         continue
-                    now = datetime.now(UTC)
                     is_mount_point = i == len(parts)
-                    meta = FileMetadata(
-                        path=dir_path,
-                        size=0,
-                        content_id=None,
-                        entry_type=entry_type if is_mount_point else DT_DIR,
-                        created_at=now,
-                        modified_at=now,
-                        version=1,
+                    self.nexus_fs._kernel.sys_setattr(
+                        dir_path,
+                        entry_type if is_mount_point else DT_DIR,
                         zone_id=zone_id,
                     )
-                    self.nexus_fs._kernel.metastore_put(meta)
                     logger.info(f"Created directory entry: {dir_path}")
                 except Exception as e:
                     logger.warning(f"Failed to create directory entry {dir_path}: {e}")

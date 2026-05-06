@@ -43,7 +43,16 @@ def mock_nexus_fs():
     fs = MagicMock()
     fs.mkdir = MagicMock()
     fs.sys_write = MagicMock()
+    fs.sys_unlink = MagicMock()
     fs._kernel.metastore_delete = MagicMock()
+    fs._kernel.metastore_list_paginated = MagicMock(
+        return_value={
+            "items": [],
+            "has_more": False,
+            "next_cursor": None,
+            "total_count": 0,
+        }
+    )
     fs.rebac_add_tuple = MagicMock()
     fs.rebac_check = MagicMock(return_value=True)
     fs.rebac_delete_object_tuples = MagicMock(return_value=0)
@@ -200,21 +209,21 @@ class TestRemoveMount:
         assert "Mount not found" in result["errors"][0]
 
     def test_remove_mount_cleans_up_directory(self, mount_service, mock_nexus_fs):
-        """Removing a mount deletes metadata entries via per-path metastore_delete."""
+        """Removing a mount deletes metadata entries via sys_unlink."""
         mount_service._driver_coordinator.unmount.return_value = True
 
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
         assert result["removed"] is True
-        # Post-W2 mount_service iterates metastore_list + per-path
-        # metastore_delete (the kernel exposes no batch-delete primitive
+        # Post-C10b/C11: mount_service iterates metastore_list_paginated +
+        # per-path sys_unlink (the kernel exposes no batch-delete primitive
         # so the bulk wrapper became a loop).
-        mock_nexus_fs._kernel.metastore_delete.assert_called()
+        mock_nexus_fs.sys_unlink.assert_called()
 
     def test_remove_mount_handles_cleanup_errors(self, mount_service, mock_nexus_fs):
         """Errors during cleanup are reported but don't fail the removal."""
         mount_service._driver_coordinator.unmount.return_value = True
-        mock_nexus_fs._kernel.metastore_list.side_effect = RuntimeError("DB error")
+        mock_nexus_fs._kernel.metastore_list_paginated.side_effect = RuntimeError("DB error")
 
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
@@ -415,15 +424,15 @@ class TestGrantMountOwnerPermission:
 
     def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
         """Mount point directory entries are created via _setup_mount_point."""
-        # metadata.get returns None → dirs don't exist yet, so metadata.put is called
-        mock_nexus_fs._kernel.metastore_get.return_value = None
+        # access returns False → dirs don't exist yet, so metastore_put is called
+        mock_nexus_fs._kernel.access.return_value = False
         mount_service._setup_mount_point("/mnt/test", operation_context)
         # metadata.put called for /mnt and /mnt/test
         assert mock_nexus_fs._kernel.metastore_put.call_count == 2
 
     def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
         """Errors creating directory do not prevent permission grant."""
-        mock_nexus_fs._kernel.metastore_get.return_value = None
+        mock_nexus_fs._kernel.access.return_value = False
         mock_nexus_fs._kernel.metastore_put.side_effect = RuntimeError("put failed")
 
         # Should not raise — errors in directory creation are logged but not fatal

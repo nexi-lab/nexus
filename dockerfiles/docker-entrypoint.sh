@@ -571,13 +571,13 @@ wait_for_health() {
     local max="${2:-30}"
     local i
     for i in $(seq 1 "$max"); do
-        if curl -sf "http://localhost:${port}/health" > /dev/null 2>&1; then
+        if curl --max-time 5 -sf "http://localhost:${port}/health" > /dev/null 2>&1; then
             echo -e "${GREEN}✓ Server is ready${NC}"
             return 0
         fi
         sleep 5
     done
-    echo -e "${YELLOW}⚠ Server health check timeout after ${max}s (continuing anyway)${NC}"
+    echo -e "${YELLOW}⚠ Server health check timeout after ${max} attempts (continuing anyway)${NC}"
     return 1
 }
 

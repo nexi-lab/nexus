@@ -4,6 +4,7 @@ Extracted from fastapi_server.py (#1602).
 """
 
 import logging
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -43,17 +44,16 @@ async def health_check(request: Request) -> HealthResponse | Any:
         # Phase H: federation readiness is observed through the
         # DistributedCoordinator HAL trait via the
         # ``nexus_runtime.federation_is_initialized`` module helper.
-        # Treats federation-disabled (no env vars) as ready so the
-        # slim / tests path sails through unchanged.
+        # Treat federation-disabled (no env vars) as ready without
+        # entering the native readiness helper; /health must stay cheap
+        # and non-blocking for Docker health checks.
         _kernel = getattr(nx_fs, "_kernel", None)
         _ready = True
-        if _kernel is not None:
+        if _kernel is not None and os.environ.get("NEXUS_PEERS"):
             try:
                 import nexus_runtime as _nr
 
-                _ready = bool(_nr.federation_is_initialized(_kernel)) or (
-                    not __import__("os").environ.get("NEXUS_PEERS")
-                )
+                _ready = bool(_nr.federation_is_initialized(_kernel))
             except Exception:
                 _ready = True
         if not _ready:

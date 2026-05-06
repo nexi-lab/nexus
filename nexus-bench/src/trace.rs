@@ -69,17 +69,7 @@ pub fn load_trace(path: &Path) -> BenchResult<Vec<TraceOp>> {
 pub fn validate_trace(trace: &[TraceOp]) -> BenchResult<()> {
     let mut last_ts = 0;
     for (index, op) in trace.iter().enumerate() {
-        if !op.path.starts_with('/') {
-            return trace_error(index, "path must be absolute");
-        }
-        if op.path.contains("//")
-            || op.path.contains("/../")
-            || op.path.ends_with("/..")
-            || op.path.contains("/./")
-            || op.path.ends_with("/.")
-        {
-            return trace_error(index, "path must be normalized");
-        }
+        validate_trace_path(index, &op.path, "path")?;
         if index > 0 && op.timestamp_ns < last_ts {
             return trace_error(index, "timestamp_ns must be monotonic");
         }
@@ -100,13 +90,26 @@ pub fn validate_trace(trace: &[TraceOp]) -> BenchResult<()> {
                 let Some(to_path) = &op.to_path else {
                     return trace_error(index, "rename requires to_path");
                 };
-                if !to_path.starts_with('/') {
-                    return trace_error(index, "rename to_path must be absolute");
-                }
+                validate_trace_path(index, to_path, "rename to_path")?;
             }
             OpKind::Getattr | OpKind::Lookup | OpKind::Readdir | OpKind::Delete | OpKind::Mkdir => {
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_trace_path(index: usize, path: &str, field: &str) -> BenchResult<()> {
+    if !path.starts_with('/') {
+        return trace_error(index, &format!("{field} must be absolute"));
+    }
+    if path.contains("//")
+        || path.contains("/../")
+        || path.ends_with("/..")
+        || path.contains("/./")
+        || path.ends_with("/.")
+    {
+        return trace_error(index, &format!("{field} must be normalized"));
     }
     Ok(())
 }
@@ -146,6 +149,14 @@ mod tests {
     fn validation_rejects_dot_path_component() {
         let trace = vec![op(OpKind::Getattr, "/foo/./bar")];
         let err = validate_trace(&trace).expect_err("dot path components must fail validation");
+        assert!(err.to_string().contains("path must be normalized"));
+    }
+
+    #[test]
+    fn validation_rejects_malformed_rename_to_path() {
+        let mut rename = op(OpKind::Rename, "/src/file");
+        rename.to_path = Some("/dst//file".to_string());
+        let err = validate_trace(&[rename]).expect_err("malformed rename to_path must fail");
         assert!(err.to_string().contains("path must be normalized"));
     }
 

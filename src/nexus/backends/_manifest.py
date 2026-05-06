@@ -27,7 +27,6 @@ from nexus.backends.base.runtime_deps import (
     BinaryDep,
     PythonDep,
     RuntimeDep,
-    ServiceDep,
 )
 
 
@@ -122,12 +121,18 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
     ),
     # --- OAuth / API connectors ---
     # Every OAuth connector uses OAuthConnectorMixin / OAuthConnectorBase,
-    # which lazily imports ``nexus.bricks.auth.oauth.factory`` at
-    # instantiation time (see src/nexus/backends/connectors/oauth_base.py).
-    # ``nexus.bricks`` is excluded from the slim wheel, so declaring
-    # ``ServiceDep("token_manager")`` here gates the mount with a clean
-    # ``MissingDependencyError`` on slim instead of leaking a raw
-    # ModuleNotFoundError from deep inside the OAuth factory call.
+    # which lazily imports ``nexus.bricks.auth.oauth.token_manager`` (and
+    # ``nexus.bricks.auth.oauth.factory``) at instantiation time (see
+    # src/nexus/backends/connectors/oauth_base.py and connectors/oauth.py).
+    # The slim wheel force-includes the auth/oauth bricks subtree (see
+    # packages/nexus-fs/pyproject.toml ``force-include``), and each OAuth
+    # connector extra (gdrive/gmail/gcalendar/slack/x) pins ``sqlalchemy``
+    # — together that means the lazy import succeeds whenever the matching
+    # extra is installed. The PythonDep entries below already gate on the
+    # extra-specific packages, so the connectors do **not** carry a
+    # ``ServiceDep("token_manager")`` — that gate would falsely advertise
+    # "requires a full nexus install" on slim even though slim ships
+    # everything the connector needs (Issue #3947).
     ConnectorManifestEntry(
         name="gdrive_connector",
         module_path="nexus.backends.connectors.gdrive.connector",
@@ -137,7 +142,6 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         runtime_deps=(
             PythonDep("googleapiclient", extras=("gdrive",), package="google-api-python-client"),
             PythonDep("google_auth_oauthlib", extras=("gdrive",), package="google-auth-oauthlib"),
-            ServiceDep("token_manager"),
         ),
         service_name="google-drive",
     ),
@@ -150,7 +154,6 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         runtime_deps=(
             PythonDep("googleapiclient", extras=("gmail",), package="google-api-python-client"),
             PythonDep("google_auth_oauthlib", extras=("gmail",), package="google-auth-oauthlib"),
-            ServiceDep("token_manager"),
         ),
         service_name="gmail",
     ),
@@ -165,7 +168,6 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
             PythonDep(
                 "google_auth_oauthlib", extras=("gcalendar",), package="google-auth-oauthlib"
             ),
-            ServiceDep("token_manager"),
         ),
         service_name="google-calendar",
     ),
@@ -180,7 +182,6 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
             PythonDep(
                 "google_auth_oauthlib", extras=("gcalendar",), package="google-auth-oauthlib"
             ),
-            ServiceDep("token_manager"),
         ),
         service_name="google-calendar",
     ),
@@ -190,10 +191,7 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         class_name="PathXBackend",
         description="X (Twitter) API with OAuth 2.0 PKCE",
         category="api",
-        runtime_deps=(
-            PythonDep("requests_oauthlib", extras=("x",), package="requests-oauthlib"),
-            ServiceDep("token_manager"),
-        ),
+        runtime_deps=(PythonDep("requests_oauthlib", extras=("x",), package="requests-oauthlib"),),
         service_name="x",
     ),
     ConnectorManifestEntry(
@@ -202,10 +200,7 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         class_name="PathSlackBackend",
         description="Slack workspace with OAuth 2.0 authentication",
         category="oauth",
-        runtime_deps=(
-            PythonDep("slack_sdk", extras=("slack",), package="slack-sdk"),
-            ServiceDep("token_manager"),
-        ),
+        runtime_deps=(PythonDep("slack_sdk", extras=("slack",), package="slack-sdk"),),
         service_name="slack",
     ),
     ConnectorManifestEntry(

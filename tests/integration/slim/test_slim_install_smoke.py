@@ -188,3 +188,151 @@ def test_slim_connector_imports(slim_venv: Path, connector_module: str) -> None:
         f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
     assert "OK" in result.stdout
+
+
+def test_slim_base_service_dep_token_manager_unsatisfied(slim_base_venv: Path) -> None:
+    """Issue #3947: on a base slim install (no OAuth extras),
+    ``ServiceDep("token_manager")`` must report missing — sqlalchemy is
+    only declared in the OAuth connector extras, and a presence-only probe
+    against the force-included token_manager.py would otherwise mark the
+    service satisfied even though importing it would raise
+    ``ModuleNotFoundError: sqlalchemy`` at instantiation time.
+    """
+    script = """
+from nexus.backends.base.runtime_deps import (
+    ServiceDep,
+    check_runtime_deps,
+)
+
+missing = check_runtime_deps((ServiceDep("token_manager"),))
+assert missing, "ServiceDep(\\"token_manager\\") falsely satisfied on base slim"
+_, reason = missing[0]
+assert "service \\"token_manager\\"" in reason or "service 'token_manager'" in reason, reason
+print("BASE-SLIM-TOKEN-MANAGER-UNSATISFIED-OK")
+"""
+    result = run_in_slim_venv(slim_base_venv, script)
+    assert result.returncode == 0, (
+        f"base-slim ServiceDep(token_manager) audit failed:\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "BASE-SLIM-TOKEN-MANAGER-UNSATISFIED-OK" in result.stdout
+
+
+def test_slim_service_dep_token_manager_is_satisfied(slim_venv: Path) -> None:
+    """Issue #3947: legacy / third-party manifests that still declare
+    ``ServiceDep("token_manager")`` must be reported as *satisfied* in a
+    slim install, because the auth/oauth bricks are force-included.
+
+    Without the per-module probe in ``_SERVICE_MODULES`` the check falls
+    through to ``_server_available()`` and falsely raises "requires a full
+    nexus install" — even though the slim wheel ships the token manager.
+    Pin that mapping with an end-to-end check that runs inside the slim
+    venv (no full server runtime present).
+    """
+    script = """
+from nexus.backends.base.runtime_deps import (
+    ServiceDep,
+    _server_available,
+    check_runtime_deps,
+)
+
+# Sanity: nexus.server is not available in a slim install.
+_server_available.cache_clear()
+assert not _server_available(), "slim venv unexpectedly has nexus.server"
+
+# token_manager probe must hit the per-module path, not the server fallback.
+missing = check_runtime_deps((ServiceDep("token_manager"),))
+assert not missing, (
+    f"ServiceDep(\\"token_manager\\") falsely reported missing on slim: {missing}"
+)
+print("TOKEN-MANAGER-SERVICE-OK")
+"""
+    result = run_in_slim_venv(slim_venv, script)
+    assert result.returncode == 0, (
+        f"ServiceDep(token_manager) slim probe failed:\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "TOKEN-MANAGER-SERVICE-OK" in result.stdout
+
+
+def test_slim_oauth_extras_independent_of_bricks(slim_venv: Path) -> None:
+    """Issue #3947: each advertised OAuth/API extra must import and pass
+    runtime-dep checks without ``nexus.bricks`` being importable.
+
+    The slim wheel ships the auth/oauth bricks subtree so OAuth connectors
+    work end-to-end; the runtime-dep contract is the *advertised* gate
+    users hit when a mount fails.  Encoding a ``nexus.bricks`` dependency
+    in that gate would falsely advertise "requires a full nexus install"
+    even though the slim wheel + OAuth extras already ship everything the
+    connector needs.
+
+    This test installs the ``meta_path`` blocker before any backend module
+    has been touched, then verifies:
+
+    1. The connector module itself imports (top-level imports must not
+       reach into ``nexus.bricks``).
+    2. The manifest entry carries no ``ServiceDep`` (token_manager service
+       gate would smuggle a bricks probe back in).
+    3. ``check_runtime_deps`` for the entry returns no missing deps —
+       so the only failure modes left are real external creds / packages.
+    """
+    script = '''
+import sys
+
+class _BlockBricks:
+    """Reject any import of nexus.bricks.* — proves the runtime-dep
+    check does not transitively need the bricks tree."""
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "nexus.bricks" or name.startswith("nexus.bricks."):
+            raise ModuleNotFoundError(f"blocked by test: {name}")
+        return None
+
+sys.meta_path.insert(0, _BlockBricks())
+
+# Manifest must import without touching bricks.
+from nexus.backends._manifest import CONNECTOR_MANIFEST
+from nexus.backends.base.runtime_deps import (
+    PythonDep,
+    ServiceDep,
+    check_runtime_deps,
+)
+
+oauth_names = {
+    "gdrive_connector",
+    "gmail_connector",
+    "calendar_connector",
+    "gcalendar_connector",
+    "x_connector",
+    "slack_connector",
+}
+seen = set()
+for entry in CONNECTOR_MANIFEST:
+    if entry.name not in oauth_names:
+        continue
+    seen.add(entry.name)
+    for dep in entry.runtime_deps:
+        assert not isinstance(dep, ServiceDep), (
+            f"{entry.name} carries ServiceDep({dep.name!r}); the OAuth "
+            "extras must not gate on a server-side service probe."
+        )
+        if isinstance(dep, PythonDep):
+            assert "nexus.bricks" not in dep.module, (
+                f"{entry.name} declares PythonDep({dep.module!r}); runtime-dep "
+                "checks must not target the bricks tree."
+            )
+    missing = check_runtime_deps(entry.runtime_deps)
+    assert not missing, (
+        f"{entry.name} reports missing runtime deps even with the matching "
+        f"extra installed: {missing}"
+    )
+
+assert seen == oauth_names, f"manifest is missing OAuth entries: {oauth_names - seen}"
+print("OAUTH-DEPS-OK")
+'''
+    result = run_in_slim_venv(slim_venv, script)
+    assert result.returncode == 0, (
+        f"OAuth extras manifest dep audit failed:\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "OAUTH-DEPS-OK" in result.stdout

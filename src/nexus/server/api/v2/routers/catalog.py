@@ -5,6 +5,7 @@ Provides endpoints for data catalog operations:
 - GET /api/v2/catalog/search -- Search for files by column name
 """
 
+import asyncio
 import logging
 import mimetypes
 from typing import Any
@@ -53,7 +54,7 @@ async def get_catalog_schema(
             # Verify caller has file access before returning cached schema
             # (prevents bypassing permission checks via cache)
             try:
-                nexus_fs.sys_stat(full_path)
+                await asyncio.to_thread(nexus_fs.sys_stat, full_path)
             except PermissionError as perm_err:
                 raise HTTPException(
                     status_code=403, detail=f"Access denied: {full_path}"
@@ -132,7 +133,7 @@ async def search_by_column(
             if path_payload and path_payload.get("virtual_path"):
                 file_path = path_payload["virtual_path"]
                 try:
-                    nexus_fs.sys_stat(file_path)
+                    await asyncio.to_thread(nexus_fs.sys_stat, file_path)
                     results.append(r)
                 except Exception:
                     continue  # Caller can't access this file

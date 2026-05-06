@@ -17,6 +17,7 @@ Example:
     >>> connections = await manager.list_connections()
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -200,7 +201,7 @@ class MCPConnectionManager:
         """Load existing connections from storage."""
         try:
             if self.filesystem and self.filesystem.access(self.CONNECTIONS_PATH):
-                items = self.filesystem.sys_readdir(self.CONNECTIONS_PATH)
+                items = await asyncio.to_thread(self.filesystem.sys_readdir, self.CONNECTIONS_PATH)
                 for item in items:
                     # Item might be full path, just filename, or dict
                     if isinstance(item, dict):
@@ -211,7 +212,7 @@ class MCPConnectionManager:
                     if item_name.endswith(".json"):
                         path = f"{self.CONNECTIONS_PATH}{item_name}"
                         try:
-                            raw = self.filesystem.sys_read(path)
+                            raw = await asyncio.to_thread(self.filesystem.sys_read, path)
                             data = json.loads(
                                 raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
                             )
@@ -251,7 +252,7 @@ class MCPConnectionManager:
                 filename = f"{provider}_{user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
                 if self.filesystem.access(path):
-                    self.filesystem.sys_unlink(path)
+                    await asyncio.to_thread(self.filesystem.sys_unlink, path)
         except Exception as e:
             logger.warning(f"Failed to delete connection file: {e}")
 

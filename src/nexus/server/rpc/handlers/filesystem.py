@@ -7,6 +7,7 @@ All sync handlers are wrapped with ``to_thread_with_timeout`` by the dispatch
 layer — they MUST NOT call async code directly.
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -206,7 +207,7 @@ async def handle_semantic_search_index(
         stale_candidates: list[tuple[str, str, str | None]] = []
         for file_path in paths_to_index:
             try:
-                raw = nexus_fs.sys_read(file_path, context=context)
+                raw = await asyncio.to_thread(nexus_fs.sys_read, file_path, context=context)
                 # Pass the DB-tracked content_id so the parse cache key
                 # matches what has_successful_parse later compares against
                 # (etag on S3/GCS, BLAKE3 on local CAS — adapter stores

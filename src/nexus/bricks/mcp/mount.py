@@ -6,6 +6,7 @@ This module provides functionality for mounting external MCP servers
 Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 """
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -239,7 +240,7 @@ class MCPMountManager:
                     return False
 
                 # List directories in MCP_TOOLS_PATH
-                items = self._filesystem.sys_readdir(self.MCP_TOOLS_PATH)
+                items = await asyncio.to_thread(self._filesystem.sys_readdir, self.MCP_TOOLS_PATH)
                 for item in items:
                     # Skip files at root level
                     item_path = f"{self.MCP_TOOLS_PATH}{item}"
@@ -247,7 +248,9 @@ class MCPMountManager:
 
                     try:
                         if self._filesystem.access(mount_json_path):
-                            raw_content = self._filesystem.sys_read(mount_json_path)
+                            raw_content = await asyncio.to_thread(
+                                self._filesystem.sys_read, mount_json_path
+                            )
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)
@@ -1301,14 +1304,16 @@ class MCPMountManager:
                     return 0
 
                 # List directories in tier_path
-                items = self._filesystem.sys_readdir(tier_path)
+                items = await asyncio.to_thread(self._filesystem.sys_readdir, tier_path)
                 for item in items:
                     item_path = f"{tier_path}{item}"
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
                         if self._filesystem.access(mount_json_path):
-                            raw_content = self._filesystem.sys_read(mount_json_path)
+                            raw_content = await asyncio.to_thread(
+                                self._filesystem.sys_read, mount_json_path
+                            )
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)

@@ -36,22 +36,33 @@ use services::managed_agent::{
 // ── Sudo-code adapter ──────────────────────────────────────────────────
 //
 // Concrete `SpawnTask<Kernel>` impl that wraps
-// `sudocode_runtime::spawn_task::spawn_task::<K>(...)`. Lives in the
-// cdylib (not services rlib, not in a dedicated adapter crate)
-// because the binary-edge cdylib is the allowed seam for cross-repo
-// runtime deps — services rlib stays runtime-agnostic so the cluster
-// slim binary can ship without sudocode. ManagedAgentService remains
-// the single integration point: this adapter just wires the concrete
-// `SpawnTask<Kernel>` provider on the cdylib (Python wheel) path.
+// `sudocode_runtime::spawn_task::spawn_task_echo::<K>(...)`.
 //
-// Generic-K monomorphisation: `sudocode_runtime::spawn_task::spawn_task`
-// is `pub fn spawn_task<K: KernelAbi + Send + Sync + 'static>(...)`,
-// and `SudoCodeSpawnAdapter` impls `SpawnTask<Kernel>` (concrete
-// kernel, the only K the cdylib path needs). Inside the adapter we
-// call `spawn_task::<Kernel>` so the sudocode side compiles
-// concretely against the same kernel handle the service holds — no
-// per-`sys_read` vtable cost, identical perf to a direct inherent
-// call.
+// Lives in the cdylib (not services rlib, not in a dedicated adapter
+// crate) because the binary-edge cdylib is the allowed seam for
+// cross-repo runtime deps — services rlib stays runtime-agnostic so
+// the cluster slim binary can ship without sudocode.
+//
+// ## v1 echo → v2 ConversationRuntime upgrade path
+//
+// sudocode PR#100 introduced `spawn_task` v2 which drives a full
+// `ConversationRuntime` per-pid. The v2 signature requires
+// `ApiClient + ToolExecutor + SystemPrompt + PermissionPolicy +
+// state_callback` — providers that the cdylib adapter must construct.
+// Until those factories land (tracked as `spawn_task v2 full
+// integration`), the adapter calls `spawn_task_echo` which retains
+// the v1 echo round-trip body. The v2 upgrade is:
+//
+//   1. Add `sudocode_runtime::spawn_task::spawn_task` (7-param) call
+//   2. Construct ApiClient from StartSessionRequest.model label
+//   3. Construct ToolExecutor using KernelFsBackend
+//   4. Build SystemPrompt from VFS `/agents/{name}/config/`
+//   5. Wire state_callback → AgentRegistry::update_state
+//
+// Generic-K monomorphisation: `spawn_task_echo` is generic over
+// `K: KernelAbi + Send + Sync + 'static` and `SudoCodeSpawnAdapter`
+// impls `SpawnTask<Kernel>` — the compiler monomorphises against
+// the concrete kernel type (no per-`sys_read` vtable cost).
 
 struct SudoCodeSpawnHandle(sudocode_runtime::spawn_task::SpawnHandle);
 
@@ -73,7 +84,10 @@ impl SpawnTask<Kernel> for SudoCodeSpawnAdapter {
         kernel: Arc<Kernel>,
         desc: AgentDescriptor,
     ) -> Box<dyn ServiceSpawnHandle> {
-        let handle = sudocode_runtime::spawn_task::spawn_task::<Kernel>(kernel, desc);
+        // v1 echo body — polls /proc/{pid}/chat-with-me and echoes
+        // inbound prompts back. Swapped for the full ConversationRuntime
+        // body once the ApiClient/ToolExecutor factory wiring lands.
+        let handle = sudocode_runtime::spawn_task::spawn_task_echo::<Kernel>(kernel, desc);
         Box::new(SudoCodeSpawnHandle(handle))
     }
 }

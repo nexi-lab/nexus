@@ -2111,10 +2111,11 @@ dependencies = [
 [[package]]
 name = "nexus-vfs-client"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=2b67d5b452ea69b8ea4aba1fca3fa73588df60da#2b67d5b452ea69b8ea4aba1fca3fa73588df60da"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=140e5ac#140e5ac309e9bde7d8bd10b3653b75007cebfb47"
 dependencies = [
  "prost",
  "protoc-bin-vendored",
+ "serde_json",
  "tokio",
  "tonic",
  "tonic-build",
@@ -2318,7 +2319,7 @@ dependencies = [
 [[package]]
 name = "plugins"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=2b67d5b452ea69b8ea4aba1fca3fa73588df60da#2b67d5b452ea69b8ea4aba1fca3fa73588df60da"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=140e5ac#140e5ac309e9bde7d8bd10b3653b75007cebfb47"
 dependencies = [
  "serde",
  "serde_json",
@@ -3070,7 +3071,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=2b67d5b452ea69b8ea4aba1fca3fa73588df60da#2b67d5b452ea69b8ea4aba1fca3fa73588df60da"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=140e5ac#140e5ac309e9bde7d8bd10b3653b75007cebfb47"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
@@ -3640,7 +3641,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 [[package]]
 name = "telemetry"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=2b67d5b452ea69b8ea4aba1fca3fa73588df60da#2b67d5b452ea69b8ea4aba1fca3fa73588df60da"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=140e5ac#140e5ac309e9bde7d8bd10b3653b75007cebfb47"
 dependencies = [
  "serde",
  "serde_json",

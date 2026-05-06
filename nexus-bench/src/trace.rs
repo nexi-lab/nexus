@@ -72,7 +72,12 @@ pub fn validate_trace(trace: &[TraceOp]) -> BenchResult<()> {
         if !op.path.starts_with('/') {
             return trace_error(index, "path must be absolute");
         }
-        if op.path.contains("//") || op.path.contains("/../") || op.path.ends_with("/..") {
+        if op.path.contains("//")
+            || op.path.contains("/../")
+            || op.path.ends_with("/..")
+            || op.path.contains("/./")
+            || op.path.ends_with("/.")
+        {
             return trace_error(index, "path must be normalized");
         }
         if index > 0 && op.timestamp_ns < last_ts {
@@ -135,6 +140,13 @@ mod tests {
         let trace = vec![op(OpKind::Getattr, "relative.txt")];
         let err = validate_trace(&trace).expect_err("relative paths must fail validation");
         assert!(err.to_string().contains("path must be absolute"));
+    }
+
+    #[test]
+    fn validation_rejects_dot_path_component() {
+        let trace = vec![op(OpKind::Getattr, "/foo/./bar")];
+        let err = validate_trace(&trace).expect_err("dot path components must fail validation");
+        assert!(err.to_string().contains("path must be normalized"));
     }
 
     #[test]

@@ -43,6 +43,7 @@ import sqlite3
 import struct
 import threading
 import weakref
+from collections.abc import Sequence
 from typing import Any
 
 from nexus.bricks.search.results import BaseSearchResult
@@ -601,8 +602,15 @@ class SqliteVecBackend:
         return self._conn
 
     # ------------------------------------------------------------------
-    # SearchBackendProtocol surface
+    # SearchBackend protocol surface
     # ------------------------------------------------------------------
+    async def add(self, docs: Sequence[dict[str, Any]], *, zone_id: str) -> int:
+        # TODO(T9): wire to upsert once daemon integration lands.
+        raise NotImplementedError(
+            "SqliteVecBackend.add: use upsert() directly on this backend. "
+            "Protocol-shaped add() will be wired through daemon integration (T9)."
+        )
+
     async def upsert(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
         """Embed each document's text and insert / replace into the vec0 table.
 
@@ -823,6 +831,95 @@ class SqliteVecBackend:
             results.append(
                 BaseSearchResult(
                     path=str(path or ""),
+                    chunk_text=str(chunk_text or ""),
+                    score=score,
+                    chunk_index=int(chunk_index or 0),
+                    vector_score=score,
+                    zone_id=str(row_zone or zone_id),
+                )
+            )
+        return results
+
+    # ------------------------------------------------------------------
+    # SearchBackend protocol: keyword_search + semantic_search
+    # ------------------------------------------------------------------
+
+    async def keyword_search(
+        self,
+        query: str,  # noqa: ARG002
+        path: str,  # noqa: ARG002
+        k: int,  # noqa: ARG002
+        zone_id: str,  # noqa: ARG002
+    ) -> list[BaseSearchResult]:
+        """Not implemented — this backend is semantic-only; keyword search lives in SqliteFtsBackend."""
+        return []
+
+    async def semantic_search(
+        self,
+        query_vector: Sequence[float],
+        path: str,
+        k: int,
+        zone_id: str,
+    ) -> list[BaseSearchResult]:
+        """KNN search using a pre-computed query vector (protocol-shaped entry point).
+
+        Adapts the protocol signature ``(query_vector, path, k, zone_id)`` to the
+        existing ``_query`` SQL path.  The ``search()`` method (called by
+        SearchService) embeds a text query itself; this method accepts an already-
+        embedded vector so the daemon can share a single EmbeddingClient.
+        """
+        if not query_vector:
+            return []
+        await self.startup()
+        conn = self._require_conn()
+
+        vec = list(query_vector)
+        if len(vec) != self._embedding_dim:
+            logger.warning(
+                "[SqliteVecBackend] semantic_search: query vector dim %d != table dim %d — skipping",
+                len(vec),
+                self._embedding_dim,
+            )
+            return []
+        qbytes = self._pack_vector(vec)
+
+        fetch_k = k
+        path_filter: str | None = None
+        if path and path != "/":
+            path_filter = path.rstrip("/")
+            fetch_k = max(k * 5, 50)
+
+        def _query() -> list[tuple[Any, ...]]:
+            sql = (
+                f"SELECT rowid, zone_id, path, chunk_text, chunk_index, distance "
+                f"FROM {_VEC_TABLE} "
+                f"WHERE embedding MATCH ? AND zone_id = ? "
+                f"ORDER BY distance LIMIT ?"
+            )
+            cur = conn.execute(sql, (qbytes, zone_id, fetch_k))
+            return list(cur.fetchall())
+
+        async with self._get_loop_lock(self._op_locks):
+            rows = await self._run_native(_query)
+
+        if path_filter:
+            prefix = path_filter
+            rows = [
+                row
+                for row in rows
+                if str(row[2] or "") == prefix or str(row[2] or "").startswith(prefix + "/")
+            ]
+            rows = rows[:k]
+
+        results: list[BaseSearchResult] = []
+        for _rowid, row_zone, row_path, chunk_text, chunk_index, distance in rows:
+            try:
+                score = 1.0 / (1.0 + float(distance))
+            except (TypeError, ValueError):
+                score = 0.0
+            results.append(
+                BaseSearchResult(
+                    path=str(row_path or ""),
                     chunk_text=str(chunk_text or ""),
                     score=score,
                     chunk_index=int(chunk_index or 0),

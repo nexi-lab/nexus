@@ -13,9 +13,7 @@ those live in integration tests.
 
 from __future__ import annotations
 
-import pytest
-
-from nexus.bricks.search.txtai_backend import _aggregate_chunks_to_pages
+from nexus.bricks.search.result_builders import _aggregate_chunks_to_pages
 
 
 def _row(path: str, score: float, text: str = "", id_: str | None = None) -> dict:
@@ -97,15 +95,6 @@ def test_empty_input_returns_empty() -> None:
     assert _aggregate_chunks_to_pages([], chunks_per_page=2) == []
 
 
-def test_chunks_per_page_clamped_to_at_least_one() -> None:
-    """The backend constructor clamps chunks_per_page to >=1 so a misconfig
-    can't silently drop all results."""
-    from nexus.bricks.search.txtai_backend import TxtaiBackend
-
-    backend = TxtaiBackend(database_url=None, chunks_per_page=0)
-    assert backend._chunks_per_page == 1
-
-
 def test_rows_without_path_kept_separate() -> None:
     """Rows missing ``path`` must not silently merge under the empty-string
     key — they each represent a distinct unit.
@@ -133,60 +122,3 @@ def test_pages_ranked_by_max_chunk_then_within_page_chunks_descending() -> None:
     out = _aggregate_chunks_to_pages(rows, chunks_per_page=2)
 
     assert [r["text"] for r in out] == ["a-high", "a-low", "b-only"]
-
-
-class _FakeEmbeddings:
-    def __init__(self, rows: list[dict]) -> None:
-        self.rows = rows
-
-    def search(self, _sql: str) -> list[dict]:
-        return self.rows
-
-    def batchsearch(self, _sqls: list[str]) -> list[list[dict]]:
-        return [self.rows]
-
-
-@pytest.mark.asyncio
-async def test_search_page_aggregation_keeps_distinct_chunks_with_same_id() -> None:
-    """Distinct chunks from one txtai document can share an id; aggregation
-    must see them before hybrid dedupe collapses duplicate scorer rows."""
-    from nexus.bricks.search.txtai_backend import TxtaiBackend
-
-    rows = [
-        _row("/same-page.md", 0.90, "best chunk", id_="doc-1"),
-        _row("/same-page.md", 0.80, "second chunk", id_="doc-1"),
-        _row("/other-page.md", 0.70, "other chunk", id_="doc-2"),
-    ]
-    backend = TxtaiBackend(database_url=None, page_aggregation=True, chunks_per_page=2)
-    backend._started = True
-    backend._embeddings = _FakeEmbeddings(rows)
-
-    out = await backend.search("query", zone_id="root", limit=3)
-
-    assert [(r.path, r.chunk_text) for r in out] == [
-        ("/same-page.md", "best chunk"),
-        ("/same-page.md", "second chunk"),
-        ("/other-page.md", "other chunk"),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_batch_page_aggregation_keeps_distinct_chunks_with_same_id() -> None:
-    from nexus.bricks.search.txtai_backend import TxtaiBackend
-
-    rows = [
-        _row("/same-page.md", 0.90, "best chunk", id_="doc-1"),
-        _row("/same-page.md", 0.80, "second chunk", id_="doc-1"),
-        _row("/other-page.md", 0.70, "other chunk", id_="doc-2"),
-    ]
-    backend = TxtaiBackend(database_url=None, page_aggregation=True, chunks_per_page=2)
-    backend._started = True
-    backend._embeddings = _FakeEmbeddings(rows)
-
-    out = await backend.batch_search([{"q": "query", "limit": 3}], zone_id="root")
-
-    assert [(r.path, r.chunk_text) for r in out[0]] == [
-        ("/same-page.md", "best chunk"),
-        ("/same-page.md", "second chunk"),
-        ("/other-page.md", "other chunk"),
-    ]

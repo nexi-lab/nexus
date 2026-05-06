@@ -68,6 +68,7 @@ class ContentMixin:
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
+        timeout_ms: int | None = None,
     ) -> bytes | dict[str, Any]:
         """Read file content as bytes (POSIX pread(2)).
 
@@ -77,6 +78,16 @@ class ContentMixin:
 
         Rust Kernel.sys_read handles ALL entry types end-to-end (DT_REG,
         DT_PIPE, DT_STREAM) including IPC blocking waits with timeout.
+
+        Args:
+            timeout_ms: For DT_PIPE / DT_STREAM, how long to block waiting
+                for data. ``0`` is O_NONBLOCK (nowait pop, return immediately
+                with empty data if pipe drained). Default ``None`` uses the
+                long-poll default (5000 ms). Hot polling loops MUST pass
+                ``timeout_ms=0`` to avoid blocking the asyncio event loop —
+                the Rust kernel's ``pipe_read_blocking`` releases the GIL
+                but a 5 s wait per empty poll still starves uvicorn's
+                accept loop. Issue #3699.
         """
 
         context = self._parse_context(context)
@@ -108,7 +119,8 @@ class ContentMixin:
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         # DT_STREAM uses 30s timeout (long-poll); DT_PIPE uses 5s.
         # The caller's `offset` param doubles as the stream cursor position.
-        _timeout_ms = 5000
+        # ``timeout_ms=0`` from the caller selects O_NONBLOCK (Issue #3699).
+        _timeout_ms = 5000 if timeout_ms is None else int(timeout_ms)
         result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
 
         # DT_STREAM: return dict with next_offset for cursor advancement.

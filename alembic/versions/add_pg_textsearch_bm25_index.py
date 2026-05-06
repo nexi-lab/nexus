@@ -45,63 +45,106 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add pg_textsearch extension and BM25 index (PostgreSQL 17+ only)."""
+    """Add a BM25 index for native ranking.
+
+    Issue #3699 update: paradedb/paradedb (the bundled image post-#3699)
+    ships ``pg_search``; Tiger Data's ``pg_textsearch`` is a separate
+    fork with the same ``@@@`` operator but different ``CREATE INDEX``
+    syntax. Probe for whichever is available and skip cleanly otherwise
+    so the rest of the alembic chain can still apply.
+    """
     conn = op.get_bind()
 
-    # Only create pg_textsearch index on PostgreSQL
-    # SQLite doesn't support this extension
     if conn.dialect.name != "postgresql":
         return
 
-    # Check PostgreSQL version (pg_textsearch requires PG 17+)
-    result = conn.execute(text("SHOW server_version_num"))
-    version_num = int(result.scalar())
+    # Detect already-installed BM25 extension first (paradedb image
+    # enables pg_search via the init SQL, so a fresh stack hits this
+    # branch and we just create the index).
+    have = {
+        row[0]
+        for row in conn.execute(
+            text("SELECT extname FROM pg_extension WHERE extname IN ('pg_search', 'pg_textsearch')")
+        ).fetchall()
+    }
 
-    if version_num < 170000:
-        # PostgreSQL < 17, skip pg_textsearch
+    # If neither installed, try to install pg_search first (paradedb)
+    # then pg_textsearch (Tiger Data). Each attempt runs in a
+    # SAVEPOINT so a failure does NOT poison the outer migration
+    # transaction — without this, the next migration would fail with
+    # "current transaction is aborted, commands ignored ..." (Issue #3699).
+    if not have:
+        for ext in ("pg_search", "pg_textsearch"):
+            sp = "try_install_" + ext
+            try:
+                conn.execute(text(f"SAVEPOINT {sp}"))
+                conn.execute(text(f"CREATE EXTENSION IF NOT EXISTS {ext}"))
+                conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                have.add(ext)
+                break
+            except Exception:
+                conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+                conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+
+    if not have:
         import warnings
 
         warnings.warn(
-            f"pg_textsearch requires PostgreSQL 17+, but server is {version_num // 10000}.{(version_num % 10000) // 100}. "
-            "Skipping BM25 index creation. Keyword search will use ts_rank() fallback.",
+            "Neither pg_search (paradedb) nor pg_textsearch (Tiger Data) "
+            "is installed. Skipping BM25 index creation; keyword search "
+            "will fail at query time. Use the bundled paradedb image or "
+            "install one of these extensions manually.",
             stacklevel=2,
         )
         return
 
-    # Try to enable pg_textsearch extension
-    try:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_textsearch"))
-
-        # Create BM25 index on document_chunks.chunk_text
-        # Using English text config with default BM25 parameters (k1=1.2, b=0.75)
-        conn.execute(
-            text("""
+    # Index DDL differs between the two extensions; both are queried
+    # via the same ``@@@`` operator so the runtime backend doesn't care.
+    if "pg_search" in have:
+        # paradedb pg_search: requires explicit key_field + text_fields JSON.
+        chunks_ddl = """
+            CREATE INDEX IF NOT EXISTS idx_chunks_bm25
+            ON document_chunks
+            USING bm25 (chunk_id, chunk_text)
+            WITH (key_field='chunk_id', text_fields='{"chunk_text": {}}')
+        """
+        paths_ddl = """
+            CREATE INDEX IF NOT EXISTS idx_file_paths_bm25
+            ON file_paths
+            USING bm25 (path_id, virtual_path)
+            WITH (key_field='path_id', text_fields='{"virtual_path": {}}')
+        """
+    else:
+        # Tiger Data pg_textsearch: text_config-only DDL.
+        chunks_ddl = """
             CREATE INDEX IF NOT EXISTS idx_chunks_bm25
             ON document_chunks USING bm25(chunk_text)
             WITH (text_config='english')
-        """)
-        )
-
-        # Create BM25 index on file_paths.virtual_path for filename search
-        conn.execute(
-            text("""
+        """
+        paths_ddl = """
             CREATE INDEX IF NOT EXISTS idx_file_paths_bm25
             ON file_paths USING bm25(virtual_path)
             WITH (text_config='simple')
-        """)
-        )
+        """
 
-    except Exception as e:
-        # pg_textsearch extension not available
-        import warnings
+    # Wrap the index creation too — index syntax errors must not poison
+    # the outer transaction either.
+    for ddl in (chunks_ddl, paths_ddl):
+        sp = "try_idx_bm25"
+        try:
+            conn.execute(text(f"SAVEPOINT {sp}"))
+            conn.execute(text(ddl))
+            conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+        except Exception as exc:
+            conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+            conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+            import warnings
 
-        warnings.warn(
-            f"pg_textsearch extension not available: {e}. "
-            "Keyword search will use ts_rank() fallback. "
-            "Install pg_textsearch for true BM25 ranking: "
-            "https://github.com/timescale/pg_textsearch",
-            stacklevel=2,
-        )
+            warnings.warn(
+                f"BM25 index creation failed: {exc}. "
+                "Keyword search may degrade to ts_rank fallback at runtime.",
+                stacklevel=2,
+            )
 
 
 def downgrade() -> None:

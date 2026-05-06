@@ -6,96 +6,9 @@
 set -e
 set -o pipefail
 
-# ---------------------------------------------------------------------------
-# Static-TLS reservation (all platforms)
-#
-# faiss-cpu bundles its own libgomp (faiss_cpu.libs/libgomp-*.so) which is a
-# different .so from the system libgomp preloaded via LD_PRELOAD.  On x86_64
-# CPU-only containers the Dockerfile's LD_PRELOAD ensures the *system* libgomp
-# gets TLS early, but when faiss later dlopen()s its *bundled* copy the default
-# static-TLS pool is already full → "cannot allocate memory in static TLS block".
-#
-# GLIBC_TUNABLES expands the reservation so both copies fit.  It is harmless on
-# all platforms and also covers libc10 (PyTorch), ggml, numpy, etc.
-# ---------------------------------------------------------------------------
-export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
-
-# ---------------------------------------------------------------------------
-# Conservative SIMD defaults (all platforms) — Issue #3125 + faiss/torch SIGILL
-#
-# faiss-cpu and PyTorch's MKL kernels emit AVX/AVX2/AVX-512 instructions that
-# are not always executable on the underlying CPU:
-#   * ARM64 in Docker: faiss SVE auto-detection crashes when CPU feature flags
-#     are masked by the runtime.
-#   * x86_64 on virtualized / shared / older hardware (e.g. GitHub Actions
-#     runners, some QEMU VMs, older Xeons): "Successfully loaded faiss with
-#     AVX2 support" then SIGILL on first SIMD op; or torch's mkl_vml_kernel_*
-#     SIGILL with AVX-512 (faiss #426/#885/#896, pytorch #175436/#68349,
-#     sentence-transformers #1120).
-#
-# Defaults below trade peak vector-search throughput for portability:
-#   FAISS_OPT_LEVEL=generic        — faiss loads non-SIMD .so
-#   OMP_NUM_THREADS=1              — single-threaded OpenMP (avoids
-#                                    libgomp/libiomp5 runtime conflict)
-#   MKL_ENABLE_INSTRUCTIONS=SSE4_2 — clamp Intel MKL to SSE4.2 (no AVX*)
-#   ATEN_CPU_CAPABILITY=default    — disable PyTorch ATen SIMD kernels
-#                                    (covers the path MKL_ENABLE_INSTRUCTIONS
-#                                    misses — e.g. sentence-transformers
-#                                    forward passes via torch native ops)
-#
-# Users running on known-good modern CPUs can override at `docker run` time:
-#   docker run -e FAISS_OPT_LEVEL=avx2 -e OMP_NUM_THREADS=4 \
-#              -e MKL_ENABLE_INSTRUCTIONS=AVX512 \
-#              -e ATEN_CPU_CAPABILITY=avx512 ...
-# ---------------------------------------------------------------------------
-export FAISS_OPT_LEVEL="${FAISS_OPT_LEVEL:-generic}"
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
-export MKL_ENABLE_INSTRUCTIONS="${MKL_ENABLE_INSTRUCTIONS:-SSE4_2}"
-export ATEN_CPU_CAPABILITY="${ATEN_CPU_CAPABILITY:-default}"
-
-# ---------------------------------------------------------------------------
-# jemalloc safety net (Issue #3997)
-# Dockerfile prepends /usr/lib/libjemalloc.so.2 to LD_PRELOAD via a symlink
-# (per-arch). If the file is missing at runtime (custom base image, broken
-# layer, mount issue), strip it from LD_PRELOAD so the dynamic linker
-# doesn't abort every command in the container. Glibc + MALLOC_ARENA_MAX=2
-# fallback still saves 400-800 MB RSS.
-# ---------------------------------------------------------------------------
-_jemalloc_path="/usr/lib/libjemalloc.so.2"
-if [ -n "${LD_PRELOAD:-}" ] && [ ! -e "$_jemalloc_path" ]; then
-    case ":${LD_PRELOAD}:" in
-        *":${_jemalloc_path}:"*)
-            echo "WARN: ${_jemalloc_path} missing; stripping from LD_PRELOAD (glibc fallback)" >&2
-            export LD_PRELOAD="${LD_PRELOAD//${_jemalloc_path}:/}"
-            export LD_PRELOAD="${LD_PRELOAD//:${_jemalloc_path}/}"
-            export LD_PRELOAD="${LD_PRELOAD//${_jemalloc_path}/}"
-            ;;
-    esac
-fi
-unset _jemalloc_path
-
-# ---------------------------------------------------------------------------
-# LD_PRELOAD fallback (CPU-only)
-# Preloading the system libgomp helps libraries other than faiss that link
-# against the system copy.  On CUDA, LD_PRELOAD conflicts with NVIDIA's
-# libgomp (SIGILL), so we skip it — GLIBC_TUNABLES above is sufficient.
-# ---------------------------------------------------------------------------
-if [ ! -d /usr/local/cuda ] && [ -z "${LD_PRELOAD:-}" ]; then
-    _gomp=$(find /usr/lib -name 'libgomp.so.1' -print -quit 2>/dev/null || true)
-    [ -n "$_gomp" ] && export LD_PRELOAD="$_gomp"
-    unset _gomp
-fi
-
-# When torch is installed (non-SANDBOX builds), also preload libc10 to
-# avoid "cannot allocate memory in static TLS block" (Issue #2946).
-# SANDBOX builds (Issue #3778) don't install torch → no libc10 symlink →
-# this block is a no-op.
-if [ ! -d /usr/local/cuda ] && [ -e /usr/lib/libc10.so ]; then
-    case ":${LD_PRELOAD:-}:" in
-        *:/usr/lib/libc10.so:*) ;;  # already present
-        *) export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD }/usr/lib/libc10.so" ;;
-    esac
-fi
+# Issue #3699: the faiss/torch/txtai LD_PRELOAD + GLIBC_TUNABLES + SIMD
+# clamps + jemalloc plumbing that used to live here are gone — direct
+# pgvector + pg_search no longer pulls those libraries in.
 
 # Load helpers (same directory as this script)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

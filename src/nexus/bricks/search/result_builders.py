@@ -89,3 +89,64 @@ def build_result_from_row(row: Any, *, score_abs: bool = False) -> dict[str, Any
         line_end=row.line_end,
         score=abs(raw_score) if score_abs else raw_score,
     )
+
+
+def _aggregate_chunks_to_pages(
+    chunks: list[dict[str, Any]],
+    *,
+    chunks_per_page: int,
+) -> list[dict[str, Any]]:
+    """Max-pool chunk scores to page (path) granularity, re-rank pages, emit
+    the top-K best chunks per surviving page.
+
+    Why this exists (Issue #3980): txtai's pgtext BM25 scores at chunk
+    granularity. For rare-phrase queries the chunk that literally contains the
+    phrase loses on local BM25 — a 360-word page split into three 120-word
+    chunks distributes term frequency across chunks, and a competing page
+    whose single chunk repeats a frequent token can outscore it. The page
+    that *should* rank in the top-5 ends up at chunk-rank 30+ across its
+    fragments. Page-level max-pool restores the right ranking with the
+    bonus that we keep chunk-grain context for downstream RAG.
+
+    Pattern matches Vespa's MaxSim long-context evaluation, ColBERT's
+    max-then-sum late-interaction, and gbrain's "Best-of-Page" dedup.
+
+    Args:
+        chunks: deduped raw rows from the txtai SQL search. Each row must
+            carry ``path`` and ``score``; rows missing ``path`` get treated
+            as their own page (``id`` fallback) so they're not silently
+            collapsed together.
+        chunks_per_page: cap on chunks emitted per page. Protects against
+            one-doc dominance at the top of the result list.
+
+    Returns:
+        A flat list of chunk rows, ordered by (page rank desc, chunk score
+        desc within page). Length is at most ``chunks_per_page * len(pages)``.
+    """
+    if not chunks:
+        return []
+
+    by_page: dict[str, list[dict[str, Any]]] = {}
+    for r in chunks:
+        # Use ``path`` as the page key. Fall back to ``id`` (and finally to a
+        # synthetic per-row key) so rows without a path don't collide on the
+        # empty string and silently merge.
+        path = r.get("path") or ""
+        key = path or str(r.get("id") or id(r))
+        by_page.setdefault(key, []).append(r)
+
+    ranked_pages: list[tuple[float, list[dict[str, Any]]]] = []
+    for page_chunks in by_page.values():
+        # Max-pool: page score = best chunk's score. Sum-pool conflates
+        # chunk count with relevance and over-rewards long pages; max keeps
+        # the rare-phrase signal intact.
+        page_chunks.sort(key=lambda r: float(r.get("score", 0.0)), reverse=True)
+        page_score = float(page_chunks[0].get("score", 0.0))
+        ranked_pages.append((page_score, page_chunks))
+
+    ranked_pages.sort(key=lambda item: item[0], reverse=True)
+
+    out: list[dict[str, Any]] = []
+    for _page_score, page_chunks in ranked_pages:
+        out.extend(page_chunks[:chunks_per_page])
+    return out

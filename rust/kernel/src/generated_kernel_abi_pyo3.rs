@@ -421,6 +421,29 @@ fn set_optional_iso_datetime(
     }
 }
 
+/// Convert StatResult → Python dict (same shape as sys_stat output).
+fn stat_result_to_pydict<'py>(
+    py: Python<'py>,
+    s: &crate::kernel::StatResult,
+) -> Bound<'py, PyDict> {
+    let dict = PyDict::new(py);
+    let _ = dict.set_item("path", &s.path);
+    let _ = dict.set_item("size", s.size);
+    let _ = dict.set_item("last_writer_address", s.last_writer_address.as_deref());
+    let _ = dict.set_item("content_id", s.content_id.as_deref());
+    let _ = dict.set_item("mime_type", &s.mime_type);
+    let _ = set_optional_iso_datetime(py, &dict, "created_at", s.created_at_ms);
+    let _ = set_optional_iso_datetime(py, &dict, "modified_at", s.modified_at_ms);
+    let _ = dict.set_item("is_directory", s.is_directory);
+    let _ = dict.set_item("entry_type", s.entry_type);
+    let _ = dict.set_item("mode", s.mode);
+    let _ = dict.set_item("version", s.version);
+    let _ = dict.set_item("zone_id", s.zone_id.as_deref());
+    let _ = dict.set_item("link_target", s.link_target.as_deref());
+    let _ = dict.set_item("lock", py.None());
+    dict
+}
+
 /// Convert Rust OperationContext -> Python OperationContext.
 ///
 /// Forwards ALL fields so Python hooks see the full credential.
@@ -1238,6 +1261,73 @@ impl PyKernel {
         dict.set_item("has_more", page.has_more)?;
         dict.set_item("total_count", page.total_count)?;
         Ok(dict.into())
+    }
+
+    // ── Tier 2 convenience methods ────────────────────────────────────
+
+    #[pyo3(signature = (paths, zone_id="root"))]
+    fn stat_batch(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+        zone_id: &str,
+    ) -> Vec<Option<Py<PyAny>>> {
+        use crate::kernel::convenience::KernelConvenience;
+        let results = self.inner.stat_batch(&paths, zone_id);
+        results
+            .into_iter()
+            .map(|opt| opt.map(|stat| stat_result_to_pydict(py, &stat).into()))
+            .collect()
+    }
+
+    fn set_xattr(&self, path: &str, key: &str, value: String) -> PyResult<()> {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner
+            .set_xattr(path, key, value, contracts::ROOT_ZONE_ID)
+            .map_err(Into::into)
+    }
+
+    fn get_xattr(&self, path: &str, key: &str) -> PyResult<Option<String>> {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner
+            .get_xattr(path, key, contracts::ROOT_ZONE_ID)
+            .map_err(Into::into)
+    }
+
+    fn get_xattr_bulk(&self, py: Python<'_>, paths: Vec<String>, key: &str) -> PyResult<Py<PyAny>> {
+        use crate::kernel::convenience::KernelConvenience;
+        let pairs = self
+            .inner
+            .get_xattr_bulk(&paths, key, contracts::ROOT_ZONE_ID)
+            .map_err::<PyErr, _>(Into::into)?;
+        let dict = PyDict::new(py);
+        for (path, value) in pairs {
+            match value {
+                Some(text) => dict.set_item(path, text)?,
+                None => dict.set_item(path, py.None())?,
+            }
+        }
+        Ok(dict.into())
+    }
+
+    #[pyo3(signature = (parent_path, zone_id="root", is_admin=false, limit=0, cursor=None))]
+    fn readdir_paged(
+        &self,
+        py: Python<'_>,
+        parent_path: &str,
+        zone_id: &str,
+        is_admin: bool,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Py<PyAny> {
+        let result = self
+            .inner
+            .readdir_paged(parent_path, zone_id, is_admin, limit, cursor);
+        let dict = PyDict::new(py);
+        let _ = dict.set_item("items", &result.items);
+        let _ = dict.set_item("next_cursor", &result.next_cursor);
+        let _ = dict.set_item("has_more", result.has_more);
+        dict.into()
     }
 
     // ── Advisory lock syscalls (F4 C5) ──────────────────────────────

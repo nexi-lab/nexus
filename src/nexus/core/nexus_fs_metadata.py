@@ -1145,8 +1145,11 @@ class MetadataMixin:
         """
         path = self._validate_path(path)
 
-        # Check if it's an implicit directory first (for permission check optimization)
-        is_implicit_dir = self._kernel.metastore_is_implicit_directory(path)
+        # Single Rust round-trip: get stat (handles both explicit entries and implicit directories)
+        _stat = self._kernel.sys_stat(path, self._zone_id)
+        is_implicit_dir = (
+            _stat is not None and _stat.get("is_directory", False) and _stat.get("version", 1) == 0
+        )
 
         # Issue #1815: permission check via KernelDispatch INTERCEPT hook.
         ctx = self._resolve_cred(context)
@@ -1185,34 +1188,17 @@ class MetadataMixin:
                 "is_directory": True,
             }
 
-        # Get file metadata
-        meta = self._kernel.metastore_get(path)
-        if meta is None:
+        # sys_stat already has all metadata — no separate metastore_get needed
+        if _stat is None:
             raise NexusFileNotFoundError(path)
 
-        # Get size from backend if not in metadata
-        size = meta.size
-        if size is None and meta.content_id and meta.is_external_storage:
-            # External connectors: try Rust kernel sys_stat for size.
-            # CAS backends always have size set in metastore by sys_write.
-            try:
-                _stat = self._kernel.sys_stat(path, self._zone_id)
-                size = _stat.get("size") if isinstance(_stat, dict) else None
-            except Exception as exc:
-                logger.debug("Failed to get content size for %s: %s", path, exc)
-                size = None
-
-        # Convert datetime to ISO string for wire compatibility with Rust FUSE client
-        # The client expects a plain string, not the wrapped {"__type__": "datetime", ...} format
-        modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
-
         return {
-            "size": size,
-            "content_id": meta.content_id,
-            "version": meta.version,
-            "gen": meta.gen,
-            "modified_at": modified_at_str,
-            "is_directory": False,
+            "size": _stat.get("size", 0),
+            "content_id": _stat.get("content_id"),
+            "version": _stat.get("version"),
+            "gen": _stat.get("gen", 0),
+            "modified_at": _stat.get("modified_at"),
+            "is_directory": _stat.get("is_directory", False),
         }
 
     @rpc_expose(description="Get metadata for multiple files in bulk")
@@ -1584,17 +1570,14 @@ class MetadataMixin:
                         # a "looks empty" verdict.  Success requires
                         # both probes to confirm absence.
                         try:
-                            explicit_after = self._kernel.metastore_get(normalized)
-                            implicit_after = self._kernel.metastore_is_implicit_directory(
-                                normalized
-                            )
+                            _after_stat = self._kernel.sys_stat(normalized, ROOT_ZONE_ID)
                         except Exception as e:
                             results[path] = {
                                 "success": False,
                                 "error": f"Could not verify recursive delete: {e}",
                             }
                             continue
-                        if explicit_after is not None or implicit_after:
+                        if _after_stat is not None:
                             results[path] = {
                                 "success": False,
                                 "error": (

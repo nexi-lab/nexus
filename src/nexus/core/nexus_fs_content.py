@@ -273,13 +273,13 @@ class ContentMixin:
                     result = self._kernel.sys_read(path, _rust_ctx)
                     content = result.data or b""
                     if return_metadata:
-                        meta = self._kernel.metastore_get(path)
+                        stat = self._kernel.sys_stat(path, ROOT_ZONE_ID)
                         results[path] = {
                             "content": content,
-                            "content_id": meta.content_id if meta else None,
-                            "version": meta.version if meta else 0,
-                            "gen": meta.gen if meta else 0,
-                            "modified_at": meta.modified_at if meta else None,
+                            "content_id": stat["content_id"] if stat else None,
+                            "version": stat["version"] if stat else 0,
+                            "gen": stat.get("gen", 0) if stat else 0,
+                            "modified_at": stat["modified_at"] if stat else None,
                             "size": len(content),
                         }
                     else:

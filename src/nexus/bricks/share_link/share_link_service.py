@@ -207,12 +207,8 @@ class ShareLinkService:
             # Determine resource type
             resource_type = "file"
             if self._nexus_fs.access(normalized_path):
-                meta = (
-                    self._nexus_fs._kernel.metastore_get(normalized_path)
-                    if hasattr(self._nexus_fs._kernel, "get")
-                    else None
-                )
-                if meta and getattr(meta, "is_dir", False):
+                stat = self._nexus_fs._kernel.sys_stat(normalized_path, ROOT_ZONE_ID)
+                if stat and stat.get("is_directory", False):
                     resource_type = "directory"
 
             # Calculate expiration

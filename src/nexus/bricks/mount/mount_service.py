@@ -318,6 +318,7 @@ class MountService:
         if self.nexus_fs is not None and hasattr(self.nexus_fs, "metadata"):
             from datetime import UTC, datetime
 
+            from nexus.contracts.constants import ROOT_ZONE_ID
             from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
             from nexus.lib.context_utils import get_zone_id
 
@@ -330,7 +331,7 @@ class MountService:
             for i in range(2, len(parts) + 1):
                 dir_path = "/".join(parts[:i])
                 try:
-                    existing = self.nexus_fs._kernel.metastore_get(dir_path)
+                    existing = self.nexus_fs._kernel.access(dir_path, ROOT_ZONE_ID)
                     if existing:
                         continue
                     now = datetime.now(UTC)

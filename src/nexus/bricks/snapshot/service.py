@@ -363,8 +363,8 @@ class TransactionalSnapshotService:
         conflicts: list[ConflictInfo] = []
         for entry in entries:
             if entry.new_hash is not None:
-                current_meta = self._kernel.metastore_get(entry.path)
-                current_hash = current_meta.content_id if current_meta else None
+                current_stat = self._kernel.sys_stat(entry.path, ROOT_ZONE_ID)
+                current_hash = current_stat["content_id"] if current_stat else None
                 if current_hash != entry.new_hash:
                     conflicts.append(
                         ConflictInfo(

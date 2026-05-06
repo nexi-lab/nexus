@@ -8,6 +8,7 @@ use crate::{
     metrics::BenchResultFile,
     report::{render_diff_markdown, render_summary_markdown, write_markdown, write_result_json},
     runner::run_trace,
+    suite::{run_suite, SuiteRunOptions},
     target::{http::HttpTarget, mount::MountTarget, noop::NoopTarget, BenchTarget},
     threshold::{evaluate, ThresholdSet},
     trace::load_trace,
@@ -41,6 +42,26 @@ enum Commands {
         out_json: PathBuf,
         #[arg(long)]
         out_md: PathBuf,
+        #[arg(long, default_value_t = false)]
+        allow_errors: bool,
+    },
+    Suite {
+        #[arg(long)]
+        trace_dir: PathBuf,
+        #[arg(long, value_enum)]
+        target: TargetKind,
+        #[arg(long)]
+        mount_root: Option<PathBuf>,
+        #[arg(long)]
+        base_url: Option<String>,
+        #[arg(long)]
+        api_key: Option<String>,
+        #[arg(long)]
+        out_dir: PathBuf,
+        #[arg(long, default_value_t = 5)]
+        iterations: u32,
+        #[arg(long, default_value_t = 1)]
+        warmups: u32,
         #[arg(long, default_value_t = false)]
         allow_errors: bool,
     },
@@ -139,6 +160,74 @@ pub fn run() -> BenchResult<()> {
                 }
             }
         }
+        Commands::Suite {
+            trace_dir,
+            target,
+            mount_root,
+            base_url,
+            api_key,
+            out_dir,
+            iterations,
+            warmups,
+            allow_errors,
+        } => match target {
+            TargetKind::Noop => {
+                run_suite(
+                    &NoopTarget,
+                    SuiteRunOptions {
+                        target_name: "noop",
+                        git_sha: &git_sha(),
+                        trace_dir: &trace_dir,
+                        out_dir: &out_dir,
+                        iterations,
+                        warmups,
+                        allow_errors,
+                    },
+                )?;
+                Ok(())
+            }
+            TargetKind::Mount => {
+                let root = mount_root.ok_or_else(|| {
+                    BenchError::Target("--mount-root is required for mount target".to_string())
+                })?;
+                let target = MountTarget::new(root);
+                run_suite(
+                    &target,
+                    SuiteRunOptions {
+                        target_name: "mount",
+                        git_sha: &git_sha(),
+                        trace_dir: &trace_dir,
+                        out_dir: &out_dir,
+                        iterations,
+                        warmups,
+                        allow_errors,
+                    },
+                )?;
+                Ok(())
+            }
+            TargetKind::Http => {
+                let base_url = base_url.ok_or_else(|| {
+                    BenchError::Target("--base-url is required for http target".to_string())
+                })?;
+                let api_key = api_key.ok_or_else(|| {
+                    BenchError::Target("--api-key is required for http target".to_string())
+                })?;
+                let target = HttpTarget::new(base_url, api_key)?;
+                run_suite(
+                    &target,
+                    SuiteRunOptions {
+                        target_name: "http",
+                        git_sha: &git_sha(),
+                        trace_dir: &trace_dir,
+                        out_dir: &out_dir,
+                        iterations,
+                        warmups,
+                        allow_errors,
+                    },
+                )?;
+                Ok(())
+            }
+        },
         Commands::Diff {
             baseline,
             candidate,

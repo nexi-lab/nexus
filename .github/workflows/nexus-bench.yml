@@ -12,6 +12,7 @@ on:
       - "rust/backends/**"
       - "rust/transport/**"
       - ".github/workflows/nexus-bench.yml"
+      - ".github/workflows/nexus-bench-real.yml"
   push:
     branches: [main, develop]
     paths:
@@ -23,6 +24,7 @@ on:
       - "rust/backends/**"
       - "rust/transport/**"
       - ".github/workflows/nexus-bench.yml"
+      - ".github/workflows/nexus-bench-real.yml"
 
 permissions:
   contents: read

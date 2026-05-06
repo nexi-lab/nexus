@@ -41,6 +41,23 @@ cargo run --manifest-path nexus-bench/Cargo.toml -- replay \
   --out-md target/nexus-bench/agent-warm-trace.md
 ```
 
+## Run the full suite
+
+Use `suite` for #4061 performance evidence. It runs every committed workload, performs warmups, records repeated measured iterations, and writes per-run plus aggregate artifacts.
+
+```bash
+cargo run --manifest-path nexus-bench/Cargo.toml -- suite \
+  --target http \
+  --base-url http://localhost:2026 \
+  --api-key "$NEXUS_API_KEY" \
+  --trace-dir nexus-bench/traces \
+  --out-dir target/nexus-bench/real-http \
+  --warmups 1 \
+  --iterations 5
+```
+
+The `noop` target is only for smoke checks. Real performance claims require `mount` or `http` suite artifacts from a real Nexus environment. See `nexus-bench/EPIC-4061.md` for the issue-to-workload matrix and runbook.
+
 ## Compare results
 
 ```bash

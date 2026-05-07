@@ -1774,9 +1774,10 @@ impl Kernel {
                 self.setattr_create_dir(path, zone_id)
             }
             0 => {
-                // UPDATE or IDEMPOTENT OPEN
+                // UPDATE existing DT_REG, or CREATE if path does not exist (upsert).
                 self.setattr_update(
                     path,
+                    zone_id,
                     mime_type,
                     modified_at_ms,
                     content_id,
@@ -2188,11 +2189,17 @@ impl Kernel {
         })
     }
 
-    /// UPDATE or IDEMPOTENT OPEN: modify mutable fields on existing inode.
+    /// UPDATE existing DT_REG, or CREATE if path does not exist (upsert).
+    ///
+    /// When the metastore has no entry for `path`, a new DT_REG is created
+    /// with the supplied fields (mirrors `setattr_create_dir` semantics).
+    /// This eliminates the need for Python callers to use `metastore_put`
+    /// to create file metadata entries.
     #[allow(clippy::too_many_arguments)]
     fn setattr_update(
         &self,
         path: &str,
+        zone_id: &str,
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
         content_id: Option<&str>,
@@ -2201,7 +2208,39 @@ impl Kernel {
         created_at_ms: Option<i64>,
     ) -> Result<SysSetAttrResult, KernelError> {
         let existing = self.metastore_get(path)?;
-        let meta = existing.ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
+
+        // ── CREATE: path does not exist — build new DT_REG ──────────
+        let Some(meta) = existing else {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+
+            let new_meta = self.build_metadata(
+                path,
+                zone_id,
+                crate::meta_store::DT_REG,
+                size.unwrap_or(0),
+                content_id.map(|s| s.to_string()),
+                version.unwrap_or(1),
+                mime_type.map(|s| s.to_string()),
+                Some(created_at_ms.unwrap_or(now_ms)),
+                Some(modified_at_ms.unwrap_or(now_ms)),
+            );
+            self.metastore_put(path, new_meta)?;
+
+            return Ok(SysSetAttrResult {
+                path: path.to_string(),
+                created: true,
+                entry_type: crate::meta_store::DT_REG as i32,
+                backend_name: None,
+                capacity: None,
+                updated: Vec::new(),
+                shm_path: None,
+                data_rd_fd: None,
+                space_rd_fd: None,
+            });
+        };
 
         // No fields to update → idempotent open (no-op)
         if mime_type.is_none()
@@ -3723,14 +3762,17 @@ mod tests {
     }
 
     #[test]
-    fn sys_setattr_update_file_not_found() {
+    fn sys_setattr_update_creates_on_miss() {
         let k = Kernel::new();
-        let err = setattr(&k, "/nonexistent", 0);
-        assert!(err.is_err());
-        match err.unwrap_err() {
-            KernelError::FileNotFound(_) => {}
-            other => panic!("expected FileNotFound, got: {other:?}"),
-        }
+        let result = setattr(&k, "/newfile", 0);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert!(r.created);
+        assert_eq!(r.entry_type, 0); // DT_REG
+
+        // Idempotent: second call is an update (created=false)
+        let r2 = setattr(&k, "/newfile", 0).unwrap();
+        assert!(!r2.created);
     }
 
     // ── Metastore-key tests ────────────────────────────────────────────

@@ -169,6 +169,68 @@ def test_slim_base_module_imports(slim_base_venv: Path, base_module: str) -> Non
     assert "OK" in result.stdout
 
 
+def test_slim_base_connector_metadata_discovery_without_optional_deps(
+    slim_base_venv: Path,
+) -> None:
+    """Base slim install lists S3 and Slack metadata without connector extras."""
+    script = """
+import sys
+from importlib.metadata import PackageNotFoundError, distribution
+
+for name in (
+    "boto3",
+    "slack_sdk",
+    "nexus.backends.storage.path_s3",
+    "nexus.backends.transports.s3_transport",
+    "nexus.backends.connectors.slack.connector",
+    "nexus.backends.connectors.slack.transport",
+):
+    sys.modules.pop(name, None)
+
+for package_name in ("boto3", "slack-sdk"):
+    try:
+        distribution(package_name)
+    except PackageNotFoundError:
+        pass
+    else:
+        sys.exit(f"{package_name} unexpectedly installed in slim base venv")
+
+import nexus
+import nexus.backends
+from nexus.extensions.store import get_store, reset_store
+
+reset_store()
+store = get_store()
+s3 = store.get("path_s3", kind="connector")
+slack = store.get("slack_connector", kind="connector")
+
+assert s3.metadata_complete is True
+assert s3.service_name == "s3"
+assert "boto3" in {d.name for d in s3.runtime_deps}
+assert slack.metadata_complete is True
+assert slack.service_name == "slack"
+assert "slack-sdk" in {d.name for d in slack.runtime_deps}
+
+for name in (
+    "boto3",
+    "slack_sdk",
+    "nexus.backends.storage.path_s3",
+    "nexus.backends.transports.s3_transport",
+    "nexus.backends.connectors.slack.connector",
+    "nexus.backends.connectors.slack.transport",
+):
+    assert name not in sys.modules, name
+
+print("DISCOVERY OK")
+"""
+    result = run_in_slim_venv(slim_base_venv, script)
+    assert result.returncode == 0, (
+        "slim base connector metadata discovery failed:\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "DISCOVERY OK" in result.stdout
+
+
 @pytest.mark.parametrize(
     "connector_module",
     [

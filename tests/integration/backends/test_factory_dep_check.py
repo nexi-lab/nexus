@@ -39,11 +39,29 @@ class _StubBackend:
 
 @pytest.fixture(autouse=True)
 def _clean_registry() -> Any:
-    # Snapshot + restore so we don't affect other tests in the integration run.
-    names_before = set(ConnectorRegistry.list_available())
+    # Snapshot + restore so real connector registration does not leak across
+    # tests. BackendFactory.create("path_s3", config) triggers optional backend
+    # registration, so restore the registry contents, one-shot flag, and module
+    # imports that control whether connector decorators rerun.
+    import sys
+
+    import nexus.backends as backends_mod
+    from nexus.backends._manifest import CONNECTOR_MANIFEST
+
+    items_before = dict(ConnectorRegistry._base._items)
+    registered_before = backends_mod._optional_backends_registered
+    modules_before = {
+        entry.module_path: sys.modules.get(entry.module_path) for entry in CONNECTOR_MANIFEST
+    }
     yield
-    for nm in set(ConnectorRegistry.list_available()) - names_before:
-        ConnectorRegistry._base._items.pop(nm, None)
+    ConnectorRegistry._base._items.clear()
+    ConnectorRegistry._base._items.update(items_before)
+    backends_mod._optional_backends_registered = registered_before
+    for module_path, module in modules_before.items():
+        if module is None:
+            sys.modules.pop(module_path, None)
+        else:
+            sys.modules[module_path] = module
 
 
 class TestFactoryDepCheck:
@@ -110,3 +128,53 @@ class TestFactoryDepCheck:
         msg = str(err)
         assert "definitely_not_a_real_module_xyz" in msg
         assert "definitely_not_a_real_binary_xyz" in msg
+
+    def test_path_s3_missing_boto3_uses_s3_extra_hint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib.util
+
+        real_find_spec = importlib.util.find_spec
+
+        def fake_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "boto3":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+        monkeypatch.setattr(
+            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+            lambda: True,
+        )
+
+        with pytest.raises(MissingDependencyError) as exc_info:
+            BackendFactory.create("path_s3", {"bucket": "example"})
+
+        msg = str(exc_info.value)
+        assert "path_s3" in msg
+        assert "boto3" in msg
+        assert "pip install nexus-fs[s3]" in msg
+
+    def test_slack_missing_sdk_uses_slack_extra_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib.util
+
+        real_find_spec = importlib.util.find_spec
+
+        def fake_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "slack_sdk":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+        monkeypatch.setattr(
+            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+            lambda: True,
+        )
+        with pytest.raises(MissingDependencyError) as exc_info:
+            BackendFactory.create("slack_connector", {"token_manager_db": "tokens.db"})
+
+        msg = str(exc_info.value)
+        assert "slack_connector" in msg
+        assert "slack_sdk" in msg
+        assert "pip install nexus-fs[slack]" in msg
+        assert "service 'token_manager'" not in msg

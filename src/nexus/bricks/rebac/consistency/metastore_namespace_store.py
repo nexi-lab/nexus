@@ -64,6 +64,7 @@ class _NexusFSProto(Protocol):
     """Minimal NexusFS surface used by the namespace store."""
 
     def sys_write(self, path: str, buf: bytes | str, **kwargs: Any) -> Any: ...
+    def sys_setattr(self, path: str, **kwargs: Any) -> Any: ...
     def sys_read(self, path: str, **kwargs: Any) -> Any: ...
     def sys_readdir(self, path: str = "/", recursive: bool = True, **kwargs: Any) -> Any: ...
     def sys_unlink(self, path: str, **kwargs: Any) -> Any: ...
@@ -106,6 +107,8 @@ class MetastoreNamespaceStore:
                 if value is not None and not callable(value):
                     payload[attr] = value
         path = _config_path(namespace.object_type)
+        # sys_write requires file to exist — ensure DT_REG entry first.
+        self._nx.sys_setattr(path, entry_type=0)
         self._nx.sys_write(path, json.dumps(payload, default=_json_default).encode("utf-8"))
 
     def create_if_absent(self, namespace: NamespaceConfig) -> None:

@@ -187,5 +187,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "unregister_hook",
         "unregister_watch",
         "wait_zone_revision",
+        "write",
     }
 )

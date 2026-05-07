@@ -1,3 +1,5 @@
+//! Tier 1 CONTRACTS — implementations in `io.rs`.
+//!
 //! `KernelAbi` — the canonical Rust syscall surface that every
 //! in-process Rust service uses to reach the kernel.
 //!

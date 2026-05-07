@@ -66,6 +66,7 @@ class _NexusFSProto(Protocol):
     """
 
     def sys_write(self, path: str, buf: bytes | str, **kwargs: Any) -> Any: ...
+    def sys_setattr(self, path: str, **kwargs: Any) -> Any: ...
     def sys_read(self, path: str, **kwargs: Any) -> Any: ...
     def sys_readdir(self, path: str = "/", recursive: bool = True, **kwargs: Any) -> Any: ...
     def sys_unlink(self, path: str, **kwargs: Any) -> Any: ...
@@ -130,6 +131,8 @@ class MetastoreMountStore:
             "created_at": now,
             "updated_at": now,
         }
+        # sys_write requires file to exist — ensure DT_REG entry first.
+        self._nx.sys_setattr(path, entry_type=0)
         self._nx.sys_write(path, json.dumps(payload).encode("utf-8"))
         return mount_id
 

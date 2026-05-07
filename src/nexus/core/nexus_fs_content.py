@@ -886,7 +886,9 @@ class ContentMixin:
 
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
-        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        # Tier 2 write: Rust handles create-on-write (setattr_update +
+        # sys_write) internally — no Python fallback needed.
+        result = self._kernel.write(path, _rust_ctx, buf, offset)
         if result.hit:
             io_metrics.record_write_backend_rpc()
 

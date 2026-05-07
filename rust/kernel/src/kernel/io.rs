@@ -653,7 +653,7 @@ impl Kernel {
         //    entries normally only land in dcache via the IPC registry
         //    setattr path) but is harmless on the rare cross-call cold
         //    path.
-        let entry = self
+        let mut entry = self
             .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
             .flatten();
 
@@ -677,16 +677,16 @@ impl Kernel {
             }
         }
 
-        // 3b. Contract guard: sys_write does NOT create new files.
-        //     File creation goes through sys_setattr(path, DT_REG, ...).
-        //     When entry is None (file doesn't exist) and this is a
-        //     fresh write (offset==0), return miss() — the caller must
-        //     create the file first. DT_PIPE / DT_STREAM entries are
-        //     always pre-created via sys_setattr, so they're never None
-        //     here. Partial writes (offset>0) already reject None in
-        //     step 5 via Err(FileNotFound).
+        // 3b. Auto-create DT_REG on first write (offset==0).
+        //     Mirrors POSIX open(O_CREAT|O_WRONLY) + write(2) semantics:
+        //     the kernel ensures the inode exists before writing content.
+        //     DT_PIPE / DT_STREAM are always pre-created via sys_setattr,
+        //     so they're never None here. Partial writes (offset>0) to a
+        //     non-existent file return Err(FileNotFound) in step 5.
         if entry.is_none() && offset == 0 {
-            return miss();
+            self.setattr_update(path, &ctx.zone_id, None, None, None, None, None, None)?;
+            // Re-fetch the freshly created entry for step 4+.
+            entry = self.metastore_get(path)?;
         }
 
         // 3c. DT_PIPE / DT_STREAM: try Rust IPC registry

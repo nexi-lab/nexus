@@ -622,12 +622,16 @@ fn run_mount(
             zone,
             false,
             0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, // read_fd
+            None, // write_fd
+            None, // mime_type
+            None, // modified_at_ms
+            None, // content_id
+            None, // size
+            None, // version
+            None, // created_at_ms
+            None, // link_target
+            None, // source
             None, // remote_metastore
         )
         .map_err(|e| anyhow::anyhow!("mount {mount_point}: {:?}", e))?;

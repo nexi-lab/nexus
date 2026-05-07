@@ -42,7 +42,6 @@ class _NexusFSProto(Protocol):
 
     def sys_write(self, path: str, buf: bytes | str, **kwargs: Any) -> Any: ...
     def sys_read(self, path: str, **kwargs: Any) -> Any: ...
-    def sys_setattr(self, path: str, **kwargs: Any) -> Any: ...
 
 
 def _decode_read(result: Any) -> bytes | None:
@@ -98,9 +97,5 @@ class MetastoreVersionStore:
         current = self.get_version(zone_id)
         new_version = current + 1
         path = _version_path(zone_id)
-        if current == 0:
-            # C23: sys_write no longer implicitly creates files — ensure a
-            # DT_REG entry exists before the first write.
-            self._nx.sys_setattr(path, entry_type=0)
         self._nx.sys_write(path, json.dumps({"v": new_version}).encode("utf-8"))
         return new_version

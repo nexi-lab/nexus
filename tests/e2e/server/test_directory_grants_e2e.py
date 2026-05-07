@@ -195,7 +195,9 @@ class TestDirectoryGrantExpansion:
 
         # Verify files exist (kernel.metastore_list is single-zone and
         # ignores recursive — both flags match the proxy semantics)
-        listed = nx._kernel.metastore_list("/workspace/project/")
+        listed = nx._kernel.metastore_list_paginated("/workspace/project/", True, 100000, None)[
+            "items"
+        ]
         assert len(listed) == 3, f"Expected 3 files, got {len(listed)}"
 
         # Grant read permission on the directory

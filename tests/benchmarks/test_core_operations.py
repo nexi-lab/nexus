@@ -399,7 +399,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def list_meta():
-            return nx._kernel.metastore_list("/dir_0/")
+            return nx._kernel.metastore_list_paginated("/dir_0/", True, 100000, None)["items"]
 
         result = benchmark(list_meta)
         assert result is not None
@@ -409,7 +409,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def list_meta():
-            return nx._kernel.metastore_list("/many_files/")
+            return nx._kernel.metastore_list_paginated("/many_files/", True, 100000, None)["items"]
 
         benchmark(list_meta)
 
@@ -417,10 +417,10 @@ class TestMetadataBenchmarks:
         """Benchmark cached metadata existence check."""
         nx = populated_nexus
         # Pre-warm cache
-        nx._kernel.metastore_get("/test_small.bin")
+        nx._kernel.sys_stat("/test_small.bin", "root")
 
         def exists_meta():
-            return nx._kernel.metastore_exists("/test_small.bin")
+            return nx._kernel.access("/test_small.bin", "root")
 
         result = benchmark(exists_meta)
         assert result is True

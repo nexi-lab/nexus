@@ -2980,16 +2980,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    pub post_hook_needed: bool,",
             "}",
             "",
-            "// ── PySysRmdirResult ────────────────────────────────────────────",
-            "",
-            "/// Python-facing SysRmdirResult.",
-            "#[pyclass(get_all)]",
-            "pub struct PySysRmdirResult {",
-            "    pub hit: bool,",
-            "    pub post_hook_needed: bool,",
-            "    pub children_deleted: usize,",
-            "}",
-            "",
             "// ── PySysCopyResult ─────────────────────────────────────────────",
             "",
             "/// Python-facing SysCopyResult.",
@@ -4345,37 +4335,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        })",
             "    }",
             "",
-            "    // ── sys_rmdir ─────────────────────────────────────────────────────",
-            "",
-            "    #[pyo3(signature = (path, ctx, recursive=false))]",
-            "    fn sys_rmdir(",
-            "        &self,",
-            "        py: Python<'_>,",
-            "        path: &str,",
-            "        ctx: &PyOperationContext,",
-            "        recursive: bool,",
-            "    ) -> PyResult<PySysRmdirResult> {",
-            "        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)",
-            '        if self.inner.has_hooks("rmdir") {',
-            '            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")',
-            "                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;",
-            '            let hc = get_hook_ctx_cache(py).ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("hook context cache init failed"))?;',
-            "            let rhc = hc.rmdir.bind(py).call1((path, py_ctx))?.unbind();",
-            '            self.dispatch_pre_hooks_inner("rmdir", &rhc)?;',
-            "        }",
-            "",
-            "        // 2. Call pure Rust kernel (full rmdir)",
-            "        let rust_ctx = ctx.to_rust();",
-            "        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx, recursive));",
-            "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
-            "",
-            "        Ok(PySysRmdirResult {",
-            "            hit: result.hit,",
-            "            post_hook_needed: result.post_hook_needed,",
-            "            children_deleted: result.children_deleted,",
-            "        })",
-            "    }",
-            "",
             "    // ── Tier 2 convenience methods ────────────────────────────────────",
             "",
             "    #[pyo3(signature = (path, zone_id))]",
@@ -5141,7 +5100,7 @@ def collect_all() -> tuple[
 # Methods on PyKernel that map 1:1 to a NexusFS syscall and should be
 # served by the thin dispatcher.  Names match PyKernel's Python-facing
 # names — alias surface (read/write/delete/exists/list/rename/sys_mkdir
-# /sys_rmdir/lock_acquire) is wired separately below since some don't
+# /lock_acquire) is wired separately below since some don't
 # have a matching PyKernel symbol.
 _KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
     "sys_read",
@@ -5153,7 +5112,6 @@ _KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
     "sys_stat",
     "sys_readdir",
     "sys_mkdir",
-    "sys_rmdir",
     "sys_lock",
     "sys_unlock",
     "access",
@@ -5166,10 +5124,12 @@ _KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
 #      ``list`` / ``rename``) are short forms used by nexus-test and
 #      remote clients; canonical NexusFS methods keep the ``sys_``
 #      prefix (or are Tier 2 wrappers without it for mkdir/rmdir).
-#   2. PyKernel exposes ``sys_mkdir`` / ``sys_rmdir`` while NexusFS
-#      Tier 2 wrappers expose ``mkdir`` / ``rmdir`` (no ``sys_``
-#      prefix).  Backward-compat ``sys_mkdir`` / ``sys_rmdir`` keep
-#      working for older clients via the alias map.
+#   2. PyKernel exposes ``sys_mkdir`` while NexusFS Tier 2 exposes
+#      ``mkdir`` / ``rmdir`` (no ``sys_`` prefix).  Wire-compat
+#      ``sys_mkdir`` / ``sys_rmdir`` keep working for older clients
+#      via the alias map (``sys_rmdir`` is no longer a PyKernel
+#      method — it was deleted in C21 since all rmdir goes through
+#      sys_unlink; the alias routes to NexusFS.rmdir directly).
 #   3. ``write`` (and the syscall-shaped ``sys_write`` alias) routes to
 #      ``NexusFS.write``: that's the HTTP-style write returning a
 #      content_id dict — the wire shape Tier 2 RPC callers depend on
@@ -5190,7 +5150,9 @@ _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
     # gRPC servicer routes ``sys_readdir`` straight to NexusFS.sys_readdir
     # rather than dropping it into the legacy "Unknown method" path.
     "sys_readdir": "sys_readdir",
-    # PyKernel says sys_mkdir / sys_rmdir; NexusFS Tier 2 says mkdir / rmdir.
+    # PyKernel exposes sys_mkdir; sys_rmdir was removed from PyKernel
+    # (C21) but the wire alias stays for remote-backend compat.
+    # NexusFS Tier 2 says mkdir / rmdir.
     "sys_mkdir": "mkdir",
     "sys_rmdir": "rmdir",
     # Bare ``mkdir`` / ``rmdir`` are the canonical wire forms used by

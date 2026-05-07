@@ -179,7 +179,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "sys_read_raw",
         "sys_readdir_backend",
         "sys_rename",
-        "sys_rmdir",
         "sys_setattr",
         "sys_stat",
         "sys_unlink",

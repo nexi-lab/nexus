@@ -990,16 +990,6 @@ pub struct PySysMkdirResult {
     pub post_hook_needed: bool,
 }
 
-// ── PySysRmdirResult ────────────────────────────────────────────
-
-/// Python-facing SysRmdirResult.
-#[pyclass(get_all)]
-pub struct PySysRmdirResult {
-    pub hit: bool,
-    pub post_hook_needed: bool,
-    pub children_deleted: usize,
-}
-
 // ── PySysCopyResult ─────────────────────────────────────────────
 
 /// Python-facing SysCopyResult.
@@ -2455,39 +2445,6 @@ impl PyKernel {
         Ok(PySysMkdirResult {
             hit: result.hit,
             post_hook_needed: result.post_hook_needed,
-        })
-    }
-
-    // ── sys_rmdir ─────────────────────────────────────────────────────
-
-    #[pyo3(signature = (path, ctx, recursive=false))]
-    fn sys_rmdir(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        ctx: &PyOperationContext,
-        recursive: bool,
-    ) -> PyResult<PySysRmdirResult> {
-        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
-        if self.inner.has_hooks("rmdir") {
-            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
-                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-            let hc = get_hook_ctx_cache(py).ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err("hook context cache init failed")
-            })?;
-            let rhc = hc.rmdir.bind(py).call1((path, py_ctx))?.unbind();
-            self.dispatch_pre_hooks_inner("rmdir", &rhc)?;
-        }
-
-        // 2. Call pure Rust kernel (full rmdir)
-        let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx, recursive));
-        let result = result.map_err(|e| -> PyErr { e.into() })?;
-
-        Ok(PySysRmdirResult {
-            hit: result.hit,
-            post_hook_needed: result.post_hook_needed,
-            children_deleted: result.children_deleted,
         })
     }
 

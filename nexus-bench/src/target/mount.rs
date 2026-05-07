@@ -81,11 +81,25 @@ fn read_range(path: &Path, op: &TraceOp) -> BenchResult<OperationMetrics> {
             source,
         })?;
     let mut buf = vec![0; len];
-    let read = file.read(&mut buf).map_err(|source| BenchError::Io {
-        path: path.to_path_buf(),
-        source,
-    })? as u64;
-    Ok(metrics(read, 0, 1, read))
+    let mut read = 0;
+    while read < len {
+        let count = file
+            .read(&mut buf[read..])
+            .map_err(|source| BenchError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        if count == 0 {
+            return Err(BenchError::Target(format!(
+                "short read from {}: expected {} bytes, got {} bytes",
+                path.display(),
+                len,
+                read
+            )));
+        }
+        read += count;
+    }
+    Ok(metrics(len as u64, 0, 1, len as u64))
 }
 
 fn write_range(path: &Path, op: &TraceOp) -> BenchResult<OperationMetrics> {
@@ -183,6 +197,23 @@ mod tests {
         let metrics = target.execute(&read).expect("range read should succeed");
         assert_eq!(metrics.logical_bytes_read, 3);
         assert_eq!(metrics.egress_bytes, 3);
+    }
+
+    #[test]
+    fn mount_target_rejects_short_reads() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("file.bin"), b"ab").unwrap();
+        let target = MountTarget::new(temp.path().to_path_buf());
+        let mut read = op(OpKind::Read, "/file.bin");
+        read.offset = Some(0);
+        read.length = Some(4);
+
+        let err = target
+            .execute(&read)
+            .expect_err("short read should fail the benchmark operation");
+
+        assert!(err.to_string().contains("short read"));
+        assert!(err.to_string().contains("expected 4 bytes"));
     }
 
     #[test]

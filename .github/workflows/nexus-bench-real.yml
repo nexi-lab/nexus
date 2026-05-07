@@ -53,6 +53,11 @@ jobs:
     env:
       OUT_DIR: target/nexus-bench-real/${{ inputs.target }}
       NEXUS_BENCH_API_KEY: ${{ secrets.NEXUS_BENCH_API_KEY }}
+      BENCH_TARGET: ${{ inputs.target }}
+      BENCH_MOUNT_ROOT: ${{ inputs.mount_root }}
+      BENCH_BASE_URL: ${{ inputs.base_url }}
+      BENCH_WARMUPS: ${{ inputs.warmups }}
+      BENCH_ITERATIONS: ${{ inputs.iterations }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,27 +77,27 @@ jobs:
           set -euo pipefail
           mkdir -p "$OUT_DIR"
 
-          case "${{ inputs.target }}" in
+          case "$BENCH_TARGET" in
             noop)
               cargo run --manifest-path nexus-bench/Cargo.toml -- suite \
                 --target noop \
                 --trace-dir nexus-bench/traces \
                 --out-dir "$OUT_DIR" \
-                --warmups "${{ inputs.warmups }}" \
-                --iterations "${{ inputs.iterations }}"
+                --warmups "$BENCH_WARMUPS" \
+                --iterations "$BENCH_ITERATIONS"
               ;;
             mount)
-              if [[ -z "${{ inputs.mount_root }}" ]]; then
+              if [[ -z "$BENCH_MOUNT_ROOT" ]]; then
                 echo "::error::mount_root is required when target=mount"
                 exit 1
               fi
               cargo run --manifest-path nexus-bench/Cargo.toml -- suite \
                 --target mount \
-                --mount-root "${{ inputs.mount_root }}" \
+                --mount-root "$BENCH_MOUNT_ROOT" \
                 --trace-dir nexus-bench/traces \
                 --out-dir "$OUT_DIR" \
-                --warmups "${{ inputs.warmups }}" \
-                --iterations "${{ inputs.iterations }}"
+                --warmups "$BENCH_WARMUPS" \
+                --iterations "$BENCH_ITERATIONS"
               ;;
             http)
               if [[ -z "$NEXUS_BENCH_API_KEY" ]]; then
@@ -101,12 +106,12 @@ jobs:
               fi
               cargo run --manifest-path nexus-bench/Cargo.toml -- suite \
                 --target http \
-                --base-url "${{ inputs.base_url }}" \
+                --base-url "$BENCH_BASE_URL" \
                 --api-key "$NEXUS_BENCH_API_KEY" \
                 --trace-dir nexus-bench/traces \
                 --out-dir "$OUT_DIR" \
-                --warmups "${{ inputs.warmups }}" \
-                --iterations "${{ inputs.iterations }}"
+                --warmups "$BENCH_WARMUPS" \
+                --iterations "$BENCH_ITERATIONS"
               ;;
           esac
 

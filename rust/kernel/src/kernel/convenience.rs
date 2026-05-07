@@ -1,14 +1,14 @@
-//! Tier 2 convenience methods — composed from Tier 1 syscalls.
+//! Tier 2 CONVENIENCE — composes Tier 1. Tier 2 logic never goes in
+//! `io.rs`.
 //!
 //! `KernelConvenience` is a supertrait of `KernelAbi` that provides
-//! higher-level operations Python callers need (xattr access, batch
-//! stat, full stat with xattrs). Default implementations compose
+//! higher-level operations Python callers need (create-or-overwrite
+//! write, xattr access, batch stat). Default implementations compose
 //! `KernelAbi` methods; the `impl KernelConvenience for Kernel`
-//! overrides with optimized direct-metastore paths where the
-//! composition overhead matters (batch stat uses a single redb read
-//! txn instead of N sys_stat calls).
+//! overrides with optimized direct paths where the composition
+//! overhead matters.
 
-use super::{Kernel, KernelError, StatResult};
+use super::{Kernel, KernelError, OperationContext, StatResult, SysWriteResult};
 use crate::abi::KernelAbi;
 use crate::meta_store::{DT_DIR, DT_MOUNT};
 
@@ -51,6 +51,20 @@ pub trait KernelConvenience: KernelAbi {
         key: &str,
         zone_id: &str,
     ) -> Result<Vec<(String, Option<String>)>, KernelError>;
+
+    /// Tier 2 write: create-or-overwrite.
+    ///
+    /// Composes `sys_write` + `setattr_update` for POSIX
+    /// `open(O_CREAT|O_WRONLY) + write(2) + close(2)` semantics.
+    /// When `sys_write` returns miss (file doesn't exist) and
+    /// `offset == 0`, creates a DT_REG entry and retries.
+    fn write(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        content: &[u8],
+        offset: u64,
+    ) -> Result<SysWriteResult, KernelError>;
 }
 
 // ── `impl KernelConvenience for Kernel` — optimized overrides ────────
@@ -151,5 +165,22 @@ impl KernelConvenience for Kernel {
         _zone_id: &str,
     ) -> Result<Vec<(String, Option<String>)>, KernelError> {
         self.metastore_get_file_metadata_bulk(paths, key)
+    }
+
+    fn write(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        content: &[u8],
+        offset: u64,
+    ) -> Result<SysWriteResult, KernelError> {
+        // Optimized: direct sys_write_with_link_depth + setattr_update
+        // in a single Rust call — no PyO3 round-trip for the create path.
+        let result = self.sys_write_with_link_depth(path, ctx, content, offset, 1)?;
+        if !result.hit && offset == 0 {
+            self.setattr_update(path, &ctx.zone_id, None, None, None, None, None, None)?;
+            return self.sys_write_with_link_depth(path, ctx, content, offset, 1);
+        }
+        Ok(result)
     }
 }

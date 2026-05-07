@@ -1,7 +1,10 @@
-//! File I/O syscalls -- `sys_read`, `sys_write`, `sys_stat`,
+//! Tier 1 syscall IMPLEMENTATIONS — see `abi.rs` for contracts,
+//! `convenience.rs` for Tier 2.
+//!
+//! File I/O syscalls: `sys_read`, `sys_write`, `sys_stat`,
 //! `sys_unlink`, `sys_rename`, `sys_copy`, `sys_mkdir`.
 //!
-//! `sys_rmdir` is kernel-internal (`pub(crate)`) -- only called from
+//! `sys_rmdir` is kernel-internal (`pub(crate)`) — only called from
 //! `sys_unlink` DT_DIR branch. Removed from PyO3 surface in C21.
 
 use std::sync::atomic::Ordering;
@@ -808,7 +811,7 @@ impl Kernel {
         self.sys_write_single(path, ctx, content, offset, 1)
     }
 
-    fn sys_write_single(
+    pub(crate) fn sys_write_with_link_depth(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -889,7 +892,7 @@ impl Kernel {
         //    entries normally only land in dcache via the IPC registry
         //    setattr path) but is harmless on the rare cross-call cold
         //    path.
-        let mut entry = self
+        let entry = self
             .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
             .flatten();
 
@@ -913,16 +916,12 @@ impl Kernel {
             }
         }
 
-        // 3b. Auto-create DT_REG on first write (offset==0).
-        //     Mirrors POSIX open(O_CREAT|O_WRONLY) + write(2) semantics:
-        //     the kernel ensures the inode exists before writing content.
-        //     DT_PIPE / DT_STREAM are always pre-created via sys_setattr,
-        //     so they're never None here. Partial writes (offset>0) to a
-        //     non-existent file return Err(FileNotFound) in step 5.
+        // 3b. POSIX write(2) contract: file must exist.
+        //     File creation goes through sys_setattr(path, DT_REG).
+        //     Tier 2 write() (convenience.rs) composes create + write
+        //     for callers that need create-or-overwrite semantics.
         if entry.is_none() && offset == 0 {
-            self.setattr_update(path, &ctx.zone_id, None, None, None, None, None, None)?;
-            // Re-fetch the freshly created entry for step 4+.
-            entry = self.metastore_get(path)?;
+            return miss();
         }
 
         // 3c. DT_PIPE / DT_STREAM: try Rust IPC registry

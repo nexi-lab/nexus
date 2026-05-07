@@ -2649,6 +2649,19 @@ impl Kernel {
         if validate_path_fast(parent_path).is_err() {
             return Vec::new();
         }
+
+        // Federation procfs: /__sys__/zones/ enumerates loaded zones
+        // (read-only namespace, like Linux /proc).
+        if let Some(zones) = self.zones_procfs_readdir(parent_path) {
+            return zones
+                .into_iter()
+                .map(|z| {
+                    let path = format!("/__sys__/zones/{z}");
+                    (path, DT_DIR)
+                })
+                .collect();
+        }
+
         // Callers pass either "/local" or "/local/" — normalize the trailing
         // slash off before routing so prefix comparisons below don't produce
         // double slashes (which silently return no children).

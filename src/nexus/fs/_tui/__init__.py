@@ -141,10 +141,12 @@ class ContextualNexusFS:
         """
         from datetime import UTC, datetime
 
-        # Use Rust kernel sys_readdir_backend for listing (no route() needed).
+        DT_DIR = 1  # kernel entry_type constant
+
+        # Use Rust kernel readdir for listing (merges metastore + backend).
         try:
-            raw_entries = list(
-                self._kernel._kernel.sys_readdir_backend(path, self._kernel._zone_id)
+            raw_entries: list[tuple[str, int]] = list(
+                self._kernel._kernel.readdir(path, self._kernel._zone_id)
             )
         except Exception:
             return None
@@ -152,15 +154,10 @@ class ContextualNexusFS:
             return None
 
         now = datetime.now(UTC).isoformat()
-        mount_root = path.rstrip("/") or "/"
         if detail:
             fallback_rows: list[dict[str, Any]] = []
-            for entry in raw_entries:
-                name = str(entry).rstrip("/")
-                if not name:
-                    continue
-                is_dir = str(entry).endswith("/")
-                full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
+            for full_path, etype in raw_entries:
+                is_dir = etype == DT_DIR
                 fallback_rows.append(
                     {
                         "path": full_path,
@@ -172,19 +169,12 @@ class ContextualNexusFS:
                         "modified_at": now,
                         "version": 0,
                         "zone_id": "root",
-                        "entry_type": 1 if is_dir else 0,
+                        "entry_type": etype,
                     }
                 )
             return fallback_rows
 
-        fallback_paths: list[str] = []
-        for entry in raw_entries:
-            name = str(entry).rstrip("/")
-            if not name:
-                continue
-            full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
-            fallback_paths.append(full_path)
-        return fallback_paths
+        return [full_path for full_path, _etype in raw_entries]
 
     async def _stat_backend_path(self, path: str) -> dict[str, Any] | None:
         """Fallback stat for connector-backed entries not materialized in metadata."""

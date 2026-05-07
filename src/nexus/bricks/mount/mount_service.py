@@ -202,7 +202,7 @@ class MountService:
 
             admin_ctx = OperationContext(user_id="system", groups=[], is_admin=True, is_system=True)
 
-            # Enumerate files via Rust kernel sys_readdir (BFS) — works for all
+            # Enumerate files via Rust kernel readdir (BFS) — works for all
             # connector types including CLI-backed ones where the Raft metastore
             # doesn't store file entries.
             file_paths: list[str] = []
@@ -210,23 +210,19 @@ class MountService:
             if _rust_kernel is not None:
                 from collections import deque
 
+                DT_DIR = 1  # kernel entry_type constant
                 queue: deque[str] = deque([mount_point])
                 while queue and len(file_paths) < 200:
                     virtual_prefix = queue.popleft()
                     try:
-                        entries = list(
-                            _rust_kernel.sys_readdir_backend(virtual_prefix, zone_id or "root")
-                        )
+                        entries = list(_rust_kernel.readdir(virtual_prefix, zone_id or "root"))
                     except Exception:
                         continue
-                    for entry in entries:
-                        is_dir = entry.endswith("/")
-                        name = entry.rstrip("/")
-                        vp = f"{virtual_prefix.rstrip('/')}/{name}"
-                        if is_dir:
-                            queue.append(vp)
+                    for child_path, etype in entries:
+                        if etype == DT_DIR:
+                            queue.append(child_path)
                         else:
-                            file_paths.append(vp)
+                            file_paths.append(child_path)
                             if len(file_paths) >= 200:
                                 break
 

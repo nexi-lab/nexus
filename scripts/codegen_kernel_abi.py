@@ -4347,11 +4347,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        self.inner.readdir(parent_path, zone_id, is_admin)",
             "    }",
             "",
-            "    /// Backend-native directory listing for external connector mounts.",
-            "    fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {",
-            "        self.inner.sys_readdir_backend(path, zone_id)",
-            "    }",
-            "",
             "    /// Phase 6: glob match against the metastore-recursive listing of",
             "    /// `prefix`.  Replaces `nexus.fs._helpers.glob` — pure Rust, no",
             "    /// Python fallback (`lib::glob::glob_match` covers the same",
@@ -5144,9 +5139,8 @@ _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
     "exists": "access",
     "list": "sys_readdir",
     # #4005 round-2: ``sys_readdir`` is the canonical wire name CLI clients
-    # use directly (no rewrite). PyKernel exposes only ``sys_readdir_backend``
-    # so the allowlist scan filters it out — register the identity alias here
-    # so KERNEL_SYSCALL_NAMES (built from alias keys) includes it and the
+    # use directly (no rewrite). Register the identity alias here so
+    # KERNEL_SYSCALL_NAMES (built from alias keys) includes it and the
     # gRPC servicer routes ``sys_readdir`` straight to NexusFS.sys_readdir
     # rather than dropping it into the legacy "Unknown method" path.
     "sys_readdir": "sys_readdir",

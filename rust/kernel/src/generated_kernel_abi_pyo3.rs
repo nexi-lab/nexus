@@ -2460,11 +2460,6 @@ impl PyKernel {
         self.inner.readdir(parent_path, zone_id, is_admin)
     }
 
-    /// Backend-native directory listing for external connector mounts.
-    fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
-        self.inner.sys_readdir_backend(path, zone_id)
-    }
-
     /// Phase 6: glob match against the metastore-recursive listing of
     /// `prefix`.  Replaces `nexus.fs._helpers.glob` — pure Rust, no
     /// Python fallback (`lib::glob::glob_match` covers the same

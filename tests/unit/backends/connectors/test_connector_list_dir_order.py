@@ -231,7 +231,7 @@ def test_gmail_is_directory_matches_list_dir_acceptance() -> None:
 
 
 def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
-    """Post-DLC-rewrite: Rust ``sys_readdir_backend`` swallows backend errors
+    """Post-DLC-rewrite: Rust ``readdir`` swallows backend errors
     and returns an empty Vec instead of propagating ``BackendError``.  The
     kernel's readdir layer therefore returns an empty list (or metastore
     entries only) rather than raising.  This matches the Rust kernel's
@@ -266,7 +266,7 @@ def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
     kernel.sys_setattr("/ext", entry_type=DT_MOUNT, backend=backend, is_external=True)
     metastore.metastore_put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
 
-    # Rust sys_readdir_backend swallows errors and returns empty Vec;
+    # Rust readdir swallows errors and returns empty Vec;
     # the Python sys_readdir layer surfaces an empty list (or only
     # metastore-backed entries) instead of propagating BackendError.
     result = kernel.sys_readdir("/ext", context=kernel._init_cred)

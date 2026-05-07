@@ -1,0 +1,8 @@
+[
+  {"timestamp_ns":0,"op":"getattr","path":"/workspace"},
+  {"timestamp_ns":1000,"op":"readdir","path":"/workspace"},
+  {"timestamp_ns":2000,"op":"read","path":"/workspace/README.md","offset":0,"length":32768},
+  {"timestamp_ns":3000,"op":"read","path":"/workspace/pyproject.toml","offset":0,"length":16384},
+  {"timestamp_ns":4000,"op":"lookup","path":"/workspace/src/nexus/__init__.py"},
+  {"timestamp_ns":5000,"op":"read","path":"/workspace/src/nexus/__init__.py","offset":0,"length":8192}
+]

@@ -1,0 +1,7 @@
+{
+  "latency_ms.p95": {"max_regression_percent": 20.0},
+  "latency_ms.p99": {"max_regression_percent": 25.0},
+  "throughput.ops_per_sec": {"max_regression_percent": 20.0, "higher_is_better": true},
+  "rpc_count": {"max_regression_percent": 10.0},
+  "bytes_egress": {"max_regression_percent": 10.0}
+}

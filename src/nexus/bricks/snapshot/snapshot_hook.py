@@ -45,19 +45,19 @@ class SnapshotWriteHook:
         if txn_id is None:
             return
         old = ctx.old_metadata
-        snapshot_hash = old.content_id if old else None
+        snapshot_hash = old.get("content_id") if old else None
         metadata_snapshot: dict[str, Any] | None = None
         if old:
             metadata_snapshot = {
-                "size": old.size,
-                "version": old.version,
-                "modified_at": old.modified_at.isoformat() if old.modified_at else None,
+                "size": old.get("size", 0),
+                "version": old.get("version", 1),
+                "modified_at": old["modified_at"].isoformat() if old.get("modified_at") else None,
                 # Capture the address of the node that last wrote the
                 # *pre-mutation* content so historical reads of
                 # ``original_hash`` after a cross-node overwrite can scatter-
                 # gather chunks from the original writer rather than the
                 # current one (Issue #3989, codex r8).
-                "last_writer_address": old.last_writer_address,
+                "last_writer_address": old.get("last_writer_address"),
             }
         self._svc.track_write(
             txn_id,
@@ -71,10 +71,10 @@ class SnapshotWriteHook:
         txn_id = self._svc.is_tracked(ctx.path)
         if txn_id is None:
             return
-        meta = ctx.metadata  # pre-delete state
+        meta = ctx.metadata  # pre-delete state (dict from sys_stat)
         if meta is None:
             return
-        snapshot_hash = meta.content_id
+        snapshot_hash = meta.get("content_id")
         # backend_name/physical_path were dropped from FileMetadata; the
         # kernel resolves a file's physical location at read time via the
         # mount/route layer, so the snapshot only needs content_id + path-level
@@ -83,9 +83,9 @@ class SnapshotWriteHook:
         # can still scatter-gather from the writer's node when local
         # chunks are missing (Issue #3989, codex r8).
         metadata_snapshot: dict[str, Any] = {
-            "size": meta.size,
-            "version": meta.version,
-            "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-            "last_writer_address": meta.last_writer_address,
+            "size": meta.get("size", 0),
+            "version": meta.get("version", 1),
+            "modified_at": meta.get("modified_at"),
+            "last_writer_address": meta.get("last_writer_address"),
         }
         self._svc.track_delete(txn_id, ctx.path, snapshot_hash, metadata_snapshot)

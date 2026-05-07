@@ -28,6 +28,7 @@ Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
 """
 
 import logging
+from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.record_store import RecordStoreABC
@@ -119,7 +120,7 @@ class RecordStoreWriteObserver:
         *,
         is_new: bool,
         path: str,
-        old_metadata: FileMetadata | None = None,
+        old_metadata: dict[str, Any] | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
     ) -> None:
@@ -139,7 +140,7 @@ class RecordStoreWriteObserver:
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    snapshot_hash=old_metadata.content_id if old_metadata else None,
+                    snapshot_hash=old_metadata.get("content_id") if old_metadata else None,
                     metadata_snapshot=metadata.to_dict(),
                     status="success",
                     entity_urn=urn,
@@ -284,7 +285,7 @@ class RecordStoreWriteObserver:
         self,
         path: str,
         *,
-        metadata: FileMetadata | None = None,
+        metadata: dict[str, Any] | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
     ) -> None:
@@ -304,8 +305,8 @@ class RecordStoreWriteObserver:
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    snapshot_hash=metadata.content_id if metadata else None,
-                    metadata_snapshot=metadata.to_dict() if metadata else None,
+                    snapshot_hash=metadata.get("content_id") if metadata else None,
+                    metadata_snapshot=metadata if metadata else None,
                     status="success",
                     entity_urn=urn,
                     aspect_name="file_metadata",

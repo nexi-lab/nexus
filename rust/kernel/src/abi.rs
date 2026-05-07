@@ -114,10 +114,10 @@ pub trait KernelAbi: Send + Sync + 'static {
 
     fn sys_stat(&self, path: &str, zone_id: &str) -> Option<StatResult>;
 
-    /// Backend-direct readdir (bypasses native hooks). Used by ACP
-    /// to scan `/__sys__/agents/` and `/__proc__/` without firing
-    /// the agent-status pre-hook on every entry.
-    fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String>;
+    /// Directory listing with metastore + backend merge. Returns
+    /// Vec<(child_path, entry_type)>. Handles procfs intercepts
+    /// (e.g. `/__sys__/zones/`).
+    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)>;
 
     /// DT_PIPE creation helper. Used by `AcpSubprocess::spawn` to
     /// surface the agent's stdio fds inside VFS as
@@ -268,8 +268,8 @@ impl KernelAbi for crate::kernel::Kernel {
         Self::sys_stat(self, path, zone_id)
     }
 
-    fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
-        Self::sys_readdir_backend(self, path, zone_id)
+    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+        Self::readdir(self, parent_path, zone_id, is_admin)
     }
 
     fn setattr_pipe(

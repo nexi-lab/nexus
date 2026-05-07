@@ -2617,41 +2617,6 @@ impl Kernel {
     //    sys_rename / sys_copy / sys_mkdir / sys_rmdir) ──────────────────
     // (Moved to `kernel::io` submodule.)
 
-    /// Backend-native directory listing for external mounts.
-    ///
-    /// Unlike `readdir` (which merges dcache + metastore), this calls the
-    /// backend's `list_dir` directly — needed for external connectors
-    /// (HN, CLI, X, GDrive, etc.) whose entries are only known to the
-    /// live API, not persisted in dcache/metastore.
-    ///
-    /// Returns entry names (files plain, directories with trailing `/`).
-    /// Returns empty Vec on backend NotSupported or mount not found.
-    pub fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
-        if validate_path_fast(path).is_err() {
-            return Vec::new();
-        }
-        // Federation procfs: /__sys__/zones/ enumerates loaded zones
-        // (read-only namespace, like Linux /proc).  Returns the zone-id
-        // list verbatim — caller may format with trailing-slash etc.
-        if let Some(zones) = self.zones_procfs_readdir(path) {
-            return zones;
-        }
-        let normalized = if path != "/" && path.ends_with('/') {
-            path.trim_end_matches('/')
-        } else {
-            path
-        };
-        let route = match self.vfs_router.route(normalized, zone_id) {
-            Ok(r) => r,
-            Err(_) => return Vec::new(),
-        };
-        route
-            .backend
-            .as_ref()
-            .and_then(|b| b.list_dir(&route.backend_path).ok())
-            .unwrap_or_default()
-    }
-
     // ── sys_grep + sys_glob ───────────────────────────────────────────
     //
     // Two read-only "search" syscalls that wrap `lib::search` /

@@ -407,7 +407,10 @@ def _list_zones(nexus_fs: Any) -> list[str]:
     try:
         kernel = getattr(nexus_fs, "_kernel", None) or getattr(nexus_fs, "kernel", None)
         if kernel is not None:
-            return list(kernel.sys_readdir_backend("/__sys__/zones/", "root"))
+            return [
+                p.rstrip("/").rsplit("/", 1)[-1]
+                for p, _etype in kernel.readdir("/__sys__/zones/", "root")
+            ]
     except Exception:
         pass
     return []

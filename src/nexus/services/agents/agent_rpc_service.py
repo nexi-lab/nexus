@@ -306,7 +306,7 @@ class AgentRPCService:
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
         config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}/config.yaml"
         try:
-            existing_meta = self._kernel.metastore_get(config_path)
+            existing_meta = self._kernel.sys_stat(config_path, ROOT_ZONE_ID)
             if existing_meta:
                 raise ValueError(
                     f"Agent already exists at {config_path}. "
@@ -433,7 +433,7 @@ class AgentRPCService:
         config_path = f"{agent_dir}/config.yaml"
 
         try:
-            existing_meta = self._kernel.metastore_get(config_path)
+            existing_meta = self._kernel.sys_stat(config_path, ROOT_ZONE_ID)
             if not existing_meta:
                 raise ValueError(f"Agent not found at {config_path}")
         except FileNotFoundError as e:

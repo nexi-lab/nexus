@@ -319,8 +319,8 @@ class WorkspaceManager:
                 full_path = workspace_prefix + rel_path
 
                 # Check if file exists with same content
-                existing = self._kernel.metastore_get(full_path)
-                if existing and existing.content_id == entry.content_id:
+                existing = self._kernel.sys_stat(full_path, "root")
+                if existing and existing.get("content_id") == entry.content_id:
                     continue  # Already up to date
 
                 # Create metadata entry pointing to existing CAS content

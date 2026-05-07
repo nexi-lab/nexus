@@ -33,9 +33,9 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 | # | Plane | Syscall | Signature | POSIX Ref |
 |---|-------|---------|-----------|-----------|
 | 1 | Content | `sys_read` | `(path, count=None, offset=0) → bytes` | `pread(2)` |
-| 2 | Content | `sys_write` | `(path, buf, count=None, offset=0) → dict` | `write(2)` |
-| 3 | Metadata | `sys_stat` | `(path, include_lock=False) → dict \| None` | `stat(2)` — include_lock=True appends advisory lock state (zero cost when False) |
-| 4 | Metadata | `sys_setattr` | `(path, **attrs) → dict` | `chmod/chown/utimes` + `mknod` (DT_DIR, DT_PIPE, DT_STREAM, DT_MOUNT) |
+| 2 | Content | `sys_write` | `(path, buf, count=None, offset=0) → dict` | `write(2)` — file must exist; raises `NexusFileNotFoundError` on non-existent path (creation via `sys_setattr`) |
+| 3 | Metadata | `sys_stat` | `(path, include_lock=False) → dict \| None` | `stat(2)` — StatResult includes `owner_id` (posix_uid for DAC); include_lock=True appends advisory lock state (zero cost when False) |
+| 4 | Metadata | `sys_setattr` | `(path, **attrs) → dict` | `chmod/chown/utimes` + `mknod`/`creat` — creates DT_REG, DT_DIR, DT_PIPE, DT_STREAM, DT_MOUNT; updates content_id, size, version, created_at_ms, owner_id |
 | 5 | Namespace | `sys_unlink` | `(path, recursive=False) → dict` | `unlink(2)` |
 | 6 | Namespace | `sys_rename` | `(old, new) → dict` | `rename(2)` |
 | 7 | Namespace | `sys_copy` | `(src, dst) → dict` | — (server-side copy, Issue #3329) |
@@ -51,8 +51,11 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 | `rmdir` | 2 | `sys_unlink(recursive=)` | Thin delegation, overridable |
 | `access` | 2 | `sys_stat` | Returns `True` if stat succeeds |
 | `is_directory` | 2 | `sys_stat` | Checks `is_directory` field |
+| `glob` | 2 | `sys_readdir` + filter | Pattern matching over directory listing (PR #3921). Search-tier logic; future: migrate to search service |
+| `grep` | 2 | `sys_readdir` + `sys_read` + regex | Content search across files (PR #3921). Search-tier logic; future: migrate to search service |
 
 `sys_setattr` is the universal creation/management syscall:
+- `create(path)` = `sys_setattr(path, entry_type=DT_REG)` — upsert: creates regular file if absent, updates metadata if present. Accepts `content_id`, `size`, `version`, `created_at_ms`, `owner_id`.
 - `mkdir(path)` = `sys_setattr(path, entry_type=DT_DIR)` (Tier 2)
 - `mount` = `sys_setattr(path, entry_type=DT_MOUNT, backend=...)`
 - `mkpipe` = `sys_setattr(path, entry_type=DT_PIPE)`
@@ -81,7 +84,7 @@ NexusFS inherits them — callers use `nx.read(path)` directly.
 | Method | Composes | Behavior |
 |--------|----------|----------|
 | `read(path, count, offset)` | `sys_stat` + `sys_read` | POSIX pread semantics |
-| `write(path, buf, consistency=)` | `sys_write` + `sys_setattr` | Write + metadata update, consistency param |
+| `write(path, buf, consistency=)` | `sys_setattr` (create) + `sys_write` | Create-if-absent via sys_setattr(DT_REG), then write content |
 | `mkdir(path, parents, exist_ok)` | `sys_setattr(entry_type=DT_DIR)` | Directory creation with hooks + events |
 | `rmdir(path, recursive)` | `rmdir` | Lenient defaults (recursive=True) |
 | `append(path, content)` | `read` + `write` | Shell `>>` semantics |
@@ -103,12 +106,12 @@ NexusFS inherits them — callers use `nx.read(path)` directly.
 | `stream(hash)` | `ObjectStoreABC.stream(hash)` | Streaming blob read |
 | `write_stream(path)` | `ObjectStoreABC.write_stream(path)` | Streaming blob write |
 
-### Higher-level
+### Search Convenience — Tier 2
 
-| Method | Composes |
-|--------|----------|
-| `glob(pattern)` | `sys_readdir` + filter |
-| `grep(pattern, path)` | `sys_readdir` + `sys_read` + regex |
+| Method | Composes | Notes |
+|--------|----------|-------|
+| `glob(pattern)` | `sys_readdir` + filter | Pattern matching over directory listing (PR #3921). Search-tier logic, not a kernel syscall |
+| `grep(pattern, path)` | `sys_readdir` + `sys_read` + regex | Content search across files (PR #3921). Search-tier logic, not a kernel syscall |
 
 ---
 
@@ -118,7 +121,9 @@ NexusFS inherits them — callers use `nx.read(path)` directly.
 
 `sys_write` is content-only (SRP). Metadata updates are handled by `sys_setattr`
 or Tier 2 `write()`. File must exist — `sys_write` to a non-existent path raises
-`NexusFileNotFoundError`. Creation goes through `sys_setattr`.
+`NexusFileNotFoundError`. Creation goes through `sys_setattr(entry_type=DT_REG)`.
+`sys_write` never implicitly creates files — this is a kernel invariant, not a
+configurable behavior.
 
 CAS read-modify-write for offset writes is handled internally by the driver.
 Kernel does not know whether backend is CAS or path-addressed.
@@ -134,8 +139,9 @@ CAS content is freed when refcount reaches zero.
 `sys_setattr` is the Swiss Army knife — creation, attribute updates, and special
 inode types all flow through it:
 
-- **Create**: `entry_type=DT_DIR/DT_PIPE/DT_STREAM/DT_MOUNT` creates the inode
-- **Update**: No `entry_type` updates mutable metadata fields
+- **Create DT_REG**: `entry_type=DT_REG` creates a regular file (upsert — creates if absent, updates metadata if present). Accepts `content_id`, `size`, `version`, `created_at_ms`, `owner_id` for metadata population at creation time.
+- **Create others**: `entry_type=DT_DIR/DT_PIPE/DT_STREAM/DT_MOUNT` creates the inode
+- **Update**: No `entry_type` updates mutable metadata fields (content_id, size, version, created_at_ms, owner_id)
 - **Idempotent open**: Same `entry_type` on existing path recovers the buffer (pipes/streams)
 - **`/__sys__/`**: Kernel management namespace (service register, config, etc.)
 
@@ -196,22 +202,24 @@ between DataNodes — separate from NameNode API).
 
 | Syscall | Aligned? | Notes |
 |---------|----------|-------|
-| `sys_stat` | ✅ | dict vs struct stat (Pythonic) |
-| `sys_setattr` | ✅ | Bundles chmod/chown/utimes + mknod (DT_DIR, DT_PIPE, DT_STREAM, DT_MOUNT) |
+| `sys_stat` | ✅ | dict vs struct stat (Pythonic). StatResult includes `owner_id` for DAC |
+| `sys_setattr` | ✅ | Bundles chmod/chown/utimes + mknod/creat (DT_REG, DT_DIR, DT_PIPE, DT_STREAM, DT_MOUNT). Accepts content_id, size, version, created_at_ms, owner_id |
 | `sys_readdir` | ✅ | No opendir/closedir (acceptable simplification), supports pagination |
 | `sys_rename` | ✅ | — |
 | `sys_unlink` | ✅ | Unified delete (files + dirs), metadata-only (CAS GC pattern) |
 | `sys_copy` | ✅ | No direct POSIX equivalent; server-side optimization |
 | `sys_read` | ✅ | count/offset (pread semantics) |
-| `sys_write` | ✅ | count/offset, content-only (SRP) |
+| `sys_write` | ✅ | count/offset, content-only (SRP). No implicit file creation — path must exist |
 | `sys_lock` | ✅ | fcntl(F_SETLK) — acquire + extend (lock_id param) |
 | `sys_unlock` | ✅ | flock(LOCK_UN) — release + force (force param) |
 | `sys_watch` | ✅ | inotify(7) equivalent |
 
-Tier 2 demotions (no longer Tier 1):
+Tier 2 convenience (not kernel syscalls):
 - `access` → Tier 2 (derives from `sys_stat`)
 - `is_directory` → Tier 2 (derives from `sys_stat`)
 - `rmdir` → Tier 2 (delegates to `sys_unlink`)
+- `glob` → Tier 2 (composes `sys_readdir` + filter). Search-tier logic (PR #3921)
+- `grep` → Tier 2 (composes `sys_readdir` + `sys_read` + regex). Search-tier logic (PR #3921)
 
 ---
 
@@ -228,7 +236,7 @@ PYTHONPATH=src uv run lint-imports
 
 Syscall execution crosses Rust→Python at two points:
 
-1. **Hook dispatch** (read/write/unlink/rename/copy/mkdir/rmdir):
+1. **Hook dispatch** (read/write/unlink/rename/copy/mkdir):
    - `rust_ctx_to_python()`: OperationContext → Python dataclass (1 call/syscall)
    - Hook context constructor: e.g. `ReadHookContext(path, ctx)` (1 call/syscall)
    - Per-hook `on_pre_*()` via `PyInterceptHookAdapter` (N calls/syscall)
@@ -441,3 +449,4 @@ collapse is a **refactoring** that changes the boundary, not the logic.
 | §11 | 2026-04-10 | KERNEL-ARCHITECTURE.md §2.4.1: formal 4 dispatch contracts (RESOLVE, INTERCEPT PRE, INTERCEPT POST, OBSERVE) with ordering, error semantics, and zero-overhead invariant. Phase 18 docs. |
 | §7.3, §7.6 | 2026-04-23 | §7 collapse roadmap fully completed: `_backend_read` deleted, sys_write metadata in Rust, PIPE/STREAM dispatched in Rust, advisory locks in Rust, connectors via gRPC. All "Remaining" items → Done (#1817, #1960). |
 | §6.1 | 2026-04-26 | Rust/Python boundary status: hook dispatch (2+N crossings), service lifecycle (4 crossings, stdlib-only), zero-crossing syscalls, pure Rust pillar dispatch. Eliminated: sys_write IPC pre-check (redundant metadata.get), sys_stat py.import("datetime") → chrono. |
+| §2, §4, §5 | 2026-05-07 | sys_setattr: DT_REG create (upsert) + content_id/size/version/created_at_ms/owner_id params. sys_stat: owner_id in StatResult. sys_write: no-implicit-create contract. glob/grep: Tier 2 convenience (search-tier, PR #3921). Removed sys_rmdir, sys_readdir_backend (deleted from kernel). |

@@ -197,12 +197,13 @@ Kernel syscalls, all POSIX-aligned, all path-addressed:
 | Plane | Syscalls |
 |-------|----------|
 | **Metadata** | `sys_stat`, `sys_setattr`, `sys_rename`, `sys_unlink`, `sys_readdir` |
-| **Content** | `sys_read` (pread), `sys_write` (pwrite), `sys_copy` |
+| **Content** | `sys_read` (pread), `sys_write` (pwrite — file must exist), `sys_copy` |
 | **Locking** | `sys_lock` (acquire + extend), `sys_unlock` (release + force) |
 | **Watch** | `sys_watch` (inotify) |
 
 `sys_setattr` is the universal creation/management syscall:
-`mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
+`mkdir` = `sys_setattr(entry_type=DT_DIR)`, `create` = `sys_setattr(entry_type=DT_REG)` (upsert — creates regular file if absent, updates metadata if present; accepts `content_id`, `size`, `version`, `created_at_ms`, `owner_id`),
+`mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
 `umount` = `rmdir` on DT_MOUNT path, `symlink` = `sys_setattr(entry_type=DT_LINK, link_target=...)`.
 
 Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` pattern):
@@ -216,7 +217,7 @@ Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` patte
 
 **Primitive usage pattern:**
 
-- **Mutating syscalls** (write, unlink, rename, rmdir): full pipeline — VFSRouter →
+- **Mutating syscalls** (write, unlink, rename, copy): full pipeline — VFSRouter →
   VFSLock → KernelDispatch (3-phase) → Metastore → FileEvent
 - **DT_PIPE / DT_STREAM I/O**: the routed metastore detects entry_type early in
   sys_read/sys_write and dispatches to PipeManager/StreamManager inline — no
@@ -228,7 +229,7 @@ Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` patte
 - **Read**: same pipeline minus FileEvent (reads are not mutations)
 - **Read-only metadata** (stat, access, readdir, is_directory): direct Metastore
   lookup only — no routing, locking, or dispatch
-- **setattr**: Metastore-only (Tier 2 `mkdir` adds routing + hooks)
+- **setattr**: Metastore-only. DT_REG upsert (creates if absent, updates metadata if present). Tier 2 `mkdir` adds routing + hooks
 
 See `syscall-design.md` for the full per-syscall primitive matrix.
 
@@ -238,7 +239,7 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*` |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*`. `glob`/`grep` are search-tier convenience (PR #3921), composing `sys_readdir` + filter/regex |
 | **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
 The HDFS half bypasses path resolution and metadata lookup — CAS is a driver
@@ -254,7 +255,7 @@ Consistency is zone-level (configured at metastore layer), not per-write.
 ### 2.4 VFS Dispatch (KernelDispatch)
 
 The kernel provides callback-based dispatch at 6 VFS operation points (read,
-write, delete, rename, mkdir, rmdir) plus driver lifecycle events (mount,
+write, delete, rename, mkdir, copy) plus driver lifecycle events (mount,
 unmount). These are kernel-owned callback lists (implemented by
 `KernelDispatch`, §4) that any authorized caller populates.
 
@@ -332,7 +333,7 @@ when no services are registered.
 | Path | Crossings | Notes |
 |------|-----------|-------|
 | Pillar calls (Metastore, ObjectStore, CacheStore) | 0 | Pure Rust trait dispatch |
-| Hook dispatch (read/write/unlink/rename/copy/mkdir/rmdir) | 2+N | Context build + per-hook call, GIL held pre-detach |
+| Hook dispatch (read/write/unlink/rename/copy/mkdir) | 2+N | Context build + per-hook call, GIL held pre-detach |
 | Service lifecycle (enlist auto-start, start_all, stop_all) | 4/service | isinstance + call_method0 + asyncio.wait_for + asyncio.run (stdlib only). Not on syscall hot path |
 | Zero-crossing syscalls | 0 | sys_lock, sys_unlock, sys_watch, sys_stat (chrono), sys_setattr, sys_readdir, sys_write IPC (DT_PIPE/DT_STREAM) |
 
@@ -821,7 +822,7 @@ syscall implementations across per-family submodules:
 | File                | Owns                                                                           |
 |---------------------|--------------------------------------------------------------------------------|
 | `kernel/mod.rs`     | `Kernel` struct, constructor, wiring, MetaStore + Router proxies, syscall-shaped helpers (`lookup_content_id`, `with_metastore_route`, `commit_metadata`, `commit_delete`). |
-| `kernel/io.rs`      | `sys_read` / `sys_write` / `sys_stat` / `sys_unlink` / `sys_rename` / `sys_copy` / `sys_mkdir` / `sys_rmdir`. |
+| `kernel/io.rs`      | `sys_read` / `sys_write` / `sys_stat` / `sys_unlink` / `sys_rename` / `sys_copy` / `sys_mkdir`. |
 | `kernel/ipc.rs`     | Pipe + stream registries (`create_pipe`, `pipe_write_nowait`, `stream_read_at`, …). |
 | `kernel/locks.rs`   | Advisory-lock syscalls (`sys_lock`, `sys_unlock`, `metastore_list_locks`, `install_federation_locks`). |
 | `kernel/dispatch.rs`| Native INTERCEPT hook dispatch (`dispatch_native_pre`, `dispatch_native_post`, `register_native_hook`). |

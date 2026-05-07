@@ -7,3 +7,4 @@ pub mod client;
 pub mod daemon;
 pub mod error;
 pub mod fs;
+pub mod metrics;

@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+use crate::metrics;
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -136,6 +137,22 @@ impl FileCache {
             .unwrap_or(0)
     }
 
+    #[cfg(test)]
+    pub(crate) fn open_in_memory_for_tests() -> Self {
+        let conn = Connection::open_in_memory().unwrap();
+        Self::open_connection(conn).unwrap()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_cached_at_for_tests(&self, path: &str, cached_at: u64) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE file_cache SET cached_at = ? WHERE path = ?",
+            params![cached_at, path],
+        )
+        .unwrap();
+    }
+
     /// Look up a file in the cache using two-phase metadata-first query (Issue 16A).
     ///
     /// Phase 1: Query only lightweight metadata (etag, cached_at) to determine
@@ -176,11 +193,16 @@ impl FileCache {
                     match content {
                         Some(content) => {
                             debug!("Cache hit for {} (age: {}s)", path, age);
+                            metrics::record_cache_request("sqlite", "hit");
                             CacheLookup::Hit(CacheEntry { content, etag })
                         }
                         None => {
                             // Shouldn't happen (metadata existed but content gone)
-                            debug!("Cache inconsistency for {} — metadata without content", path);
+                            debug!(
+                                "Cache inconsistency for {} — metadata without content",
+                                path
+                            );
+                            metrics::record_cache_request("sqlite", "miss");
                             CacheLookup::Miss
                         }
                     }
@@ -190,18 +212,43 @@ impl FileCache {
                         "Cache stale for {} (age: {}s), needs revalidation",
                         path, age
                     );
+                    metrics::record_cache_request("sqlite", "stale");
                     CacheLookup::NeedsRevalidation { etag }
                 } else {
                     // Stale with no etag — treat as miss
                     debug!("Cache stale for {} with no etag", path);
+                    metrics::record_cache_request("sqlite", "miss");
                     CacheLookup::Miss
                 }
             }
             None => {
                 debug!("Cache miss for {}", path);
+                metrics::record_cache_request("sqlite", "miss");
                 CacheLookup::Miss
             }
         }
+    }
+
+    /// Fetch cached content for an entry that already entered revalidation.
+    ///
+    /// This deliberately bypasses freshness checks and cache request metrics.
+    /// Use it only after `get()` returned `NeedsRevalidation`.
+    pub fn get_entry_for_revalidation(&self, path: &str) -> Option<CacheEntry> {
+        let conn = self.conn.lock().unwrap();
+
+        conn.query_row(
+            "SELECT content, etag FROM file_cache WHERE path = ?",
+            params![path],
+            |row| {
+                Ok(CacheEntry {
+                    content: row.get(0)?,
+                    etag: row.get(1)?,
+                })
+            },
+        )
+        .optional()
+        .ok()
+        .flatten()
     }
 
     /// Get etag for a cached file (for conditional requests).
@@ -232,22 +279,31 @@ impl FileCache {
             return;
         }
 
-        let conn = self.conn.lock().unwrap();
-        let now = Self::now();
+        let inserted = {
+            let conn = self.conn.lock().unwrap();
+            let now = Self::now();
 
-        if let Err(e) = conn.execute(
-            "INSERT OR REPLACE INTO file_cache (path, content, etag, size, cached_at)
-             VALUES (?, ?, ?, ?, ?)",
-            params![path, content, etag, content.len() as i64, now],
-        ) {
-            error!("Failed to cache {}: {}", path, e);
-        } else {
+            match conn.execute(
+                "INSERT OR REPLACE INTO file_cache (path, content, etag, size, cached_at)
+                 VALUES (?, ?, ?, ?, ?)",
+                params![path, content, etag, content.len() as i64, now],
+            ) {
+                Ok(_) => true,
+                Err(e) => {
+                    error!("Failed to cache {}: {}", path, e);
+                    false
+                }
+            }
+        };
+
+        if inserted {
             debug!(
                 "Cached {} ({} bytes, etag: {:?})",
                 path,
                 content.len(),
                 etag
             );
+            self.stats();
         }
     }
 
@@ -268,10 +324,14 @@ impl FileCache {
 
     /// Invalidate a specific path.
     pub fn invalidate(&self, path: &str) {
-        let conn = self.conn.lock().unwrap();
+        {
+            let conn = self.conn.lock().unwrap();
 
-        let _ = conn.execute("DELETE FROM file_cache WHERE path = ?", params![path]);
-        let _ = conn.execute("DELETE FROM metadata_cache WHERE path = ?", params![path]);
+            let _ = conn.execute("DELETE FROM file_cache WHERE path = ?", params![path]);
+            let _ = conn.execute("DELETE FROM metadata_cache WHERE path = ?", params![path]);
+        }
+
+        self.stats();
 
         debug!("Invalidated cache for {}", path);
     }
@@ -334,6 +394,8 @@ impl FileCache {
             })
             .unwrap_or(0);
 
+        metrics::set_cache_bytes_in_use("sqlite", total_size);
+
         CacheStats {
             file_count,
             total_size,
@@ -358,12 +420,29 @@ mod tests {
         FileCache::open_connection(conn).unwrap()
     }
 
+    fn metric_value(rendered: &str, metric: &str) -> Option<u64> {
+        rendered.lines().find_map(|line| {
+            line.strip_prefix(metric)
+                .and_then(|value| value.trim().parse::<u64>().ok())
+        })
+    }
+
+    fn assert_metric_at_least(metric: &str, expected: u64) {
+        let rendered = crate::metrics::render();
+        let actual = metric_value(&rendered, metric).unwrap_or(0);
+        assert!(
+            actual >= expected,
+            "expected {metric}{expected} or greater, got {actual}\n{rendered}"
+        );
+    }
+
     // ──────────────────────────────────────────────────────
     // 1. Basic put / get / invalidate (existing test, kept)
     // ──────────────────────────────────────────────────────
 
     #[test]
     fn test_cache_basic() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("basic");
 
         // Miss on empty cache
@@ -385,12 +464,86 @@ mod tests {
         assert!(matches!(cache.get("/test.txt"), CacheLookup::Miss));
     }
 
+    #[test]
+    fn test_cache_get_records_hit_miss_and_stale_metrics() {
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+        let cache = test_cache("metrics");
+
+        assert!(matches!(cache.get("/metrics-miss.txt"), CacheLookup::Miss));
+        assert_metric_at_least(
+            "nexus_cache_requests_total{tier=\"sqlite\",result=\"miss\"} ",
+            1,
+        );
+
+        cache.put("/metrics-hit.txt", b"data", Some("etag-1"));
+        assert!(matches!(cache.get("/metrics-hit.txt"), CacheLookup::Hit(_)));
+        assert_metric_at_least(
+            "nexus_cache_requests_total{tier=\"sqlite\",result=\"hit\"} ",
+            1,
+        );
+
+        let old_cached_at = FileCache::now().saturating_sub(MAX_CACHE_AGE_SECS + 1);
+        {
+            let conn = cache.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE file_cache SET cached_at = ? WHERE path = ?",
+                params![old_cached_at, "/metrics-hit.txt"],
+            )
+            .unwrap();
+        }
+        assert!(matches!(
+            cache.get("/metrics-hit.txt"),
+            CacheLookup::NeedsRevalidation { .. }
+        ));
+        assert_metric_at_least(
+            "nexus_cache_requests_total{tier=\"sqlite\",result=\"stale\"} ",
+            1,
+        );
+    }
+
+    #[test]
+    fn test_cache_put_records_bytes_in_use() {
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+        let cache = test_cache("bytes");
+
+        cache.put("/metrics-bytes.txt", b"data", Some("etag-1"));
+
+        assert_eq!(
+            metric_value(
+                &crate::metrics::render(),
+                "nexus_cache_bytes_in_use{tier=\"sqlite\"} "
+            ),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn test_cache_invalidate_refreshes_bytes_in_use() {
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+        let cache = test_cache("invalidate-bytes");
+
+        cache.put("/metrics-invalidated.txt", b"data", Some("etag-1"));
+        cache.invalidate("/metrics-invalidated.txt");
+
+        assert_eq!(
+            metric_value(
+                &crate::metrics::render(),
+                "nexus_cache_bytes_in_use{tier=\"sqlite\"} "
+            ),
+            Some(0)
+        );
+    }
+
     // ──────────────────────────────────────────────────────
     // 2. Put without etag → stale entries become Miss (not NeedsRevalidation)
     // ──────────────────────────────────────────────────────
 
     #[test]
     fn test_put_without_etag() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("no-etag");
         cache.put("/no-etag.txt", b"data", None);
 
@@ -409,6 +562,7 @@ mod tests {
 
     #[test]
     fn test_overwrite_entry() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("overwrite");
         cache.put("/f.txt", b"v1", Some("e1"));
         cache.put("/f.txt", b"v2", Some("e2"));
@@ -428,6 +582,7 @@ mod tests {
 
     #[test]
     fn test_get_etag() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("etag");
         assert_eq!(cache.get_etag("/missing.txt"), None);
 
@@ -444,6 +599,7 @@ mod tests {
 
     #[test]
     fn test_touch_refreshes_entry() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("touch");
         cache.put("/t.txt", b"data", Some("e1"));
 
@@ -462,6 +618,7 @@ mod tests {
 
     #[test]
     fn test_large_file_not_cached() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("large");
         let big = vec![0u8; MAX_FILE_SIZE + 1];
         cache.put("/big.bin", &big, Some("e1"));
@@ -476,6 +633,7 @@ mod tests {
 
     #[test]
     fn test_max_size_file_cached() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("maxsize");
         let data = vec![42u8; MAX_FILE_SIZE];
         cache.put("/exact.bin", &data, Some("e1"));
@@ -492,6 +650,7 @@ mod tests {
 
     #[test]
     fn test_cache_stats() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("stats");
 
         // Ensure clean slate (DB persists on disk between runs)
@@ -513,6 +672,7 @@ mod tests {
 
     #[test]
     fn test_stats_after_invalidation() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("stats-inv");
         cache.put("/x.txt", b"12345", None);
 
@@ -533,6 +693,7 @@ mod tests {
 
     #[test]
     fn test_multiple_independent_paths() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("multi");
         cache.put("/a.txt", b"aaa", Some("ea"));
         cache.put("/b.txt", b"bbb", Some("eb"));
@@ -552,6 +713,7 @@ mod tests {
 
     #[test]
     fn test_empty_content_cached() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("empty");
         cache.put("/empty.txt", b"", Some("e0"));
 
@@ -570,6 +732,7 @@ mod tests {
 
     #[test]
     fn test_binary_content_preserved() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("binary");
         let binary: Vec<u8> = (0..=255).collect();
         cache.put("/bin.dat", &binary, Some("ebin"));
@@ -586,6 +749,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_access() {
+        let _guard = crate::metrics::test_guard();
         use std::sync::Arc;
         use std::thread;
 
@@ -619,6 +783,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_removes_old_entries() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("cleanup");
 
         // Insert an entry, then manually backdate it
@@ -650,6 +815,7 @@ mod tests {
 
     #[test]
     fn test_invalidate_nonexistent_is_noop() {
+        let _guard = crate::metrics::test_guard();
         let cache = test_cache("inv-noop");
         // Should not panic or error
         cache.invalidate("/does-not-exist.txt");

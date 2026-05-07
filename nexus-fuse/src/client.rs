@@ -90,11 +90,15 @@ pub struct NexusClient {
 
 impl NexusClient {
     /// Create a new Nexus client.
-    pub fn new(base_url: &str, api_key: &str, agent_id: Option<String>) -> Result<Self, NexusClientError> {
+    pub fn new(
+        base_url: &str,
+        api_key: &str,
+        agent_id: Option<String>,
+    ) -> Result<Self, NexusClientError> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(5))
-            .no_proxy()  // Disable proxy to avoid HTTP_PROXY interference
+            .no_proxy() // Disable proxy to avoid HTTP_PROXY interference
             .build()?;
 
         Ok(Self {
@@ -139,7 +143,11 @@ impl NexusClient {
     }
 
     /// Call a JSON-RPC method.
-    fn rpc_call<T: for<'de> Deserialize<'de>>(&self, method: &str, params: Value) -> Result<T, NexusClientError> {
+    fn rpc_call<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<T, NexusClientError> {
         let url = format!("{}/api/nfs/{}", self.base_url, method);
 
         // Build proper JSON-RPC request
@@ -188,11 +196,7 @@ impl NexusClient {
         let url = format!("{}/api/auth/whoami", self.base_url);
         debug!("GET {}", url);
 
-        let resp = self
-            .client
-            .get(&url)
-            .headers(self.headers())
-            .send()?;
+        let resp = self.client.get(&url).headers(self.headers()).send()?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -225,53 +229,62 @@ impl NexusClient {
             files: Vec<DetailedEntry>,
         }
 
-        let result: ListResult = self.rpc_call("list", json!({
-            "path": path,
-            "recursive": false,
-            "details": true
-        }))?;
+        let result: ListResult = self.rpc_call(
+            "list",
+            json!({
+                "path": path,
+                "recursive": false,
+                "details": true
+            }),
+        )?;
 
         // Convert to FileEntry objects - extract immediate children only
         let parent_prefix = if path == "/" { "/" } else { path };
         let mut seen_names = std::collections::HashSet::new();
 
-        let entries = result.files.iter().filter_map(|entry| {
-            // Strip parent prefix to get relative path
-            let relative = if path == "/" {
-                entry.path.strip_prefix('/').unwrap_or(&entry.path)
-            } else {
-                entry.path.strip_prefix(parent_prefix)
-                    .and_then(|s| s.strip_prefix('/'))
-                    .unwrap_or(&entry.path)
-            };
+        let entries = result
+            .files
+            .iter()
+            .filter_map(|entry| {
+                // Strip parent prefix to get relative path
+                let relative = if path == "/" {
+                    entry.path.strip_prefix('/').unwrap_or(&entry.path)
+                } else {
+                    entry
+                        .path
+                        .strip_prefix(parent_prefix)
+                        .and_then(|s| s.strip_prefix('/'))
+                        .unwrap_or(&entry.path)
+                };
 
-            // Get immediate child (first path component)
-            let name = relative.split('/').next()?.to_string();
-            if name.is_empty() {
-                return None;
-            }
+                // Get immediate child (first path component)
+                let name = relative.split('/').next()?.to_string();
+                if name.is_empty() {
+                    return None;
+                }
 
-            // Deduplicate (same directory may appear multiple times from nested files)
-            if !seen_names.insert(name.clone()) {
-                return None;
-            }
+                // Deduplicate (same directory may appear multiple times from nested files)
+                if !seen_names.insert(name.clone()) {
+                    return None;
+                }
 
-            // If there are more path components, this is a directory
-            let is_nested = relative.contains('/');
-            let entry_type = if is_nested || entry.is_directory {
-                "directory".to_string()
-            } else {
-                "file".to_string()
-            };
+                // If there are more path components, this is a directory
+                let is_nested = relative.contains('/');
+                let entry_type = if is_nested || entry.is_directory {
+                    "directory".to_string()
+                } else {
+                    "file".to_string()
+                };
 
-            Some(FileEntry {
-                name,
-                entry_type,
-                size: if is_nested { 0 } else { entry.size },
-                created_at: None,  // Complex type from API, not used
-                updated_at: None,  // Complex type from API, not used
+                Some(FileEntry {
+                    name,
+                    entry_type,
+                    size: if is_nested { 0 } else { entry.size },
+                    created_at: None, // Complex type from API, not used
+                    updated_at: None, // Complex type from API, not used
+                })
             })
-        }).collect();
+            .collect();
 
         Ok(entries)
     }
@@ -285,13 +298,19 @@ impl NexusClient {
     pub fn read(&self, path: &str) -> Result<Vec<u8>, NexusClientError> {
         match self.read_with_etag(path, None)? {
             ReadResponse::Content { content, .. } => Ok(content),
-            ReadResponse::NotModified => Err(NexusClientError::InvalidResponse("Unexpected 304 without etag".to_string())),
+            ReadResponse::NotModified => Err(NexusClientError::InvalidResponse(
+                "Unexpected 304 without etag".to_string(),
+            )),
         }
     }
 
     /// Read file contents with ETag support for conditional requests.
     /// If `if_none_match` is provided and content hasn't changed, returns NotModified.
-    pub fn read_with_etag(&self, path: &str, if_none_match: Option<&str>) -> Result<ReadResponse, NexusClientError> {
+    pub fn read_with_etag(
+        &self,
+        path: &str,
+        if_none_match: Option<&str>,
+    ) -> Result<ReadResponse, NexusClientError> {
         use base64::{engine::general_purpose::STANDARD, Engine};
 
         let url = format!("{}/api/nfs/read", self.base_url);
@@ -365,10 +384,12 @@ impl NexusClient {
             )));
         }
 
-        let result = rpc_resp.result.ok_or_else(|| NexusClientError::InvalidResponse("no result in response".to_string()))?;
-        let content = STANDARD
-            .decode(&result.data)
-            .map_err(|e| NexusClientError::InvalidResponse(format!("base64 decode error: {}", e)))?;
+        let result = rpc_resp.result.ok_or_else(|| {
+            NexusClientError::InvalidResponse("no result in response".to_string())
+        })?;
+        let content = STANDARD.decode(&result.data).map_err(|e| {
+            NexusClientError::InvalidResponse(format!("base64 decode error: {}", e))
+        })?;
 
         Ok(ReadResponse::Content { content, etag })
     }
@@ -378,13 +399,16 @@ impl NexusClient {
         use base64::{engine::general_purpose::STANDARD, Engine};
 
         // API expects {"__type__": "bytes", "data": "base64..."} format
-        let _: Value = self.rpc_call("write", json!({
-            "path": path,
-            "content": {
-                "__type__": "bytes",
-                "data": STANDARD.encode(content)
-            }
-        }))?;
+        let _: Value = self.rpc_call(
+            "write",
+            json!({
+                "path": path,
+                "content": {
+                    "__type__": "bytes",
+                    "data": STANDARD.encode(content)
+                }
+            }),
+        )?;
         Ok(())
     }
 
@@ -402,10 +426,13 @@ impl NexusClient {
 
     /// Rename/move file or directory.
     pub fn rename(&self, old_path: &str, new_path: &str) -> Result<(), NexusClientError> {
-        let _: Value = self.rpc_call("rename", json!({
-            "old_path": old_path,
-            "new_path": new_path
-        }))?;
+        let _: Value = self.rpc_call(
+            "rename",
+            json!({
+                "old_path": old_path,
+                "new_path": new_path
+            }),
+        )?;
         Ok(())
     }
 

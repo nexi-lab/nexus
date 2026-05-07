@@ -1,0 +1,164 @@
+{
+  "uid": "nexus-io-observability",
+  "title": "Nexus I/O Observability",
+  "description": "Read, write, cache, ETag, prefetch, coalescing, and passthrough metrics for issue #4062.",
+  "tags": ["nexus", "io", "observability"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "label": "Datasource"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Read Latency By Tier",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, tier) (rate(nexus_read_latency_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{tier}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, tier) (rate(nexus_read_latency_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{tier}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, tier) (rate(nexus_read_latency_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{tier}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Read Bytes By Tier",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (tier) (rate(nexus_read_bytes_total[5m]))",
+          "legendFormat": "{{tier}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache Requests",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (tier, result) (rate(nexus_cache_requests_total[5m]))",
+          "legendFormat": "{{tier}} {{result}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Derived Cache Hit Percentage",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "100 * (sum by (tier) (rate(nexus_cache_requests_total{result=\"hit\"}[5m])) or on (tier) 0 * sum by (tier) (rate(nexus_cache_requests_total[5m]))) / clamp_min(sum by (tier) (rate(nexus_cache_requests_total[5m])), 1e-9)",
+          "legendFormat": "{{tier}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache Bytes In Use",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (tier) (nexus_cache_bytes_in_use)",
+          "legendFormat": "{{tier}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "ETag Checks",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(nexus_etag_check_total[5m]))",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "type": "heatmap",
+      "title": "Read Batch Size",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (le) (rate(nexus_read_batch_size_bucket[5m]))",
+          "legendFormat": "{{le}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Backend Write RPC Rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "sum(rate(nexus_write_backend_rpc_total[5m]))",
+          "legendFormat": "total write RPC/s"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Prefetch And Coalescing Reserved",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "rate(nexus_prefetch_issued_bytes_total[5m])",
+          "legendFormat": "prefetch issued B/s"
+        },
+        {
+          "expr": "rate(nexus_prefetch_used_bytes_total[5m])",
+          "legendFormat": "prefetch used B/s"
+        },
+        {
+          "expr": "rate(nexus_prefetch_wasted_bytes_total[5m])",
+          "legendFormat": "prefetch wasted B/s"
+        },
+        {
+          "expr": "sum by (trigger) (rate(nexus_write_coalesce_flush_total[5m]))",
+          "legendFormat": "flush {{trigger}}"
+        }
+      ]
+    }
+  ]
+}

@@ -27,6 +27,7 @@ from nexus.contracts.exceptions import (
 )
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
+from nexus.lib import io_metrics
 from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -90,70 +91,95 @@ class ContentMixin:
                 accept loop. Issue #3699.
         """
 
-        context = self._parse_context(context)
-        _handled, _resolve_hint = self.resolve_read(path, context=context)
-        if _handled:
-            content = _resolve_hint or b""
-            if offset or count is not None:
-                content = (
-                    content[offset : offset + count] if count is not None else content[offset:]
+        start = time.perf_counter()
+        try:
+            context = self._parse_context(context)
+            _handled, _resolve_hint = self.resolve_read(path, context=context)
+            if _handled:
+                content = _resolve_hint or b""
+                if offset or count is not None:
+                    content = (
+                        content[offset : offset + count] if count is not None else content[offset:]
+                    )
+                io_metrics.record_read(
+                    tier="virtual",
+                    bytes_read=len(content),
+                    latency_seconds=time.perf_counter() - start,
                 )
-            return content
+                return content
 
-        _is_admin = (
-            getattr(context, "is_admin", False)
-            if context is not None and not isinstance(context, dict)
-            else (context.get("is_admin", False) if isinstance(context, dict) else False)
-        )
-
-        # ── KERNEL (Rust — pre-hooks + route + backend read + IPC blocking) ──
-        # Rust sys_read handles ALL entry types end-to-end:
-        #   DT_REG: backend read + federation remote fetch
-        #   DT_PIPE: nowait pop → blocking wait (timeout_ms)
-        #   DT_STREAM: offset read → blocking wait (timeout_ms)
-        #
-        # Slim-package mode: ``nexus-fs`` can ship without ``nexus_runtime``,
-        # in which case ``self._kernel`` is None.
-        if self._kernel is None:
-            raise NexusFileNotFoundError(path)
-        _rust_ctx = self._build_rust_ctx(context, _is_admin)
-        # DT_STREAM uses 30s timeout (long-poll); DT_PIPE uses 5s.
-        # The caller's `offset` param doubles as the stream cursor position.
-        # ``timeout_ms=0`` from the caller selects O_NONBLOCK (Issue #3699).
-        _timeout_ms = 5000 if timeout_ms is None else int(timeout_ms)
-        result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
-
-        # DT_STREAM: return dict with next_offset for cursor advancement.
-        # This is a Python API contract that callers depend on.
-        if result.entry_type == 4:  # DT_STREAM
-            return {
-                "data": bytes(result.data) if result.data else b"",
-                "next_offset": result.stream_next_offset or 0,
-            }
-
-        # DT_PIPE / DT_REG: return bytes.
-        data = result.data or b""
-
-        if offset or count is not None:
-            data = data[offset : offset + count] if count is not None else data[offset:]
-
-        # POST-INTERCEPT: hooks dispatched via Rust dispatch_post_hooks
-        if result.post_hook_needed:
-            zone_id, agent_id, _ = self._get_context_identity(context)
-            from nexus.contracts.vfs_hooks import ReadHookContext
-
-            _read_ctx = ReadHookContext(
-                path=path,
-                context=context,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                content=data,
-                content_id=result.content_id,
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
             )
-            self._kernel.dispatch_post_hooks("read", _read_ctx)
-            data = _read_ctx.content or data
 
-        return data
+            # ── KERNEL (Rust — pre-hooks + route + backend read + IPC blocking) ──
+            # Rust sys_read handles ALL entry types end-to-end:
+            #   DT_REG: backend read + federation remote fetch
+            #   DT_PIPE: nowait pop → blocking wait (timeout_ms)
+            #   DT_STREAM: offset read → blocking wait (timeout_ms)
+            #
+            # Slim-package mode: ``nexus-fs`` can ship without ``nexus_runtime``,
+            # in which case ``self._kernel`` is None.
+            if self._kernel is None:
+                raise NexusFileNotFoundError(path)
+            _rust_ctx = self._build_rust_ctx(context, _is_admin)
+            # DT_STREAM uses 30s timeout (long-poll); DT_PIPE uses 5s.
+            # The caller's `offset` param doubles as the stream cursor position.
+            # ``timeout_ms=0`` from the caller selects O_NONBLOCK (Issue #3699).
+            _timeout_ms = 5000 if timeout_ms is None else int(timeout_ms)
+            result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
+
+            # DT_STREAM: return dict with next_offset for cursor advancement.
+            # This is a Python API contract that callers depend on.
+            if result.entry_type == 4:  # DT_STREAM
+                payload = bytes(result.data) if result.data else b""
+                io_metrics.record_read(
+                    tier="backend",
+                    bytes_read=len(payload),
+                    latency_seconds=time.perf_counter() - start,
+                )
+                return {
+                    "data": payload,
+                    "next_offset": result.stream_next_offset or 0,
+                }
+
+            # DT_PIPE / DT_REG: return bytes.
+            data = result.data or b""
+
+            if offset or count is not None:
+                data = data[offset : offset + count] if count is not None else data[offset:]
+
+            # POST-INTERCEPT: hooks dispatched via Rust dispatch_post_hooks
+            if result.post_hook_needed:
+                zone_id, agent_id, _ = self._get_context_identity(context)
+                from nexus.contracts.vfs_hooks import ReadHookContext
+
+                _read_ctx = ReadHookContext(
+                    path=path,
+                    context=context,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    content=data,
+                    content_id=result.content_id,
+                )
+                self._kernel.dispatch_post_hooks("read", _read_ctx)
+                data = _read_ctx.content or data
+
+            io_metrics.record_read(
+                tier="backend",
+                bytes_read=len(data),
+                latency_seconds=time.perf_counter() - start,
+            )
+            return data
+        except Exception:
+            io_metrics.record_read(
+                tier="error",
+                bytes_read=0,
+                latency_seconds=time.perf_counter() - start,
+            )
+            raise
 
     @rpc_expose(description="Read multiple files in a single RPC call")
     def read_bulk(
@@ -569,6 +595,8 @@ class ContentMixin:
         )
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        if result.hit:
+            io_metrics.record_write_backend_rpc()
 
         # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
         if result.hit and result.post_hook_needed:
@@ -805,6 +833,8 @@ class ContentMixin:
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        if result.hit:
+            io_metrics.record_write_backend_rpc()
 
         # Reconstruct old_metadata from Rust result (atomic snapshot taken
         # during write — no TOCTOU gap, no extra PyO3 round-trip).
@@ -1419,6 +1449,7 @@ class ContentMixin:
         for i, (path, content) in enumerate(validated_files):
             r = rust_results[i]
             if r.hit:
+                io_metrics.record_write_backend_rpc()
                 results.append(
                     {
                         "content_id": r.content_id,
@@ -1544,6 +1575,7 @@ class ContentMixin:
             NexusFileNotFoundError: If any path is missing and partial=False.
             NexusPermissionError:   If access is denied and partial=False.
         """
+        io_metrics.record_read_batch_size(len(paths))
         if not paths:
             return []
 
@@ -1647,7 +1679,12 @@ class ContentMixin:
                 # endpoint.
                 try:
                     content = self.read(path, context=context)
-                    _loaded_bytes += len(content)
+                    content_bytes_len = (
+                        len(content.get("data") or b"")
+                        if isinstance(content, dict)
+                        else len(content)
+                    )
+                    _loaded_bytes += content_bytes_len
                     if _loaded_bytes > _MAX_BATCH_READ_BYTES:
                         raise ValueError(
                             f"Batch read aggregate size exceeded "
@@ -1660,7 +1697,7 @@ class ContentMixin:
                             "content_id": meta.content_id if meta else None,
                             "version": meta.version if meta else 0,
                             "modified_at": meta.modified_at if meta else None,
-                            "size": len(content),
+                            "size": content_bytes_len,
                         }
                     )
                     hit_items.append((path, meta))
@@ -1707,6 +1744,11 @@ class ContentMixin:
                 )
                 self._kernel.dispatch_post_hooks("read", _read_ctx)
                 content = _read_ctx.content or content
+
+            io_metrics.record_read_bytes(
+                tier="batch",
+                bytes_read=len(content),
+            )
 
             # Use r.content_id as the primary content_id — it reflects the actual bytes
             # returned by this read, not the pre-read metadata snapshot (which can be

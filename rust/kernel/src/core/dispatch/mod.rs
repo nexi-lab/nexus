@@ -13,6 +13,7 @@
 
 #[cfg(feature = "python")]
 pub mod hook_registry;
+pub mod ops_registry;
 
 use parking_lot::RwLock;
 use std::collections::HashMap;

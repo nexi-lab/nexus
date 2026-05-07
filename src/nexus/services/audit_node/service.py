@@ -250,6 +250,9 @@ class AuditNode:
         path = self._offset_path(source_zone)
         payload = json.dumps({"offset": offset}).encode("utf-8")
         try:
+            # C23: sys_write no longer implicitly creates files — ensure a
+            # DT_REG entry exists before write (upsert, no-op if exists).
+            self._kernel.sys_setattr(path, entry_type=0)
             self._kernel.sys_write(path, payload)
         except Exception as exc:  # pragma: no cover
             logger.warning(

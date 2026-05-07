@@ -185,7 +185,7 @@ class MetadataExportService:
                     if metadata_dict.get("modified_at"):
                         modified_at = datetime.fromisoformat(metadata_dict["modified_at"])
 
-                    existing = self._kernel.metastore_get(path)
+                    existing = self._kernel.sys_stat(path, "root")
                     imported_content_id = metadata_dict.get("content_id")
 
                     if existing:
@@ -231,7 +231,7 @@ class MetadataExportService:
         modified_at: datetime | None,
     ) -> None:
         """Handle import collision with existing file."""
-        existing_content_id = existing.content_id
+        existing_content_id = existing.get("content_id")
         is_same_content = existing_content_id == imported_content_id
 
         if is_same_content:
@@ -239,15 +239,21 @@ class MetadataExportService:
                 result.updated += 1
                 return
 
-            _mod_dt = modified_at or existing.modified_at
-            _cre_dt = created_at or existing.created_at
+            _existing_mod = existing.get("modified_at")
+            _existing_cre = existing.get("created_at")
+            _mod_dt = modified_at or (
+                datetime.fromisoformat(_existing_mod) if _existing_mod else None
+            )
+            _cre_dt = created_at or (
+                datetime.fromisoformat(_existing_cre) if _existing_cre else None
+            )
             self._kernel.sys_setattr(
                 path,
                 0,  # UPDATE existing entry
                 content_id=imported_content_id,
                 size=metadata_dict["size"],
                 mime_type=metadata_dict.get("mime_type"),
-                version=metadata_dict.get("version", existing.version),
+                version=metadata_dict.get("version", existing.get("version")),
                 modified_at_ms=int(_mod_dt.timestamp() * 1000) if _mod_dt else None,
                 created_at_ms=int(_cre_dt.timestamp() * 1000) if _cre_dt else None,
             )
@@ -328,14 +334,16 @@ class MetadataExportService:
             )
             return
 
-        _cre_dt = created_at or existing.created_at
+        _existing_cre = existing.get("created_at")
+        _cre_dt = created_at or (datetime.fromisoformat(_existing_cre) if _existing_cre else None)
+        _existing_ver = existing.get("version") or 0
         self._kernel.sys_setattr(
             path,
             0,  # UPDATE existing entry
             content_id=imported_content_id,
             size=metadata_dict["size"],
             mime_type=metadata_dict.get("mime_type"),
-            version=metadata_dict.get("version", existing.version + 1),
+            version=metadata_dict.get("version", _existing_ver + 1),
             modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
             created_at_ms=int(_cre_dt.timestamp() * 1000) if _cre_dt else None,
         )
@@ -414,7 +422,11 @@ class MetadataExportService:
         created_at: datetime | None,
         modified_at: datetime | None,
     ) -> None:
-        existing_time = existing.modified_at or existing.created_at
+        _existing_mod = existing.get("modified_at")
+        _existing_cre = existing.get("created_at")
+        existing_time = (datetime.fromisoformat(_existing_mod) if _existing_mod else None) or (
+            datetime.fromisoformat(_existing_cre) if _existing_cre else None
+        )
         imported_time = modified_at or created_at
 
         if existing_time and existing_time.tzinfo is None:
@@ -436,14 +448,18 @@ class MetadataExportService:
                 )
                 return
 
-            _cre_dt = created_at or existing.created_at
+            _auto_existing_cre = existing.get("created_at")
+            _cre_dt = created_at or (
+                datetime.fromisoformat(_auto_existing_cre) if _auto_existing_cre else None
+            )
+            _existing_ver = existing.get("version") or 0
             self._kernel.sys_setattr(
                 path,
                 0,  # UPDATE existing entry
                 content_id=imported_content_id,
                 size=metadata_dict["size"],
                 mime_type=metadata_dict.get("mime_type"),
-                version=metadata_dict.get("version", existing.version + 1),
+                version=metadata_dict.get("version", _existing_ver + 1),
                 modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
                 created_at_ms=int(_cre_dt.timestamp() * 1000) if _cre_dt else None,
             )

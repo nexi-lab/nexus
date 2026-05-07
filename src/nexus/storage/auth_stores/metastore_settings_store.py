@@ -22,7 +22,6 @@ from typing import Any
 
 from nexus.contracts.auth_store_types import SystemSettingDTO
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import FileMetadata
 
 _CFG_PREFIX = "cfg:"
 
@@ -65,9 +64,11 @@ class MetastoreSettingsStore:
         payload: dict[str, str | None] = {"v": value}
         if description is not None:
             payload["d"] = description
-        fm = FileMetadata(
-            path=f"{_CFG_PREFIX}{key}",
+        json_payload = json.dumps(payload)
+        self._kernel.sys_setattr(
+            f"{_CFG_PREFIX}{key}",
+            0,  # DT_REG upsert
+            content_id=json_payload,
             size=0,
-            content_id=json.dumps(payload),
+            zone_id=ROOT_ZONE_ID,
         )
-        self._kernel.metastore_put(fm)

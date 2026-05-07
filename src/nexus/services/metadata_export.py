@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.kernel_helpers import metastore_list_iter, metastore_set_file_metadata
 from nexus.lib.export_import import (
     CollisionDetail,
@@ -388,16 +388,18 @@ class MetadataExportService:
             )
             return
 
-        file_meta = FileMetadata(
-            path=remapped_path,
-            size=metadata_dict["size"],
+        file_meta_path = remapped_path
+        self._kernel.sys_setattr(
+            file_meta_path,
+            0,  # DT_REG upsert
             content_id=imported_content_id,
+            size=metadata_dict["size"],
             mime_type=metadata_dict.get("mime_type"),
-            created_at=created_at,
-            modified_at=modified_at,
             version=metadata_dict.get("version", 1),
+            zone_id=ROOT_ZONE_ID,
+            created_at_ms=int(created_at.timestamp() * 1000) if created_at else None,
+            modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
         )
-        self._kernel.metastore_put(file_meta)
         self._import_custom_metadata(remapped_path, metadata_dict)
         result.remapped += 1
         result.collisions.append(
@@ -501,17 +503,18 @@ class MetadataExportService:
             result.created += 1
             return
 
-        file_meta = FileMetadata(
-            path=path,
-            size=metadata_dict["size"],
+        self._kernel.sys_setattr(
+            path,
+            0,  # DT_REG upsert
             content_id=imported_content_id,
+            size=metadata_dict["size"],
             mime_type=metadata_dict.get("mime_type"),
-            created_at=created_at,
-            modified_at=modified_at,
             version=metadata_dict.get("version", 1),
+            zone_id=ROOT_ZONE_ID,
+            created_at_ms=int(created_at.timestamp() * 1000) if created_at else None,
+            modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
         )
 
-        self._kernel.metastore_put(file_meta)
         self._import_custom_metadata(path, metadata_dict)
         result.created += 1
 

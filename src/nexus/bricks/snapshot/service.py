@@ -507,10 +507,27 @@ class TransactionalSnapshotService:
                 elif entry.operation == "delete" and entry.original_hash is not None:
                     # File was deleted — restore from snapshot
                     if entry.original_metadata:
-                        restored = self._restore_metadata_from_snapshot(
-                            entry.path, entry.original_hash, entry.original_metadata
+                        meta_dict = json.loads(entry.original_metadata)
+                        _created = (
+                            datetime.fromisoformat(meta_dict["created_at"])
+                            if meta_dict.get("created_at")
+                            else datetime.now(UTC)
                         )
-                        self._kernel.metastore_put(restored)
+                        _modified = (
+                            datetime.fromisoformat(meta_dict["modified_at"])
+                            if meta_dict.get("modified_at")
+                            else datetime.now(UTC)
+                        )
+                        self._kernel.sys_setattr(
+                            entry.path,
+                            0,  # DT_REG upsert (re-create deleted entry)
+                            content_id=entry.original_hash,
+                            size=meta_dict.get("size", 0),
+                            version=meta_dict.get("version", 1),
+                            zone_id=meta_dict.get("zone_id", ROOT_ZONE_ID),
+                            modified_at_ms=int(_modified.timestamp() * 1000),
+                            created_at_ms=int(_created.timestamp() * 1000),
+                        )
                         logger.debug(
                             "Restored deleted file: path=%s hash=%s",
                             entry.path,

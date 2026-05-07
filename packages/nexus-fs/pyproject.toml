@@ -43,6 +43,8 @@ dependencies = [
     "platformdirs>=4.0",
     "cryptography>=41.0",
     "httpx>=0.28",
+    # nexus.core imports nexus.lib.io_metrics for read/write/cache counters.
+    "prometheus-client>=0.20.0",
     # Rust kernel (PyKernel + Rust-accelerated primitives). Required at runtime;
     # NexusFS.sys_* and metastore both go through nexus_runtime.PyKernel.
     "nexus-runtime>=0.10,<0.11",
@@ -176,7 +178,7 @@ exclude = [
 #   - postgres_profile_store.py, postgres_migrate.py (server-only SQLAlchemy)
 #   - providers/ subtree (database_key.py, oidc.py import sqlalchemy at top level)
 #   - cache.py (imports cachetools, not a slim dep; not imported by connectors)
-#   - consumer_metrics.py (imports prometheus_client, not a slim dep; not imported by connectors)
+#   - consumer_metrics.py (not imported by connectors)
 "../../src/nexus/bricks/__init__.py" = "nexus/bricks/__init__.py"
 # Ship a slim stub instead of the full search/__init__.py — the real one eagerly
 # imports chunking/search_service/etc. which are excluded from the slim wheel.

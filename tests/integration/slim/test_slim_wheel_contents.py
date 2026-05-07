@@ -145,3 +145,16 @@ def test_slim_wheel_nexus_runtime_dep(slim_wheel: Path) -> None:
         "Found Requires-Dist lines:\n"
         + "\n".join(line for line in meta.splitlines() if "Requires-Dist" in line)
     )
+
+
+def test_slim_wheel_prometheus_client_dep(slim_wheel: Path) -> None:
+    """The METADATA must declare prometheus-client for shipped io_metrics imports."""
+    with zipfile.ZipFile(slim_wheel) as zf:
+        meta_files = [n for n in zf.namelist() if n.endswith("METADATA")]
+        assert meta_files, f"no METADATA in {slim_wheel}"
+        meta = zf.read(meta_files[0]).decode("utf-8")
+    assert "Requires-Dist: prometheus-client" in meta, (
+        "slim wheel METADATA missing prometheus-client requirement.\n"
+        "Found Requires-Dist lines:\n"
+        + "\n".join(line for line in meta.splitlines() if "Requires-Dist" in line)
+    )

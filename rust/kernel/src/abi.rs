@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use contracts::{OperationContext, RustService};
 
-use crate::core::dispatch::NativeInterceptHook;
+use crate::core::dispatch::{FileEvent, NativeInterceptHook};
 use crate::kernel::{
     KernelError, StatResult, SysReadResult, SysSetAttrResult, SysUnlinkResult, SysWriteResult,
 };
@@ -121,6 +121,16 @@ pub trait KernelAbi: Send + Sync + 'static {
         write_fd: Option<i32>,
         zone_id: &str,
     ) -> Result<SysSetAttrResult, KernelError>;
+
+    // ── Event watch (inotify equivalent) ──────────────────────────
+
+    /// Block until a file event matching `pattern` fires, or timeout.
+    /// Returns `None` on timeout or when `timeout_ms == 0` (non-blocking
+    /// try). Callers re-arm by calling again with a new `sys_watch`.
+    ///
+    /// Used by managed-agent runtimes to replace polling with
+    /// event-driven blocking on `/proc/{pid}/chat-with-me` mailboxes.
+    fn sys_watch(&self, pattern: &str, timeout_ms: u64) -> Option<FileEvent>;
 
     // ── Install-time control plane (LSM-style hook + Rust service
     //    registry) ────────────────────────────────────────────────
@@ -240,6 +250,10 @@ impl KernelAbi for crate::kernel::Kernel {
         zone_id: &str,
     ) -> Result<SysSetAttrResult, KernelError> {
         Self::setattr_pipe(self, path, capacity, io_profile, read_fd, write_fd, zone_id)
+    }
+
+    fn sys_watch(&self, pattern: &str, timeout_ms: u64) -> Option<FileEvent> {
+        Self::sys_watch(self, pattern, timeout_ms)
     }
 
     fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {

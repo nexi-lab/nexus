@@ -106,10 +106,10 @@ pub(crate) const ALL_FILE_EVENTS: u32 = (1 << 10) - 1;
 pub struct FileEvent {
     /// Event type — strongly typed; the boundary adapter converts to the
     /// Python `FileEventType` StrEnum.
-    pub(crate) event_type: FileEventType,
+    pub event_type: FileEventType,
     /// Primary path (for `file_rename`, this is the *old* path; the new
     /// path lives in `new_path`, mirroring the Python field naming).
-    pub(crate) path: String,
+    pub path: String,
     /// Kernel namespace partition; `None` for Layer 1 local events.
     pub(crate) zone_id: Option<String>,
     /// ISO 8601 timestamp (kept as string to match Python serialization).

@@ -37,7 +37,7 @@ import logging
 from types import SimpleNamespace
 from typing import Any
 
-from nexus.contracts.exceptions import NexusError
+from nexus.contracts.exceptions import NexusError, NexusPermissionError
 from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
@@ -276,6 +276,8 @@ class VFSCallDispatcher:
             return True, _error_payload(RPCErrorCode.PERMISSION_ERROR, str(exc))
         except ValueError as exc:
             return True, _error_payload(RPCErrorCode.INVALID_PARAMS, f"Invalid parameters: {exc}")
+        except NexusPermissionError as exc:
+            return True, _error_payload(RPCErrorCode.PERMISSION_ERROR, str(exc))
         except NexusError as exc:
             return True, _error_payload(RPCErrorCode.INTERNAL_ERROR, str(exc))
         except Exception as exc:

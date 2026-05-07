@@ -1,6 +1,7 @@
 """Tests for factory adapters — Issue #2180."""
 
 import asyncio
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -62,6 +63,22 @@ class TestNexusFSFileReader:
         nx.sys_read = MagicMock(return_value="hello world")
         reader = _NexusFSFileReader(nx)
         assert await reader.read_text("/test.txt") == "hello world"
+
+    @pytest.mark.asyncio
+    async def test_read_head_offloads_sync_sys_read_from_event_loop(self) -> None:
+        loop_thread_id = threading.get_ident()
+        read_thread_ids: list[int] = []
+
+        class SyncNexusFS:
+            def sys_read(self, path, *, count, context):
+                read_thread_ids.append(threading.get_ident())
+                return b"heading"
+
+        reader = _NexusFSFileReader(SyncNexusFS())
+
+        assert await reader.read_head("/test.txt", 16) == b"heading"
+        assert read_thread_ids
+        assert read_thread_ids[0] != loop_thread_id
 
     def test_get_path_id_with_session(self) -> None:
         nx = MagicMock()

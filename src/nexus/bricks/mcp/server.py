@@ -410,6 +410,104 @@ async def create_mcp_server(
         return hook.get_structure_listing(path, content=content, content_id=content_id)
 
     # =========================================================================
+    # HUB ADMIN TOOLS
+    # =========================================================================
+
+    async def _call_hub_admin_rpc(
+        nx_instance: Any,
+        method: str,
+        params: dict[str, Any],
+    ) -> str:
+        call_rpc = getattr(nx_instance, "_nexus_remote_call_rpc", None)
+        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
+        if not getattr(op_context, "is_admin", False):
+            request_key = _request_api_key.get()
+            if not request_key or call_rpc is None:
+                return tool_error(
+                    "permission_denied",
+                    "Admin privileges required for hub administration",
+                )
+
+        if call_rpc is None:
+            return tool_error(
+                "unavailable",
+                "Hub admin tools require a remote hub backend",
+            )
+
+        try:
+            result = call_rpc(method, params)
+        except Exception as exc:
+            from nexus.contracts.exceptions import NexusPermissionError
+
+            if isinstance(exc, NexusPermissionError):
+                return tool_error("permission_denied", str(exc))
+            raise
+        if inspect.isawaitable(result):
+            result = await result
+        return json.dumps(result)
+
+    @mcp.tool()
+    @handle_tool_errors("listing hub tokens")
+    async def nexus_hub_token_list(
+        show_revoked: bool = False,
+        ctx: Context | None = None,
+    ) -> str:
+        """List hub API tokens. Requires a global admin token."""
+        nx_instance = _get_nexus_instance(ctx)
+        return await _call_hub_admin_rpc(
+            nx_instance,
+            "hub_admin_token_list",
+            {"show_revoked": show_revoked},
+        )
+
+    @mcp.tool()
+    @handle_tool_errors("creating hub token")
+    async def nexus_hub_token_create(
+        name: str,
+        zones: str | None = None,
+        zones_glob: str | None = None,
+        admin: bool = False,
+        expires: str | None = None,
+        user_id: str | None = None,
+        ctx: Context | None = None,
+    ) -> str:
+        """Create a hub API token and return its one-time secret. Requires admin."""
+        nx_instance = _get_nexus_instance(ctx)
+        return await _call_hub_admin_rpc(
+            nx_instance,
+            "hub_admin_token_create",
+            {
+                "name": name,
+                "zones": zones,
+                "zones_glob": zones_glob,
+                "admin": admin,
+                "expires": expires,
+                "user_id": user_id,
+            },
+        )
+
+    @mcp.tool()
+    @handle_tool_errors("revoking hub token")
+    async def nexus_hub_token_revoke(
+        identifier: str,
+        ctx: Context | None = None,
+    ) -> str:
+        """Revoke a hub API token by id, id prefix, or name. Requires admin."""
+        nx_instance = _get_nexus_instance(ctx)
+        return await _call_hub_admin_rpc(
+            nx_instance,
+            "hub_admin_token_revoke",
+            {"identifier": identifier},
+        )
+
+    @mcp.tool()
+    @handle_tool_errors("reading hub status")
+    async def nexus_hub_status(ctx: Context | None = None) -> str:
+        """Read hub status. Requires admin."""
+        nx_instance = _get_nexus_instance(ctx)
+        return await _call_hub_admin_rpc(nx_instance, "hub_admin_status", {})
+
+    # =========================================================================
     # FILE OPERATIONS TOOLS
     # =========================================================================
 

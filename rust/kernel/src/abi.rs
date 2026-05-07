@@ -119,6 +119,15 @@ pub trait KernelAbi: Send + Sync + 'static {
     /// (e.g. `/__sys__/zones/`).
     fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)>;
 
+    /// Backwards-compat shim for external consumers (runtime crate).
+    /// Returns child *names* only. New code should use `readdir` instead.
+    fn sys_readdir_backend(&self, parent_path: &str, zone_id: &str) -> Vec<String> {
+        self.readdir(parent_path, zone_id, false)
+            .into_iter()
+            .map(|(path, _)| path.rsplit('/').next().unwrap_or(&path).to_string())
+            .collect()
+    }
+
     /// DT_PIPE creation helper. Used by `AcpSubprocess::spawn` to
     /// surface the agent's stdio fds inside VFS as
     /// `/{zone}/proc/{pid}/fd/{0,1,2}`. Stays a dedicated method

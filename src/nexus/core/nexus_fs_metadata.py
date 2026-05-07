@@ -783,16 +783,16 @@ class MetadataMixin:
             return _result
 
         # Capture pre-delete metadata so post-delete hooks (snapshot
-        # rollback, audit, etc.) receive the original FileMetadata.
+        # rollback, audit, etc.) receive the original state as a dict.
         # Without this, SnapshotWriteHook.on_post_delete returns early
         # on ctx.metadata=None and never records original_hash for
         # transactional rollback (Codex review, Issue #4002 round 4).
-        # Let metastore errors propagate (Codex review, round 9): if
+        # Let stat errors propagate (Codex review, round 9): if
         # the probe fails we cannot prove the delete is observable,
         # so refuse rather than silently lose rollback data.  None is
         # still legitimate (implicit dirs / external storage entries
         # carry no metastore row).
-        _pre_delete_meta = self._kernel.metastore_get(path)
+        _pre_delete_meta = self._kernel.sys_stat(path, ROOT_ZONE_ID)
 
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         _unlink_start = time.perf_counter()
@@ -918,7 +918,11 @@ class MetadataMixin:
             # caller's zone — e.g. an admin context deleting a tenant
             # mount.  Fall back to caller zone if metadata is missing
             # the field (older entries) and finally to ROOT_ZONE_ID.
-            route_zone = getattr(_pre_delete_meta, "zone_id", None) or zone_id or ROOT_ZONE_ID
+            route_zone = (
+                (_pre_delete_meta.get("zone_id") if _pre_delete_meta else None)
+                or zone_id
+                or ROOT_ZONE_ID
+            )
             self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
             self._kernel.metastore_delete(path)
             removed = self._driver_coordinator.unmount(path, route_zone)

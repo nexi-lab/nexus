@@ -58,7 +58,7 @@ class WriteHookContext:
     is_new_file: bool = False
     content_id: str | None = None
     metadata: FileMetadata | None = None
-    old_metadata: FileMetadata | None = None
+    old_metadata: dict[str, Any] | None = None
     new_version: int = 1
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -72,7 +72,7 @@ class DeleteHookContext:
     context: OperationContext | None
     zone_id: str | None = None
     agent_id: str | None = None
-    metadata: FileMetadata | None = None
+    metadata: dict[str, Any] | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -128,7 +128,7 @@ class RmdirHookContext:
     zone_id: str | None = None
     agent_id: str | None = None
     recursive: bool = False
-    metadata: FileMetadata | None = None
+    metadata: dict[str, Any] | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -301,7 +301,7 @@ class VFSWriteBatchHook(Protocol):
 class ReadBatchHookContext:
     """Context passed through read-batch hooks (Issue #3700)."""
 
-    items: list[tuple[Any, FileMetadata | None]]  # (path, metadata_or_None)
+    items: list[tuple[Any, dict[str, Any] | None]]  # (path, metadata_dict_or_None)
     context: OperationContext | None = None
     zone_id: str | None = None
     agent_id: str | None = None

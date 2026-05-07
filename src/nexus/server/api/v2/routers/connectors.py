@@ -916,7 +916,7 @@ async def write_to_connector(
 
             # Load existing metadata so permission hooks can distinguish
             # overwrite (check WRITE on file) vs create (check WRITE on parent).
-            _old_meta = nx._kernel.metastore_get(mount_path)
+            _old_meta = nx._kernel.sys_stat(mount_path, ROOT_ZONE_ID)
 
             nx.intercept_pre_write(
                 _WHC(path=mount_path, content=data, context=write_context, old_metadata=_old_meta)

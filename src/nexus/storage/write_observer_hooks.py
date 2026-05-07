@@ -188,8 +188,8 @@ class AuditWriteInterceptor:
             "is_new": ctx.is_new_file,
             "zone_id": ctx.zone_id,
             "agent_id": ctx.agent_id,
-            "snapshot_hash": ctx.old_metadata.content_id if ctx.old_metadata else None,
-            "metadata_snapshot": ctx.old_metadata.to_dict() if ctx.old_metadata else None,
+            "snapshot_hash": ctx.old_metadata.get("content_id") if ctx.old_metadata else None,
+            "metadata_snapshot": ctx.old_metadata if ctx.old_metadata else None,
             "metadata": ctx.metadata.to_dict() if ctx.metadata else None,
         }
         self._emit(event, "write", ctx.path)
@@ -221,8 +221,8 @@ class AuditWriteInterceptor:
             "path": ctx.path,
             "zone_id": ctx.zone_id,
             "agent_id": ctx.agent_id,
-            "snapshot_hash": ctx.metadata.content_id if ctx.metadata else None,
-            "metadata_snapshot": ctx.metadata.to_dict() if ctx.metadata else None,
+            "snapshot_hash": ctx.metadata.get("content_id") if ctx.metadata else None,
+            "metadata_snapshot": ctx.metadata if ctx.metadata else None,
         }
         self._emit(event, "delete", ctx.path)
 

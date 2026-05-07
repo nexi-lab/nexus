@@ -615,13 +615,24 @@ class SearchService:
                 f"{len(cross_zone_paths) if cross_zone_paths else 0} paths"
             )
             if cross_zone_paths:
+                from nexus.contracts.metadata import FileMetadata
+
                 existing_paths = {meta.path for meta in all_files}
                 for ct_path in cross_zone_paths:
                     if ct_path not in existing_paths:
                         try:
-                            ct_meta = self._kernel.metastore_get(ct_path)
-                            if ct_meta:
-                                all_files.append(ct_meta)
+                            ct_stat = self._kernel.sys_stat(ct_path, ROOT_ZONE_ID)
+                            if ct_stat:
+                                all_files.append(
+                                    FileMetadata(
+                                        path=ct_path,
+                                        size=ct_stat.get("size", 0),
+                                        content_id=ct_stat.get("content_id"),
+                                        version=ct_stat.get("version", 1),
+                                        entry_type=ct_stat.get("entry_type", 0),
+                                        zone_id=ct_stat.get("zone_id"),
+                                    )
+                                )
                         except Exception:
                             logger.debug("Skipping deleted cross-zone path: %s", ct_path)
 

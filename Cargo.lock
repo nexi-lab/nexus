@@ -162,7 +162,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -173,7 +173,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -181,20 +181,6 @@ name = "anyhow"
 version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
-
-[[package]]
-name = "api"
-version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
-dependencies = [
- "base64",
- "reqwest 0.12.28",
- "runtime",
- "serde",
- "serde_json",
- "telemetry",
- "tokio",
-]
 
 [[package]]
 name = "arrayref"
@@ -377,7 +363,7 @@ dependencies = [
  "rcgen",
  "redb",
  "regex",
- "reqwest 0.13.3",
+ "reqwest",
  "roaring",
  "serde",
  "serde_json",
@@ -534,9 +520,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.61"
+version = "1.2.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d16d90359e986641506914ba71350897565610e87ce0ad9e6f28569db3dd5c6d"
+checksum = "a1dce859f0832a7d088c4f1119888ab94ef4b5d6795d1ce05afb7fe159d79f98"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -677,16 +663,6 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
-]
-
-[[package]]
-name = "commands"
-version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
-dependencies = [
- "plugins",
- "runtime",
- "serde_json",
 ]
 
 [[package]]
@@ -1086,7 +1062,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1470,9 +1446,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "allocator-api2",
  "equivalent",
@@ -1589,7 +1565,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
 ]
 
 [[package]]
@@ -1622,7 +1597,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tokio",
  "tower-service",
  "tracing",
@@ -1800,7 +1775,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
- "hashbrown 0.17.0",
+ "hashbrown 0.17.1",
  "serde",
  "serde_core",
 ]
@@ -1964,7 +1939,7 @@ dependencies = [
  "rcgen",
  "redb",
  "regex",
- "reqwest 0.13.3",
+ "reqwest",
  "roaring",
  "serde",
  "serde_json",
@@ -2090,7 +2065,7 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
 dependencies = [
- "hashbrown 0.17.0",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -2229,7 +2204,6 @@ dependencies = [
  "raft 0.1.0",
  "runtime",
  "services",
- "tools",
  "transport",
 ]
 
@@ -2252,7 +2226,7 @@ dependencies = [
 [[package]]
 name = "nexus-vfs-client"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=7a229b2#7a229b27b7949338b850e3b20fbdc393815d33c1"
 dependencies = [
  "prost 0.13.5",
  "protoc-bin-vendored",
@@ -2278,7 +2252,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2487,7 +2461,7 @@ dependencies = [
 [[package]]
 name = "plugins"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=7a229b2#7a229b27b7949338b850e3b20fbdc393815d33c1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2909,7 +2883,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2947,7 +2921,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -3227,46 +3201,6 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "reqwest"
-version = "0.12.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
-dependencies = [
- "base64",
- "bytes",
- "futures-channel",
- "futures-core",
- "futures-util",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "js-sys",
- "log",
- "percent-encoding",
- "pin-project-lite",
- "quinn",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sync_wrapper",
- "tokio",
- "tokio-rustls",
- "tower",
- "tower-http",
- "tower-service",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "webpki-roots",
-]
-
-[[package]]
-name = "reqwest"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62e0021ea2c22aed41653bc7e1419abb2c97e038ff2c33d0e1309e49a97deec0"
@@ -3367,7 +3301,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=7a229b2#7a229b27b7949338b850e3b20fbdc393815d33c1"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
@@ -3426,7 +3360,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3485,7 +3419,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3916,7 +3850,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4017,7 +3951,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 [[package]]
 name = "telemetry"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=7a229b2#7a229b27b7949338b850e3b20fbdc393815d33c1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4033,7 +3967,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4162,9 +4096,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.52.2"
+version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "110a78583f19d5cdb2c5ccf321d1290344e71313c6c37d43520d386027d18386"
+checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
 dependencies = [
  "bytes",
  "libc",
@@ -4356,24 +4290,6 @@ dependencies = [
  "syn",
  "tempfile",
  "tonic-build 0.14.6",
-]
-
-[[package]]
-name = "tools"
-version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
-dependencies = [
- "api",
- "async-trait",
- "commands",
- "flate2",
- "futures",
- "plugins",
- "reqwest 0.12.28",
- "runtime",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -4820,15 +4736,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "webpki-roots"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4850,7 +4757,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

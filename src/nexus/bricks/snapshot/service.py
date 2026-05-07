@@ -456,6 +456,11 @@ class TransactionalSnapshotService:
         if txn_model.status != "active":
             raise TransactionNotActiveError(transaction_id, txn_model.status)
 
+        # System context for admin cleanup operations (rollback deletes).
+        from nexus.contracts.types import OperationContext
+
+        _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+
         # Process entries in reverse order (LIFO)
         for entry in reversed(entries):
             try:
@@ -499,7 +504,7 @@ class TransactionalSnapshotService:
                 elif entry.operation == "write" and entry.original_hash is None:
                     # New file created during transaction — delete it
                     try:
-                        self._kernel.metastore_delete(entry.path)
+                        self._kernel.sys_unlink(entry.path, context=_sys_ctx)
                         if entry.new_hash:
                             self._cas_store.release(entry.new_hash)
                     except Exception:

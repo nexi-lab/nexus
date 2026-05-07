@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -42,10 +43,45 @@ class TestServerHealth:
         assert result["status"] == "healthy"
 
     @patch("httpx.Client")
+    def test_uses_public_health_without_api_key(self, mock_client_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"status": "healthy", "service": "nexus-rpc"}
+        mock_client.get.return_value = mock_resp
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        result = _server_health("http://localhost:2026")
+
+        assert result == {"status": "healthy", "service": "nexus-rpc"}
+        mock_client.get.assert_called_once_with("http://localhost:2026/health")
+
+    @patch("httpx.Client")
     def test_returns_none_on_connection_error(self, mock_client_cls: MagicMock) -> None:
         mock_client_cls.side_effect = Exception("Connection refused")
         result = _server_health("http://localhost:2026")
         assert result is None
+
+    @patch("httpx.Client")
+    def test_falls_back_to_public_health_when_detailed_times_out(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        fallback_resp = MagicMock(status_code=200)
+        fallback_resp.json.return_value = {"status": "healthy", "service": "nexus-rpc"}
+        mock_client.get.side_effect = [
+            httpx.TimeoutException("detailed health timed out"),
+            fallback_resp,
+        ]
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        result = _server_health("http://localhost:2026", api_key="sk-test")
+
+        assert result == {"status": "healthy", "service": "nexus-rpc"}
+        assert mock_client.get.call_count == 2
 
 
 # ---------------------------------------------------------------------------

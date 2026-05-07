@@ -13,7 +13,7 @@ import contextlib
 import logging
 import os
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
@@ -110,7 +110,10 @@ def _maybe_build_trigram_background(
 
     def _build() -> None:
         try:
-            from nexus_runtime import build_trigram_index_from_entries
+            from nexus._rust_compat import build_trigram_index_from_entries
+
+            if build_trigram_index_from_entries is None:
+                return
 
             entries: list[tuple[str, bytes]] = []
             for fp in file_paths:
@@ -150,9 +153,9 @@ def _ensure_trigram_index(kernel: NexusFS, file_paths: list[str], zone_id: str) 
 def _trigram_candidates(
     index_path: str, pattern: str, path: str, ignore_case: bool
 ) -> list[str] | None:
-    try:
-        from nexus_runtime import trigram_search_candidates
-    except (ImportError, OSError):
+    from nexus._rust_compat import trigram_search_candidates
+
+    if trigram_search_candidates is None:
         return None
     try:
         candidates = trigram_search_candidates(index_path, pattern, ignore_case)
@@ -163,7 +166,7 @@ def _trigram_candidates(
     if path != "/":
         prefix = path if path.endswith("/") else path + "/"
         candidates = [c for c in candidates if c.startswith(prefix) or c == path]
-    return candidates
+    return cast(list[str], candidates)
 
 
 def grep(

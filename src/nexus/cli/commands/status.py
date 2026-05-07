@@ -74,6 +74,17 @@ def _server_health(
     Falls back to the public ``/health`` endpoint when the detailed
     endpoint requires authentication and no *api_key* is provided.
     """
+
+    def public_health(client: Any) -> dict[str, Any] | None:
+        try:
+            fallback = client.get(f"{base_url}/health")
+        except Exception:
+            return None
+        if fallback.status_code == 200:
+            fb_result: dict[str, Any] = fallback.json()
+            return fb_result
+        return {"status": "error", "http_status": fallback.status_code}
+
     try:
         import httpx
 
@@ -82,17 +93,20 @@ def _server_health(
             headers["Authorization"] = f"Bearer {api_key}"
 
         with httpx.Client(timeout=timeout, headers=headers) as client:
-            resp = client.get(f"{base_url}/health/detailed")
+            if not api_key:
+                return public_health(client)
+
+            try:
+                resp = client.get(f"{base_url}/health/detailed")
+            except (httpx.TimeoutException, httpx.RequestError):
+                return public_health(client)
             if resp.status_code == 200:
                 result: dict[str, Any] = resp.json()
                 return result
             # Detailed endpoint may require admin auth — fall back to
             # the public /health endpoint so we still report "healthy".
             if resp.status_code in (401, 403):
-                fallback = client.get(f"{base_url}/health")
-                if fallback.status_code == 200:
-                    fb_result: dict[str, Any] = fallback.json()
-                    return fb_result
+                return public_health(client)
             return {"status": "error", "http_status": resp.status_code}
     except Exception:
         return None

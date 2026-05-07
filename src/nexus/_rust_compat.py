@@ -222,6 +222,12 @@ hash_content_smart_py = _get("hash_content_smart_py")
 read_file = _get("read_file")
 read_files_bulk = _get("read_files_bulk")
 
+# ReBAC helpers
+compute_permission_single = _get("compute_permission_single")
+compute_permissions_bulk = _get("compute_permissions_bulk")
+expand_subjects = _get("expand_subjects")
+list_objects_for_subject = _get("list_objects_for_subject")
+
 # Mount table helpers
 canonicalize_path = _get("canonicalize_path")
 extract_zone_id = _get("extract_zone_id")
@@ -231,6 +237,24 @@ grep_bulk = _get("grep_bulk")
 grep_files_mmap = _get("grep_files_mmap")
 glob_match_bulk = _get("glob_match_bulk")
 
+# Trigram search
+build_trigram_index = _get("build_trigram_index")
+build_trigram_index_from_entries = _get("build_trigram_index_from_entries")
+invalidate_trigram_cache = _get("invalidate_trigram_cache")
+trigram_grep = _get("trigram_grep")
+trigram_index_stats = _get("trigram_index_stats")
+trigram_search_candidates = _get("trigram_search_candidates")
+
 # Prefix / bitmap helpers (Issue #3951)
 any_path_starts_with = _get("any_path_starts_with")
 batch_prefix_check = _get("batch_prefix_check")
+filter_paths_by_prefix = _get("filter_paths_by_prefix")
+
+# Tiger bitmap helpers
+any_path_accessible_tiger_cache = _get("any_path_accessible_tiger_cache")
+check_permission_bitmap = _get("check_permission_bitmap")
+check_permission_bitmap_batch = _get("check_permission_bitmap_batch")
+filter_paths_with_tiger_cache = _get("filter_paths_with_tiger_cache")
+filter_paths_with_tiger_cache_parallel = _get("filter_paths_with_tiger_cache_parallel")
+intersect_paths_with_tiger_cache = _get("intersect_paths_with_tiger_cache")
+tiger_cache_bitmap_stats = _get("tiger_cache_bitmap_stats")

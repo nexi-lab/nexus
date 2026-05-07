@@ -258,6 +258,53 @@ class TestUpCommand:
             assert result.exit_code != 0
             assert "not found" in result.output
 
+    def test_build_uses_local_image_ref_for_compose_build(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        data_dir = tmp_path / "nexus-data"
+        compose_path = tmp_path / "nexus-stack.yml"
+        compose_path.write_text(
+            yaml.dump(
+                {
+                    "services": {
+                        "nexus": {
+                            "image": "${NEXUS_IMAGE_REF:-ghcr.io/nexi-lab/nexus:latest}",
+                            "build": {"context": ".", "dockerfile": "Dockerfile"},
+                        }
+                    }
+                }
+            )
+        )
+        cfg_path = tmp_path / "nexus.yaml"
+        with open(cfg_path, "w") as f:
+            yaml.dump(
+                {
+                    "preset": "shared",
+                    "data_dir": str(data_dir),
+                    "compose_file": str(compose_path),
+                    "compose_profiles": [],
+                    "services": [],
+                    "ports": {},
+                    "image_ref": "ghcr.io/nexi-lab/nexus:latest",
+                },
+                f,
+            )
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with (
+            patch(_CONFIG_PATCH, (str(cfg_path),)),
+            patch(
+                "nexus.cli.commands.stack._run_compose", return_value=mock_result
+            ) as mock_compose,
+        ):
+            result = runner.invoke(up, ["--build", "--no-detach"])
+
+        assert result.exit_code == 0
+        compose_env = mock_compose.call_args.kwargs["extra_env"]
+        project_hash = compose_env["COMPOSE_PROJECT_NAME"].split("-")[-1]
+        assert compose_env["NEXUS_IMAGE_REF"] == f"nexus:local-{project_hash}"
+
 
 # ---------------------------------------------------------------------------
 # _derive_project_env tests

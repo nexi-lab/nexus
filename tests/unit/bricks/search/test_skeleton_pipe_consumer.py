@@ -1,6 +1,8 @@
 """Tests for DT_PIPE-backed skeleton indexing consumer."""
 
 import asyncio
+import contextlib
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -19,6 +21,18 @@ class _FakeIndexer:
 
     async def delete_file(self, *, path_id: str | None, virtual_path: str, zone_id: str) -> None:
         return None
+
+
+class _RecordingIndexer:
+    def __init__(self) -> None:
+        self.indexed: list[str] = []
+        self.deleted: list[str] = []
+
+    async def index_file(self, *, path_id: str | None, virtual_path: str, zone_id: str) -> None:
+        self.indexed.append(virtual_path)
+
+    async def delete_file(self, *, path_id: str | None, virtual_path: str, zone_id: str) -> None:
+        self.deleted.append(virtual_path)
 
 
 def _indexer() -> "SkeletonIndexer":
@@ -53,6 +67,12 @@ class _FakeNx:
     def sys_write(self, path: str, data: bytes, *, context: Any | None = None) -> dict[str, Any]:
         self.write_calls.append((path, data, context))
         return {"path": path, "bytes_written": len(data)}
+
+
+class _SlowReadNx:
+    def sys_read(self, path: str, *, context: Any | None = None) -> bytes:
+        time.sleep(0.15)
+        return b""
 
 
 @pytest.mark.asyncio
@@ -103,3 +123,38 @@ async def test_flush_uses_system_context_for_pipe_writes() -> None:
     finally:
         await consumer.stop()
         await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skips_internal_pipe_paths() -> None:
+    indexer = _RecordingIndexer()
+    consumer = SkeletonPipeConsumer(indexer=cast("SkeletonIndexer", indexer))
+
+    await consumer._dispatch_single(  # noqa: SLF001
+        {
+            "type": "write",
+            "path": "/nexus/pipes/skeleton-writes",
+            "path_id": None,
+            "zone_id": "root",
+        }
+    )
+
+    assert indexer.indexed == []
+    assert indexer.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_consumer_does_not_block_event_loop_while_waiting_for_pipe() -> None:
+    consumer = SkeletonPipeConsumer(indexer=_indexer())
+    consumer.bind_fs(_SlowReadNx())
+
+    task = asyncio.create_task(consumer._consume())  # noqa: SLF001
+    started = asyncio.get_running_loop().time()
+    try:
+        await asyncio.sleep(0.01)
+        elapsed = asyncio.get_running_loop().time() - started
+        assert elapsed < 0.08
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

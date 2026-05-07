@@ -177,6 +177,12 @@ def _docker_build_args(extra_env: dict[str, str]) -> list[str]:
     ]
 
 
+def _local_build_image_ref(compose_env: dict[str, str]) -> str:
+    """Return the per-project image tag used for local Docker builds."""
+    project_hash = compose_env["COMPOSE_PROJECT_NAME"].split("-")[-1]
+    return f"nexus:local-{project_hash}"
+
+
 def _resolve_profiles(
     config: dict[str, Any],
     cli_addons: tuple[str, ...] = (),
@@ -951,11 +957,10 @@ def up(
 
     # When --build is requested, build with a local-only tag
     if build:
-        project_hash = compose_env["COMPOSE_PROJECT_NAME"].split("-")[-1]
-        local_tag = f"nexus:local-{project_hash}"
+        local_tag = _local_build_image_ref(compose_env)
 
         if _compose_has_build(cf):
-            compose_env.pop("NEXUS_IMAGE_REF", None)
+            compose_env["NEXUS_IMAGE_REF"] = local_tag
             effective_build_mode = "local"
             effective_image_used = local_tag
         else:
@@ -1382,7 +1387,7 @@ def restart(build: bool | None) -> None:
     # Same --build / --pull logic as `up`
     if build:
         if _compose_has_build(cf):
-            compose_env.pop("NEXUS_IMAGE_REF", None)
+            compose_env["NEXUS_IMAGE_REF"] = _local_build_image_ref(compose_env)
         else:
             console.print(
                 "[nexus.warning]Warning:[/nexus.warning] --build ignored — compose file "

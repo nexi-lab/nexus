@@ -39,6 +39,20 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
         "grep_files_mmap",
         "glob_match_bulk",
     ),
+    "trigram": (
+        "build_trigram_index",
+        "build_trigram_index_from_entries",
+        "invalidate_trigram_cache",
+        "trigram_grep",
+        "trigram_index_stats",
+        "trigram_search_candidates",
+    ),
+    "rebac": (
+        "compute_permission_single",
+        "compute_permissions_bulk",
+        "expand_subjects",
+        "list_objects_for_subject",
+    ),
     "storage": (
         "BloomFilter",
         "BlobPackEngine",
@@ -46,6 +60,16 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     "prefix": (
         "any_path_starts_with",
         "batch_prefix_check",
+        "filter_paths_by_prefix",
+    ),
+    "tiger": (
+        "any_path_accessible_tiger_cache",
+        "check_permission_bitmap",
+        "check_permission_bitmap_batch",
+        "filter_paths_with_tiger_cache",
+        "filter_paths_with_tiger_cache_parallel",
+        "intersect_paths_with_tiger_cache",
+        "tiger_cache_bitmap_stats",
     ),
 }
 

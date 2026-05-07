@@ -1161,26 +1161,6 @@ impl PyKernel {
         self.inner.metastore_delete(path).map_err(Into::into)
     }
 
-    fn metastore_list(&self, py: Python<'_>, prefix: &str) -> PyResult<Vec<Py<PyAny>>> {
-        let items = self
-            .inner
-            .metastore_list(prefix)
-            .map_err::<PyErr, _>(Into::into)?;
-        let mut result = Vec::with_capacity(items.len());
-        for meta in &items {
-            result.push(
-                to_python_metadata(py, meta)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?
-                    .into(),
-            );
-        }
-        Ok(result)
-    }
-
-    fn metastore_exists(&self, path: &str) -> PyResult<bool> {
-        self.inner.metastore_exists(path).map_err(Into::into)
-    }
-
     fn metastore_get_batch(
         &self,
         py: Python<'_>,
@@ -1202,48 +1182,6 @@ impl PyKernel {
             }
         }
         Ok(result)
-    }
-
-    /// Auxiliary per-path metadata storage (e.g. ``parsed_text``,
-    /// ``parser_name``). Values are UTF-8 strings; callers that want
-    /// to store structured data JSON-encode at this boundary — no
-    /// opaque bytes cross the GIL.
-    fn metastore_set_file_metadata(&self, path: &str, key: &str, value: String) -> PyResult<()> {
-        self.inner
-            .metastore_set_file_metadata(path, key, value)
-            .map_err(Into::into)
-    }
-
-    fn metastore_get_file_metadata(&self, path: &str, key: &str) -> PyResult<Option<String>> {
-        self.inner
-            .metastore_get_file_metadata(path, key)
-            .map_err(Into::into)
-    }
-
-    fn metastore_get_file_metadata_bulk(
-        &self,
-        py: Python<'_>,
-        paths: Vec<String>,
-        key: &str,
-    ) -> PyResult<Py<PyAny>> {
-        let pairs = self
-            .inner
-            .metastore_get_file_metadata_bulk(&paths, key)
-            .map_err::<PyErr, _>(Into::into)?;
-        let dict = PyDict::new(py);
-        for (path, value) in pairs {
-            match value {
-                Some(text) => dict.set_item(path, text)?,
-                None => dict.set_item(path, py.None())?,
-            }
-        }
-        Ok(dict.into())
-    }
-
-    fn metastore_is_implicit_directory(&self, path: &str) -> PyResult<bool> {
-        self.inner
-            .metastore_is_implicit_directory(path)
-            .map_err(Into::into)
     }
 
     #[pyo3(signature = (prefix, recursive=true, limit=1000, cursor=None))]

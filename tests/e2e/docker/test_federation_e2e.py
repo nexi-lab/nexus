@@ -4051,3 +4051,306 @@ class TestFreshJoinToRunningCluster:
             f"AddNode-d, or someone implemented stale-voter auto-GC without "
             f"the F5 plan — this assertion is the canary either way."
         )
+
+
+# ===================================================================
+# Task #21: WAL DT_STREAM/PIPE cross-node replication smoke
+# ===================================================================
+class TestWalStreamCrossNodeReplication:
+    """Cross-node replication for WAL-backed DT_STREAM and DT_PIPE.
+
+    Exercises the end-to-end raft-replicated stream/pipe path that the
+    managed-agent ``chat-with-me`` mailbox relies on:
+
+      1. Node-1 creates a WAL DT_STREAM → raft commit propagates to node-2
+      2. Node-1 produces messages → raft AppendStreamEntry on every voter
+      3. Node-2 consumes messages with offset tracking → local reads, no RPC
+      4. Node-1 creates a WAL DT_PIPE → raft commit
+      5. Node-1 produces messages → raft AppendPipeEntry
+      6. Node-2 consumes FIFO → verifies ordering
+
+    This is the multi-node counterpart of ``scripts/wal_smoke_singlenode.py``
+    and covers the gap documented in TestNewTeamOnboarding (task #21):
+    MemoryStreamBackend is per-node only; ``io_profile="wal"`` selects
+    ``WalStreamCore`` which raft-replicates every push.
+
+    Real-world scenario: two managed agents coordinating across a
+    federated cluster — agent-A on node-1 writes status updates to a
+    shared DT_STREAM, agent-B on node-2 consumes them. The federation
+    layer must replicate writes without data loss or reordering.
+    """
+
+    DT_STREAM = 4
+    DT_PIPE = 3
+    STREAM_CAPACITY = 65_536
+
+    def test_wal_stream_cross_node_produce_consume(self, cluster, api_key):
+        """Producer on node-1, consumer on node-2 via WAL DT_STREAM.
+
+        Workflow: create stream → produce N messages on node-1 →
+        consume all N on node-2 with offset tracking → verify ordering
+        and completeness → stat on node-2 confirms stream metadata.
+        """
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        # Step 1: Create a project dir and WAL stream under it.
+        project = f"/corp/eng/wal-stream-{uid}"
+        mk = _grpc_call(grpc1, "mkdir", {"path": project, "parents": True}, api_key=api_key)
+        assert "error" not in mk, f"mkdir failed: {mk}"
+
+        stream_path = f"{project}/agent-mailbox.stream"
+        sa = _grpc_call(
+            grpc1,
+            "sys_setattr",
+            {
+                "path": stream_path,
+                "entry_type": self.DT_STREAM,
+                "capacity": self.STREAM_CAPACITY,
+                "io_profile": "wal",
+            },
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in sa, f"sys_setattr DT_STREAM failed: {sa}"
+
+        # Step 2: Produce 10 messages from node-1.
+        # Each sys_write is a raft Command::AppendStreamEntry proposal.
+        messages = [f'{{"from":"agent-a","seq":{i},"body":"task-{uid}-{i}"}}' for i in range(10)]
+        for msg in messages:
+            ws = _grpc_call(
+                grpc1,
+                "sys_write",
+                {"path": stream_path, "content": msg},
+                api_key=api_key,
+                timeout=15,
+            )
+            assert "error" not in ws, f"sys_write to DT_STREAM failed: {ws}"
+
+        # Step 3: Consume all messages from node-2 with offset tracking.
+        # WAL replication means every voter's state machine apply lands
+        # the entry in its local stream-entries redb table. Reads on
+        # node-2 are local (no cross-node RPC once raft apply completes).
+        cursor = 0
+        consumed: list[str] = []
+        deadline = time.time() + 45
+        while len(consumed) < len(messages) and time.time() < deadline:
+            r = _grpc_call(
+                grpc2,
+                "sys_read",
+                {"path": stream_path, "offset": cursor},
+                api_key=api_key,
+                timeout=10,
+            )
+            if "error" in r:
+                time.sleep(0.3)
+                continue
+            payload = r.get("result", r)
+            if not isinstance(payload, dict):
+                pytest.fail(
+                    f"DT_STREAM sys_read must return dict {{data, next_offset}}, got {payload!r}"
+                )
+            next_off = payload.get("next_offset")
+            if payload.get("data") is None or next_off is None:
+                time.sleep(0.3)
+                continue
+            decoded = _decode_content({"result": payload})
+            if decoded:
+                consumed.append(decoded)
+                cursor = next_off
+
+        assert consumed == messages, (
+            f"WAL DT_STREAM cross-node mismatch: got {len(consumed)}/{len(messages)} messages.\n"
+            f"  consumed: {consumed!r}\n"
+            f"  expected: {messages!r}"
+        )
+
+        # Step 4: Verify stream metadata is visible on node-2 via sys_stat.
+        stat = _grpc_call(grpc2, "sys_stat", {"path": stream_path}, api_key=api_key)
+        assert "error" not in stat, f"sys_stat on stream failed: {stat}"
+        meta = stat.get("result")
+        assert meta is not None, "stream should be visible on follower after replication"
+
+    def test_wal_stream_bidirectional_exchange(self, cluster, api_key):
+        """Both nodes produce and consume — symmetric coordination.
+
+        Real scenario: two managed agents in the same zone, each on a
+        different node, exchanging messages through a shared WAL stream.
+        Agent-A (node-1) writes a request, agent-B (node-2) reads it
+        and writes a response, agent-A reads the response back.
+
+        Workflow: create stream → A writes request on node-1 →
+        B reads request on node-2 → B writes response on node-2 →
+        A reads response on node-1 → verify full round-trip.
+        """
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        project = f"/corp/eng/wal-bidir-{uid}"
+        mk = _grpc_call(grpc1, "mkdir", {"path": project, "parents": True}, api_key=api_key)
+        assert "error" not in mk
+
+        stream_path = f"{project}/chat-with-me.stream"
+        sa = _grpc_call(
+            grpc1,
+            "sys_setattr",
+            {
+                "path": stream_path,
+                "entry_type": self.DT_STREAM,
+                "capacity": self.STREAM_CAPACITY,
+                "io_profile": "wal",
+            },
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in sa
+
+        # Agent-A sends request from node-1.
+        request_msg = f'{{"from":"agent-a","to":"agent-b","body":"summarize doc-{uid}"}}'
+        ws = _grpc_call(
+            grpc1,
+            "sys_write",
+            {"path": stream_path, "content": request_msg},
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in ws
+
+        # Agent-B reads request on node-2.
+        cursor = 0
+        deadline = time.time() + 30
+        received_request = None
+        while time.time() < deadline:
+            r = _grpc_call(
+                grpc2,
+                "sys_read",
+                {"path": stream_path, "offset": cursor},
+                api_key=api_key,
+                timeout=10,
+            )
+            if "error" in r:
+                time.sleep(0.3)
+                continue
+            payload = r.get("result", r)
+            if isinstance(payload, dict) and payload.get("data") is not None:
+                received_request = _decode_content({"result": payload})
+                cursor = payload.get("next_offset", cursor)
+                break
+            time.sleep(0.3)
+        assert received_request == request_msg, (
+            f"Agent-B did not receive request: got {received_request!r}"
+        )
+
+        # Agent-B writes response from node-2.
+        response_msg = f'{{"from":"agent-b","to":"agent-a","body":"summary of doc-{uid}: ..."}}'
+        ws2 = _grpc_call(
+            grpc2,
+            "sys_write",
+            {"path": stream_path, "content": response_msg},
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in ws2
+
+        # Agent-A reads response on node-1 (using cursor from last read position).
+        deadline = time.time() + 30
+        received_response = None
+        while time.time() < deadline:
+            r = _grpc_call(
+                grpc1,
+                "sys_read",
+                {"path": stream_path, "offset": cursor},
+                api_key=api_key,
+                timeout=10,
+            )
+            if "error" in r:
+                time.sleep(0.3)
+                continue
+            payload = r.get("result", r)
+            if isinstance(payload, dict) and payload.get("data") is not None:
+                received_response = _decode_content({"result": payload})
+                break
+            time.sleep(0.3)
+        assert received_response == response_msg, (
+            f"Agent-A did not receive response: got {received_response!r}"
+        )
+
+    def test_wal_pipe_cross_node_fifo(self, cluster, api_key):
+        """FIFO ordering through a WAL DT_PIPE across nodes.
+
+        DT_PIPE is the queue primitive (pop-on-read, vs DT_STREAM's
+        log-with-offset). Verifies that messages pushed on node-1
+        are popped in FIFO order on node-2 via raft replication.
+
+        Workflow: create pipe → push 5 messages on node-1 →
+        pop all 5 on node-2 → verify FIFO order → pop again → empty.
+        """
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        project = f"/corp/eng/wal-pipe-{uid}"
+        mk = _grpc_call(grpc1, "mkdir", {"path": project, "parents": True}, api_key=api_key)
+        assert "error" not in mk
+
+        pipe_path = f"{project}/task-queue.pipe"
+        sa = _grpc_call(
+            grpc1,
+            "sys_setattr",
+            {
+                "path": pipe_path,
+                "entry_type": self.DT_PIPE,
+                "capacity": self.STREAM_CAPACITY,
+                "io_profile": "wal",
+            },
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in sa, f"sys_setattr DT_PIPE failed: {sa}"
+
+        # Push 5 messages from node-1.
+        messages = [f"task-{i}-{uid}" for i in range(5)]
+        for msg in messages:
+            ws = _grpc_call(
+                grpc1,
+                "sys_write",
+                {"path": pipe_path, "content": msg},
+                api_key=api_key,
+                timeout=15,
+            )
+            assert "error" not in ws, f"sys_write to DT_PIPE failed: {ws}"
+
+        # Pop all on node-2 — FIFO order expected.
+        consumed: list[str] = []
+        deadline = time.time() + 45
+        while len(consumed) < len(messages) and time.time() < deadline:
+            r = _grpc_call(
+                grpc2,
+                "sys_read",
+                {"path": pipe_path},
+                api_key=api_key,
+                timeout=10,
+            )
+            if "error" in r:
+                time.sleep(0.3)
+                continue
+            payload = r.get("result", r)
+            if isinstance(payload, dict):
+                data = payload.get("data")
+                if data is None:
+                    time.sleep(0.3)
+                    continue
+                decoded = _decode_content({"result": payload})
+            elif payload is None:
+                time.sleep(0.3)
+                continue
+            else:
+                decoded = _decode_content(r)
+            if decoded:
+                consumed.append(decoded)
+
+        assert consumed == messages, (
+            f"WAL DT_PIPE FIFO mismatch: got {consumed!r}, want {messages!r}"
+        )

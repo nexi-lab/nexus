@@ -189,9 +189,8 @@ primitives (§4) into user-facing operations. NexusFS contains **no service
 business logic**.
 
 All kernel methods are synchronous (`def`, not `async def`). Blocking
-waits (advisory locks, stream reads) use Rust Condvar with GIL release.
-Exception: `sys_watch` uses asyncio futures to wait for file events.
-Async exists only at the transport layer (gRPC, HTTP).
+waits (advisory locks, stream reads, `sys_watch`) use Rust Condvar with
+GIL release. Async exists only at the transport layer (gRPC, HTTP).
 
 Kernel syscalls, all POSIX-aligned, all path-addressed:
 

@@ -163,8 +163,20 @@ must NOT hold locks when calling `sys_copy`.
 
 ### 4.6 sys_watch: File change notification (inotify)
 
-Waits for file changes with timeout. Returns `FileEvent` dict or `None` on
-timeout. Supports recursive watching. Backed by `FileWatcher` kernel primitive.
+Waits for file changes matching a glob pattern with timeout. Returns `FileEvent`
+or `None` on timeout. Backed by `FileWatchRegistry` (`rust/kernel/src/core/file_watch.rs`).
+
+Implementation: `parking_lot::Condvar` per watch + `Mutex<Vec<FileEvent>>` inbox.
+Every mutation syscall calls `dispatch_observers` → `notify_match`, waking all
+matching watchers. Cost when no watches registered: single `RwLock` read (~50ns).
+
+Available on all kernel surfaces:
+- **Rust in-process**: `KernelAbi::sys_watch(pattern, timeout_ms)` — managed-agent
+  runtimes use this to replace polling with event-driven blocking on
+  `/proc/{pid}/chat-with-me` mailboxes
+- **Python**: `PyKernel.sys_watch(pattern, timeout_ms)` — releases GIL via
+  `py.detach()` during the blocking wait
+- **gRPC/RPC**: `WatchMixin.sys_watch` → `sys_watch` Call RPC
 
 ### 4.7 Hash-addressed ops: Driver level, not kernel
 

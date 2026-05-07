@@ -16,6 +16,10 @@
 //! Kernel struct + syscalls — pure Rust kernel boundary.
 
 use crate::core::permission_cache::PermissionLeaseCache;
+use crate::dispatch::ops_registry::{
+    BackendKind, CatHandlerKind, FileType, FingerprintHandlerKind, GrepHandlerKind, OpHandler,
+    OpKey, OpName, OpsRegistry,
+};
 use crate::dispatch::{MutationObserver, PermissionProvider, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
@@ -178,6 +182,20 @@ pub struct SysReadResult {
     /// DT_STREAM: next read offset (message index) for cursor advancement.
     /// None for non-stream entry types.
     pub stream_next_offset: Option<usize>,
+}
+
+pub struct SysCatResult {
+    pub data: Vec<u8>,
+    pub handler: String,
+    pub filetype: FileType,
+    pub backend: BackendKind,
+}
+
+pub struct OpMetadataResult {
+    pub filetype: FileType,
+    pub backend: BackendKind,
+    pub mime_type: Option<String>,
+    pub backend_name: String,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -615,6 +633,7 @@ pub struct Kernel {
     pub(crate) agent_registry: Arc<crate::core::agents::registry::AgentRegistry>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
+    pub(crate) ops_registry: OpsRegistry,
     // Per-mount metastores now live inside `VFSRouter::entries` as
     // `MountEntry::metastore: Option<Arc<dyn MetaStore>>` (our v20
     // SSOT cleanup — kept against develop's legacy split map).
@@ -772,6 +791,7 @@ impl Kernel {
             file_watches: Arc::new(FileWatchRegistry::new()),
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
+            ops_registry: OpsRegistry::new(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: RwLock::new(NativeHookRegistry::new()),
@@ -807,7 +827,44 @@ impl Kernel {
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
+        k.register_default_ops();
         k
+    }
+
+    fn register_default_ops(&self) {
+        self.ops_registry
+            .register(
+                OpKey::new(OpName::new("cat"), None, None),
+                OpHandler::Cat(CatHandlerKind::Default),
+            )
+            .expect("default cat handler registration must be unique");
+        self.ops_registry
+            .register(
+                OpKey::new(OpName::new("cat"), Some(FileType::Json), None),
+                OpHandler::Cat(CatHandlerKind::JsonPretty),
+            )
+            .expect("json cat handler registration must be unique");
+        self.ops_registry
+            .register(
+                OpKey::new(OpName::new("grep"), None, None),
+                OpHandler::Grep(GrepHandlerKind::Default),
+            )
+            .expect("default grep handler registration must be unique");
+        self.ops_registry
+            .register(
+                OpKey::new(OpName::new("fingerprint"), None, Some(BackendKind::S3)),
+                OpHandler::Fingerprint(FingerprintHandlerKind::S3),
+            )
+            .expect("s3 fingerprint handler registration must be unique");
+    }
+
+    pub fn resolve_op_handler(
+        &self,
+        op: &str,
+        filetype: &FileType,
+        backend: &BackendKind,
+    ) -> Option<OpHandler> {
+        self.ops_registry.resolve(op, filetype, backend)
     }
 
     // ── Lock Manager wiring ──────────────────────────────────────────
@@ -2748,14 +2805,18 @@ pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::abc::object_store::{ObjectStore, StorageError, WriteResult};
+    use parking_lot::Mutex;
+    use std::collections::HashMap;
+
     use super::*;
 
     #[derive(Default)]
     struct TestObjectStore {
-        blobs: parking_lot::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+        blobs: Mutex<HashMap<String, Vec<u8>>>,
     }
 
-    impl crate::abc::object_store::ObjectStore for TestObjectStore {
+    impl ObjectStore for TestObjectStore {
         fn name(&self) -> &str {
             "test"
         }
@@ -2766,8 +2827,7 @@ mod tests {
             content_id: &str,
             _ctx: &OperationContext,
             offset: u64,
-        ) -> Result<crate::abc::object_store::WriteResult, crate::abc::object_store::StorageError>
-        {
+        ) -> Result<WriteResult, StorageError> {
             let key = content_id.to_string();
             let mut blobs = self.blobs.lock();
             let mut data = if offset > 0 {
@@ -2786,7 +2846,7 @@ mod tests {
             data[start..end].copy_from_slice(content);
             let size = data.len() as u64;
             blobs.insert(key.clone(), data);
-            Ok(crate::abc::object_store::WriteResult {
+            Ok(WriteResult {
                 content_id: key.clone(),
                 version: key,
                 size,
@@ -2797,44 +2857,36 @@ mod tests {
             &self,
             content_id: &str,
             _ctx: &OperationContext,
-        ) -> Result<Vec<u8>, crate::abc::object_store::StorageError> {
+        ) -> Result<Vec<u8>, StorageError> {
             self.blobs
                 .lock()
                 .get(content_id)
                 .cloned()
-                .ok_or_else(|| crate::abc::object_store::StorageError::NotFound(content_id.into()))
+                .ok_or_else(|| StorageError::NotFound(content_id.into()))
         }
 
-        fn delete_file(&self, path: &str) -> Result<(), crate::abc::object_store::StorageError> {
+        fn delete_file(&self, path: &str) -> Result<(), StorageError> {
             self.blobs.lock().remove(path);
             Ok(())
         }
 
-        fn get_content_size(
-            &self,
-            content_id: &str,
-        ) -> Result<u64, crate::abc::object_store::StorageError> {
+        fn get_content_size(&self, content_id: &str) -> Result<u64, StorageError> {
             self.blobs
                 .lock()
                 .get(content_id)
                 .map(|data| data.len() as u64)
-                .ok_or_else(|| crate::abc::object_store::StorageError::NotFound(content_id.into()))
+                .ok_or_else(|| StorageError::NotFound(content_id.into()))
         }
 
-        fn copy_file(
-            &self,
-            src_path: &str,
-            dst_path: &str,
-        ) -> Result<crate::abc::object_store::WriteResult, crate::abc::object_store::StorageError>
-        {
+        fn copy_file(&self, src_path: &str, dst_path: &str) -> Result<WriteResult, StorageError> {
             let mut blobs = self.blobs.lock();
             let data = blobs
                 .get(src_path)
                 .cloned()
-                .ok_or_else(|| crate::abc::object_store::StorageError::NotFound(src_path.into()))?;
+                .ok_or_else(|| StorageError::NotFound(src_path.into()))?;
             let size = data.len() as u64;
             blobs.insert(dst_path.to_string(), data);
-            Ok(crate::abc::object_store::WriteResult {
+            Ok(WriteResult {
                 content_id: dst_path.to_string(),
                 version: dst_path.to_string(),
                 size,
@@ -2844,7 +2896,7 @@ mod tests {
 
     fn kernel_with_root_backend() -> Kernel {
         let k = Kernel::new();
-        let backend: std::sync::Arc<dyn crate::abc::object_store::ObjectStore> =
+        let backend: std::sync::Arc<dyn ObjectStore> =
             std::sync::Arc::new(TestObjectStore::default());
         k.add_mount(
             "/",
@@ -3024,6 +3076,62 @@ mod tests {
         assert_eq!(second[0].gen, 2);
         assert_eq!(k.sys_stat("/a.txt", "root").unwrap().gen, 2);
         assert_eq!(k.sys_stat("/b.txt", "root").unwrap().gen, 1);
+    }
+
+    #[test]
+    fn sys_cat_pretty_prints_json_without_changing_sys_read() {
+        let k = kernel_with_root_backend();
+        let ctx = OperationContext::new("system", "root", true, None, true);
+        let write = k
+            .sys_write("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
+            .unwrap();
+        assert!(write.hit);
+        let raw = k.sys_read("/doc.json", &ctx, 5000, 0).unwrap();
+        assert_eq!(raw.data.unwrap(), br#"{"b":2,"a":1}"#);
+
+        let cat = k.sys_cat("/doc.json", &ctx, true).unwrap();
+        assert_eq!(cat.data, b"{\n  \"a\": 1,\n  \"b\": 2\n}\n");
+        assert_eq!(cat.filetype.as_str(), "json");
+    }
+
+    #[test]
+    fn sys_cat_returns_raw_bytes_for_unknown_filetype() {
+        let k = kernel_with_root_backend();
+        let ctx = OperationContext::new("system", "root", true, None, true);
+        let write = k.sys_write("/plain.bin", &ctx, b"abc", 0).unwrap();
+        assert!(write.hit);
+
+        let cat = k.sys_cat("/plain.bin", &ctx, true).unwrap();
+        assert_eq!(cat.data, b"abc");
+        assert_eq!(cat.handler, "cat/default");
+    }
+
+    #[test]
+    fn sys_cat_uses_backend_fallback_when_metadata_is_missing() {
+        let k = Kernel::new();
+        let backend = std::sync::Arc::new(TestObjectStore::default());
+        backend
+            .blobs
+            .lock()
+            .insert("loose.json".to_string(), br#"{"z":0}"#.to_vec());
+        let mounted: std::sync::Arc<dyn ObjectStore> = backend;
+        k.add_mount(
+            "/",
+            contracts::ROOT_ZONE_ID,
+            Some(mounted),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let ctx = OperationContext::new("system", "root", true, None, true);
+
+        let raw = k.sys_read("/loose.json", &ctx, 5000, 0).unwrap();
+        assert_eq!(raw.data.unwrap(), br#"{"z":0}"#);
+
+        let cat = k.sys_cat("/loose.json", &ctx, true).unwrap();
+        assert_eq!(cat.data, b"{\n  \"z\": 0\n}\n");
+        assert_eq!(cat.filetype.as_str(), "json");
     }
 
     // ── §11 OBSERVE ThreadPool tests ───────────────────────────────

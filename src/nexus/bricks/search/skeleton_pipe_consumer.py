@@ -25,7 +25,7 @@ import contextlib
 import json
 import logging
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.contracts.types import OperationContext
 
@@ -237,15 +237,18 @@ class SkeletonPipeConsumer:
 
         def _read() -> bytes:
             try:
-                return nx.sys_read(
-                    _SKELETON_PIPE_PATH,
-                    context=self._pipe_context,
-                    timeout_ms=0,
+                return cast(
+                    bytes,
+                    nx.sys_read(
+                        _SKELETON_PIPE_PATH,
+                        context=self._pipe_context,
+                        timeout_ms=0,
+                    ),
                 )
             except TypeError as exc:
                 if "timeout_ms" not in str(exc):
                     raise
-                return nx.sys_read(_SKELETON_PIPE_PATH, context=self._pipe_context)
+                return cast(bytes, nx.sys_read(_SKELETON_PIPE_PATH, context=self._pipe_context))
 
         return await asyncio.to_thread(_read)
 

@@ -175,8 +175,10 @@ services:
       # Set to 'false' to disable permission checks at runtime
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
 
-      # uvloop - disable for debugging compatibility issues
-      NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
+      # uvloop remains opt-in in Docker: Python 3.14 + uvloop can hang
+      # HTTP request servicing after startup on some local container runtimes.
+      NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-false}
+      NEXUS_DEBUG_STACK_DUMP: ${NEXUS_DEBUG_STACK_DUMP:-false}
 
       # Admin bypass (allows admin users to bypass ReBAC checks)
       # Set to 'false' for stricter security in production

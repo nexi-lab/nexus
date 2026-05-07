@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -32,8 +33,6 @@ from nexus.contracts.operation_types import OperationType
 from nexus.services.event_bus.types import FileEvent, FileEventType
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
     from nexus.services.event_log.exporter_registry import ExporterRegistry
     from nexus.storage.record_store import RecordStoreABC
 
@@ -52,6 +51,15 @@ _OP_TO_EVENT_TYPE: dict[str, FileEventType] = {
     OperationType.CHGRP: FileEventType.METADATA_CHANGE,
     OperationType.SETFACL: FileEventType.METADATA_CHANGE,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingDelivery:
+    """Detached operation_log row data safe to use outside a DB session."""
+
+    event: FileEvent
+    operation_id: str
+    retry_count: int
 
 
 class EventDeliveryWorker:
@@ -176,11 +184,44 @@ class EventDeliveryWorker:
         Returns:
             Number of events successfully dispatched.
         """
+        pending = await asyncio.to_thread(self._load_pending_deliveries)
+        if not pending:
+            return 0
+        dispatched_ids: list[str] = []
+
+        # 1. Dispatch events to EventBus + webhooks, ordered per zone (#2755).
+        #    Group by zone_id and dispatch sequentially within each zone
+        #    (parallel across zones is safe — no cross-zone causal deps).
+        def zone_key(item: _PendingDelivery) -> str:
+            return item.event.zone_id or ROOT_ZONE_ID
+
+        sorted_items = sorted(pending, key=zone_key)
+        from itertools import groupby
+
+        for _zone_id, zone_group in groupby(sorted_items, key=zone_key):
+            for item in zone_group:
+                try:
+                    await self._dispatch_event_internal(item.event, item)
+                    dispatched_ids.append(item.operation_id)
+                    self._total_dispatched += 1
+                except Exception as exc:
+                    await asyncio.to_thread(self._handle_dispatch_failure, item, exc)
+
+        # 2. Dispatch batch to external exporters (parallel)
+        if self._exporter_registry and self._exporter_registry.exporter_names:
+            await self._dispatch_to_exporters(pending)
+
+        # Mark successfully dispatched rows as delivered
+        if dispatched_ids:
+            await asyncio.to_thread(self._mark_delivered, dispatched_ids)
+
+        return len(dispatched_ids)
+
+    def _load_pending_deliveries(self) -> list[_PendingDelivery]:
+        """Load pending operation_log rows without blocking the event loop."""
         from sqlalchemy import select
 
         from nexus.storage.models.operation_log import OperationLogModel
-
-        dispatched_ids: list[str] = []
 
         with self._session_factory() as session:
             # Build SELECT ... WHERE delivered = FALSE ORDER BY sequence_number
@@ -198,46 +239,14 @@ class EventDeliveryWorker:
                 stmt = stmt.with_for_update(skip_locked=True)
 
             rows = list(session.execute(stmt).scalars())
-
-            if not rows:
-                return 0
-
-            # Build FileEvents for the batch
-            events_with_records: list[tuple[FileEvent, Any]] = []
-            for record in rows:
-                events_with_records.append((self._build_file_event(record), record))
-
-            # 1. Dispatch events to EventBus + webhooks, ordered per zone (#2755).
-            #    Group by zone_id and dispatch sequentially within each zone
-            #    (parallel across zones is safe — no cross-zone causal deps).
-            def zone_key(pair: tuple[FileEvent, Any]) -> str:
-                return pair[1].zone_id or ROOT_ZONE_ID
-
-            sorted_pairs = sorted(events_with_records, key=zone_key)
-            from itertools import groupby
-
-            for _zone_id, zone_group in groupby(sorted_pairs, key=zone_key):
-                for event, record in zone_group:
-                    try:
-                        await self._dispatch_event_internal(event, record)
-                        dispatched_ids.append(record.operation_id)
-                        self._total_dispatched += 1
-                    except Exception as exc:
-                        self._handle_dispatch_failure(session, record, event, exc)
-
-            # 2. Dispatch batch to external exporters (parallel)
-            if self._exporter_registry and self._exporter_registry.exporter_names:
-                events = [ev for ev, _ in events_with_records]
-                await self._dispatch_to_exporters(session, events, events_with_records)
-
-            # Mark successfully dispatched rows as delivered
-            if dispatched_ids:
-                self._mark_delivered(session, dispatched_ids)
-
-            # Commit: delivered marks + any DLQ entries added during this batch
-            session.commit()
-
-        return len(dispatched_ids)
+            return [
+                _PendingDelivery(
+                    event=self._build_file_event(record),
+                    operation_id=record.operation_id,
+                    retry_count=record.retry_count,
+                )
+                for record in rows
+            ]
 
     async def _dispatch_event_internal(self, event: FileEvent, record: Any) -> None:
         """Dispatch event to EventBus and webhook subscriptions."""
@@ -271,57 +280,62 @@ class EventDeliveryWorker:
             record.operation_id,
         )
 
-    def _handle_dispatch_failure(
-        self, session: "Session", record: Any, event: FileEvent, exc: Exception
-    ) -> None:
+    def _handle_dispatch_failure(self, item: _PendingDelivery, exc: Exception) -> None:
         """Handle a failed dispatch: increment persistent retry_count or route to DLQ.
 
         Uses ``record.retry_count`` (persisted in DB) instead of an in-memory
         dict so retry state survives worker restarts (Issue #2751).
         """
-        op_id = record.operation_id
-        record.retry_count = record.retry_count + 1
-        retries = record.retry_count
+        from nexus.storage.models.operation_log import OperationLogModel
 
-        if retries >= self._max_retries:
-            # Route to DLQ and mark delivered to stop re-polling
-            try:
-                from nexus.services.event_log.dead_letter import DeadLetterHandler
+        op_id = item.operation_id
+        with self._session_factory() as session:
+            record = session.get(OperationLogModel, op_id)
+            if record is None:
+                return
 
-                handler = DeadLetterHandler()
-                handler.route_to_dlq(
-                    session,
-                    operation_id=op_id,
-                    exporter_name="internal",
-                    error=exc,
-                    event=event,
-                    retry_count=retries,
+            record.retry_count = record.retry_count + 1
+            retries = record.retry_count
+
+            if retries >= self._max_retries:
+                # Route to DLQ and mark delivered to stop re-polling
+                try:
+                    from nexus.services.event_log.dead_letter import DeadLetterHandler
+
+                    handler = DeadLetterHandler()
+                    handler.route_to_dlq(
+                        session,
+                        operation_id=op_id,
+                        exporter_name="internal",
+                        error=exc,
+                        event=item.event,
+                        retry_count=retries,
+                    )
+                    record.delivered = True
+                    self._total_dlq += 1
+                except Exception:
+                    logger.exception("Failed to route event %s to DLQ", op_id)
+            else:
+                logger.warning(
+                    "Dispatch failed for %s (retry %d/%d): %s",
+                    op_id,
+                    retries,
+                    self._max_retries,
+                    exc,
                 )
-                record.delivered = True
-                self._total_dlq += 1
-            except Exception:
-                logger.exception("Failed to route event %s to DLQ", op_id)
-        else:
-            logger.warning(
-                "Dispatch failed for %s (retry %d/%d): %s",
-                op_id,
-                retries,
-                self._max_retries,
-                exc,
-            )
+            session.commit()
         self._total_failed += 1
 
     async def _dispatch_to_exporters(
         self,
-        session: "Session",
-        events: list[FileEvent],
-        events_with_records: list[tuple[FileEvent, Any]],
+        pending: list[_PendingDelivery],
     ) -> None:
         """Dispatch event batch to external exporters via ExporterRegistry."""
         registry = self._exporter_registry
         if not registry:
             return
 
+        events = [item.event for item in pending]
         try:
             failures = await registry.dispatch_batch(events)
         except Exception:
@@ -330,25 +344,34 @@ class EventDeliveryWorker:
 
         # Route per-exporter failures to DLQ
         if failures:
-            from nexus.services.event_log.dead_letter import DeadLetterHandler
+            await asyncio.to_thread(self._route_exporter_failures, failures, pending)
 
-            handler = DeadLetterHandler()
-            # Build event_id -> (event, record) map
-            id_map = {ev.event_id: (ev, rec) for ev, rec in events_with_records}
+    def _route_exporter_failures(
+        self,
+        failures: dict[str, list[str]],
+        pending: list[_PendingDelivery],
+    ) -> None:
+        """Persist exporter DLQ entries without blocking the event loop."""
+        from nexus.services.event_log.dead_letter import DeadLetterHandler
 
+        handler = DeadLetterHandler()
+        id_map = {item.event.event_id: item for item in pending}
+
+        with self._session_factory() as session:
             for exporter_name, failed_ids in failures.items():
                 for event_id in failed_ids:
-                    pair = id_map.get(event_id)
-                    if pair:
-                        event, record = pair
-                        handler.route_to_dlq(
-                            session,
-                            operation_id=record.operation_id,
-                            exporter_name=exporter_name,
-                            error=ConnectionError(f"Export to {exporter_name} failed"),
-                            event=event,
-                        )
-                        self._total_dlq += 1
+                    item = id_map.get(event_id)
+                    if item is None:
+                        continue
+                    handler.route_to_dlq(
+                        session,
+                        operation_id=item.operation_id,
+                        exporter_name=exporter_name,
+                        error=ConnectionError(f"Export to {exporter_name} failed"),
+                        event=item.event,
+                    )
+                    self._total_dlq += 1
+            session.commit()
 
     def _build_file_event(self, record: Any) -> FileEvent:
         """Build a FileEvent from an OperationLogModel record."""
@@ -364,14 +387,16 @@ class EventDeliveryWorker:
             sequence_number=record.sequence_number,
         )
 
-    def _mark_delivered(self, session: "Session", operation_ids: list[str]) -> None:
+    def _mark_delivered(self, operation_ids: list[str]) -> None:
         """Mark operation_log rows as delivered."""
         from sqlalchemy import update
 
         from nexus.storage.models.operation_log import OperationLogModel
 
-        session.execute(
-            update(OperationLogModel)
-            .where(OperationLogModel.operation_id.in_(operation_ids))
-            .values(delivered=True)
-        )
+        with self._session_factory() as session:
+            session.execute(
+                update(OperationLogModel)
+                .where(OperationLogModel.operation_id.in_(operation_ids))
+                .values(delivered=True)
+            )
+            session.commit()

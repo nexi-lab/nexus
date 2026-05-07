@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 DEFAULT_PORTS: dict[str, int] = {
     "http": 2026,
     "grpc": 2028,
+    "approvals": 2029,
     "postgres": 5432,
     "dragonfly": 6379,
 }
@@ -41,6 +42,7 @@ _SLOT_SIZE = 10
 PORT_LABELS: dict[str, str] = {
     "http": "Nexus HTTP",
     "grpc": "Nexus gRPC",
+    "approvals": "Nexus approvals gRPC",
     "postgres": "PostgreSQL",
     "dragonfly": "DragonflyDB",
 }
@@ -62,7 +64,8 @@ def derive_ports(data_dir: str | Path) -> dict[str, int]:
         +1  grpc
         +2  postgres
         +3  dragonfly
-        +4…+9  reserved for future services
+        +4  approvals grpc
+        +5…+9  reserved for future services
     """
     abs_path = str(Path(data_dir).resolve())
     digest = hashlib.sha256(abs_path.encode()).hexdigest()
@@ -75,6 +78,7 @@ def derive_ports(data_dir: str | Path) -> dict[str, int]:
         "grpc": base + 1,
         "postgres": base + 2,
         "dragonfly": base + 3,
+        "approvals": base + 4,
     }
 
 

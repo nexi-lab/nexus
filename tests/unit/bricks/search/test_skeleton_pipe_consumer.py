@@ -2,17 +2,33 @@
 
 import asyncio
 import contextlib
+import importlib.util
+import sys
+import threading
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from nexus.bricks.search.skeleton_pipe_consumer import SkeletonPipeConsumer
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.metadata import DT_PIPE
 
 if TYPE_CHECKING:
     from nexus.bricks.search.skeleton_indexer import SkeletonIndexer
+
+_MODULE_PATH = (
+    Path(__file__).resolve().parents[4] / "src/nexus/bricks/search/skeleton_pipe_consumer.py"
+)
+_SPEC = importlib.util.spec_from_file_location(
+    "tests._skeleton_pipe_consumer_under_test",
+    _MODULE_PATH,
+)
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _MODULE
+_SPEC.loader.exec_module(_MODULE)
+SkeletonPipeConsumer = _MODULE.SkeletonPipeConsumer
 
 
 class _FakeIndexer:
@@ -52,14 +68,22 @@ class _FakeNx:
         self.setattr_calls: list[tuple[str, dict[str, Any]]] = []
         self.write_calls: list[tuple[str, bytes, Any]] = []
         self.read_contexts: list[Any] = []
+        self.read_timeouts: list[int | None] = []
         self.closed_paths: set[str] = set()
         self._kernel = _Kernel(self)
 
     def sys_setattr(self, path: str, **attrs: Any) -> None:
         self.setattr_calls.append((path, attrs))
 
-    def sys_read(self, path: str, *, context: Any | None = None) -> bytes:
+    def sys_read(
+        self,
+        path: str,
+        *,
+        context: Any | None = None,
+        timeout_ms: int | None = None,
+    ) -> bytes:
         self.read_contexts.append(context)
+        self.read_timeouts.append(timeout_ms)
         if path in self.closed_paths:
             raise NexusFileNotFoundError(path)
         return b""
@@ -72,6 +96,27 @@ class _FakeNx:
 class _SlowReadNx:
     def sys_read(self, path: str, *, context: Any | None = None) -> bytes:
         time.sleep(0.15)
+        return b""
+
+
+class _BlockingReadNx(_FakeNx):
+    def __init__(self) -> None:
+        super().__init__()
+        self.read_started = threading.Event()
+
+    def sys_read(
+        self,
+        path: str,
+        *,
+        context: Any | None = None,
+        timeout_ms: int | None = None,
+    ) -> bytes:
+        self.read_started.set()
+        self.read_contexts.append(context)
+        self.read_timeouts.append(timeout_ms)
+        time.sleep(0.5)
+        if path in self.closed_paths:
+            raise NexusFileNotFoundError(path)
         return b""
 
 
@@ -158,3 +203,25 @@ async def test_consumer_does_not_block_event_loop_while_waiting_for_pipe() -> No
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+@pytest.mark.asyncio
+async def test_blocking_pipe_read_does_not_block_event_loop() -> None:
+    nx = _BlockingReadNx()
+    consumer = SkeletonPipeConsumer(indexer=_indexer())
+    consumer.bind_fs(nx)
+
+    await consumer.start()
+    try:
+
+        async def _wait_for_read() -> None:
+            while not nx.read_started.is_set():
+                await asyncio.sleep(0.01)
+
+        started_at = time.perf_counter()
+        await asyncio.wait_for(_wait_for_read(), timeout=1.0)
+        assert time.perf_counter() - started_at < 0.25
+        assert nx.read_timeouts == [0]
+    finally:
+        await consumer.stop()
+        await asyncio.sleep(0)

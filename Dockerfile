@@ -129,6 +129,12 @@ ARG TARGETARCH
 ARG NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 ENV NEXUS_PROFILE_EXTRAS=${NEXUS_PROFILE_EXTRAS}
+# Python 3.14 + uvloop can leave Docker-launched Nexus accepting TCP
+# connections without servicing HTTP requests on some local runtimes
+# (Docker Desktop/OrbStack). Keep uvloop opt-in for containers.
+ENV NEXUS_USE_UVLOOP=false \
+    NEXUS_RATE_LIMIT_ENABLED=false \
+    NEXUS_DEBUG_STACK_DUMP=false
 
 # ---------- Runtime dependencies ----------
 # libgomp1: OpenMP runtime required by scikit-learn / scipy / numpy.

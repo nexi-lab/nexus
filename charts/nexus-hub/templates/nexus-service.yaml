@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus-hub.nexusName" . }}
+  labels:
+    {{- include "nexus-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.service.nexusHttpPort }}
+      targetPort: http
+    - name: grpc
+      port: {{ .Values.service.nexusGrpcPort }}
+      targetPort: grpc
+  selector:
+    {{- include "nexus-hub.selectorLabels" (dict "root" . "component" "nexus") | nindent 4 }}

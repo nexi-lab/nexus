@@ -65,13 +65,13 @@ PRESETS: dict[str, PresetConfig] = {
         services=("nexus", "postgres", "dragonfly"),
         auth="static",
         compose_profiles=("core", "cache"),
-        port_keys=("http", "grpc", "postgres", "dragonfly"),
+        port_keys=("http", "grpc", "approvals", "postgres", "dragonfly"),
     ),
     "demo": PresetConfig(
         services=("nexus", "postgres", "dragonfly"),
         auth="database",
         compose_profiles=("core", "cache"),
-        port_keys=("http", "grpc", "postgres", "dragonfly"),
+        port_keys=("http", "grpc", "approvals", "postgres", "dragonfly"),
     ),
 }
 

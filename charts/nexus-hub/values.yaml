@@ -1,0 +1,131 @@
+image:
+  repository: ghcr.io/nexi-lab/nexus
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+nexus:
+  profile: full
+  # Keep this at 1 when nexus.persistence.enabled=true. Multiple persistent
+  # Nexus pods would otherwise mount the same writable data PVC.
+  replicaCount: 1
+  podAnnotations: {}
+  podLabels: {}
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+  probes:
+    startup:
+      path: /healthz/startup
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 90
+      failureThreshold: 30
+    readiness:
+      path: /healthz/ready
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 90
+      failureThreshold: 3
+    liveness:
+      path: /healthz/live
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 90
+      failureThreshold: 6
+
+mcpFrontend:
+  replicaCount: 1
+  podAnnotations: {}
+  podLabels: {}
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+postgres:
+  internal:
+    enabled: true
+    image: pgvector/pgvector:pg17
+    imagePullPolicy: IfNotPresent
+    resources: {}
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+  auth:
+    database: nexus
+    username: nexus
+    password: nexus
+    existingSecret: ""
+    existingSecretPasswordKey: password
+  external:
+    host: ""
+    port: 5432
+    database: nexus
+    username: nexus
+    password: ""
+    existingSecret: ""
+    existingSecretPasswordKey: password
+
+redis:
+  internal:
+    enabled: true
+    image: redis:7-alpine
+    imagePullPolicy: IfNotPresent
+    resources: {}
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+  external:
+    url: ""
+    existingSecret: ""
+    existingSecretUrlKey: redis-url
+
+service:
+  type: ClusterIP
+  mcpPort: 8081
+  nexusHttpPort: 2026
+  nexusGrpcPort: 2028
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+podMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+  scrapeTimeout: 10s
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL

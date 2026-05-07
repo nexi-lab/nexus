@@ -207,3 +207,6 @@ nav:
     - User Guide: guides/user-guide.md
   - Deployment:
     - SANDBOX Profile: deployment/sandbox-profile.md
+    - MCP Hub Mode: deployment/mcp-hub-mode.md
+    - Hub Deploy: hub-deploy.md
+    - Hub Deploy on Kubernetes: hub-deploy-k8s.md

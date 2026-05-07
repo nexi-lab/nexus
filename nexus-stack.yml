@@ -192,8 +192,10 @@ services:
       # which fails the insecure-channel loopback check in pipe_manager.
       # Default to 127.0.0.1 for single-node; override for federation/cross-container.
       NEXUS_ADVERTISE_ADDR: "${NEXUS_ADVERTISE_ADDR:-127.0.0.1:${NEXUS_GRPC_PORT:-2028}}"
-      # Runtime
-      NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
+      # Runtime. uvloop remains opt-in in Docker: Python 3.14 + uvloop can
+      # hang HTTP request servicing after startup on some local runtimes.
+      NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-false}
+      NEXUS_DEBUG_STACK_DUMP: ${NEXUS_DEBUG_STACK_DUMP:-false}
     volumes:
       - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/app/data
       - ./configs:/app/configs:ro

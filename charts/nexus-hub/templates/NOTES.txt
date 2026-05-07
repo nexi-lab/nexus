@@ -1,0 +1,20 @@
+Nexus hub has been installed.
+
+MCP frontend service:
+  {{ include "nexus-hub.mcpFrontendName" . }}:{{ .Values.service.mcpPort }}
+
+Create the first admin token after the Nexus pod is ready:
+  kubectl exec deploy/{{ include "nexus-hub.nexusName" . }} -- \
+    nexus hub token create --name root --admin --zone root
+
+For local access without Ingress:
+  kubectl port-forward svc/{{ include "nexus-hub.mcpFrontendName" . }} 8081:{{ .Values.service.mcpPort }}
+
+Then configure MCP clients with:
+  Authorization: Bearer <sk-token>
+
+{{- if eq .Values.postgres.auth.password "nexus" }}
+
+The chart is using the default Postgres password. Use an existing Secret or
+override postgres.auth.password before first production install.
+{{- end }}

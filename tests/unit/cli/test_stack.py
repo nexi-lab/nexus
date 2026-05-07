@@ -319,6 +319,7 @@ class TestDeriveProjectEnv:
             "ports": {
                 "http": 2026,
                 "grpc": 2028,
+                "approvals": 2029,
                 "postgres": 5432,
                 "dragonfly": 6379,
             },
@@ -330,6 +331,7 @@ class TestDeriveProjectEnv:
         assert len(env["COMPOSE_PROJECT_NAME"]) == len("nexus-") + 8
         assert env["NEXUS_PORT"] == "2026"
         assert env["NEXUS_GRPC_PORT"] == "2028"
+        assert env["NEXUS_APPROVALS_GRPC_PORT"] == "2029"
         assert env["POSTGRES_PORT"] == "5432"
         assert env["NEXUS_HOST_DATA_DIR"] == str(tmp_path / "data")
         assert env["NEXUS_AUTH_TYPE"] == "database"
@@ -367,10 +369,11 @@ class TestDeriveProjectEnv:
             "data_dir": str(tmp_path / "data"),
             "ports": {"http": 2026, "grpc": 2028},
         }
-        resolved = {"http": 3026, "grpc": 3028}
+        resolved = {"http": 3026, "grpc": 3028, "approvals": 3029}
         env = _derive_project_env(config, resolved_ports=resolved)
         assert env["NEXUS_PORT"] == "3026"
         assert env["NEXUS_GRPC_PORT"] == "3028"
+        assert env["NEXUS_APPROVALS_GRPC_PORT"] == "3029"
 
     def test_tls_sets_grpc_tls_flag(self, tmp_path: Path) -> None:
         """TLS config sets NEXUS_GRPC_TLS explicitly."""

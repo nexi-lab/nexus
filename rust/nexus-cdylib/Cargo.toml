@@ -63,9 +63,7 @@ pyo3 = { version = "0.27.2", features = ["extension-module"] }
 # (sudocode branch HEAD `2b67d5b`) stays reachable in git history
 # even after sudocode merges, so re-pinning is optional for
 # correctness — only matters for reproducibility audit.
-# Pin to sudocode PR#100 merge — introduces FsBackend trait, spawn_task v2
-# (ConversationRuntime integration), and renames the v1 echo scaffolding
-# to `spawn_task_echo`. Adapter below uses `spawn_task_echo` as the
-# interim body until ApiClient/ToolExecutor factories are wired
-# (tracked as spawn_task v2 full integration).
-sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "140e5ac" }
+# Pin to sudocode PR#119 merge — spawn_task_echo now uses sys_watch
+# condvar blocking instead of 50ms busy-poll. Near-zero idle CPU,
+# sub-millisecond wake latency on new mailbox data.
+sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "7c24866" }

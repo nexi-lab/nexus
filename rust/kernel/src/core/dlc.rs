@@ -87,6 +87,7 @@ impl DriverLifecycleCoordinator {
                     target_zone_id: Some(zone_id.to_string()),
                     // DT_LINK target: only meaningful for DT_LINK entries.
                     link_target: None,
+                    owner_id: None,
                 };
                 let _ = ms.put(mount_point, meta);
             });

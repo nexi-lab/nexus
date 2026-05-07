@@ -392,6 +392,8 @@ pub struct StatResult {
     /// the link compose with the kernel's transparent-follow paths
     /// or call sys_stat on `link_target` directly.
     pub link_target: Option<String>,
+    /// User/agent identity that owns this file (from FileMetadata).
+    pub owner_id: Option<String>,
 }
 
 /// Result of paginated readdir: children + cursor for next page.
@@ -1193,6 +1195,7 @@ impl Kernel {
             // target through a different construction path; non-link
             // metadata never carries a value here.
             link_target: None,
+            owner_id: None,
         }
     }
 
@@ -1862,6 +1865,7 @@ impl Kernel {
             last_writer_address: self.self_address.read().clone(),
             target_zone_id: None,
             link_target: Some(link_target.to_string()),
+            owner_id: None,
         };
         self.metastore_put(path, meta)?;
         // The metastore impl populates its own internal cache during
@@ -3683,6 +3687,7 @@ mod tests {
                 last_writer_address: None,
                 target_zone_id: None,
                 link_target: None,
+                owner_id: None,
             },
         )
         .unwrap();
@@ -4930,6 +4935,7 @@ mod tests {
                 last_writer_address: None,
                 target_zone_id: None,
                 link_target: Some(target.to_string()),
+                owner_id: None,
             }
         }
 
@@ -4948,6 +4954,7 @@ mod tests {
                 last_writer_address: None,
                 target_zone_id: None,
                 link_target: None,
+                owner_id: None,
             }
         }
 

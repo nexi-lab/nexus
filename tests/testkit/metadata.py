@@ -126,15 +126,17 @@ class FailingMetastore:
 
     def exists(self, path: str) -> bool:
         self._maybe_fail("exists")
-        return self._inner.metastore_exists(path)
+        return self._inner.access(path, "root")
 
     def list(self, prefix: str = "", recursive: bool = True, **_kwargs: Any) -> list[FileMetadata]:
         self._maybe_fail("list")
-        return list(self._inner.metastore_list(prefix))
+        page = self._inner.metastore_list_paginated(prefix, recursive, 100000, None)
+        return page["items"]
 
     def is_implicit_directory(self, path: str) -> bool:
         self._maybe_fail("is_implicit_directory")
-        return bool(self._inner.metastore_is_implicit_directory(path))
+        stat = self._inner.sys_stat(path, "root")
+        return stat is not None and stat.get("is_directory", False)
 
     def set_file_metadata(self, path: str, key: str, value: Any) -> None:
         self._maybe_fail("set_file_metadata")

@@ -297,12 +297,15 @@ class WorkspaceManager:
             }
 
             # Delete files not in snapshot
+            from nexus.contracts.types import OperationContext
+
+            _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
             manifest_paths = manifest.paths()
             files_deleted = 0
             for current_path in current_paths:
                 if current_path not in manifest_paths and not current_path.endswith("/"):
                     full_path = workspace_prefix + current_path
-                    self._kernel.metastore_delete(full_path)
+                    self._kernel.sys_unlink(full_path, context=_sys_ctx)
                     files_deleted += 1
 
             # Restore files from snapshot

@@ -149,8 +149,11 @@ class TTLVolumeSweeper:
                     expired_paths.append(meta.path)
 
         if expired_paths:
+            from nexus.contracts.types import OperationContext
+
+            _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
             for path in expired_paths:
-                self._kernel.metastore_delete(path)
+                self._kernel.sys_unlink(path, context=_sys_ctx)
             logger.info("TTL metastore cleanup: deleted %d expired entries", len(expired_paths))
 
         return len(expired_paths)

@@ -67,7 +67,10 @@ fn test_500_maps_to_eio() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(matches!(err, NexusClientError::ServerError { status: 500, .. }));
+    assert!(matches!(
+        err,
+        NexusClientError::ServerError { status: 500, .. }
+    ));
     assert_eq!(err.to_errno(), libc::EIO);
     assert!(err.is_transient());
 }
@@ -88,7 +91,10 @@ fn test_503_maps_to_server_error() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(matches!(err, NexusClientError::ServerError { status: 503, .. }));
+    assert!(matches!(
+        err,
+        NexusClientError::ServerError { status: 503, .. }
+    ));
     assert_eq!(err.to_errno(), libc::EIO);
     assert!(err.is_transient());
 }
@@ -348,7 +354,9 @@ fn test_rpc_non_32000_code_with_not_found_message_is_not_enoent() {
         .mock("POST", "/api/nfs/stat")
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"Not Found: /missing"}}"#)
+        .with_body(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"Not Found: /missing"}}"#,
+        )
         .create();
 
     let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
@@ -421,5 +429,8 @@ fn test_rpc_internal_error_not_misclassified() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(!err.is_not_found(), "Internal errors must not be misclassified as NotFound");
+    assert!(
+        !err.is_not_found(),
+        "Internal errors must not be misclassified as NotFound"
+    );
 }

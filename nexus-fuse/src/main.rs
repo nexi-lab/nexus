@@ -4,9 +4,9 @@
 //! fast startup time (<100ms vs ~10s for Python version).
 
 use clap::{Parser, Subcommand};
-use nexus_fuse::{cache, client, daemon, fs};
 use fuser::MountOption;
 use log::{error, info};
+use nexus_fuse::{cache, client, daemon, fs, metrics};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -49,6 +49,10 @@ enum Commands {
         /// Agent ID for file attribution
         #[arg(long, env = "NEXUS_AGENT_ID")]
         agent_id: Option<String>,
+
+        /// Prometheus metrics bind address, for example 127.0.0.1:9464
+        #[arg(long, env = "NEXUS_FUSE_METRICS_ADDR")]
+        metrics_addr: Option<String>,
     },
     /// Run as Unix socket IPC daemon for Python integration
     Daemon {
@@ -71,6 +75,10 @@ enum Commands {
         /// Agent ID for file attribution
         #[arg(long, env = "NEXUS_AGENT_ID")]
         agent_id: Option<String>,
+
+        /// Prometheus metrics bind address, for example 127.0.0.1:9464
+        #[arg(long, env = "NEXUS_FUSE_METRICS_ADDR")]
+        metrics_addr: Option<String>,
     },
     /// Check version
     Version,
@@ -80,10 +88,14 @@ enum Commands {
 ///
 /// Resolution order: --api-key-file > --api-key / NEXUS_API_KEY.
 /// Using --api-key prints a deprecation warning to stderr.
-fn resolve_api_key(api_key: Option<String>, api_key_file: Option<PathBuf>) -> anyhow::Result<String> {
+fn resolve_api_key(
+    api_key: Option<String>,
+    api_key_file: Option<PathBuf>,
+) -> anyhow::Result<String> {
     if let Some(path) = api_key_file {
-        let key = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("Failed to read API key file {}: {}", path.display(), e))?;
+        let key = std::fs::read_to_string(&path).map_err(|e| {
+            anyhow::anyhow!("Failed to read API key file {}: {}", path.display(), e)
+        })?;
         return Ok(key.trim().to_string());
     }
 
@@ -116,8 +128,16 @@ fn main() -> anyhow::Result<()> {
             allow_other,
             foreground,
             agent_id,
+            metrics_addr,
         } => {
             let api_key = resolve_api_key(api_key, api_key_file)?;
+            let _metrics_server = if let Some(addr) = metrics_addr.as_deref() {
+                let server = metrics::start_server(addr)?;
+                info!("FUSE metrics listening on {}", server.local_addr());
+                Some(server)
+            } else {
+                None
+            };
 
             info!("Nexus FUSE client starting...");
             info!("Server URL: {}", url);
@@ -152,7 +172,10 @@ fn main() -> anyhow::Result<()> {
                     Some(cache)
                 }
                 Err(e) => {
-                    error!("Failed to initialize cache: {} (continuing without cache)", e);
+                    error!(
+                        "Failed to initialize cache: {} (continuing without cache)",
+                        e
+                    );
                     None
                 }
             };
@@ -188,8 +211,16 @@ fn main() -> anyhow::Result<()> {
             api_key_file,
             socket,
             agent_id,
+            metrics_addr,
         } => {
             let api_key = resolve_api_key(api_key, api_key_file)?;
+            let _metrics_server = if let Some(addr) = metrics_addr.as_deref() {
+                let server = metrics::start_server(addr)?;
+                info!("FUSE metrics listening on {}", server.local_addr());
+                Some(server)
+            } else {
+                None
+            };
 
             // Determine socket path
             let socket_path = socket.unwrap_or_else(|| {

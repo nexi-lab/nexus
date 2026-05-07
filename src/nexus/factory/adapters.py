@@ -246,6 +246,8 @@ class _NexusFSFileReader:
             is_admin=True,
             is_system=True,
         )
+        # sys_read blocks the event loop (Rust kernel pread + pipe waits).
+        # Run it in a worker thread.
         content_raw = await asyncio.to_thread(self._nx.sys_read, path, context=admin_ctx)
 
         # Look up the backend-tracked content_id (``file_paths.content_id``)
@@ -403,6 +405,7 @@ class _NexusFSFileReader:
             is_system=True,
         )
         try:
+            # sys_read is synchronous Rust; use a worker thread.
             content = await asyncio.to_thread(
                 self._nx.sys_read,
                 path,

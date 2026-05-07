@@ -11,7 +11,7 @@ fn test_raw_http_request() {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(5))
-        .http1_only()  // Force HTTP/1.1
+        .http1_only() // Force HTTP/1.1
         .build()
         .expect("Failed to create HTTP client");
 

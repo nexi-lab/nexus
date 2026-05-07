@@ -96,6 +96,8 @@ protoc-bin-vendored = "3"
 criterion = "0.8"
 rcgen = { version = "0.14", features = ["pem", "x509-parser"] }  # Self-signed CAs for federation_client tests
 tempfile = "3"
+backends = { workspace = true, features = ["driver-path-local"] }
+libc = "0.2"
 
 [[bench]]
 name = "prefix_bench"
@@ -103,4 +105,8 @@ harness = false
 
 [[bench]]
 name = "read_batch"
+harness = false
+
+[[bench]]
+name = "syscall_bench"
 harness = false

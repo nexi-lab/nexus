@@ -1,0 +1,384 @@
+//! Criterion benchmarks: pure Rust kernel syscalls vs host OS syscalls.
+//!
+//! This is the production call path — sudocode/sudowork call
+//! `kernel.sys_read()` / `kernel.sys_write()` directly in-process,
+//! zero Python, zero PyO3.
+//!
+//! Run:  cd rust/kernel && cargo bench syscall
+//!
+//! Cluster profile: PathLocalBackend + redb metastore (the only
+//! production-deployed profile as of 2026-05).
+
+use std::path::Path;
+use std::sync::Arc;
+
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+
+use contracts::operation_context::OperationContext;
+use kernel::abc::object_store::ObjectStore;
+use kernel::kernel::Kernel;
+use kernel::meta_store::{DT_DIR, DT_PIPE};
+
+// ── Constants ───────────────────────────────────────────────────────
+
+const PAYLOAD_1KB: &[u8] = &[b'x'; 1024];
+
+fn payload_64kb() -> Vec<u8> {
+    vec![b'y'; 64 * 1024]
+}
+
+fn payload_1mb() -> Vec<u8> {
+    vec![b'z'; 1024 * 1024]
+}
+
+fn admin_ctx() -> OperationContext {
+    OperationContext::new("bench", "root", true, None, true)
+}
+
+// ── Kernel setup ────────────────────────────────────────────────────
+
+/// Create a Kernel with PathLocalBackend mounted at "/" — mirrors
+/// the cluster profile production setup.
+fn setup_kernel(tmp: &Path) -> Kernel {
+    let data_dir = tmp.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let redb_path = tmp.join("meta.redb");
+
+    let kernel = Kernel::new();
+    let _ = kernel.set_metastore_path(redb_path.to_str().unwrap());
+
+    // Mount PathLocalBackend at "/" via VFS router (mirrors cluster profile boot)
+    let backend: Arc<dyn ObjectStore> =
+        Arc::new(backends::storage::path_local::PathLocalBackend::new(&data_dir, false).unwrap());
+    kernel
+        .vfs_router_arc()
+        .add_mount("/", "root", Some(backend), false);
+
+    kernel
+}
+
+/// Pre-populate kernel with test files.
+fn populate(kernel: &Kernel, ctx: &OperationContext) {
+    let w = kernel
+        .sys_write("/test_1kb.bin", ctx, PAYLOAD_1KB, 0)
+        .expect("write 1kb");
+    assert!(w.hit, "sys_write must hit (VFS route missing?)");
+    kernel
+        .sys_write("/test_64kb.bin", ctx, &payload_64kb(), 0)
+        .expect("write 64kb");
+    kernel
+        .sys_write("/test_1mb.bin", ctx, &payload_1mb(), 0)
+        .expect("write 1mb");
+
+    // 100 files for readdir — mkdir via sys_setattr then write files
+    kernel
+        .sys_setattr(
+            "/many_files",
+            DT_DIR as i32,
+            "",
+            None,
+            None,
+            None,
+            "default",
+            "root",
+            false,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("mkdir /many_files");
+    for i in 0..100 {
+        let path = format!("/many_files/file_{i:04}.txt");
+        let content = format!("Content {i}");
+        kernel
+            .sys_write(&path, ctx, content.as_bytes(), 0)
+            .expect("write many_files");
+    }
+}
+
+// ── Benchmarks ──────────────────────────────────────────────────────
+
+fn bench_sys_stat(c: &mut Criterion) {
+    let tmp = tempfile::tempdir().unwrap();
+    let kernel = setup_kernel(tmp.path());
+    let ctx = admin_ctx();
+    populate(&kernel, &ctx);
+
+    c.bench_function("sys_stat (1KB file)", |b| {
+        b.iter(|| {
+            let result = kernel.sys_stat(black_box("/test_1kb.bin"), "root");
+            black_box(result);
+        })
+    });
+}
+
+fn bench_sys_read(c: &mut Criterion) {
+    let tmp = tempfile::tempdir().unwrap();
+    let kernel = setup_kernel(tmp.path());
+    let ctx = admin_ctx();
+    populate(&kernel, &ctx);
+
+    let mut group = c.benchmark_group("sys_read");
+    for (label, path) in [
+        ("1KB", "/test_1kb.bin"),
+        ("64KB", "/test_64kb.bin"),
+        ("1MB", "/test_1mb.bin"),
+    ] {
+        group.bench_with_input(BenchmarkId::new("nexus", label), &path, |b, &path| {
+            b.iter(|| {
+                let result = kernel
+                    .sys_read(black_box(path), &ctx, 0, 0)
+                    .expect("sys_read");
+                black_box(result);
+            })
+        });
+    }
+
+    // OS baseline: pre-opened fd
+    let tmp_os = tempfile::tempdir().unwrap();
+    for (label, size) in [
+        ("1KB", 1024usize),
+        ("64KB", 64 * 1024),
+        ("1MB", 1024 * 1024),
+    ] {
+        let file_path = tmp_os.path().join(format!("test_{label}.bin"));
+        std::fs::write(&file_path, vec![b'x'; size]).unwrap();
+
+        let c_path = std::ffi::CString::new(file_path.to_str().unwrap()).unwrap();
+        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY) };
+        assert!(fd >= 0, "failed to open OS test file");
+
+        let mut buf = vec![0u8; size];
+        group.bench_with_input(BenchmarkId::new("host_os", label), &size, |b, &sz| {
+            b.iter(|| unsafe {
+                libc::lseek(fd, 0, libc::SEEK_SET);
+                libc::read(fd, buf.as_mut_ptr() as *mut _, sz);
+                black_box(&buf);
+            })
+        });
+
+        unsafe { libc::close(fd) };
+    }
+
+    group.finish();
+}
+
+fn bench_sys_write(c: &mut Criterion) {
+    let tmp = tempfile::tempdir().unwrap();
+    let kernel = setup_kernel(tmp.path());
+    let ctx = admin_ctx();
+    populate(&kernel, &ctx);
+
+    let mut group = c.benchmark_group("sys_write");
+
+    // Write new file (unique path per iteration)
+    let counter = std::sync::atomic::AtomicU64::new(0);
+    group.bench_function("nexus_new_1KB", |b| {
+        b.iter(|| {
+            let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = format!("/bench_new_{n}.txt");
+            let result = kernel
+                .sys_write(black_box(&path), &ctx, PAYLOAD_1KB, 0)
+                .expect("sys_write new");
+            black_box(result);
+        })
+    });
+
+    // Write overwrite
+    group.bench_function("nexus_overwrite_1KB", |b| {
+        b.iter(|| {
+            let result = kernel
+                .sys_write(black_box("/test_1kb.bin"), &ctx, PAYLOAD_1KB, 0)
+                .expect("sys_write overwrite");
+            black_box(result);
+        })
+    });
+
+    // OS baseline: write new
+    let tmp_os = tempfile::tempdir().unwrap();
+    let os_counter = std::sync::atomic::AtomicU64::new(0);
+    let os_base = tmp_os.path().to_path_buf();
+    group.bench_function("host_os_new_1KB", |b| {
+        b.iter(|| {
+            let n = os_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = os_base.join(format!("bench_new_{n}.txt"));
+            std::fs::write(black_box(&path), PAYLOAD_1KB).unwrap();
+        })
+    });
+
+    // OS baseline: write overwrite
+    let os_overwrite_path = tmp_os.path().join("overwrite.bin");
+    std::fs::write(&os_overwrite_path, PAYLOAD_1KB).unwrap();
+    group.bench_function("host_os_overwrite_1KB", |b| {
+        b.iter(|| {
+            std::fs::write(black_box(&os_overwrite_path), PAYLOAD_1KB).unwrap();
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_sys_readdir(c: &mut Criterion) {
+    let tmp = tempfile::tempdir().unwrap();
+    let kernel = setup_kernel(tmp.path());
+    let ctx = admin_ctx();
+    populate(&kernel, &ctx);
+
+    let mut group = c.benchmark_group("sys_readdir");
+
+    group.bench_function("nexus_100_entries", |b| {
+        b.iter(|| {
+            let result = kernel.sys_readdir_backend(black_box("/many_files"), "root");
+            black_box(result);
+        })
+    });
+
+    // OS baseline
+    let tmp_os = tempfile::tempdir().unwrap();
+    let os_many = tmp_os.path().join("many_files");
+    std::fs::create_dir_all(&os_many).unwrap();
+    for i in 0..100 {
+        std::fs::write(
+            os_many.join(format!("file_{i:04}.txt")),
+            format!("Content {i}"),
+        )
+        .unwrap();
+    }
+    group.bench_function("host_os_100_entries", |b| {
+        b.iter(|| {
+            let entries: Vec<_> = std::fs::read_dir(black_box(&os_many)).unwrap().collect();
+            black_box(entries);
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_sys_unlink(c: &mut Criterion) {
+    let tmp = tempfile::tempdir().unwrap();
+    let kernel = setup_kernel(tmp.path());
+    let ctx = admin_ctx();
+
+    // Pre-create many files for deletion
+    for i in 0..5000 {
+        let path = format!("/bench_del_{i}.txt");
+        kernel
+            .sys_write(&path, &ctx, b"x", 0)
+            .expect("write del file");
+    }
+
+    let counter = std::sync::atomic::AtomicU64::new(0);
+    c.bench_function("sys_unlink", |b| {
+        b.iter(|| {
+            let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = format!("/bench_del_{n}.txt");
+            let _ = kernel.sys_unlink(black_box(&path), &ctx, false);
+        })
+    });
+}
+
+fn bench_sys_rename(c: &mut Criterion) {
+    let tmp = tempfile::tempdir().unwrap();
+    let kernel = setup_kernel(tmp.path());
+    let ctx = admin_ctx();
+
+    for i in 0..5000 {
+        let path = format!("/bench_ren_{i}.txt");
+        kernel
+            .sys_write(&path, &ctx, b"x", 0)
+            .expect("write ren file");
+    }
+
+    let counter = std::sync::atomic::AtomicU64::new(0);
+    c.bench_function("sys_rename", |b| {
+        b.iter(|| {
+            let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let src = format!("/bench_ren_{n}.txt");
+            let dst = format!("/bench_ren_dst_{n}.txt");
+            let _ = kernel.sys_rename(black_box(&src), black_box(&dst), &ctx);
+        })
+    });
+}
+
+fn bench_pipe_roundtrip(c: &mut Criterion) {
+    let tmp = tempfile::tempdir().unwrap();
+    let kernel = setup_kernel(tmp.path());
+
+    // Create DT_PIPE
+    kernel
+        .sys_setattr(
+            "/bench/pipe",
+            DT_PIPE as i32,
+            "",
+            None,
+            None,
+            None,
+            "default",
+            "root",
+            false,
+            4 * 1024 * 1024, // 4MB capacity
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("create DT_PIPE");
+
+    let payload =
+        b"bench-payload-80-bytes-long-for-a-typical-audit-event-json-body-padding!!!!!!!!";
+
+    let mut group = c.benchmark_group("pipe_roundtrip");
+
+    group.bench_function("nexus_DT_PIPE", |b| {
+        b.iter(|| {
+            kernel
+                .pipe_write_nowait(black_box("/bench/pipe"), black_box(payload))
+                .expect("pipe write");
+            let data = kernel
+                .pipe_read_nowait(black_box("/bench/pipe"))
+                .expect("pipe read");
+            black_box(data);
+        })
+    });
+
+    // OS pipe baseline
+    let (r_fd, w_fd) = unsafe {
+        let mut fds = [0i32; 2];
+        assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
+        (fds[0], fds[1])
+    };
+    let mut read_buf = [0u8; 128];
+    group.bench_function("host_os_pipe", |b| {
+        b.iter(|| unsafe {
+            libc::write(w_fd, payload.as_ptr() as *const _, payload.len());
+            libc::read(r_fd, read_buf.as_mut_ptr() as *mut _, payload.len());
+            black_box(&read_buf);
+        })
+    });
+    unsafe {
+        libc::close(r_fd);
+        libc::close(w_fd);
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_sys_stat,
+    bench_sys_read,
+    bench_sys_write,
+    bench_sys_readdir,
+    bench_sys_unlink,
+    bench_sys_rename,
+    bench_pipe_roundtrip,
+);
+criterion_main!(benches);

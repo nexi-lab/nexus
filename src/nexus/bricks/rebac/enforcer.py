@@ -222,13 +222,19 @@ class PermissionEnforcer:
         Moved from PermissionChecker to kernel contract so the kernel
         can call it directly before hook dispatch.
         """
-        if metadata is not None and getattr(metadata, "owner_id", None):
-            subject_id = context.subject_id or context.user_id
-            if metadata.owner_id == subject_id:
-                logger.debug(
-                    f"  -> OWNER FAST-PATH: {subject_id} owns {getattr(metadata, 'path', '?')}, skipping ReBAC"
-                )
-                return True
+        if metadata is not None:
+            _owner = (
+                metadata.get("owner_id")
+                if isinstance(metadata, dict)
+                else getattr(metadata, "owner_id", None)
+            )
+            if _owner:
+                subject_id = context.subject_id or context.user_id
+                if _owner == subject_id:
+                    logger.debug(
+                        f"  -> OWNER FAST-PATH: {subject_id} owns {metadata.get('path', '?') if isinstance(metadata, dict) else getattr(metadata, 'path', '?')}, skipping ReBAC"
+                    )
+                    return True
         return False
 
     def invalidate_cache(

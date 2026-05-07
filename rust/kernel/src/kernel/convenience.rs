@@ -109,6 +109,7 @@ impl KernelConvenience for Kernel {
                                 last_writer_address: entry.last_writer_address.clone(),
                                 lock: None, // batch stat skips lock info for perf
                                 link_target: entry.link_target.clone(),
+                                owner_id: entry.owner_id.clone(),
                             })
                         }
                         None => {

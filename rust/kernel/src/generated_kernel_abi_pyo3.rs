@@ -340,6 +340,7 @@ fn extract_metadata(
         last_writer_address: get_opt_str("last_writer_address")?,
         target_zone_id: get_opt_str("target_zone_id")?,
         link_target: get_opt_str("link_target").ok().flatten(),
+        owner_id: get_opt_str("owner_id").ok().flatten(),
     })
 }
 
@@ -389,6 +390,9 @@ fn to_python_metadata<'py>(
     set_optional_datetime(py, &kwargs, "modified_at", meta.modified_at_ms).map_err(err)?;
     if let Some(target) = meta.link_target.as_deref() {
         kwargs.set_item("link_target", target).map_err(err)?;
+    }
+    if let Some(owner) = meta.owner_id.as_deref() {
+        kwargs.set_item("owner_id", owner).map_err(err)?;
     }
     cls.call((), Some(&kwargs)).map_err(err)
 }
@@ -450,6 +454,7 @@ fn stat_result_to_pydict<'py>(
     let _ = dict.set_item("version", s.version);
     let _ = dict.set_item("zone_id", s.zone_id.as_deref());
     let _ = dict.set_item("link_target", s.link_target.as_deref());
+    let _ = dict.set_item("owner_id", s.owner_id.as_deref());
     let _ = dict.set_item("lock", py.None());
     dict
 }
@@ -2268,6 +2273,7 @@ impl PyKernel {
                 dict.set_item("gen", s.gen)?;
                 dict.set_item("zone_id", s.zone_id.as_deref())?;
                 dict.set_item("link_target", s.link_target.as_deref())?;
+                dict.set_item("owner_id", s.owner_id.as_deref())?;
                 match &s.lock {
                     Some(lock) => {
                         let lock_dict = PyDict::new(py);

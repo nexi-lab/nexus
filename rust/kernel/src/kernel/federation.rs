@@ -73,6 +73,7 @@ impl Kernel {
                 last_writer_address: None,
                 lock: None,
                 link_target: None,
+                owner_id: None,
             });
         }
         // /__sys__/zones/<id>: synthesise from federation list.
@@ -99,6 +100,7 @@ impl Kernel {
             last_writer_address: self.self_address_string(),
             lock: None,
             link_target: None,
+            owner_id: None,
         })
     }
 

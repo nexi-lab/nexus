@@ -1016,6 +1016,7 @@ impl Kernel {
                 last_writer_address: None,
                 lock: None,
                 link_target: None,
+                owner_id: None,
             });
         }
 
@@ -1059,6 +1060,7 @@ impl Kernel {
                         last_writer_address: None,
                         lock: None,
                         link_target: None,
+                        owner_id: None,
                     });
                 }
                 return None;
@@ -1100,6 +1102,7 @@ impl Kernel {
             last_writer_address: entry.last_writer_address,
             lock,
             link_target: entry.link_target,
+            owner_id: entry.owner_id,
         })
     }
 
@@ -1180,6 +1183,7 @@ impl Kernel {
                 last_writer_address: None,
                 target_zone_id: Some(route.zone_id.clone()),
                 link_target: None,
+                owner_id: None,
             }
         } else {
             // 3. Get metadata via the routed metastore (per-mount first,

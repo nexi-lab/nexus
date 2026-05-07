@@ -293,9 +293,12 @@ class NexusFS(  # type: ignore[misc]
                     # tempfile redb (suitable for fixtures that don't care
                     # about on-disk persistence).
                     if _metastore_path is None:
+                        import os
                         import tempfile
 
-                        _metastore_path = tempfile.mktemp(suffix=".redb")
+                        fd, tmp_path = tempfile.mkstemp(suffix=".redb")
+                        os.close(fd)
+                        _metastore_path = tmp_path
 
                     self._kernel.set_metastore_path(str(_metastore_path))
                     # All kernel wiring that depends on other NexusFS attributes

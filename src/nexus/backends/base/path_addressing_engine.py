@@ -164,7 +164,7 @@ class PathAddressingEngine(Backend):
             blob_path = self._get_key_path(backend_path)
             try:
                 old_data, _ = self._transport.fetch(blob_path)
-            except Exception:
+            except NexusFileNotFoundError:
                 old_data = b""
             # Zero-fill gap if offset > len(old_data)
             if offset > len(old_data):

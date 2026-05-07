@@ -209,7 +209,7 @@ class AgentRPCService:
         provision_agent_wallet(agent_id, zone_id, self._wallet_provisioner, _logger)
 
     def _determine_agent_key_expiration(self, user_id: str, session: Any) -> datetime:
-        from nexus.contracts.agent_utils import determine_agent_key_expiration
+        from nexus.services.agents.agent_key_utils import determine_agent_key_expiration
 
         return determine_agent_key_expiration(user_id, session)
 

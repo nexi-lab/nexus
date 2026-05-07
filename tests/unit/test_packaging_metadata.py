@@ -34,6 +34,18 @@ def test_root_package_does_not_advertise_unpublished_nexus_runtime_extra() -> No
     assert "fast" not in optional
 
 
+def test_base_dependencies_include_email_validation_runtime() -> None:
+    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+    base_dependencies = payload["project"]["dependencies"]
+
+    assert any(
+        dep.startswith("pydantic[email]") or dep.startswith("email-validator")
+        for dep in base_dependencies
+    )
+
+
 def test_rust_package_versions_match_main_package() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     root_payload = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))

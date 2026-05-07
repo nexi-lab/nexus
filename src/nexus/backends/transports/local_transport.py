@@ -1,8 +1,8 @@
 """Local filesystem Transport — raw key→blob I/O on local disk.
 
-Implements the Transport protocol using direct writes with optional
-fsync for durability. CAS is idempotent (same hash = same bytes), so
-temp+replace atomicity is unnecessary — direct write is safe and faster.
+Implements the Transport protocol using atomic replacement writes with
+optional fsync for durability. Local path-addressed storage is mutable and
+user-visible, so writes must not expose truncated or partial files.
 
 Storage mapping:
     key "cas/ab/cd/abcd1234…" → root_path / "cas" / "ab" / "cd" / "abcd1234…"
@@ -22,6 +22,7 @@ import contextlib
 import logging
 import os
 import shutil
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -58,7 +59,7 @@ class LocalTransport:
 
         CAS has at most 65,536 two-level dirs (cas/ab/cd/). Once created,
         they are never deleted during normal operation, so we cache the
-        result. On ENOENT from os.open we evict and retry (see store).
+        result. On ENOENT while opening a temp file we evict and retry.
         """
         parent = str(path.parent)
         if parent not in self._known_parents:
@@ -68,28 +69,12 @@ class LocalTransport:
     # === Transport Protocol Methods ===
 
     def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
-        """Direct write: raw fd → fsync → done. No temp+replace.
-
-        CAS is idempotent (same hash = same bytes), so direct write is safe.
-        Saves ~200μs per write by eliminating temp file + os.replace overhead.
+        """Atomically write a blob via temp file + replace.
 
         Returns None (local FS has no versioning).
         """
         path = self._resolve(key)
-        self._ensure_parent(path)
-        try:
-            fd = os.open(str(path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
-        except FileNotFoundError:
-            # Parent dir was deleted externally — evict cache and retry
-            self._known_parents.discard(str(path.parent))
-            self._ensure_parent(path)
-            fd = os.open(str(path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
-        try:
-            os.write(fd, data)
-            if self._fsync:
-                os.fsync(fd)
-        finally:
-            os.close(fd)
+        self._atomic_write(path, key, data, sync=self._fsync)
         return None
 
     def get_mtime(self, key: str) -> float:
@@ -101,19 +86,14 @@ class LocalTransport:
             raise NexusFileNotFoundError(key) from None
 
     def store_nosync(self, key: str, data: bytes) -> None:
-        """Direct write without fsync — for reconstructable metadata.
+        """Atomic write without fsync — for reconstructable metadata.
 
         CDC meta JSON is reconstructable (chunk/manifest flags for GC).
         Crash-losing the meta file means GC cannot identify CDC manifests,
         but the blob is still readable.
         """
         path = self._resolve(key)
-        self._ensure_parent(path)
-        fd = os.open(str(path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
-        try:
-            os.write(fd, data)
-        finally:
-            os.close(fd)
+        self._atomic_write(path, key, data, sync=False)
 
     def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         path = self._resolve(key)
@@ -313,9 +293,8 @@ class LocalTransport:
         content_type: str = "",  # noqa: ARG002 — local FS ignores MIME
     ) -> str | None:
         """Stream chunks to local filesystem via temp file + atomic replace."""
-        import tempfile
-
         path = self._resolve(key)
+        tmp_path: str | None = None
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with tempfile.NamedTemporaryFile(dir=path.parent, delete=False, suffix=".tmp") as tmp:
@@ -324,8 +303,9 @@ class LocalTransport:
                 tmp_path = tmp.name
             os.replace(tmp_path, str(path))
         except Exception as e:
-            with contextlib.suppress(OSError):
-                Path(tmp_path).unlink(missing_ok=True)
+            if tmp_path is not None:
+                with contextlib.suppress(OSError):
+                    Path(tmp_path).unlink(missing_ok=True)
             raise BackendError(
                 f"Failed to write chunked blob to {key}: {e}",
                 backend="local",
@@ -390,6 +370,85 @@ class LocalTransport:
         return result
 
     # === Internal Helpers ===
+
+    def _atomic_write(self, path: Path, key: str, data: bytes, *, sync: bool) -> None:
+        """Write all bytes to a temp file, then atomically replace destination."""
+        tmp_path: Path | None = None
+        try:
+            fd, tmp_name = self._open_temp_for(path)
+            tmp_path = Path(tmp_name)
+            try:
+                self._set_replacement_mode(fd, tmp_path, path)
+                self._write_all(fd, data)
+                if sync:
+                    os.fsync(fd)
+            finally:
+                os.close(fd)
+
+            os.replace(str(tmp_path), str(path))
+            tmp_path = None
+            if sync:
+                self._fsync_parent_dir(path.parent)
+        except OSError as e:
+            if tmp_path is not None:
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink(missing_ok=True)
+            raise BackendError(
+                f"Failed to write blob to {key}: {e}",
+                backend="local",
+                path=key,
+            ) from e
+
+    def _open_temp_for(self, path: Path) -> tuple[int, str]:
+        """Create a temp file next to path, recovering from stale parent cache."""
+        self._ensure_parent(path)
+        try:
+            return tempfile.mkstemp(
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+            )
+        except FileNotFoundError:
+            self._known_parents.discard(str(path.parent))
+            self._ensure_parent(path)
+            return tempfile.mkstemp(
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+            )
+
+    @staticmethod
+    def _set_replacement_mode(fd: int, tmp_path: Path, path: Path) -> None:
+        mode = LocalTransport._replacement_mode(path)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
+        else:
+            tmp_path.chmod(mode)
+
+    @staticmethod
+    def _replacement_mode(path: Path) -> int:
+        with contextlib.suppress(OSError):
+            return path.stat().st_mode & 0o777
+        return 0o644
+
+    @staticmethod
+    def _write_all(fd: int, data: bytes) -> None:
+        view = memoryview(data)
+        written_total = 0
+        while written_total < len(view):
+            written = os.write(fd, view[written_total:])
+            if written == 0:
+                raise OSError("write returned 0 bytes")
+            written_total += written
+
+    @staticmethod
+    def _fsync_parent_dir(path: Path) -> None:
+        with contextlib.suppress(OSError):
+            fd = os.open(str(path), os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
 
     def _cleanup_empty_parents(self, dir_path: Path) -> None:
         """Remove empty parent directories up to root."""

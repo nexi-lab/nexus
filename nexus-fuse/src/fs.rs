@@ -26,6 +26,79 @@ const BLOCK_SIZE: u32 = 512;
 /// At ~200 bytes per entry, 100K entries ≈ 20MB.
 const MAX_INODE_ENTRIES: usize = 100_000;
 
+/// Maximum number of open file contents to keep for range reads.
+const MAX_OPEN_FILE_HANDLES: usize = 128;
+
+/// Maximum total bytes retained by open file contents.
+const MAX_OPEN_FILE_CACHE_BYTES: usize = 128 * 1024 * 1024;
+
+struct OpenFileCacheEntry {
+    path: String,
+    content: Vec<u8>,
+}
+
+struct OpenFileCache {
+    entries: LruCache<u64, OpenFileCacheEntry>,
+    total_bytes: usize,
+    max_bytes: usize,
+}
+
+impl OpenFileCache {
+    fn new(capacity: NonZeroUsize, max_bytes: usize) -> Self {
+        Self {
+            entries: LruCache::new(capacity),
+            total_bytes: 0,
+            max_bytes,
+        }
+    }
+
+    fn get(&mut self, fh: &u64) -> Option<&OpenFileCacheEntry> {
+        self.entries.get(fh)
+    }
+
+    fn put(&mut self, fh: u64, path: String, content: Vec<u8>) {
+        if content.len() > self.max_bytes {
+            self.remove(fh);
+            return;
+        }
+
+        let content_len = content.len();
+        if let Some((_, old_entry)) = self.entries.push(fh, OpenFileCacheEntry { path, content }) {
+            self.total_bytes = self.total_bytes.saturating_sub(old_entry.content.len());
+        }
+        self.total_bytes = self.total_bytes.saturating_add(content_len);
+        self.evict_to_budget();
+    }
+
+    fn remove(&mut self, fh: u64) {
+        if let Some(entry) = self.entries.pop(&fh) {
+            self.total_bytes = self.total_bytes.saturating_sub(entry.content.len());
+        }
+    }
+
+    fn invalidate_path(&mut self, path: &str) {
+        let stale_handles: Vec<u64> = self
+            .entries
+            .iter()
+            .filter_map(|(fh, entry)| if entry.path == path { Some(*fh) } else { None })
+            .collect();
+        for fh in stale_handles {
+            self.remove(fh);
+        }
+    }
+
+    fn evict_to_budget(&mut self) {
+        while self.total_bytes > self.max_bytes {
+            if let Some((_, entry)) = self.entries.pop_lru() {
+                self.total_bytes = self.total_bytes.saturating_sub(entry.content.len());
+            } else {
+                self.total_bytes = 0;
+                break;
+            }
+        }
+    }
+}
+
 /// Unified inode table combining bidirectional maps and counter under a single
 /// lock. Eliminates the race condition in `get_or_create_inode()` (Issue 7A)
 /// where releasing one lock before acquiring another could allow duplicate
@@ -170,6 +243,9 @@ pub struct NexusFs {
     dir_cache: Mutex<LruCache<u64, (Vec<FileEntry>, SystemTime)>>,
     /// Persistent SQLite cache for file content (optional).
     file_cache: Option<FileCache>,
+    /// Per-open file content cache for range reads that bypass SQLite size limits.
+    open_file_cache: Mutex<OpenFileCache>,
+    next_file_handle: Mutex<u64>,
 }
 
 #[derive(Debug)]
@@ -188,6 +264,11 @@ impl NexusFs {
             attr_cache: Mutex::new(LruCache::new(NonZeroUsize::new(10000).unwrap())),
             dir_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
             file_cache,
+            open_file_cache: Mutex::new(OpenFileCache::new(
+                NonZeroUsize::new(MAX_OPEN_FILE_HANDLES).unwrap(),
+                MAX_OPEN_FILE_CACHE_BYTES,
+            )),
+            next_file_handle: Mutex::new(1),
         }
     }
 
@@ -371,6 +452,47 @@ impl NexusFs {
         // Invalidate persistent cache
         if let Some(ref cache) = self.file_cache {
             cache.invalidate(path);
+        }
+
+        // Invalidate open-handle content caches for this path.
+        self.open_file_cache.lock().unwrap().invalidate_path(path);
+    }
+
+    fn allocate_file_handle(&self) -> u64 {
+        let mut next = self.next_file_handle.lock().unwrap();
+        let fh = *next;
+        *next = next.wrapping_add(1);
+        if *next == 0 {
+            *next = 1;
+        }
+        fh
+    }
+
+    fn reply_data_slice(content: &[u8], offset: i64, size: u32, reply: ReplyData) {
+        if offset < 0 {
+            reply.error(EIO);
+            return;
+        }
+
+        let offset = offset as usize;
+        if offset >= content.len() {
+            reply.data(&[]);
+        } else {
+            let end = std::cmp::min(offset + size as usize, content.len());
+            reply.data(&content[offset..end]);
+        }
+    }
+
+    fn slice_len(content: &[u8], offset: i64, size: u32) -> usize {
+        if offset < 0 {
+            return 0;
+        }
+
+        let offset = offset as usize;
+        if offset >= content.len() {
+            0
+        } else {
+            std::cmp::min(offset + size as usize, content.len()) - offset
         }
     }
 
@@ -625,7 +747,7 @@ impl Filesystem for NexusFs {
         &mut self,
         _req: &Request,
         ino: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
         size: u32,
         _flags: i32,
@@ -636,9 +758,21 @@ impl Filesystem for NexusFs {
 
         let path = resolve_path!(self, ino, reply);
 
-        // Read using SQLite cache with ETag support
         let started_at = std::time::Instant::now();
 
+        if fh != 0 {
+            let mut open_cache = self.open_file_cache.lock().unwrap();
+            if let Some(entry) = open_cache.get(&fh) {
+                if entry.path == path {
+                    let slice_len = Self::slice_len(&entry.content, offset, size);
+                    metrics::record_read("cache", slice_len, started_at.elapsed());
+                    Self::reply_data_slice(&entry.content, offset, size, reply);
+                    return;
+                }
+            }
+        }
+
+        // Read using SQLite cache with ETag support
         let read_result = match self.read_cached(&path) {
             Ok(result) => result,
             Err(e) => {
@@ -661,24 +795,30 @@ impl Filesystem for NexusFs {
             tier,
         } = read_result;
 
-        // Return requested slice
-        let offset = offset as usize;
-        if offset >= content.len() {
-            metrics::record_read(tier, 0, started_at.elapsed());
-            reply.data(&[]);
-        } else {
-            let end = std::cmp::min(offset + size as usize, content.len());
-            let slice = &content[offset..end];
-            metrics::record_read(tier, slice.len(), started_at.elapsed());
-            reply.data(slice);
+        if fh != 0 && content.len() <= MAX_OPEN_FILE_CACHE_BYTES {
+            let mut open_cache = self.open_file_cache.lock().unwrap();
+            open_cache.put(fh, path, content);
+            if let Some(entry) = open_cache.get(&fh) {
+                let slice_len = Self::slice_len(&entry.content, offset, size);
+                metrics::record_read(tier, slice_len, started_at.elapsed());
+                Self::reply_data_slice(&entry.content, offset, size, reply);
+                return;
+            }
+            metrics::record_read("error", 0, started_at.elapsed());
+            reply.error(EIO);
+            return;
         }
+
+        let slice_len = Self::slice_len(&content, offset, size);
+        metrics::record_read(tier, slice_len, started_at.elapsed());
+        Self::reply_data_slice(&content, offset, size, reply);
     }
 
     fn write(
         &mut self,
         _req: &Request,
         ino: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
         data: &[u8],
         _write_flags: u32,
@@ -720,6 +860,9 @@ impl Filesystem for NexusFs {
             match self.client.write(&path, &new_content) {
                 Ok(_) => {
                     metrics::record_write_backend_rpc();
+                    if fh != 0 {
+                        self.open_file_cache.lock().unwrap().remove(fh);
+                    }
                     self.invalidate_path(&path);
                     reply.written(data.len() as u32);
                 }
@@ -732,6 +875,9 @@ impl Filesystem for NexusFs {
             match self.client.write(&path, data) {
                 Ok(_) => {
                     metrics::record_write_backend_rpc();
+                    if fh != 0 {
+                        self.open_file_cache.lock().unwrap().remove(fh);
+                    }
                     self.invalidate_path(&path);
                     reply.written(data.len() as u32);
                 }
@@ -938,7 +1084,7 @@ impl Filesystem for NexusFs {
         _atime: Option<fuser::TimeOrNow>,
         _mtime: Option<fuser::TimeOrNow>,
         _ctime: Option<SystemTime>,
-        _fh: Option<u64>,
+        fh: Option<u64>,
         _crtime: Option<SystemTime>,
         _chgtime: Option<SystemTime>,
         _bkuptime: Option<SystemTime>,
@@ -956,6 +1102,9 @@ impl Filesystem for NexusFs {
                 match self.client.write(&path, &[]) {
                     Ok(_) => {
                         metrics::record_write_backend_rpc();
+                        if let Some(fh) = fh {
+                            self.open_file_cache.lock().unwrap().remove(fh);
+                        }
                         self.invalidate_path(&path);
                     }
                     Err(e) => {
@@ -973,6 +1122,9 @@ impl Filesystem for NexusFs {
                         match self.client.write(&path, &data) {
                             Ok(_) => {
                                 metrics::record_write_backend_rpc();
+                                if let Some(fh) = fh {
+                                    self.open_file_cache.lock().unwrap().remove(fh);
+                                }
                                 self.invalidate_path(&path);
                             }
                             Err(e) => {
@@ -1010,7 +1162,8 @@ impl Filesystem for NexusFs {
                 reply.error(EISDIR);
             }
             Some(false) => {
-                reply.opened(0, 0);
+                let fh = self.allocate_file_handle();
+                reply.opened(fh, 0);
             }
             None => {
                 // Path doesn't exist
@@ -1060,12 +1213,15 @@ impl Filesystem for NexusFs {
         &mut self,
         _req: &Request,
         _ino: u64,
-        _fh: u64,
+        fh: u64,
         _flags: i32,
         _lock_owner: Option<u64>,
         _flush: bool,
         reply: fuser::ReplyEmpty,
     ) {
+        if fh != 0 {
+            self.open_file_cache.lock().unwrap().remove(fh);
+        }
         reply.ok();
     }
 
@@ -1313,5 +1469,40 @@ mod tests {
         assert_eq!(removed, Some(inode));
         assert_eq!(table.peek_inode("/to-delete"), None);
         assert_eq!(table.get_path(inode), None);
+    }
+
+    #[test]
+    fn test_open_file_cache_rejects_file_over_byte_budget() {
+        let mut cache = OpenFileCache::new(NonZeroUsize::new(4).unwrap(), 8);
+        cache.put(1, "/big.bin".to_string(), vec![0; 9]);
+
+        assert!(cache.get(&1).is_none());
+        assert_eq!(cache.total_bytes, 0);
+    }
+
+    #[test]
+    fn test_open_file_cache_evicts_to_byte_budget() {
+        let mut cache = OpenFileCache::new(NonZeroUsize::new(4).unwrap(), 8);
+        cache.put(1, "/a.bin".to_string(), vec![0; 4]);
+        cache.put(2, "/b.bin".to_string(), vec![0; 4]);
+        cache.put(3, "/c.bin".to_string(), vec![0; 4]);
+
+        assert!(cache.get(&1).is_none());
+        assert!(cache.get(&2).is_some());
+        assert!(cache.get(&3).is_some());
+        assert_eq!(cache.total_bytes, 8);
+    }
+
+    #[test]
+    fn test_open_file_cache_remove_updates_byte_count() {
+        let mut cache = OpenFileCache::new(NonZeroUsize::new(4).unwrap(), 16);
+        cache.put(1, "/a.bin".to_string(), vec![0; 4]);
+        cache.put(2, "/b.bin".to_string(), vec![0; 6]);
+
+        cache.remove(1);
+
+        assert!(cache.get(&1).is_none());
+        assert!(cache.get(&2).is_some());
+        assert_eq!(cache.total_bytes, 6);
     }
 }

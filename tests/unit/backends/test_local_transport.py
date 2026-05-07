@@ -6,11 +6,13 @@ References:
     - Issue #1323: CAS x Backend orthogonal composition
 """
 
+import os
+
 import pytest
 
 from nexus.backends.base.transport import Transport
 from nexus.backends.transports.local_transport import LocalTransport
-from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 
 
 @pytest.fixture
@@ -69,6 +71,38 @@ class TestPutGetBlob:
         transport.store("large", large)
         data, _ = transport.fetch("large")
         assert data == large
+
+    def test_put_handles_partial_os_write(self, transport, monkeypatch):
+        real_write = os.write
+        calls: list[bytes] = []
+
+        def partial_write(fd: int, data: bytes) -> int:
+            calls.append(bytes(data))
+            if len(data) > 2:
+                return real_write(fd, data[:2])
+            return real_write(fd, data)
+
+        monkeypatch.setattr(os, "write", partial_write)
+
+        transport.store("partial", b"abcdef")
+
+        data, _ = transport.fetch("partial")
+        assert data == b"abcdef"
+        assert len(calls) > 1
+
+    def test_put_preserves_existing_when_replace_fails(self, transport, monkeypatch):
+        transport.store("k", b"original")
+
+        def fail_replace(src: str, dst: str) -> None:
+            raise OSError(f"replace failed: {src} -> {dst}")
+
+        monkeypatch.setattr(os, "replace", fail_replace)
+
+        with pytest.raises(BackendError, match="Failed to write blob"):
+            transport.store("k", b"new")
+
+        data, _ = transport.fetch("k")
+        assert data == b"original"
 
     def test_atomic_write_no_partial_file_on_error(self, transport, tmp_path):
         """Verify that a failed write doesn't leave partial files."""

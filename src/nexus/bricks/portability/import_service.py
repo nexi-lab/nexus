@@ -621,18 +621,21 @@ class ZoneImportService:
                 result.files_skipped += 1
                 return
 
-            metadata = self._file_metadata_class(
-                path=path,
-                size=record.size_bytes,
-                content_id=record.content_id,
-                mime_type=record.file_type,
-                created_at=record.created_at if options.preserve_timestamps else None,
-                modified_at=record.updated_at if options.preserve_timestamps else None,
-                version=record.current_version if options.preserve_ids else 1,
-            )
+            _created_at = record.created_at if options.preserve_timestamps else None
+            _modified_at = record.updated_at if options.preserve_timestamps else None
 
-            # Store metadata
-            self.nexus_fs._kernel.metastore_put(metadata)
+            # Store metadata via sys_setattr DT_REG upsert
+            self.nexus_fs._kernel.sys_setattr(
+                path,
+                0,  # DT_REG upsert
+                content_id=record.content_id,
+                size=record.size_bytes,
+                mime_type=record.file_type,
+                version=record.current_version if options.preserve_ids else 1,
+                zone_id=ROOT_ZONE_ID,
+                created_at_ms=int(_created_at.timestamp() * 1000) if _created_at else None,
+                modified_at_ms=int(_modified_at.timestamp() * 1000) if _modified_at else None,
+            )
 
             if is_update:
                 result.files_updated += 1

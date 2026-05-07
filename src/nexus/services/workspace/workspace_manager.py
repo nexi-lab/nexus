@@ -311,8 +311,6 @@ class WorkspaceManager:
 
             from datetime import UTC, datetime
 
-            from nexus.contracts.metadata import FileMetadata
-
             for rel_path in manifest_paths:
                 entry = manifest.get(rel_path)
                 assert entry is not None  # paths() guarantees entry exists
@@ -325,15 +323,17 @@ class WorkspaceManager:
 
                 # Create metadata entry pointing to existing CAS content
                 # No need to read/write content - it's already in CAS!
-                file_meta = FileMetadata(
-                    path=full_path,
-                    size=entry.size,
+                now_ms = int(datetime.now(UTC).timestamp() * 1000)
+                self._kernel.sys_setattr(
+                    full_path,
+                    0,  # DT_REG upsert
                     content_id=entry.content_id,
+                    size=entry.size,
                     mime_type=entry.mime_type,
-                    modified_at=datetime.now(UTC),
-                    version=1,  # Will be updated by metadata store  # Track who restored this version
+                    version=1,
+                    zone_id="root",
+                    modified_at_ms=now_ms,
                 )
-                self._kernel.metastore_put(file_meta)
                 files_restored += 1
 
             return {

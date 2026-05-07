@@ -1834,9 +1834,23 @@ impl Kernel {
                 });
             }
             // DT_EXTERNAL_STORAGE (5) — connector-backed mounts (oauth/api).
-            // Their lifecycle (token revocation, connector teardown) lives
-            // in Python; keep as a miss so the Python layer dispatches.
-            5 => return miss(entry.entry_type),
+            // Metadata delete + dcache invalidation handled here (kernel concern).
+            // Connector teardown (token revocation, etc.) stays in Python DLC
+            // via the post_hook_needed signal.
+            5 => {
+                // Metadata-first ordering: delete metadata so the entry becomes
+                // invisible immediately, then Python DLC handles connector teardown.
+                // metastore.delete owns dcache invalidation internally.
+                let _ = self.with_metastore_route(&route, |ms| ms.delete(path));
+                return Ok(SysUnlinkResult {
+                    hit: true,
+                    entry_type: 5,          // DT_EXTERNAL_STORAGE
+                    post_hook_needed: true, // always: Python DLC must unmount
+                    path: path.to_string(),
+                    content_id: entry.content_id,
+                    size: entry.size,
+                });
+            }
             _ => {}
         }
 

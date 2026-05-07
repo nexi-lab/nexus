@@ -898,16 +898,8 @@ class MetadataMixin:
                 return {}
             raise NexusFileNotFoundError(path)
 
-        # DT_EXTERNAL_STORAGE (5): unmount via DLC (Python service-tier,
-        # connector teardown / token revocation).  Retry-safety
-        # (Codex review, Issue #4002 round 3): commit the metadata
-        # delete FIRST so a partial failure between teardown and
-        # metadata cleanup cannot leave a stuck entry.  After
-        # metadata.delete succeeds, the kernel no longer reports et=5
-        # for this path, so a retry simply short-circuits.  Connector
-        # teardown becomes best-effort; a False return is logged but
-        # does not raise, since we cannot distinguish "real teardown
-        # failure" from "already unmounted by an earlier attempt".
+        # DT_EXTERNAL_STORAGE (5): Rust kernel now handles metadata delete
+        # (C19). Python only needs connector teardown via DLC + post hooks.
         if et == 5:
             ctx = self._resolve_cred(context)
             from nexus.contracts.vfs_hooks import RmdirHookContext
@@ -924,7 +916,6 @@ class MetadataMixin:
                 or ROOT_ZONE_ID
             )
             self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
-            self._kernel.metastore_delete(path)
             removed = self._driver_coordinator.unmount(path, route_zone)
             # Verify the kernel mount route is actually gone so a real
             # teardown failure surfaces even when unmount() reports

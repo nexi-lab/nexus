@@ -913,8 +913,20 @@ impl Kernel {
             }
         }
 
-        // 3b. DT_PIPE / DT_STREAM: try Rust IPC registry
-        if let Some(entry) = &entry {
+        // 3b. Contract guard: sys_write does NOT create new files.
+        //     File creation goes through sys_setattr(path, DT_REG, ...).
+        //     When entry is None (file doesn't exist) and this is a
+        //     fresh write (offset==0), return miss() — the caller must
+        //     create the file first. DT_PIPE / DT_STREAM entries are
+        //     always pre-created via sys_setattr, so they're never None
+        //     here. Partial writes (offset>0) already reject None in
+        //     step 5 via Err(FileNotFound).
+        if entry.is_none() && offset == 0 {
+            return miss();
+        }
+
+        // 3c. DT_PIPE / DT_STREAM: try Rust IPC registry
+        if let Some(entry) = entry {
             if entry.entry_type == DT_PIPE {
                 if let Some(buf) = self.pipe_manager.get(path) {
                     match buf.push(effective_content) {
@@ -1177,10 +1189,12 @@ impl Kernel {
             match old_entry {
                 Some(e) => e.content_id.unwrap_or_default(),
                 None => {
-                    // Partial write requires an existing file — but
-                    // `sys_write` contract says "file must exist" anyway,
-                    // so just surface that.
-                    return Err(KernelError::FileNotFound(input.path.to_string()));
+                    // Partial write to non-existent file (step 3b
+                    // already rejects offset==0 miss; this handles
+                    // the offset>0 race where the entry disappears
+                    // between step 3 and step 5).
+                    self.lock_manager.do_release(lock_handle);
+                    return Err(KernelError::FileNotFound(path.to_string()));
                 }
             }
         };
@@ -3072,12 +3086,38 @@ impl Kernel {
                 continue;
             }
 
-            // Backend write. Per-item error semantics: a failure only taints
-            // that item's result, not the whole batch.
-            let write_result = route.backend.as_ref().and_then(|b| {
-                b.write_content(&req.content, &route.backend_path, ctx, 0)
-                    .ok()
-            });
+            // Contract guard: sys_write_batch does NOT create new files.
+            // Same as sys_write step 3b — file must exist in metastore.
+            // Batch writes are always at offset=0; callers that need to
+            // create files must use sys_setattr(path, DT_REG) first.
+            let pre_entry_exists = self
+                .with_metastore_route(route, |ms| ms.get(path).ok().flatten())
+                .flatten()
+                .is_some();
+            if !pre_entry_exists {
+                results.push(SysWriteResult {
+                    hit: false,
+                    content_id: None,
+                    post_hook_needed: false,
+                    version: 0,
+                    gen: 0,
+                    size: 0,
+                    is_new: false,
+                    old_content_id: None,
+                    old_size: None,
+                    old_version: None,
+                    old_modified_at_ms: None,
+                });
+                continue;
+            }
+
+            // Backend write. ``sys_write_batch`` keeps per-item error
+            // semantics: a failure only taints that item's result, not the
+            // whole batch.
+            let write_result = route
+                .backend
+                .as_ref()
+                .and_then(|b| b.write_content(content, &route.backend_path, ctx, 0).ok());
 
             match write_result {
                 Some(wr) => {

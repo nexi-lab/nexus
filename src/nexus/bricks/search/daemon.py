@@ -1428,13 +1428,36 @@ class SearchDaemon:
         self.last_search_timing = {}
         hybrid_keyword_results: list[SearchResult] = []
         hybrid_keyword_ms = 0.0
+        has_new_backends = self._fts_backend is not None and self._vector_backend is not None
+        backend_attempted = False
 
         try:
             if search_type == "keyword":
+                if has_new_backends:
+                    backend_start = time.perf_counter()
+                    backend_results = await self._search_via_backends(
+                        query,
+                        search_type=search_type,
+                        limit=limit,
+                        path_filter=path_filter,
+                        zone_id=effective_zone_id,
+                    )
+                    backend_ms = (time.perf_counter() - backend_start) * 1000
+                    backend_attempted = True
+                    self.last_search_timing = {
+                        "backend_ms": backend_ms,
+                        "rerank_ms": 0.0,
+                    }
+                    if backend_results:
+                        latency_ms = (time.perf_counter() - start) * 1000
+                        self._track_latency(latency_ms)
+                        await self._attach_path_contexts(backend_results, zone_id=effective_zone_id)
+                        return backend_results
+
                 # Keyword mode should use the daemon's keyword stack first.
-                # The new fts backend is the canonical BM25 path. We still
-                # try `_keyword_search` (Zoekt/BM25S/inline FTS) first when
-                # zone-safe to preserve the existing fast-path semantics.
+                # The new fts backend above is the canonical BM25/native-FTS
+                # path. Fall back to `_keyword_search` only if the backend is
+                # unavailable or returned no hits.
                 keyword_start = time.perf_counter()
                 keyword_results = await self._keyword_search(
                     query,
@@ -1449,9 +1472,11 @@ class SearchDaemon:
                     self._track_latency(latency_ms)
                     await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
                     return keyword_results
-            elif search_type == "hybrid":
+            elif search_type == "hybrid" and not has_new_backends:
                 # Make lexical candidates explicit in hybrid mode so exact
                 # matches are not lost before backend semantic ranking.
+                # Post-#3699 backends already run chunk+page keyword legs, so
+                # this legacy prefetch is only needed when they are absent.
                 keyword_start = time.perf_counter()
                 hybrid_keyword_results = await self._keyword_search(
                     query,
@@ -1464,7 +1489,7 @@ class SearchDaemon:
             # Delegate to the new search backends (Issue #3699). The daemon
             # now owns hybrid composition: chunk-BM25 + page-BM25 + dense,
             # fused via the fusion module. SQLite drops the page-BM25 leg.
-            if self._fts_backend is not None and self._vector_backend is not None:
+            if has_new_backends and not backend_attempted:
                 backend_start = time.perf_counter()
                 backend_results = await self._search_via_backends(
                     query,

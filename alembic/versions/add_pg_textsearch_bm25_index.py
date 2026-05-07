@@ -92,8 +92,9 @@ def upgrade() -> None:
         warnings.warn(
             "Neither pg_search (paradedb) nor pg_textsearch (Tiger Data) "
             "is installed. Skipping BM25 index creation; keyword search "
-            "will fail at query time. Use the bundled paradedb image or "
-            "install one of these extensions manually.",
+            "will degrade to PostgreSQL native FTS at query time. Use the "
+            "bundled paradedb image or install one of these extensions "
+            "manually for true BM25 ranking.",
             stacklevel=2,
         )
         return

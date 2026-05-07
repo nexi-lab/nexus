@@ -519,6 +519,8 @@ def main() -> None:
             AUTO_INDEX_MARKER,
             "--path",
             "/workspace/demo/plan.md",
+            "--mode",
+            "keyword",
             "--limit",
             "3",
         )
@@ -561,6 +563,8 @@ def main() -> None:
             "quantum entanglement teleportation",
             "--path",
             "/workspace/demo",
+            "--mode",
+            "keyword",
             "--limit",
             "3",
         )
@@ -586,6 +590,8 @@ def main() -> None:
             "quantum entanglement teleportation",
             "--path",
             "/workspace/demo",
+            "--mode",
+            "keyword",
             "--limit",
             "3",
         )

@@ -660,7 +660,7 @@ def _register_vfs_hooks(
 
     # RevisionTrackingObserver deleted (§10 A2): zone revision counter is now
     # a kernel primitive (AtomicU64 per zone). The kernel auto-increments on
-    # sys_write/sys_unlink/sys_rename/sys_mkdir/sys_rmdir. No observer needed.
+    # sys_write/sys_unlink/sys_rename/sys_mkdir (rmdir is internal). No observer needed.
 
     # ── CAS GC (Issue #1320, #1772) ────────────────────────────────────
     # ref_count eliminated; reachability-based GC via CASGarbageCollector.

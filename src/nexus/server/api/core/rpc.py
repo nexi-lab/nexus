@@ -363,7 +363,6 @@ _KERNEL_CACHE_CATEGORY: dict[str, str] = {
     "sys_rename": "rename",
     "sys_copy": "copy",
     "sys_mkdir": "mkdir",
-    "sys_rmdir": "rmdir",
     "sys_setattr": "write",
     "sys_lock": "lock_acquire",
     "sys_unlock": "lock_acquire",

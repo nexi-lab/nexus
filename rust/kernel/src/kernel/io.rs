@@ -1,8 +1,8 @@
-//! File I/O syscalls — `sys_read`, `sys_write`, `sys_stat`,
-//! `sys_unlink`, `sys_rename`, `sys_copy`, `sys_mkdir`, `sys_rmdir`.
+//! File I/O syscalls -- `sys_read`, `sys_write`, `sys_stat`,
+//! `sys_unlink`, `sys_rename`, `sys_copy`, `sys_mkdir`.
 //!
-//! Every method stays a member of [`Kernel`] via this submodule's
-//! `impl Kernel { ... }` block.
+//! `sys_rmdir` is kernel-internal (`pub(crate)`) -- only called from
+//! `sys_unlink` DT_DIR branch. Removed from PyO3 surface in C21.
 
 use std::sync::atomic::Ordering;
 
@@ -2837,11 +2837,14 @@ impl Kernel {
 
     // ── sys_rmdir ──────────────────────────────────────────────────────
 
-    /// Rust syscall: full rmdir (validate → route → children check → delete → dcache).
+    /// Kernel-internal rmdir: full rmdir (validate -> route -> children check -> delete -> dcache).
+    ///
+    /// Only called from `sys_unlink` DT_DIR branch internally.
+    /// Not exposed to Python (removed from PyO3 surface in C21).
     ///
     /// Returns `hit=true` when Rust completed the full operation.
-    /// Returns `hit=false` for DT_MOUNT/DT_EXTERNAL_STORAGE → Python handles unmount.
-    pub fn sys_rmdir(
+    /// Returns `hit=false` for DT_MOUNT/DT_EXTERNAL_STORAGE -> Python handles unmount.
+    pub(crate) fn sys_rmdir(
         &self,
         path: &str,
         ctx: &OperationContext,

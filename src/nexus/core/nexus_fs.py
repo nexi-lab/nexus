@@ -241,6 +241,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.dispatch import get_global_registry
 
         self._ops_registry = get_global_registry()
+        self._mounted_backend_instances: dict[str, Any] = {}
 
         import os as _os_ipc
 

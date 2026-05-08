@@ -11,6 +11,8 @@ Covers:
 
 import pytest
 
+from nexus.contracts.metadata import DT_MOUNT
+from nexus.core.nexus_fs_metadata import MetadataMixin
 from tests.conftest import make_test_nexus
 
 
@@ -171,6 +173,79 @@ class TestSysUnlinkNonHit:
 
         assert result["/lock-timeout.txt"]["success"] is False
         assert "entry_type=99" in result["/lock-timeout.txt"]["error"]
+
+
+class TestSysUnlinkMountedBackendRegistry:
+    class _Kernel:
+        def __init__(self, result):
+            self.result = result
+            self.deleted: list[str] = []
+
+        def metastore_get(self, _path):
+            return None
+
+        def sys_unlink(self, *_a, **_kw):
+            return self.result
+
+        def dispatch_pre_hooks(self, *_a, **_kw):
+            return None
+
+        def metastore_delete(self, path):
+            self.deleted.append(path)
+
+        def has_mount(self, *_a, **_kw):
+            return False
+
+    class _Coordinator:
+        def unmount(self, _path, _zone_id=None):
+            return True
+
+    class _Harness(MetadataMixin):
+        _zone_id = "root"
+        _hook_specs: dict[str, object] = {}
+
+        def __init__(self, kernel):
+            self._kernel = kernel
+            self._driver_coordinator = TestSysUnlinkMountedBackendRegistry._Coordinator()
+            self._mounted_backend_instances: dict[str, object] = {}
+
+        def resolve_delete(self, path, *, context=None):  # noqa: ARG002
+            return False, None
+
+        def _get_context_identity(self, context):  # noqa: ARG002
+            return "root", "agent", False
+
+        def _build_rust_ctx(self, context, is_admin):  # noqa: ARG002
+            return None
+
+        def _resolve_cred(self, context):
+            return context
+
+    def test_mount_unlink_forgets_dispatch_backend(self):
+        class _MountResult:
+            hit = True
+            entry_type = DT_MOUNT
+            post_hook_needed = False
+
+        fs = self._Harness(self._Kernel(_MountResult()))
+        backend = object()
+        fs._mounted_backend_instances["/mount"] = backend
+
+        assert fs.sys_unlink("/mount") == {}
+        assert fs._mounted_backend_instances == {}
+
+    def test_external_unlink_forgets_dispatch_backend(self):
+        class _ExternalResult:
+            hit = False
+            entry_type = 5
+            post_hook_needed = False
+
+        fs = self._Harness(self._Kernel(_ExternalResult()))
+        backend = object()
+        fs._mounted_backend_instances["/external-mount"] = backend
+
+        assert fs.sys_unlink("/external-mount") == {}
+        assert fs._mounted_backend_instances == {}
 
 
 class TestDeleteBatchSiblingPrefixSafety:

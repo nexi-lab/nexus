@@ -186,6 +186,12 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
             content_id=meta.get("etag"),
         )
 
+    def fingerprint(self, path: str, context: "OperationContext | None" = None) -> str:
+        backend_path = (
+            context.backend_path if context and context.backend_path else path.lstrip("/")
+        )
+        return self._s3_transport.fingerprint(self._get_key_path(backend_path))
+
     # === Presigned URLs ===
 
     def generate_presigned_url(

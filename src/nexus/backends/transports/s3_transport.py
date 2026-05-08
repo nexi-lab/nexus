@@ -549,3 +549,16 @@ class S3Transport:
                 backend="s3",
                 path=key,
             ) from e
+
+    def fingerprint(self, key: str) -> str:
+        """Return a stable object fingerprint without downloading content."""
+        meta = self.get_object_metadata(key)
+        version_id = meta.get("version_id")
+        if version_id and version_id != "null":
+            return f"version:{version_id}"
+
+        etag = meta.get("etag")
+        if etag:
+            return f"etag:{etag}"
+
+        return f"size:{meta.get('size', 0)}"

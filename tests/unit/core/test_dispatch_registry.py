@@ -13,6 +13,7 @@ from nexus.core.dispatch import (
     OpKey,
     OpsRegistry,
     get_global_registry,
+    grep_path,
     normalize_backend,
     normalize_filetype,
     register_backend_ops,
@@ -98,6 +99,10 @@ def test_backend_registration_adds_requested_overrides() -> None:
 
 
 def test_backend_handlers_forward_to_backend_instances() -> None:
+    @dataclass
+    class FakeContext:
+        backend_path: str | None = None
+
     class FakeSlack:
         def grep_messages(
             self,
@@ -106,27 +111,32 @@ def test_backend_handlers_forward_to_backend_instances() -> None:
             context: object,
             max_results: int,
             ignore_case: bool,
+            backend_path: str,
+            mount_path: str,
         ) -> list[dict[str, Any]]:
             assert pattern == "error"
-            assert context == "ctx"
+            assert isinstance(context, FakeContext)
             assert max_results == 2
             assert ignore_case is True
+            assert backend_path == "channels/general.yaml"
+            assert mount_path == "/slack"
             return [{"file": "/slack/channels/general.yaml"}]
 
     class FakeGitHub:
         def raw_read(self, path: str, *, context: object) -> bytes:
-            assert path == "/repo/README.md"
-            assert context == "ctx"
+            assert path == "owner/repo/main/README.md"
+            assert getattr(context, "backend_path", None) == "owner/repo/main/README.md"
             return b"readme"
 
     class FakeS3:
         def fingerprint(self, path: str, *, context: object) -> str:
-            assert path == "/bucket/key"
-            assert context == "ctx"
+            assert path == "bucket/key"
+            assert getattr(context, "backend_path", None) == "bucket/key"
             return "etag:abc"
 
     registry = OpsRegistry()
     register_backend_ops(registry)
+    ctx = FakeContext()
 
     grep = registry.resolve("grep", FileType.UNKNOWN, BackendKind.SLACK)
     assert grep is not None
@@ -136,11 +146,15 @@ def test_backend_handlers_forward_to_backend_instances() -> None:
             path="/slack",
             filetype=FileType.UNKNOWN,
             backend=BackendKind.SLACK,
-            context="ctx",
-            metadata={"backend_instance": FakeSlack()},
+            context=ctx,
             pattern="error",
             ignore_case=True,
             max_results=2,
+            metadata={
+                "backend_instance": FakeSlack(),
+                "backend_path": "channels/general.yaml",
+                "mount_path": "/slack",
+            },
         )
     ) == [{"file": "/slack/channels/general.yaml"}]
 
@@ -153,8 +167,11 @@ def test_backend_handlers_forward_to_backend_instances() -> None:
                 path="/repo/README.md",
                 filetype=FileType.UNKNOWN,
                 backend=BackendKind.GITHUB,
-                context="ctx",
-                metadata={"backend_instance": FakeGitHub()},
+                context=ctx,
+                metadata={
+                    "backend_instance": FakeGitHub(),
+                    "backend_path": "owner/repo/main/README.md",
+                },
             )
         )
         == b"readme"
@@ -169,8 +186,8 @@ def test_backend_handlers_forward_to_backend_instances() -> None:
                 path="/bucket/key",
                 filetype=FileType.UNKNOWN,
                 backend=BackendKind.S3,
-                context="ctx",
-                metadata={"backend_instance": FakeS3()},
+                context=ctx,
+                metadata={"backend_instance": FakeS3(), "backend_path": "bucket/key"},
             )
         )
         == "etag:abc"
@@ -215,6 +232,161 @@ def test_kernel_fingerprint_fallback_preserves_context_zone() -> None:
 
     assert result == "fingerprint"
     assert kernel._kernel.calls == [("/bucket/key", "tenant-zone")]
+
+
+def test_grep_path_routes_backend_pushdown() -> None:
+    class FakeSlack:
+        def grep_messages(
+            self,
+            pattern: str,
+            *,
+            context: object,
+            max_results: int,
+            ignore_case: bool,
+            backend_path: str,
+            mount_path: str,
+        ) -> list[dict[str, Any]]:
+            assert pattern == "error"
+            assert context == "ctx"
+            assert max_results == 2
+            assert ignore_case is True
+            assert backend_path == "channels"
+            assert mount_path == "/slack"
+            return [{"file": "/slack/channels/general.yaml"}]
+
+    class FakePyKernel:
+        def op_metadata_for_path(self, path: str, zone_id: str = "root") -> dict[str, Any]:
+            return {
+                "filetype": "unknown",
+                "backend": "slack",
+                "backend_name": "slack",
+                "mime_type": None,
+                "backend_instance": FakeSlack(),
+                "backend_path": "channels",
+                "mount_path": "/slack",
+            }
+
+    class FakeKernel:
+        _kernel = FakePyKernel()
+
+    assert grep_path(
+        FakeKernel(),
+        "error",
+        "/slack/channels",
+        context="ctx",
+        ignore_case=True,
+        max_results=2,
+    ) == [{"file": "/slack/channels/general.yaml"}]
+
+
+def test_grep_path_uses_mounted_backend_instance() -> None:
+    class FakeSlack:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, int, str, str]] = []
+
+        def grep_messages(
+            self,
+            pattern: str,
+            *,
+            context: object,
+            max_results: int,
+            ignore_case: bool,
+            backend_path: str,
+            mount_path: str,
+        ) -> list[dict[str, Any]]:
+            self.calls.append((pattern, max_results, backend_path, mount_path))
+            return [{"file": "/slack/channels/general.yaml"}]
+
+    class FakePyKernel:
+        def op_metadata_for_path(self, path: str, zone_id: str = "root") -> dict[str, Any]:
+            return {
+                "filetype": "unknown",
+                "backend": "unknown",
+                "backend_name": "",
+                "mime_type": None,
+            }
+
+    slack = FakeSlack()
+
+    class FakeKernel:
+        _kernel = FakePyKernel()
+
+    FakeKernel._mounted_backend_instances = {"/slack": slack}
+
+    assert grep_path(FakeKernel(), "error", "/slack/channels/general.yaml", max_results=3) == [
+        {"file": "/slack/channels/general.yaml"}
+    ]
+    assert slack.calls == [("error", 3, "channels/general.yaml", "/slack")]
+
+
+def test_grep_path_preserves_empty_backend_path_for_mount_root() -> None:
+    class FakeSlack:
+        def __init__(self) -> None:
+            self.backend_paths: list[str] = []
+
+        def grep_messages(
+            self,
+            pattern: str,
+            *,
+            context: object,
+            max_results: int,
+            ignore_case: bool,
+            backend_path: str,
+            mount_path: str,
+        ) -> list[dict[str, Any]]:
+            self.backend_paths.append(backend_path)
+            return [{"file": "/slack/channels/general.yaml"}]
+
+    class FakePyKernel:
+        def op_metadata_for_path(self, path: str, zone_id: str = "root") -> dict[str, Any]:
+            return {
+                "filetype": "unknown",
+                "backend": "unknown",
+                "backend_name": "",
+                "mime_type": None,
+            }
+
+    slack = FakeSlack()
+
+    class FakeKernel:
+        _kernel = FakePyKernel()
+
+    FakeKernel._mounted_backend_instances = {"/slack": slack}
+
+    assert grep_path(FakeKernel(), "error", "/slack") == [{"file": "/slack/channels/general.yaml"}]
+    assert slack.backend_paths == [""]
+
+
+def test_grep_path_falls_back_when_backend_instance_is_unavailable() -> None:
+    class FakePyKernel:
+        def op_metadata_for_path(self, path: str, zone_id: str = "root") -> dict[str, Any]:
+            return {
+                "filetype": "unknown",
+                "backend": "slack",
+                "backend_name": "slack",
+                "mime_type": None,
+            }
+
+    class FakeKernel:
+        _kernel = FakePyKernel()
+
+    assert grep_path(FakeKernel(), "error", "/slack") is None
+
+
+def test_grep_path_returns_none_without_backend_override() -> None:
+    class FakePyKernel:
+        def op_metadata_for_path(self, path: str, zone_id: str = "root") -> dict[str, Any]:
+            return {
+                "filetype": "unknown",
+                "backend": "local",
+                "backend_name": "local",
+                "mime_type": None,
+            }
+
+    class FakeKernel:
+        _kernel = FakePyKernel()
+
+    assert grep_path(FakeKernel(), "error", "/data") is None
 
 
 def test_global_registry_bootstrap_is_idempotent() -> None:

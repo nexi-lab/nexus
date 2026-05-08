@@ -102,6 +102,41 @@ class GitHubConnector(PathCLIBackend):
             return load_connector_config(config_path)
         return None
 
+    def raw_read(self, path: str, context: Any = None) -> bytes:
+        """Read raw repository content through ``gh api``.
+
+        Path shape: ``owner/repo/ref/path/to/file``. For refs containing
+        slashes, candidate ref/path boundaries are retried until one succeeds.
+        """
+        parts = path.strip("/").split("/")
+        if len(parts) < 4:
+            return self.read_content(path, context=context)
+
+        owner, repo, *rest = parts
+        if not owner or not repo:
+            return self.read_content(path, context=context)
+
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        attempted = False
+        for split_at in range(len(rest) - 1, 0, -1):
+            ref = "/".join(rest[:split_at])
+            file_path = "/".join(rest[split_at:])
+            if not ref or not file_path:
+                continue
+            attempted = True
+            args = [
+                self.CLI_NAME,
+                "api",
+                f"repos/{owner}/{repo}/contents/{file_path}?ref={ref}",
+                "-H",
+                "Accept: application/vnd.github.raw",
+            ]
+            result = self._execute_cli(args, context=context, env=auth_env)
+            if result.ok:
+                return result.stdout.encode("utf-8")
+        return b"" if attempted else self.read_content(path, context=context)
+
     def display_path(self, item_id: str, metadata: dict[str, Any] | None = None) -> str:
         """Generate human-readable path for GitHub issues/PRs.
 

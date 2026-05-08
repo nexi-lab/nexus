@@ -298,6 +298,99 @@ class SlackTransport:
         version = str(int(datetime.now(UTC).timestamp()))
         return content, version
 
+    def search_messages(
+        self,
+        query: str,
+        *,
+        max_results: int = 100,
+        ignore_case: bool = False,
+        backend_path: str = "",
+        mount_path: str = "/slack",
+    ) -> list[dict[str, Any]]:
+        """Push grep-style search down to Slack search.messages."""
+        if max_results <= 0:
+            return []
+
+        client = self._get_slack_client()
+        matches: list[dict[str, Any]] = []
+        needle = query.lower() if ignore_case else query
+        requested = backend_path.strip("/")
+        mount = "/" + mount_path.strip("/")
+        if mount == "/":
+            mount = ""
+
+        page = 1
+        while True:
+            search_kwargs: dict[str, int] = {"count": max_results}
+            if page > 1:
+                search_kwargs["page"] = page
+            result = client.search_messages(query, **search_kwargs)
+            if not result.get("ok"):
+                error = result.get("error", "unknown_error")
+                raise BackendError(f"Slack search failed: {error}", backend="slack")
+
+            raw_messages = result.get("messages", {})
+            raw_matches = raw_messages.get("matches", []) if isinstance(raw_messages, dict) else []
+            for item in raw_matches:
+                if not isinstance(item, dict):
+                    continue
+
+                text = str(item.get("text", ""))
+                haystack = text.lower() if ignore_case else text
+                if needle and needle not in haystack:
+                    continue
+
+                channel = item.get("channel", {})
+                channel_name = channel.get("name") if isinstance(channel, dict) else None
+                channel_id = channel.get("id") if isinstance(channel, dict) else None
+                channel_name = channel_name or str(
+                    item.get("channel_name") or channel_id or "unknown"
+                )
+                folder = "channels"
+                if isinstance(channel, dict):
+                    if channel.get("is_im"):
+                        folder = "dms"
+                        channel_name = str(channel_id or channel_name)
+                    elif channel.get("is_group") or channel.get("is_private"):
+                        folder = "private-channels"
+                relative_path = f"{folder}/{channel_name}.yaml"
+                if requested and not (
+                    requested == relative_path
+                    or relative_path.startswith(requested.rstrip("/") + "/")
+                ):
+                    continue
+                matches.append(
+                    {
+                        "file": f"{mount}/{relative_path}" if mount else f"/{relative_path}",
+                        "line": 1,
+                        "content": text,
+                        "match": query,
+                    }
+                )
+                if len(matches) >= max_results:
+                    return matches
+
+            if not requested:
+                break
+            pagination = (
+                raw_messages.get("pagination", {}) if isinstance(raw_messages, dict) else {}
+            )
+            try:
+                current_page = int(pagination.get("page") or page)
+                page_count = int(
+                    pagination.get("page_count")
+                    or pagination.get("pages")
+                    or pagination.get("last")
+                    or 0
+                )
+            except (TypeError, ValueError):
+                break
+            if page_count <= current_page:
+                break
+            page = current_page + 1
+
+        return matches
+
     def remove(self, key: str) -> None:
         raise BackendError(
             "Slack transport does not support message deletion via remove().",

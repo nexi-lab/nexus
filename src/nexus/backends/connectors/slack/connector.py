@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import register_connector
@@ -274,6 +274,30 @@ class PathSlackBackend(
 
         # Delegate to PathAddressingEngine (which calls transport.fetch)
         return super().read_content(content_id, context)
+
+    def grep_messages(
+        self,
+        pattern: str,
+        *,
+        context: "OperationContext | None" = None,
+        max_results: int = 100,
+        ignore_case: bool = False,
+        backend_path: str = "",
+        mount_path: str = "/slack",
+    ) -> list[dict[str, Any]]:
+        """Search Slack messages through Slack API pushdown."""
+        self._bind_transport(context)
+        transport = cast(Any, self._transport)
+        return cast(
+            list[dict[str, Any]],
+            transport.search_messages(
+                pattern,
+                max_results=max_results,
+                ignore_case=ignore_case,
+                backend_path=backend_path,
+                mount_path=mount_path,
+            ),
+        )
 
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         raise BackendError(

@@ -105,6 +105,7 @@ class TestSysReaddir:
             owner_id=None,
             modified_at=None,
             version=1,
+            gen=0,
         )
         mock_fs._kernel.metastore_list = MagicMock(return_value=[entry])
         mock_fs._kernel.metastore_is_implicit_directory = MagicMock(return_value=False)
@@ -121,6 +122,7 @@ class TestSysReaddir:
                 "owner_id": None,
                 "modified_at": None,
                 "version": 1,
+                "gen": 0,
             }
         ]
 

@@ -33,6 +33,8 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
         "target_zone_id",
         "ttl_seconds",
         "last_writer_address",
+        "link_target",
+        "gen",
     }
 )
 
@@ -68,6 +70,7 @@ PROTO_TO_SQL: dict[str, str | None] = {
     "created_at": "created_at",
     "modified_at": "updated_at",
     "version": "current_version",
+    "gen": None,  # Rust/metastore generation, not persisted in FilePathModel
     "zone_id": "zone_id",
     "created_by": None,  # TODO(#1246): Add to FilePathModel
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
@@ -105,6 +108,8 @@ class MetadataMapper:
             target_zone_id=metadata.target_zone_id or "",
             ttl_seconds=metadata.ttl_seconds,
             last_writer_address=metadata.last_writer_address or "",
+            link_target=metadata.link_target or "",
+            gen=metadata.gen,
         )
 
     @staticmethod
@@ -135,6 +140,8 @@ class MetadataMapper:
             target_zone_id=proto.target_zone_id or None,
             ttl_seconds=proto.ttl_seconds,
             last_writer_address=proto.last_writer_address or None,
+            link_target=proto.link_target or None,
+            gen=proto.gen,
         )
 
     # -- JSON serialization (GENERATED) -------------------------------------
@@ -156,6 +163,8 @@ class MetadataMapper:
             "target_zone_id": metadata.target_zone_id,
             "ttl_seconds": metadata.ttl_seconds,
             "last_writer_address": metadata.last_writer_address,
+            "link_target": metadata.link_target,
+            "gen": metadata.gen,
         }
 
     @staticmethod

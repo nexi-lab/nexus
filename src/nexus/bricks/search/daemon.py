@@ -2350,11 +2350,29 @@ class SearchDaemon:
             "fts": self._consume_fts_mutations,
             "embedding": self._consume_embedding_mutations,
         }
-        self._consumer_names = tuple(consumer_specs.keys())
+        all_consumer_names = tuple(consumer_specs.keys())
+        self._consumer_names = all_consumer_names
         # #4016: reconcile pre-existing unindexed files BEFORE consumers
         # snap their checkpoints to MAX(sequence_number). Skipped on warm
         # restarts (any consumer already has a persisted checkpoint).
         await self._reconcile_unindexed_paths_at_startup()
+
+        consumer_specs = {
+            name: handler
+            for name, handler in consumer_specs.items()
+            if self._consumer_backend_ready(name)
+        }
+        self._consumer_names = tuple(consumer_specs.keys())
+        disabled = tuple(name for name in all_consumer_names if name not in consumer_specs)
+        if disabled:
+            logger.info(
+                "Search mutation consumers disabled because backend is not ready: %s",
+                ", ".join(disabled),
+            )
+        if not consumer_specs:
+            logger.info("No search mutation consumers active; refresh loop exiting")
+            return
+
         for consumer_name in self._consumer_names:
             if consumer_name not in self._consumer_last_sequence:
                 self._consumer_last_sequence[

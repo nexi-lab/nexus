@@ -14,6 +14,7 @@ class DirEntryType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DT_PIPE: _ClassVar[DirEntryType]
     DT_STREAM: _ClassVar[DirEntryType]
     DT_EXTERNAL_STORAGE: _ClassVar[DirEntryType]
+    DT_LINK: _ClassVar[DirEntryType]
 
 DT_REG: DirEntryType
 DT_DIR: DirEntryType
@@ -21,6 +22,7 @@ DT_MOUNT: DirEntryType
 DT_PIPE: DirEntryType
 DT_STREAM: DirEntryType
 DT_EXTERNAL_STORAGE: DirEntryType
+DT_LINK: DirEntryType
 
 class FileMetadata(_message.Message):
     __slots__ = (
@@ -37,6 +39,8 @@ class FileMetadata(_message.Message):
         "target_zone_id",
         "ttl_seconds",
         "last_writer_address",
+        "link_target",
+        "gen",
     )
     PATH_FIELD_NUMBER: _ClassVar[int]
     SIZE_FIELD_NUMBER: _ClassVar[int]
@@ -51,6 +55,8 @@ class FileMetadata(_message.Message):
     TARGET_ZONE_ID_FIELD_NUMBER: _ClassVar[int]
     TTL_SECONDS_FIELD_NUMBER: _ClassVar[int]
     LAST_WRITER_ADDRESS_FIELD_NUMBER: _ClassVar[int]
+    LINK_TARGET_FIELD_NUMBER: _ClassVar[int]
+    GEN_FIELD_NUMBER: _ClassVar[int]
     path: str
     size: int
     content_id: str
@@ -64,6 +70,8 @@ class FileMetadata(_message.Message):
     target_zone_id: str
     ttl_seconds: float
     last_writer_address: str
+    link_target: str
+    gen: int
     def __init__(
         self,
         path: str | None = ...,
@@ -79,4 +87,6 @@ class FileMetadata(_message.Message):
         target_zone_id: str | None = ...,
         ttl_seconds: float | None = ...,
         last_writer_address: str | None = ...,
+        link_target: str | None = ...,
+        gen: int | None = ...,
     ) -> None: ...

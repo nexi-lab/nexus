@@ -243,6 +243,7 @@ class ContentMixin:
                             "content": content,
                             "content_id": meta.content_id if meta else None,
                             "version": meta.version if meta else 0,
+                            "gen": meta.gen if meta else 0,
                             "modified_at": meta.modified_at if meta else None,
                             "size": len(content),
                         }
@@ -327,6 +328,7 @@ class ContentMixin:
                         "content": bulk_content,
                         "content_id": meta.content_id if meta else None,
                         "version": meta.version if meta else 0,
+                        "gen": meta.gen if meta else 0,
                         "modified_at": meta.modified_at if meta else None,
                         "size": len(bulk_content),
                     }
@@ -616,6 +618,7 @@ class ContentMixin:
                     size=result.old_size or 0,
                     content_id=result.old_content_id,
                     version=result.old_version or 1,
+                    gen=max(result.gen - 1, 0),
                     modified_at=_mod_at,
                 )
             from nexus.contracts.vfs_hooks import WriteHookContext
@@ -626,6 +629,7 @@ class ContentMixin:
                 size=result.size,
                 content_id=result.content_id,
                 version=result.version,
+                gen=result.gen,
                 zone_id=zone_id,
             )
             self._kernel.dispatch_post_hooks(
@@ -683,6 +687,7 @@ class ContentMixin:
                 {
                     "content_id": meta_dict.get("content_id"),
                     "version": meta_dict.get("version"),
+                    "gen": meta_dict.get("gen"),
                     "modified_at": meta_dict.get("modified_at"),
                     "size": len(content),
                 }
@@ -850,6 +855,7 @@ class ContentMixin:
                 size=result.old_size or 0,
                 content_id=result.old_content_id,
                 version=result.old_version or 1,
+                gen=max(result.gen - 1, 0),
                 modified_at=_mod_at,
             )
 
@@ -874,6 +880,7 @@ class ContentMixin:
                     size=result.size,
                     content_id=result.content_id,
                     version=result.version,
+                    gen=result.gen,
                     zone_id=zone_id,
                 ),
                 old_metadata=_old_meta,
@@ -884,6 +891,7 @@ class ContentMixin:
         return {
             "content_id": _cid,
             "version": result.version,
+            "gen": result.gen,
             "modified_at": None,
             "size": result.size,
         }
@@ -1326,6 +1334,7 @@ class ContentMixin:
             "applied_count": edit_result.applied_count,
             "content_id": write_result.get("content_id"),
             "version": write_result.get("version"),
+            "gen": write_result.get("gen"),
             "size": write_result.get("size"),
             "modified_at": write_result.get("modified_at"),
         }
@@ -1454,6 +1463,7 @@ class ContentMixin:
                     {
                         "content_id": r.content_id,
                         "version": r.version,
+                        "gen": r.gen,
                         "modified_at": now,
                         "size": r.size,
                     }
@@ -1464,6 +1474,7 @@ class ContentMixin:
                         size=r.size,
                         content_id=r.content_id,
                         version=r.version,
+                        gen=r.gen,
                         zone_id=zone_id or ROOT_ZONE_ID,
                     )
                 )
@@ -1474,6 +1485,7 @@ class ContentMixin:
                     {
                         "content_id": wr.get("content_id", ""),
                         "version": wr.get("version", 1),
+                        "gen": wr.get("gen", 0),
                         "modified_at": now,
                         "size": len(content),
                     }
@@ -1484,6 +1496,7 @@ class ContentMixin:
                         size=len(content),
                         content_id=wr.get("content_id", ""),
                         version=wr.get("version", 1),
+                        gen=wr.get("gen", 0),
                         zone_id=zone_id or ROOT_ZONE_ID,
                     )
                 )
@@ -1696,6 +1709,7 @@ class ContentMixin:
                             "content": content,
                             "content_id": meta.content_id if meta else None,
                             "version": meta.version if meta else 0,
+                            "gen": meta.gen if meta else 0,
                             "modified_at": meta.modified_at if meta else None,
                             "size": content_bytes_len,
                         }
@@ -1761,6 +1775,7 @@ class ContentMixin:
                     "content": content,
                     "content_id": _content_id,
                     "version": meta.version if meta else 0,
+                    "gen": r.gen,
                     "modified_at": meta.modified_at if meta else None,
                     "size": len(content),
                 }

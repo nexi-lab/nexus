@@ -113,10 +113,7 @@ struct VfsServiceImpl {
 impl VfsServiceImpl {
     /// Validate the bearer token and produce an `OperationContext`.
     /// API key fast-path is fully Rust; OIDC tokens delegate to Python.
-    async fn resolve_context(
-        &self,
-        token: &str,
-    ) -> Result<OperationContext, Status> {
+    async fn resolve_context(&self, token: &str) -> Result<OperationContext, Status> {
         // Fast path: API key constant-time compare. user_id matches the
         // string `get_operation_context` produces from the same auth
         // dict ("api-key-user") — keeps audit/permission context
@@ -217,6 +214,7 @@ impl NexusVfsService for VfsServiceImpl {
                     size: bytes.len() as i64,
                     content: bytes,
                     content_id: result.content_id.unwrap_or_default(),
+                    gen: result.gen,
                     is_error: false,
                     error_payload: Vec::new(),
                 }))
@@ -227,6 +225,7 @@ impl NexusVfsService for VfsServiceImpl {
                     content: Vec::new(),
                     content_id: String::new(),
                     size: 0,
+                    gen: 0,
                     is_error: true,
                     error_payload: encode_rpc_error(code, &msg),
                 }))
@@ -256,6 +255,7 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(result) => Ok(Response::new(WriteResponse {
                 content_id: result.content_id.unwrap_or_default(),
                 size: result.size as i64,
+                gen: result.gen,
                 is_error: false,
                 error_payload: Vec::new(),
             })),
@@ -264,6 +264,7 @@ impl NexusVfsService for VfsServiceImpl {
                 Ok(Response::new(WriteResponse {
                     content_id: String::new(),
                     size: 0,
+                    gen: 0,
                     is_error: true,
                     error_payload: encode_rpc_error(code, &msg),
                 }))
@@ -545,6 +546,7 @@ fn error_read(status: Status) -> ReadResponse {
         content: Vec::new(),
         content_id: String::new(),
         size: 0,
+        gen: 0,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
     }
@@ -554,6 +556,7 @@ fn error_write(status: Status) -> WriteResponse {
     WriteResponse {
         content_id: String::new(),
         size: 0,
+        gen: 0,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
     }

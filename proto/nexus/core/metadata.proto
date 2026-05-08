@@ -103,4 +103,9 @@ message FileMetadata {
   // with self-loop rejection at sys_setattr time and ELOOP at route()
   // time when target is itself DT_LINK. See KERNEL-ARCHITECTURE.md §4.5.
   string link_target = 17;
+
+  // Monotonic per-file content generation. Starts at 1 on the first
+  // successful content write by an upgraded writer. Existing records and
+  // non-content metadata entries default to 0.
+  uint64 gen = 18;
 }

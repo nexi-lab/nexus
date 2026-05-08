@@ -169,6 +169,7 @@ impl RpcTransport {
                         content: inner.content.to_vec(),
                         content_id: inner.content_id,
                         size: inner.size as u64,
+                        gen: inner.gen,
                     });
                 }
                 Err(status) if retries < 2 && is_retryable(&status) => {
@@ -219,6 +220,7 @@ impl RpcTransport {
                     return Ok(WriteRpcResult {
                         content_id: inner.content_id,
                         size: inner.size as u64,
+                        gen: inner.gen,
                     });
                 }
                 Err(status) if retries < 2 && is_retryable(&status) => {
@@ -284,12 +286,14 @@ pub struct ReadResult {
     pub content: Vec<u8>,
     pub content_id: String,
     pub size: u64,
+    pub gen: u64,
 }
 
 /// Result of a typed Write RPC.
 pub struct WriteRpcResult {
     pub content_id: String,
     pub size: u64,
+    pub gen: u64,
 }
 
 /// Retry only on transient gRPC failures (UNAVAILABLE, DEADLINE_EXCEEDED).

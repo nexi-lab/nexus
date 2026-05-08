@@ -109,6 +109,7 @@ impl Kernel {
                         data: Some(data),
                         post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                         content_id: None,
+                        gen: 0,
                         entry_type: DT_REG,
                         stream_next_offset: None,
                     });
@@ -147,6 +148,7 @@ impl Kernel {
                         data: Some(data),
                         post_hook_needed: false,
                         content_id: None,
+                        gen: 0,
                         entry_type: DT_PIPE,
                         stream_next_offset: None,
                     });
@@ -157,6 +159,7 @@ impl Kernel {
                             data: None,
                             post_hook_needed: false,
                             content_id: None,
+                            gen: 0,
                             entry_type: DT_PIPE,
                             stream_next_offset: None,
                         });
@@ -168,6 +171,7 @@ impl Kernel {
                                 data: Some(data),
                                 post_hook_needed: false,
                                 content_id: None,
+                                gen: 0,
                                 entry_type: DT_PIPE,
                                 stream_next_offset: None,
                             });
@@ -178,6 +182,7 @@ impl Kernel {
                                 data: None,
                                 post_hook_needed: false,
                                 content_id: None,
+                                gen: 0,
                                 entry_type: DT_PIPE,
                                 stream_next_offset: None,
                             });
@@ -197,6 +202,7 @@ impl Kernel {
                         data: Some(data),
                         post_hook_needed: false,
                         content_id: None,
+                        gen: 0,
                         entry_type: DT_STREAM,
                         stream_next_offset: Some(next_offset),
                     });
@@ -207,6 +213,7 @@ impl Kernel {
                             data: None,
                             post_hook_needed: false,
                             content_id: None,
+                            gen: 0,
                             entry_type: DT_STREAM,
                             stream_next_offset: None,
                         });
@@ -218,6 +225,7 @@ impl Kernel {
                                 data: Some(data),
                                 post_hook_needed: false,
                                 content_id: None,
+                                gen: 0,
                                 entry_type: DT_STREAM,
                                 stream_next_offset: Some(next_offset),
                             });
@@ -227,6 +235,7 @@ impl Kernel {
                                 data: None,
                                 post_hook_needed: false,
                                 content_id: None,
+                                gen: 0,
                                 entry_type: DT_STREAM,
                                 stream_next_offset: None,
                             });
@@ -271,6 +280,7 @@ impl Kernel {
                 data: Some(data),
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                 content_id: entry.content_id.clone(),
+                gen: entry.gen,
                 entry_type: DT_REG,
                 stream_next_offset: None,
             }),
@@ -376,6 +386,7 @@ impl Kernel {
             data: Some(data),
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
             content_id: entry.content_id.clone(),
+            gen: entry.gen,
             entry_type: DT_REG,
             stream_next_offset: None,
         })
@@ -415,6 +426,7 @@ impl Kernel {
                 content_id: None,
                 post_hook_needed: false,
                 version: 0,
+                gen: 0,
                 size: 0,
                 is_new: false,
                 old_content_id: None,
@@ -533,6 +545,7 @@ impl Kernel {
                                 content_id: None,
                                 post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
                                 version: 0,
+                                gen: 0,
                                 size: n as u64,
                                 is_new: false,
                                 old_content_id: None,
@@ -581,6 +594,7 @@ impl Kernel {
                                 content_id: None,
                                 post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
                                 version: 0,
+                                gen: 0,
                                 size: offset as u64,
                                 is_new: false,
                                 old_content_id: None,
@@ -666,8 +680,10 @@ impl Kernel {
                     .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
                     .flatten();
                 let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
+                let old_gen = old_entry.as_ref().map(|e| e.gen).unwrap_or(0);
                 let old_content_id = old_entry.as_ref().and_then(|e| e.content_id.clone());
                 let new_version = old_version + 1;
+                let new_gen = old_gen.saturating_add(1);
 
                 // Build FileMetadata and persist via metastore (per-mount or global)
                 let now_ms = std::time::SystemTime::now()
@@ -687,6 +703,7 @@ impl Kernel {
                     DT_REG,
                     wr.size,
                     Some(wr.content_id.clone()),
+                    new_gen,
                     new_version,
                     None,
                     created_at_ms,
@@ -725,6 +742,7 @@ impl Kernel {
                     ev.size = Some(size);
                     ev.content_id = Some(content_id);
                     ev.version = Some(new_version);
+                    ev.gen = Some(new_gen);
                     ev.is_new = old_version == 0;
                     ev.old_content_id = old_content_id;
                 });
@@ -751,6 +769,7 @@ impl Kernel {
                     content_id: Some(wr.content_id),
                     post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
                     version: new_version,
+                    gen: new_gen,
                     size: wr.size,
                     is_new: result_is_new,
                     old_content_id: result_old_etag,
@@ -821,6 +840,7 @@ impl Kernel {
                 entry_type: DT_MOUNT,
                 mode: 0o755,
                 version: 1,
+                gen: 0,
                 zone_id: Some(route.zone_id.clone()),
                 created_at_ms: None,
                 modified_at_ms: None,
@@ -863,6 +883,7 @@ impl Kernel {
                         entry_type: DT_DIR,
                         mode: 0o755,
                         version: 0,
+                        gen: 0,
                         zone_id: Some(route.zone_id.clone()),
                         created_at_ms: None,
                         modified_at_ms: None,
@@ -903,6 +924,7 @@ impl Kernel {
             entry_type: entry.entry_type,
             mode: if is_dir { 0o755 } else { 0o644 },
             version: entry.version,
+            gen: entry.gen,
             zone_id: entry.zone_id,
             created_at_ms: entry.created_at_ms,
             modified_at_ms: entry.modified_at_ms,
@@ -979,6 +1001,7 @@ impl Kernel {
                 path: path.to_string(),
                 size: 0,
                 content_id: None,
+                gen: 0,
                 version: 1,
                 entry_type: DT_MOUNT,
                 zone_id: Some(route.zone_id.clone()),
@@ -1474,6 +1497,7 @@ impl Kernel {
                 content_id: None,
                 size: 0,
                 version: 0,
+                gen: 0,
             })
         };
 
@@ -1530,42 +1554,6 @@ impl Kernel {
             )));
         }
 
-        // 5. Check destination doesn't already exist — full VFS path (R20.3 contract)
-        let dst_exists = self
-            .with_metastore(&dst_route.mount_point, |ms| {
-                ms.exists(dst_path).unwrap_or(false)
-            })
-            .unwrap_or(false);
-        if dst_exists {
-            return Err(KernelError::IOError(format!(
-                "sys_copy: destination already exists: {dst_path}"
-            )));
-        }
-
-        // 5b. For PAS backends, also check backend existence so rollback never
-        // deletes a pre-existing untracked file at the destination path.
-        // If the backend path already exists (untracked by metastore), reject
-        // the copy rather than silently overwriting and potentially losing bytes
-        // if the subsequent metastore commit fails.
-        if !dst_route.is_cas {
-            // Probe via the inline backend Arc — Some(true) means the file
-            // exists, Some(false) means NotFound, None means no Rust backend
-            // or the backend doesn't implement size probing (treat as
-            // unknown — let the actual copy decide).
-            let exists = dst_route.backend.as_ref().and_then(|b| {
-                match b.get_content_size(&dst_route.backend_path) {
-                    Ok(_) => Some(true),
-                    Err(crate::abc::object_store::StorageError::NotFound(_)) => Some(false),
-                    Err(_) => None,
-                }
-            });
-            if exists == Some(true) {
-                return Err(KernelError::IOError(format!(
-                    "sys_copy: destination backend path already exists (untracked): {dst_path}"
-                )));
-            }
-        }
-
         // 6. VFS lock both paths (sorted, deadlock-free)
         let (first, second) = if src_path <= dst_path {
             (src_path, dst_path)
@@ -1594,6 +1582,87 @@ impl Kernel {
         if lock1 == 0 {
             release_locks(&self.lock_manager, lock1, lock2);
             return miss();
+        }
+        if first != second && lock2 == 0 {
+            release_locks(&self.lock_manager, lock1, lock2);
+            return miss();
+        }
+
+        // Snapshot destination state under the VFS locks. Copy-overwrite
+        // is a content mutation, so it bumps the destination generation/version.
+        let old_dst_meta: Option<FileMetadata> = self
+            .with_metastore_route(&dst_route, |ms| ms.get(dst_path).ok().flatten())
+            .flatten();
+        if let Some(meta) = old_dst_meta.as_ref() {
+            if meta.entry_type != DT_REG {
+                release_locks(&self.lock_manager, lock1, lock2);
+                return Err(KernelError::InvalidPath(format!(
+                    "sys_copy: destination is not a regular file (entry_type={}): {}",
+                    meta.entry_type, dst_path
+                )));
+            }
+        }
+        let new_version = old_dst_meta
+            .as_ref()
+            .map(|m| m.version)
+            .unwrap_or(0)
+            .saturating_add(1);
+        let new_gen = old_dst_meta
+            .as_ref()
+            .map(|m| m.gen)
+            .unwrap_or(0)
+            .saturating_add(1);
+        let old_dst_content: Option<Vec<u8>> = if !dst_route.is_cas && old_dst_meta.is_some() {
+            let content_id = old_dst_meta
+                .as_ref()
+                .and_then(|m| m.content_id.as_deref())
+                .filter(|id| !id.is_empty())
+                .unwrap_or(&dst_route.backend_path);
+            let backend = match dst_route.backend.as_ref() {
+                Some(backend) => backend,
+                None => {
+                    release_locks(&self.lock_manager, lock1, lock2);
+                    return Err(KernelError::IOError(format!(
+                        "sys_copy: destination has tracked metadata but no backend: {dst_path}"
+                    )));
+                }
+            };
+            match backend.read_content(content_id, ctx) {
+                Ok(content) => Some(content),
+                Err(e) => {
+                    release_locks(&self.lock_manager, lock1, lock2);
+                    return Err(KernelError::BackendError(format!(
+                        "sys_copy: failed to snapshot destination before overwrite: {e:?}"
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+
+        // For PAS backends, also check backend existence so rollback never
+        // deletes a pre-existing untracked file at the destination path.
+        // If the backend path already exists (untracked by metastore), reject
+        // the copy rather than silently overwriting and potentially losing bytes
+        // if the subsequent metastore commit fails.
+        if !dst_route.is_cas {
+            // Probe via the inline backend Arc — Some(true) means the file
+            // exists, Some(false) means NotFound, None means no Rust backend
+            // or the backend doesn't implement size probing (treat as
+            // unknown — let the actual copy decide).
+            let exists = dst_route.backend.as_ref().and_then(|b| {
+                match b.get_content_size(&dst_route.backend_path) {
+                    Ok(_) => Some(true),
+                    Err(crate::abc::object_store::StorageError::NotFound(_)) => Some(false),
+                    Err(_) => None,
+                }
+            });
+            if old_dst_meta.is_none() && exists == Some(true) {
+                release_locks(&self.lock_manager, lock1, lock2);
+                return Err(KernelError::IOError(format!(
+                    "sys_copy: destination backend path already exists (untracked): {dst_path}"
+                )));
+            }
         }
 
         // 7. Copy content (strategy depends on same-mount vs cross-mount)
@@ -1666,7 +1735,10 @@ impl Kernel {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        let new_version = 1u32;
+        let created_at_ms = old_dst_meta
+            .as_ref()
+            .and_then(|m| m.created_at_ms)
+            .or(Some(now_ms));
         // Use full VFS dst_path for metastore key to match R20.3 convention.
         let meta = self.build_metadata(
             dst_path,
@@ -1674,9 +1746,10 @@ impl Kernel {
             DT_REG,
             size,
             Some(content_id.clone()),
+            new_gen,
             new_version,
             src_meta.mime_type.clone(),
-            Some(now_ms),
+            created_at_ms,
             Some(now_ms),
         );
         // 9. Atomic commit — metastore is the SSOT; its internal cache
@@ -1698,21 +1771,30 @@ impl Kernel {
         };
         if let Err(e) = put_result {
             // Metastore failed after bytes were written to the destination backend.
-            // Only delete the destination if this operation created those bytes
-            // (wrote_dst_bytes=true); never delete pre-existing untracked backend objects.
+            // Restore tracked PAS destinations. Only delete the destination if this
+            // operation created previously untracked bytes.
             let rollback_err = if wrote_dst_bytes {
-                dst_route
-                    .backend
-                    .as_ref()
-                    .map(|b| b.delete_file(&dst_route.backend_path))
+                if let Some(old_bytes) = old_dst_content.as_ref() {
+                    dst_route.backend.as_ref().map(|b| {
+                        b.write_content(old_bytes, &dst_route.backend_path, ctx, 0)
+                            .map(|_| ())
+                    })
+                } else if old_dst_meta.is_none() {
+                    dst_route
+                        .backend
+                        .as_ref()
+                        .map(|b| b.delete_file(&dst_route.backend_path))
+                } else {
+                    None
+                }
             } else {
                 None
             };
             release_locks(&self.lock_manager, lock1, lock2);
             return Err(match rollback_err {
-                Some(Err(del_err)) => KernelError::IOError(format!(
-                    "sys_copy: metastore.put failed ({e:?}) and rollback delete \
-                     also failed ({del_err:?}); destination bytes at {} may remain",
+                Some(Err(rollback_err)) => KernelError::IOError(format!(
+                    "sys_copy: metastore.put failed ({e:?}) and rollback \
+                     also failed ({rollback_err:?}); destination bytes at {} may remain",
                     dst_route.backend_path
                 )),
                 _ => KernelError::IOError(format!("sys_copy: metastore.put: {e:?}")),
@@ -1729,6 +1811,7 @@ impl Kernel {
             content_id: Some(content_id),
             size,
             version: new_version,
+            gen: new_gen,
         })
     }
 
@@ -1872,6 +1955,7 @@ impl Kernel {
             DT_DIR,
             0,
             None,
+            0,
             1,
             Some("inode/directory".to_string()),
             None,
@@ -1939,6 +2023,7 @@ impl Kernel {
                 DT_DIR,
                 0,
                 None,
+                0,
                 1,
                 Some("inode/directory".to_string()),
                 None,
@@ -2125,6 +2210,7 @@ impl Kernel {
                         content_id: None,
                         post_hook_needed: false,
                         version: 0,
+                        gen: 0,
                         size: 0,
                         is_new: false,
                         old_content_id: None,
@@ -2143,6 +2229,7 @@ impl Kernel {
                     content_id: None,
                     post_hook_needed: false,
                     version: 0,
+                    gen: 0,
                     size: 0,
                     is_new: false,
                     old_content_id: None,
@@ -2173,7 +2260,9 @@ impl Kernel {
                         .with_metastore_route(route, |ms| ms.get(path).ok().flatten())
                         .flatten();
                     let old_version = batch_old_entry.as_ref().map(|e| e.version).unwrap_or(0);
+                    let old_gen = batch_old_entry.as_ref().map(|e| e.gen).unwrap_or(0);
                     let new_version = old_version + 1;
+                    let new_gen = old_gen.saturating_add(1);
 
                     // Collect metadata for batch put (instead of N individual puts)
                     let meta = self.build_metadata(
@@ -2182,6 +2271,7 @@ impl Kernel {
                         DT_REG,
                         wr.size,
                         Some(wr.content_id.clone()),
+                        new_gen,
                         new_version,
                         None,
                         None,
@@ -2199,6 +2289,7 @@ impl Kernel {
                         post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0
                             || self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
                         version: new_version,
+                        gen: new_gen,
                         size: wr.size,
                         is_new: batch_old_entry.is_none(),
                         old_content_id: batch_old_entry.as_ref().and_then(|e| e.content_id.clone()),
@@ -2213,6 +2304,7 @@ impl Kernel {
                         content_id: None,
                         post_hook_needed: false,
                         version: 0,
+                        gen: 0,
                         size: 0,
                         is_new: false,
                         old_content_id: None,
@@ -2302,6 +2394,7 @@ impl Kernel {
                     data: None,
                     post_hook_needed: false,
                     content_id: None,
+                    gen: 0,
                     entry_type: 0,
                     stream_next_offset: None,
                 })
@@ -2553,6 +2646,7 @@ impl Kernel {
                 data: Some(v.into_bytes()),
                 post_hook_needed: false,
                 content_id: None,
+                gen: 0,
                 entry_type: DT_REG,
                 stream_next_offset: None,
             }),
@@ -2587,6 +2681,7 @@ impl Kernel {
             content_id: None,
             post_hook_needed: false,
             version: 0,
+            gen: 0,
             size: content.len() as u64,
             is_new: false,
             old_content_id: None,

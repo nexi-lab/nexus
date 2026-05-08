@@ -71,6 +71,7 @@ async def test_fts_mutation_skips_document_chunks_when_path_id_unresolved() -> N
                 path_id="/docs/readme.md",
                 virtual_path="/docs/readme.md",
                 content="hello",
+                content_resolved=True,
                 path_id_resolved=False,
             )
         ]
@@ -383,3 +384,26 @@ async def test_index_refresh_loop_reconciles_before_initializing_checkpoints() -
     assert call_order, "loop never ran"
     assert call_order[0] == "reconcile", f"expected reconcile first, got {call_order}"
     assert all(call.startswith("init:") for call in call_order[1:]), call_order
+
+
+@pytest.mark.asyncio
+async def test_index_refresh_loop_starts_only_ready_consumers() -> None:
+    """Disabled search lanes should not poll mutation tables."""
+    daemon = SearchDaemon()
+    daemon._chunk_store = object()
+    daemon._indexing_pipeline = None
+    daemon._embedding_provider = None
+    daemon._reconcile_unindexed_paths_at_startup = AsyncMock()
+    daemon._initialize_consumer_checkpoint = AsyncMock(return_value=0)
+
+    started: list[str] = []
+
+    async def _run_consumer(name, _handler):
+        started.append(name)
+
+    daemon._run_mutation_consumer = _run_consumer
+
+    await daemon._index_refresh_loop()
+
+    assert daemon._consumer_names == ("fts",)
+    assert started == ["fts"]

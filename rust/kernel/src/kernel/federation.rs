@@ -66,6 +66,7 @@ impl Kernel {
                 entry_type: crate::meta_store::DT_DIR,
                 mode: 0o555, // r-x — read-only namespace
                 version: 0,
+                gen: 0,
                 zone_id: Some("root".to_string()),
                 created_at_ms: None,
                 modified_at_ms: None,
@@ -91,6 +92,7 @@ impl Kernel {
             entry_type: crate::meta_store::DT_REG,
             mode: 0o444,
             version: 0,
+            gen: 0,
             zone_id: Some(zone_id.to_string()),
             created_at_ms: None,
             modified_at_ms: None,

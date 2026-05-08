@@ -48,6 +48,7 @@ class FileMetadata:
 
     size: int
     is_directory: bool
+    gen: int = 0
     content_id: str | None = None
     modified_at: str | None = None
 
@@ -388,6 +389,7 @@ class RustFUSEClient:
         return FileMetadata(
             size=result.get("size", 0),
             is_directory=result.get("is_directory", False),
+            gen=result.get("gen", 0),
             content_id=result.get("content_id"),
             modified_at=result.get("modified_at"),
         )

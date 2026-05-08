@@ -75,6 +75,7 @@ impl DriverLifecycleCoordinator {
                     path: mount_point.to_string(),
                     size: 0,
                     content_id: None,
+                    gen: 0,
                     version: 1,
                     entry_type: 2, // DT_MOUNT
                     zone_id: Some(parent_route.zone_id.clone()),

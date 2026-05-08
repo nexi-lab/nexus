@@ -55,6 +55,7 @@ message ReadResponse {
   int64 size = 3;
   bool is_error = 4;
   bytes error_payload = 5; // JSON error dict (same format as CallResponse)
+  uint64 gen = 6;
 }
 
 message WriteRequest {
@@ -69,6 +70,7 @@ message WriteResponse {
   int64 size = 2;
   bool is_error = 3;
   bytes error_payload = 4;
+  uint64 gen = 5;
 }
 
 message DeleteRequest {

@@ -307,6 +307,14 @@ fn extract_metadata(
             Err(e) => Err(MetaStoreError::IOError(format!("field {name}: {e}"))),
         }
     };
+    let get_u64_or_zero = |name: &str| -> Result<u64, MetaStoreError> {
+        match obj.getattr(name) {
+            Ok(v) => v
+                .extract::<u64>()
+                .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}"))),
+            Err(_) => Ok(0),
+        }
+    };
 
     let _ = py;
     Ok(FileMetadata {
@@ -316,6 +324,7 @@ fn extract_metadata(
             .and_then(|v| v.extract::<u64>())
             .map_err(|e| MetaStoreError::IOError(format!("field size: {e}")))?,
         content_id: get_opt_str("content_id")?,
+        gen: get_u64_or_zero("gen")?,
         version: obj
             .getattr("version")
             .and_then(|v| v.extract::<u32>())
@@ -365,6 +374,7 @@ fn to_python_metadata<'py>(
     kwargs
         .set_item("content_id", meta.content_id.as_deref())
         .map_err(err)?;
+    kwargs.set_item("gen", meta.gen).map_err(err)?;
     kwargs.set_item("version", meta.version).map_err(err)?;
     kwargs
         .set_item("entry_type", meta.entry_type)
@@ -915,6 +925,7 @@ pub struct PySysReadResult {
     pub data: Option<Py<PyBytes>>,
     pub post_hook_needed: bool,
     pub content_id: Option<String>,
+    pub gen: u64,
     pub entry_type: u8,
     pub stream_next_offset: Option<usize>,
 }
@@ -928,6 +939,7 @@ pub struct PySysWriteResult {
     pub content_id: Option<String>,
     pub post_hook_needed: bool,
     pub version: u32,
+    pub gen: u64,
     pub size: u64,
     pub is_new: bool,
     pub old_content_id: Option<String>,
@@ -994,6 +1006,7 @@ pub struct PySysCopyResult {
     pub content_id: Option<String>,
     pub size: u64,
     pub version: u32,
+    pub gen: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2231,6 +2244,7 @@ impl PyKernel {
             data: result.data.map(|d| PyBytes::new(py, &d).into()),
             post_hook_needed: result.post_hook_needed,
             content_id: result.content_id,
+            gen: result.gen,
             entry_type: result.entry_type,
             stream_next_offset: result.stream_next_offset,
         })
@@ -2273,6 +2287,7 @@ impl PyKernel {
             content_id: result.content_id,
             post_hook_needed: result.post_hook_needed,
             version: result.version,
+            gen: result.gen,
             size: result.size,
             is_new: result.is_new,
             old_content_id: result.old_content_id,
@@ -2304,6 +2319,7 @@ impl PyKernel {
                 dict.set_item("entry_type", s.entry_type)?;
                 dict.set_item("mode", s.mode)?;
                 dict.set_item("version", s.version)?;
+                dict.set_item("gen", s.gen)?;
                 dict.set_item("zone_id", s.zone_id.as_deref())?;
                 dict.set_item("link_target", s.link_target.as_deref())?;
                 match &s.lock {
@@ -2453,6 +2469,7 @@ impl PyKernel {
             content_id: result.content_id,
             size: result.size,
             version: result.version,
+            gen: result.gen,
         })
     }
 
@@ -2629,6 +2646,7 @@ impl PyKernel {
                 content_id: r.content_id,
                 post_hook_needed: r.post_hook_needed,
                 version: r.version,
+                gen: r.gen,
                 size: r.size,
                 is_new: r.is_new,
                 old_content_id: r.old_content_id,
@@ -2658,6 +2676,7 @@ impl PyKernel {
                 data: r.data.map(|d| PyBytes::new(py, &d).into()),
                 post_hook_needed: r.post_hook_needed,
                 content_id: r.content_id,
+                gen: r.gen,
                 entry_type: r.entry_type,
                 stream_next_offset: r.stream_next_offset,
             })

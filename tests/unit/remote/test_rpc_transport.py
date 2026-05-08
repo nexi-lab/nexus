@@ -233,16 +233,17 @@ class TestRPCTransportTypedMethods:
             transport.read_file("/missing.txt")
 
     def test_write_file_success(self, transport) -> None:
-        """write_file returns content_id/size dict from WriteResponse."""
+        """write_file returns content_id/size/gen dict from WriteResponse."""
         mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.content_id = "sha256-abc"
         mock_response.size = 100
+        mock_response.gen = 7
         transport._mock_stub.Write.return_value = mock_response
 
         result = transport.write_file("/file.txt", b"x" * 100)
 
-        assert result == {"content_id": "sha256-abc", "size": 100}
+        assert result == {"content_id": "sha256-abc", "size": 100, "gen": 7}
         request = transport._mock_stub.Write.call_args[0][0]
         assert request.path == "/file.txt"
         assert request.content == b"x" * 100
@@ -253,6 +254,7 @@ class TestRPCTransportTypedMethods:
         mock_response.is_error = False
         mock_response.content_id = "sha256-new"
         mock_response.size = 5
+        mock_response.gen = 8
         transport._mock_stub.Write.return_value = mock_response
 
         transport.write_file("/file.txt", b"hello", content_id="sha256-old")

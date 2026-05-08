@@ -332,6 +332,7 @@ class MetadataMixin:
             if _handled and _virt is not None:
                 _virt.setdefault("owner", ctx.user_id)
                 _virt.setdefault("group", ctx.user_id)
+                _virt.setdefault("gen", 0)
                 return _virt
 
         # Rust sys_stat handles: dcache → metastore → implicit directory.
@@ -1076,6 +1077,7 @@ class MetadataMixin:
             "size": _copy_result.size,
             "content_id": _copy_result.content_id,
             "version": _copy_result.version,
+            "gen": _copy_result.gen,
         }
 
     # ── Tier 2 metadata ──────────────────────────────────────────────
@@ -1147,6 +1149,7 @@ class MetadataMixin:
                 "size": 0,
                 "content_id": None,
                 "version": None,
+                "gen": 0,
                 "modified_at": None,
                 "is_directory": True,
             }
@@ -1176,6 +1179,7 @@ class MetadataMixin:
             "size": size,
             "content_id": meta.content_id,
             "version": meta.version,
+            "gen": meta.gen,
             "modified_at": modified_at_str,
             "is_directory": False,
         }
@@ -1273,6 +1277,7 @@ class MetadataMixin:
                             "size": 0,
                             "content_id": None,
                             "version": None,
+                            "gen": 0,
                             "modified_at": None,
                             "is_directory": True,
                         }
@@ -1286,6 +1291,7 @@ class MetadataMixin:
                         "size": meta.size,
                         "content_id": meta.content_id,
                         "version": meta.version,
+                        "gen": meta.gen,
                         "modified_at": modified_at_str,
                         "is_directory": False,
                     }
@@ -1450,6 +1456,7 @@ class MetadataMixin:
                     "created_at": meta.created_at,
                     "modified_at": meta.modified_at,
                     "version": meta.version,
+                    "gen": meta.gen,
                     "zone_id": meta.zone_id,
                     "is_directory": is_dir,
                 }
@@ -1682,6 +1689,7 @@ class MetadataMixin:
             "owner_id": entry.owner_id,
             "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,
             "version": entry.version,
+            "gen": entry.gen,
         }
 
     # Issue #3388: Internal metastore prefixes that must not appear in

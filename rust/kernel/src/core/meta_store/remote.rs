@@ -81,6 +81,7 @@ impl MetaStore for RemoteMetaStore {
                 "entry_type": metadata.entry_type,
                 "size": metadata.size,
                 "content_id": metadata.content_id,
+                "gen": metadata.gen,
                 "version": metadata.version,
                 "zone_id": metadata.zone_id,
                 "mime_type": metadata.mime_type,
@@ -281,6 +282,7 @@ fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, M
             .or_else(|| obj.get("content_id"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        gen: obj.get("gen").and_then(|v| v.as_u64()).unwrap_or(0),
         version: obj.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
         entry_type: obj.get("entry_type").and_then(|v| v.as_u64()).unwrap_or(0) as u8,
         zone_id: obj
@@ -306,4 +308,26 @@ fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, M
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_metadata_from_json_preserves_gen() {
+        let meta = parse_metadata_from_json(&serde_json::json!({
+            "path": "/remote.txt",
+            "size": 5,
+            "content_id": "hash",
+            "gen": 23,
+            "version": 2,
+            "entry_type": 0,
+        }))
+        .unwrap();
+
+        assert_eq!(meta.gen, 23);
+        assert_eq!(meta.path, "/remote.txt");
+        assert_eq!(meta.content_id.as_deref(), Some("hash"));
+    }
 }

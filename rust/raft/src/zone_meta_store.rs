@@ -179,6 +179,7 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetaSt
         } else {
             Some(proto.content_id)
         },
+        gen: proto.gen,
         version: proto.version as u32,
         entry_type: proto.entry_type as u8,
         zone_id: if proto.zone_id.is_empty() {
@@ -216,6 +217,7 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
         path: meta.path.clone(),
         size: meta.size as i64,
         content_id: meta.content_id.clone().unwrap_or_default(),
+        gen: meta.gen,
         version: meta.version as i32,
         entry_type: meta.entry_type as i32,
         zone_id: meta.zone_id.clone().unwrap_or_default(),
@@ -403,6 +405,7 @@ mod tests {
             path: "/docs/readme.md".to_string(),
             size: 1024,
             content_id: Some("hash".to_string()),
+            gen: 17,
             version: 3,
             entry_type: 0, // DT_REG
             zone_id: Some("zone-a".to_string()),
@@ -417,6 +420,7 @@ mod tests {
         assert_eq!(restored.path, meta.path);
         assert_eq!(restored.size, meta.size);
         assert_eq!(restored.content_id, meta.content_id);
+        assert_eq!(restored.gen, meta.gen);
         assert_eq!(restored.version, meta.version);
         assert_eq!(restored.entry_type, meta.entry_type);
         assert_eq!(restored.zone_id, meta.zone_id);

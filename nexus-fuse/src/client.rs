@@ -43,6 +43,8 @@ pub struct FileMetadata {
     #[serde(default)]
     pub size: u64,
     #[serde(default)]
+    pub gen: u64,
+    #[serde(default)]
     pub etag: Option<String>,
     #[serde(default)]
     pub modified_at: Option<String>,

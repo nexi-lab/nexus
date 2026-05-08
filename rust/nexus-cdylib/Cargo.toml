@@ -67,6 +67,7 @@ pyo3 = { version = "0.28.3", features = ["extension-module"] }
 # (sudocode branch HEAD `2b67d5b`) stays reachable in git history
 # even after sudocode merges, so re-pinning is optional for
 # correctness — only matters for reproducibility audit.
-# Pin to sudocode fix/readdir-migration — sys_readdir_backend → readdir.
-# Eliminates N per-child sys_stat calls; uses readdir entry_type directly.
-sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "7a229b2" }
+# Pin to sudocode fix/readdir-migration-v2 — spawn_task v2 + readdir migration.
+# sys_readdir_backend → readdir (eliminates N per-child sys_stat calls).
+sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "7f48278" }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "7f48278" }

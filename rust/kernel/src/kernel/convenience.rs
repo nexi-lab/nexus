@@ -215,13 +215,8 @@ impl KernelConvenience for Kernel {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
-        // Optimized: direct sys_write_with_link_depth + setattr_update
-        // in a single Rust call — no PyO3 round-trip for the create path.
-        let result = self.sys_write_with_link_depth(path, ctx, content, offset, 1)?;
-        if !result.hit && offset == 0 {
-            self.setattr_update(path, &ctx.zone_id, None, None, None, None, None, None)?;
-            return self.sys_write_with_link_depth(path, ctx, content, offset, 1);
-        }
-        Ok(result)
+        // sys_write handles auto-create internally (route-scoped metastore
+        // ensures SSOT). Tier 2 write() adds DT_LINK support.
+        self.sys_write_with_link_depth(path, ctx, content, offset, 1)
     }
 }

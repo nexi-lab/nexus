@@ -228,17 +228,12 @@ async def mount(
                     exc,
                 )
 
-        # Create DT_MOUNT or DT_EXTERNAL_STORAGE metadata entries for each mount point.
-        # Non-storage connectors (oauth/api backends like gdrive) must be registered as
-        # DT_EXTERNAL_STORAGE so the router returns ExternalRouteResult and reads go
-        # directly to backend.read_content() instead of through the kernel.
-        # Mirrors the logic in nexus.bricks.mount.mount_service (mount_service.py:608).
-        for mp, _backend, spec in backends:
-            metastore.sys_setattr(
-                mp,
-                _resolve_entry_type(spec),
-                mime_type="inode/directory",
-            )
+        # Mount metadata is already persisted by kernel.sys_setattr(DT_MOUNT)
+        # above — no additional metastore write needed. The previous
+        # metastore.metastore_put / metastore.sys_setattr loop was
+        # redundant and, because metastore is a singleton PyKernel shared
+        # with kernel._kernel, caused a DT_MOUNT re-mount that wiped the
+        # backend off the VFS route.
     except Exception:
         for _, be, _ in backends:
             _close_backend(be)

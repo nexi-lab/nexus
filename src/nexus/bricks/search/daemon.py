@@ -949,16 +949,77 @@ class SearchDaemon:
     # Initialization Methods
     # =========================================================================
 
+    @staticmethod
+    def _resolve_injected_engine(factory: Any) -> tuple[Any, str]:
+        """Resolve the bound engine from an injected async_sessionmaker.
+
+        Issue #4074: the prior single-strategy lookup
+        (``factory.kw["bind"]``) silently returned ``None`` for some
+        factory shapes, leaving ``db_pool_ready=False`` forever and every
+        search request 500-ing. This walks several extraction paths in
+        order of cost:
+
+        1. ``factory.kw["bind"]`` — works for the canonical
+           ``async_sessionmaker(bind=engine, ...)`` shape.
+        2. ``getattr(factory, "bind", None)`` — covers wrappers that
+           expose ``.bind`` directly.
+        3. ``factory().bind`` — constructs a session synchronously
+           and reads its ``bind`` attribute. ``AsyncSession.__init__``
+           does not touch the network, and the ``bind`` attr returns
+           the original ``AsyncEngine`` (unlike ``session.get_bind()``
+           which proxies to the *sync* engine). Safe to run during
+           startup before the pool is warm.
+
+        Returns ``(engine, strategy_name)`` where ``engine`` is ``None``
+        if every strategy failed.
+        """
+        _kw = getattr(factory, "kw", None)
+        if isinstance(_kw, dict):
+            _bind = _kw.get("bind")
+            if _bind is not None:
+                return _bind, "kw['bind']"
+
+        _bind = getattr(factory, "bind", None)
+        if _bind is not None:
+            return _bind, "factory.bind"
+
+        try:
+            _session = factory()
+            _bind = getattr(_session, "bind", None)
+            if _bind is not None:
+                return _bind, "factory().bind"
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "factory() probe failed during engine resolution: %s",
+                exc,
+            )
+
+        return None, "none"
+
     async def _init_database_pool(self) -> None:
         """Initialize and warm the database connection pool."""
         # If session factory was injected via __init__, skip engine creation
         if self._async_session is not None:
             # Extract engine reference from the injected session factory
-            # so db_pool_ready reports correctly.
-            _bind = getattr(self._async_session, "kw", {}).get("bind")
-            if _bind is not None:
-                self._async_engine = _bind
-            logger.info("Using injected async_session_factory (RecordStoreABC)")
+            # so db_pool_ready reports correctly. Issue #4074: a single
+            # `kw["bind"]` lookup is fragile across SQLAlchemy versions and
+            # factory shapes — when extraction silently failed, the daemon
+            # left `_async_engine = None` and every subsequent search
+            # request errored with "SearchDaemon not initialized".
+            _bind, _strategy = self._resolve_injected_engine(self._async_session)
+            if _bind is None:
+                raise RuntimeError(
+                    "Injected async_session_factory present but engine "
+                    "could not be resolved. Construct the factory with "
+                    "`bind=engine` (or pass the engine positionally to "
+                    "async_sessionmaker), or set NEXUS_DATABASE_URL so the "
+                    "daemon owns its own engine."
+                )
+            self._async_engine = _bind
+            logger.info(
+                "Using injected async_session_factory (RecordStoreABC); engine resolved via %s",
+                _strategy,
+            )
             return
 
         if not self.config.database_url:

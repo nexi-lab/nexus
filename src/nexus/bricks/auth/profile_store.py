@@ -9,7 +9,7 @@ Implements the AuthProfileStore protocol with:
   - Dirty-bit + periodic flush for success stats (decision 13A)
   - 500-char truncation of raw_error on write (decision 7A)
 
-Architecture: mirrors the _sqlite_meta.py pattern (single connection,
+Architecture: mirrors the _kernel_factory.py pattern (single connection,
 check_same_thread=False, row_factory=sqlite3.Row).
 """
 

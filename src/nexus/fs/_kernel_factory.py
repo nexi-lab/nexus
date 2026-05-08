@@ -1,17 +1,8 @@
-"""``SQLiteMetastore`` compatibility factory.
+"""Kernel factory for slim (nexus-fs) package.
 
-Historical note — this module used to implement a Python-only
-``MetastoreABC`` subclass backed by a local SQLite file as the slim
-package's metadata store for environments without the Rust kernel.
-The kernel is now the single source of truth for metastore state, and
-``nexus-fs`` declares ``nexus-runtime`` as a required dep, so the
-Python-only path no longer exists.
-
-This file preserves the ``SQLiteMetastore`` import path as a thin
-factory **function** — not a class — that returns a ``PyKernel``
-with its redb-backed metastore pointed at ``db_path``. The ``.db``
-suffix is rewritten to ``.redb`` so an existing sqlite file from a
-previous run is not accidentally overwritten.
+``create_kernel(db_path)`` returns a shared ``PyKernel`` backed by a
+redb metastore at ``db_path``. Multiple calls with the same path
+share the underlying kernel (redb exclusive-file lock).
 """
 
 from __future__ import annotations
@@ -62,7 +53,7 @@ def _retry_on_busy(fn: F) -> F:
 
 
 # Process-local cache: redb file → shared PyKernel. ``redb`` enforces
-# exclusive-file access within a process, so every SQLiteMetastore call
+# exclusive-file access within a process, so every create_kernel call
 # targeting the same path must funnel through one kernel. Per-proxy
 # kernels (the old behaviour) deadlocked multi-threaded tests and CLI
 # flows that `mount` twice in quick succession (Issue #3765 Cat-5/6).
@@ -96,7 +87,7 @@ def _evict_kernel_cache(kernel: Any) -> None:
     """Remove a kernel from the shared cache when its metastore is released.
 
     Called by ``NexusFS.close()`` right after ``kernel.release_metastores()``
-    so subsequent ``SQLiteMetastore(path)`` calls in the same process get a
+    so subsequent ``create_kernel(path)`` calls in the same process get a
     fresh kernel that reopens the redb file.
     """
     with _get_cache_lock():
@@ -105,19 +96,18 @@ def _evict_kernel_cache(kernel: Any) -> None:
                 _KERNEL_CACHE.pop(path, None)
 
 
-def SQLiteMetastore(db_path: str | Path, *, _args: Any = None, **_kwargs: Any) -> Any:  # noqa: N802
-    """Return a kernel-backed metastore compatible with the old API.
+def create_kernel(db_path: str | Path, *, _args: Any = None, **_kwargs: Any) -> Any:
+    """Create or retrieve a shared ``PyKernel`` backed by a redb metastore.
 
     Args:
-        db_path: Path the previous SQLite class wrote to. Rewritten to
-            a ``.redb`` sibling so the kernel's redb store opens in
-            its own file. Any existing sqlite db at ``db_path`` is
-            left untouched.
+        db_path: Path for the redb metastore file. A ``.redb`` suffix
+            is enforced automatically; any existing file at ``db_path``
+            with a different suffix is left untouched.
 
     Returns:
-        A ``PyKernel`` keyed by ``db_path`` (redb file). Multiple calls
-        with the same path share the underlying kernel so redb's
-        exclusive-file lock is honoured across threads.
+        A ``PyKernel`` keyed by ``db_path``. Multiple calls with the
+        same path share the underlying kernel so redb's exclusive-file
+        lock is honoured across threads.
     """
     redb_path = Path(str(db_path)).with_suffix(".redb")
     redb_path.parent.mkdir(parents=True, exist_ok=True)

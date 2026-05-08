@@ -243,7 +243,7 @@ def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
     from nexus.core.config import PermissionConfig
     from nexus.core.nexus_fs import NexusFS
     from nexus.fs import _make_mount_entry
-    from nexus.fs._sqlite_meta import SQLiteMetastore
+    from nexus.fs._kernel_factory import create_kernel
 
     class _ExplodingBackend:
         name = "exploding_connector"
@@ -256,7 +256,7 @@ def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
         def read_content(self, cid: str, context: OperationContext | None = None) -> bytes:
             raise BackendError("not needed", backend="exploding_connector")
 
-    metastore = SQLiteMetastore(str(tmp_path / "m.db"))
+    metastore = create_kernel(str(tmp_path / "m.db"))
     backend = _ExplodingBackend()
     kernel = NexusFS(
         metadata_store=metastore,

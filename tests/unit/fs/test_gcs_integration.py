@@ -32,7 +32,7 @@ from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.fs import _make_mount_entry  # noqa: E402
 from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts  # noqa: E402
-from nexus.fs._sqlite_meta import SQLiteMetastore  # noqa: E402
+from nexus.fs._kernel_factory import create_kernel  # noqa: E402
 
 
 class InMemoryBlobStore:
@@ -125,7 +125,7 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[NexusFS, str]:
 
     # SQLite metastore
     db_path = str(tmp_path / "metadata.db")
-    metastore = SQLiteMetastore(db_path)
+    metastore = create_kernel(db_path)
 
     mount_point = "/gcs/test-project/test-gcs-bucket"
 

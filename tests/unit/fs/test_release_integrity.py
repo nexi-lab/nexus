@@ -2,7 +2,7 @@
 
 Covers:
 - mount() cleanup on failure (Issue 9A)
-- SQLiteMetastore concurrency + _retry_on_busy (Issue 10A)
+- create_kernel concurrency + _retry_on_busy (Issue 10A)
 - Negative/error path tests (Issue 11A)
 - Method-set parity (Issue 8B / 12A)
 """
@@ -22,7 +22,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.fs._helpers import LOCAL_CONTEXT
 from nexus.fs._helpers import close as _close_fs
-from nexus.fs._sqlite_meta import SQLiteMetastore, _retry_on_busy
+from nexus.fs._kernel_factory import _retry_on_busy, create_kernel
 
 # =========================================================================
 # Issue 9A: mount() cleanup on failure
@@ -99,7 +99,7 @@ class TestMountCleanupOnFailure:
 
 
 # =========================================================================
-# Issue 10A: SQLiteMetastore concurrency + _retry_on_busy
+# Issue 10A: create_kernel concurrency + _retry_on_busy
 # =========================================================================
 
 
@@ -170,7 +170,7 @@ class TestRetryOnBusy:
 
 
 class TestConcurrentMetastore:
-    """Thread-contention test for SQLiteMetastore.
+    """Thread-contention test for create_kernel.
 
     Tests WAL-mode concurrency with separate connections (one per thread),
     which is the supported multi-process/multi-thread pattern for SQLite.
@@ -180,14 +180,14 @@ class TestConcurrentMetastore:
         """5 threads each with their own connection doing 20 put/get cycles."""
         db_path = str(tmp_path / "concurrent.db")
         # Create the schema first
-        _ = SQLiteMetastore(db_path)  # kernel manages redb lifecycle
+        _ = create_kernel(db_path)  # kernel manages redb lifecycle
 
         n_threads = 5
         n_ops = 20
         errors: list[str] = []
 
         def worker(thread_id: int) -> None:
-            ms = SQLiteMetastore(db_path)
+            ms = create_kernel(db_path)
             try:
                 for i in range(n_ops):
                     path = f"/thread{thread_id}/file{i}.txt"
@@ -217,7 +217,7 @@ class TestConcurrentMetastore:
         assert not errors, "Concurrency errors:\n" + "\n".join(errors)
 
         # Verify all entries were written
-        verify = SQLiteMetastore(db_path)
+        verify = create_kernel(db_path)
         total = len(verify.metastore_list_paginated("/", True, 100000, None)["items"])
         pass  # kernel manages redb lifecycle
         assert total == n_threads * n_ops
@@ -504,7 +504,7 @@ class TestKernelLifecycle:
         from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
-        metastore = SQLiteMetastore(db_path)
+        metastore = create_kernel(db_path)
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
@@ -539,7 +539,7 @@ class TestKernelLifecycle:
         from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
-        metastore = SQLiteMetastore(db_path)
+        metastore = create_kernel(db_path)
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)

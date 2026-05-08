@@ -1066,11 +1066,11 @@ class NexusFS(  # type: ignore[misc]
                     _release()
             except Exception as exc:  # pragma: no cover - best-effort teardown
                 logger.debug("kernel.release_metastores failed: %s", exc)
-            # Drop this kernel from the shared SQLiteMetastore cache so the
-            # next ``SQLiteMetastore(path)`` in this process gets a fresh
+            # Drop this kernel from the shared create_kernel cache so the
+            # next ``create_kernel(path)`` in this process gets a fresh
             # kernel with its own metastore wired up (Issue #3765 Cat-5/6).
             try:
-                from nexus.fs._sqlite_meta import _evict_kernel_cache
+                from nexus.fs._kernel_factory import _evict_kernel_cache
 
                 _evict_kernel_cache(self._kernel)
             except Exception as exc:  # pragma: no cover - best-effort

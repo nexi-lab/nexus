@@ -140,10 +140,10 @@ async def mount(
 
     # Create metastore
     from nexus.fs._backend_factory import create_backend
+    from nexus.fs._kernel_factory import create_kernel
     from nexus.fs._paths import metadata_db
-    from nexus.fs._sqlite_meta import SQLiteMetastore
 
-    metastore = SQLiteMetastore(str(metadata_db()))
+    metastore = create_kernel(str(metadata_db()))
 
     # Create all backends with cleanup on partial failure.
     # Store spec alongside each backend so _resolve_entry_type() can use it

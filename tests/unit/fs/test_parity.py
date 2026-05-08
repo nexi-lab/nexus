@@ -20,7 +20,7 @@ from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.fs import _make_mount_entry
 from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
-from nexus.fs._sqlite_meta import SQLiteMetastore
+from nexus.fs._kernel_factory import create_kernel
 from nexus.fs._sync import SyncNexusFS
 
 
@@ -29,7 +29,7 @@ def _build_fs(tmp_path: Path) -> NexusFS:
     from nexus.backends.storage.cas_local import CASLocalBackend
 
     db_path = str(tmp_path / "metadata.db")
-    metastore = SQLiteMetastore(db_path)
+    metastore = create_kernel(db_path)
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()

@@ -26,7 +26,7 @@ from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.fs import _make_mount_entry
 from nexus.fs._helpers import LOCAL_CONTEXT
-from nexus.fs._sqlite_meta import SQLiteMetastore
+from nexus.fs._kernel_factory import create_kernel
 
 # ---------------------------------------------------------------------------
 # Fixture: real slim FS
@@ -39,7 +39,7 @@ def slim(tmp_path: Path) -> NexusFS:
     from nexus.backends.storage.cas_local import CASLocalBackend
 
     db_path = str(tmp_path / "meta.db")
-    metastore = SQLiteMetastore(db_path)
+    metastore = create_kernel(db_path)
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()

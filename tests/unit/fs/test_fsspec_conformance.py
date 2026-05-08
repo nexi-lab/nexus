@@ -21,7 +21,7 @@ from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.fs import _make_mount_entry  # noqa: E402
 from nexus.fs._fsspec import NexusFileSystem  # noqa: E402
-from nexus.fs._sqlite_meta import SQLiteMetastore  # noqa: E402
+from nexus.fs._kernel_factory import create_kernel  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Thin subclass that bridges NexusFileSystem gaps for the abstract suite.
@@ -133,7 +133,7 @@ class NexusFsFixtures(abstract.AbstractFixtures):
         _ConformanceFS.clear_instance_cache()
 
         db_path = str(tmp_path / "metadata.db")
-        metastore = SQLiteMetastore(db_path)
+        metastore = create_kernel(db_path)
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()

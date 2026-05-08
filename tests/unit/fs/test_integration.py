@@ -26,7 +26,7 @@ from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
-from nexus.fs._sqlite_meta import SQLiteMetastore
+from nexus.fs._kernel_factory import create_kernel
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def slim_fs(tmp_path: Path):
     """Boot a full slim NexusFS with SQLite + CASLocalBackend."""
     # SQLite metastore
     db_path = str(tmp_path / "metadata.db")
-    metastore = SQLiteMetastore(db_path)
+    metastore = create_kernel(db_path)
 
     # CASLocalBackend
     from nexus.backends.storage.cas_local import CASLocalBackend
@@ -68,7 +68,7 @@ def dual_fs(tmp_path: Path):
     from nexus.backends.storage.cas_local import CASLocalBackend
 
     db_path = str(tmp_path / "metadata.db")
-    metastore = SQLiteMetastore(db_path)
+    metastore = create_kernel(db_path)
 
     data_a = tmp_path / "data_a"
     data_a.mkdir()
@@ -424,7 +424,7 @@ class TestMultiBackend:
 # ---------------------------------------------------------------------------
 
 
-class TestSQLiteMetastore:
+class TestCreateKernel:
     # F3 C4: the stdlib-SQLite backend was replaced with a kernel-backed
     # RustMetastoreProxy factory under the same import name. The previous
     # ``test_wal_mode_enabled`` check (``PRAGMA journal_mode == 'wal'``)
@@ -434,7 +434,7 @@ class TestSQLiteMetastore:
     def test_put_and_get(self, tmp_path: Path):
         """Basic setattr/stat roundtrip on the kernel metastore."""
         db_path = str(tmp_path / "test.db")
-        meta = SQLiteMetastore(db_path)
+        meta = create_kernel(db_path)
 
         # Create DT_REG via sys_setattr (entry_type=0 with upsert)
         meta.sys_setattr(

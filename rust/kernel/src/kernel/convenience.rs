@@ -215,12 +215,39 @@ impl KernelConvenience for Kernel {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
-        // Pure Tier 1 composition: sys_write → miss? → sys_setattr(DT_REG) → sys_write.
-        // Mirrors POSIX open(O_CREAT|O_WRONLY) + write(2) + close(2).
-        let result = self.sys_write(path, ctx, content, offset)?;
+        // Tier 2 create-or-overwrite. On miss + offset==0, creates DT_REG
+        // via the same route object sys_write uses internally, then retries.
+        // Uses sys_write_with_link_depth (kernel-internal) to guarantee the
+        // create and retry share the identical metastore resolution path.
+        let result = self.sys_write_with_link_depth(path, ctx, content, offset, 1)?;
         if !result.hit && offset == 0 {
-            self.setattr_update(path, &ctx.zone_id, None, None, None, None, None, None)?;
-            return self.sys_write(path, ctx, content, offset);
+            // Route-scoped create: resolve the same route sys_write uses,
+            // build a bare DT_REG entry, put it through the route metastore.
+            let route = self
+                .vfs_router
+                .route(path, &ctx.zone_id)
+                .map_err(|_| KernelError::FileNotFound(path.to_string()))?;
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let meta = self.build_metadata(
+                path,
+                &route.zone_id,
+                crate::meta_store::DT_REG,
+                0,
+                None,
+                1,
+                None,
+                Some(now_ms),
+                Some(now_ms),
+            );
+            self.with_metastore_route(&route, |ms| ms.put(path, meta))
+                .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
+                .and_then(|r| {
+                    r.map_err(|e| KernelError::IOError(format!("write create({path}): {e:?}")))
+                })?;
+            return self.sys_write_with_link_depth(path, ctx, content, offset, 1);
         }
         Ok(result)
     }

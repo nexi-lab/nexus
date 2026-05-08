@@ -577,7 +577,7 @@ impl Kernel {
         self.sys_write_with_link_depth(path, ctx, content, offset, 1)
     }
 
-    fn sys_write_with_link_depth(
+    pub(crate) fn sys_write_with_link_depth(
         &self,
         path: &str,
         ctx: &OperationContext,

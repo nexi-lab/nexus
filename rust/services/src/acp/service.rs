@@ -673,6 +673,7 @@ impl<K: KernelAbi> AcpService<K> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_session(
         &self,
         subproc: &mut AcpSubprocess,

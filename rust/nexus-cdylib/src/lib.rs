@@ -66,11 +66,7 @@ struct SudoCodeSpawnAdapter {
 }
 
 impl SpawnTask<Kernel> for SudoCodeSpawnAdapter {
-    fn spawn(
-        &self,
-        kernel: Arc<Kernel>,
-        desc: AgentDescriptor,
-    ) -> Box<dyn ServiceSpawnHandle> {
+    fn spawn(&self, kernel: Arc<Kernel>, desc: AgentDescriptor) -> Box<dyn ServiceSpawnHandle> {
         let pid = desc.pid.clone();
         let registry = Arc::clone(&self.agent_registry);
         let state_callback = move |state: sudocode_runtime::spawn_task::AgentLoopState| {
@@ -82,11 +78,8 @@ impl SpawnTask<Kernel> for SudoCodeSpawnAdapter {
             };
             let _ = registry.update_state(&pid, target);
         };
-        let handle = sudocode_tools::managed_agent::spawn_managed_agent(
-            kernel,
-            desc,
-            state_callback,
-        );
+        let handle =
+            sudocode_tools::managed_agent::spawn_managed_agent(kernel, desc, state_callback);
         Box::new(SudoCodeSpawnHandle(handle))
     }
 }
@@ -108,8 +101,7 @@ fn nx_managed_agent_install(py_kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
     let kernel_arc = py_kernel.kernel_arc();
     let agent_registry = Arc::clone(kernel_arc.agent_registry());
     let provider: Arc<dyn SpawnTask<Kernel>> = Arc::new(SudoCodeSpawnAdapter { agent_registry });
-    install_managed_agent_with_spawn(&kernel_arc, provider)
-        .map_err(PyRuntimeError::new_err)
+    install_managed_agent_with_spawn(&kernel_arc, provider).map_err(PyRuntimeError::new_err)
 }
 
 #[pymodule]

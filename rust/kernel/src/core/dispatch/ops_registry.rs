@@ -1,5 +1,5 @@
+use ahash::AHashMap;
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -169,13 +169,13 @@ impl fmt::Display for OpsRegistryError {
 impl std::error::Error for OpsRegistryError {}
 
 pub struct OpsRegistry {
-    table: RwLock<HashMap<OpKey, OpHandler>>,
+    table: RwLock<AHashMap<OpKey, OpHandler>>,
 }
 
 impl OpsRegistry {
     pub fn new() -> Self {
         Self {
-            table: RwLock::new(HashMap::new()),
+            table: RwLock::new(AHashMap::new()),
         }
     }
 

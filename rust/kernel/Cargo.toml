@@ -98,3 +98,7 @@ tempfile = "3"
 [[bench]]
 name = "prefix_bench"
 harness = false
+
+[[bench]]
+name = "ops_registry_bench"
+harness = false

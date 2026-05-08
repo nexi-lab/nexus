@@ -296,13 +296,13 @@ export class SseClient {
 
       for (const line of block.split("\n")) {
         if (line.startsWith("id:")) {
-          id = line.slice(3).trim();
+          id = parseSseFieldValue(line.slice(3));
         } else if (line.startsWith("event:")) {
-          event = line.slice(6).trim();
+          event = parseSseFieldValue(line.slice(6));
         } else if (line.startsWith("data:")) {
-          data += (data ? "\n" : "") + line.slice(5).trim();
+          data += (data ? "\n" : "") + parseSseFieldValue(line.slice(5));
         } else if (line.startsWith("retry:")) {
-          const val = parseInt(line.slice(6).trim(), 10);
+          const val = parseInt(parseSseFieldValue(line.slice(6)), 10);
           if (!Number.isNaN(val)) retry = val;
         }
       }
@@ -367,4 +367,8 @@ function sleepWithAbort(ms: number, signal: AbortSignal): Promise<boolean> {
 
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function parseSseFieldValue(value: string): string {
+  return value.startsWith(" ") ? value.slice(1) : value;
 }

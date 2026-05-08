@@ -273,6 +273,33 @@ describe("SseClient", () => {
     expect(events[0]!.data).toBe("line1\nline2");
   });
 
+  it("preserves significant SSE field whitespace after the optional separator space", async () => {
+    const clientRef: { current: SseClient | null } = { current: null };
+    const fetchFn = mockSseFetch(
+      ["id:  id-1  \nevent:  spaced  \ndata:  leading and trailing  \n\n"],
+      clientRef,
+    );
+
+    const client = new SseClient({
+      baseUrl: "http://localhost:2026",
+      apiKey: "test-key",
+      fetch: fetchFn,
+      flushIntervalMs: 10_000,
+    });
+    clientRef.current = client;
+
+    await client.connect("/events");
+
+    const events = client.getBufferedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({
+      id: " id-1  ",
+      event: " spaced  ",
+      data: " leading and trailing  ",
+      retry: undefined,
+    });
+  });
+
   it("parses CRLF-terminated SSE events", async () => {
     const clientRef: { current: SseClient | null } = { current: null };
     const fetchFn = mockSseFetch(

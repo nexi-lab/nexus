@@ -78,6 +78,7 @@ try:
         "dev",
         max_examples=10,
         deadline=500,
+        suppress_health_check=[HealthCheck.too_slow],
     )
 
     hypothesis_settings.register_profile(

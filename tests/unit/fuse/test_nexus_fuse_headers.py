@@ -18,7 +18,7 @@ def test_fuse_fs_uses_open_handle_cache_for_range_reads() -> None:
     fs_source = (repo_root / "nexus-fuse" / "src" / "fs.rs").read_text(encoding="utf-8")
 
     assert "open_file_cache" in fs_source
-    assert "reply.opened(fh, 0)" in fs_source
+    assert "reply.opened(FileHandle(fh), FopenFlags::empty())" in fs_source
     assert "Self::reply_data_slice(&entry.content, offset, size, reply)" in fs_source
 
 

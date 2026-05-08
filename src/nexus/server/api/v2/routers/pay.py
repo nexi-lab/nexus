@@ -12,17 +12,21 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from nexus.bricks.pay.constants import credits_to_micro, micro_to_credits
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.server.dependencies import get_operation_context, require_auth
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v2/pay", tags=["payments"])
-audit_router = APIRouter(prefix="/api/v2/audit", tags=["audit"])
+router = APIRouter(prefix="/api/v2/pay", tags=["payments"], dependencies=[Depends(require_auth)])
+audit_router = APIRouter(
+    prefix="/api/v2/audit", tags=["audit"], dependencies=[Depends(require_auth)]
+)
 
 
 # =============================================================================
@@ -110,29 +114,125 @@ def _ensure_tables(record_store: Any) -> None:
         logger.warning("Failed to ensure pay tables: %s", e)
 
 
+def _get_pay_context(auth_result: dict[str, Any] = Depends(require_auth)) -> Any:
+    """Get authenticated operation context for pay routes."""
+    return get_operation_context(auth_result)
+
+
+def _context_agent_id(context: Any) -> str:
+    """Resolve the wallet actor from an operation context."""
+    agent_id = getattr(context, "agent_id", None) or getattr(context, "subject_id", None)
+    if not agent_id:
+        raise HTTPException(status_code=403, detail="Agent identity required")
+    return str(agent_id)
+
+
+def _context_zone_id(context: Any) -> str:
+    return str(getattr(context, "zone_id", None) or ROOT_ZONE_ID)
+
+
+def _normalize_amount(amount: Decimal) -> Decimal:
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError("amount must be a positive decimal")
+    exponent = amount.as_tuple().exponent
+    if not isinstance(exponent, int) or abs(exponent) > 6:
+        raise ValueError("amount must have at most 6 decimal places")
+    return amount
+
+
+def _amount_to_micro(amount: Decimal) -> int:
+    return credits_to_micro(_normalize_amount(amount))
+
+
+def _amount_from_micro(micro: int) -> Decimal:
+    return micro_to_credits(int(micro))
+
+
+def _format_amount(amount: Decimal) -> str:
+    quantized = amount.quantize(Decimal("0.000001"))
+    text = format(quantized, "f").rstrip("0").rstrip(".")
+    if "." not in text:
+        return f"{text}.00"
+    integer, fraction = text.split(".", 1)
+    if len(fraction) == 1:
+        return f"{integer}.{fraction}0"
+    return text
+
+
+def _format_micro_amount(micro: int) -> str:
+    return _format_amount(_amount_from_micro(micro))
+
+
+def _transfer_id_to_int(transfer_id: str | None = None) -> int:
+    if transfer_id:
+        try:
+            value = int(transfer_id)
+            if 0 < value < 2**63:
+                return value
+        except ValueError:
+            pass
+    return uuid.uuid4().int % (2**63)
+
+
 # =============================================================================
 # Request models
 # =============================================================================
 
 
-class TransferRequest(BaseModel):
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class _AmountModel(_StrictModel):
+    amount: Decimal = Field(..., gt=Decimal("0"))
+
+    @field_validator("amount")
+    @classmethod
+    def _validate_amount(cls, value: Decimal) -> Decimal:
+        return _normalize_amount(value)
+
+
+class TransferRequest(_AmountModel):
     to: str
-    amount: float
+    memo: str = ""
+    method: Literal["auto", "credits", "x402"] = "auto"
+    idempotency_key: str | None = None
+
+
+class BatchTransferItem(_AmountModel):
+    to: str
     memo: str = ""
 
 
-class ReserveRequest(BaseModel):
-    amount: float
-    purpose: str = ""
+class BatchTransferRequest(_StrictModel):
+    transfers: list[BatchTransferItem] = Field(..., min_length=1, max_length=1000)
 
 
-class PolicyCreateRequest(BaseModel):
+class ReserveRequest(_AmountModel):
+    timeout: int = Field(default=300, ge=1, le=86400)
+    purpose: str = "general"
+    task_id: str | None = None
+
+
+class CommitReservationRequest(_StrictModel):
+    actual_amount: Decimal | None = None
+
+    @field_validator("actual_amount")
+    @classmethod
+    def _validate_actual_amount(cls, value: Decimal | None) -> Decimal | None:
+        return _normalize_amount(value) if value is not None else None
+
+
+class MeterRequest(_AmountModel):
+    event_type: str = "api_call"
+
+
+class PolicyCreateRequest(_StrictModel):
     name: str
-    rules: dict[str, Any] = {}
+    rules: dict[str, Any] = Field(default_factory=dict)
 
 
-class ApprovalRequestBody(BaseModel):
-    amount: float
+class ApprovalRequestBody(_AmountModel):
     purpose: str
 
 
@@ -144,28 +244,35 @@ class ApprovalRequestBody(BaseModel):
 @router.get("/balance")
 async def get_balance(
     _request: Request,
+    context: Any = Depends(_get_pay_context),
     credits: Any = Depends(_get_credits_service),
     record_store: Any = Depends(_get_record_store),
 ) -> dict[str, str]:
     """Get current balance. Uses TigerBeetle if available, unlimited if disabled."""
+    agent_id = _context_agent_id(context)
+    zone_id = _context_zone_id(context)
     try:
-        balance = await credits.get_balance("admin")
-        reserved = (
-            await credits.get_balance_with_reserved("admin")
-            if hasattr(credits, "get_balance_with_reserved")
-            else {"reserved": Decimal(0)}
-        )
-        res_amount = (
-            reserved.get("reserved", Decimal(0)) if isinstance(reserved, dict) else Decimal(0)
-        )
+        if hasattr(credits, "get_balance_with_reserved"):
+            balance_result = await credits.get_balance_with_reserved(agent_id, zone_id)
+            if isinstance(balance_result, tuple):
+                balance, res_amount = balance_result
+            elif isinstance(balance_result, dict):
+                balance = Decimal(str(balance_result.get("available", "0")))
+                res_amount = Decimal(str(balance_result.get("reserved", "0")))
+            else:
+                balance = Decimal(str(balance_result))
+                res_amount = Decimal(0)
+        else:
+            balance = await credits.get_balance(agent_id, zone_id)
+            res_amount = Decimal(0)
         # Disabled mode returns DISABLED_UNLIMITED_BALANCE (999999999)
         # Convert to realistic demo balance by tracking transfers in SQL
         if balance == credits.DISABLED_UNLIMITED_BALANCE:
             raise ValueError("disabled mode")
         return {
-            "available": str(balance),
-            "reserved": str(res_amount),
-            "total": str(balance + res_amount),
+            "available": _format_amount(Decimal(str(balance))),
+            "reserved": _format_amount(Decimal(str(res_amount))),
+            "total": _format_amount(Decimal(str(balance)) + Decimal(str(res_amount))),
         }
     except Exception:
         # Calculate balance from SQL transaction history
@@ -176,11 +283,12 @@ async def get_balance(
             from nexus.storage.models.payments import CreditReservationMeta, PaymentTransactionMeta
 
             with record_store.session_factory() as session:
-                initial_balance = 10000_00  # 10,000 credits in cents
+                initial_balance = credits_to_micro(Decimal("10000"))
                 sent = (
                     session.scalar(
                         select(func.coalesce(func.sum(PaymentTransactionMeta.amount), 0)).where(
-                            PaymentTransactionMeta.from_agent_id == "admin"
+                            PaymentTransactionMeta.from_agent_id == agent_id,
+                            PaymentTransactionMeta.zone_id == zone_id,
                         )
                     )
                     or 0
@@ -188,7 +296,8 @@ async def get_balance(
                 received = (
                     session.scalar(
                         select(func.coalesce(func.sum(PaymentTransactionMeta.amount), 0)).where(
-                            PaymentTransactionMeta.to_agent_id == "admin"
+                            PaymentTransactionMeta.to_agent_id == agent_id,
+                            PaymentTransactionMeta.zone_id == zone_id,
                         )
                     )
                     or 0
@@ -196,18 +305,20 @@ async def get_balance(
                 reserved = (
                     session.scalar(
                         select(func.coalesce(func.sum(CreditReservationMeta.amount), 0)).where(
-                            CreditReservationMeta.status == "pending"
+                            CreditReservationMeta.agent_id == agent_id,
+                            CreditReservationMeta.zone_id == zone_id,
+                            CreditReservationMeta.status == "pending",
                         )
                     )
                     or 0
                 )
 
-                available = (initial_balance - sent + received - reserved) / 100
-                reserved_amt = reserved / 100
+                available = _amount_from_micro(initial_balance - sent + received - reserved)
+                reserved_amt = _amount_from_micro(reserved)
                 return {
-                    "available": f"{available:.2f}",
-                    "reserved": f"{reserved_amt:.2f}",
-                    "total": f"{available + reserved_amt:.2f}",
+                    "available": _format_amount(available),
+                    "reserved": _format_amount(reserved_amt),
+                    "total": _format_amount(available + reserved_amt),
                 }
         except Exception:
             return {"available": "10000.00", "reserved": "0.00", "total": "10000.00"}
@@ -215,19 +326,25 @@ async def get_balance(
 
 @router.get("/can-afford")
 async def can_afford(
-    amount: float,
     _request: Request,
+    amount: Decimal = Query(...),
+    context: Any = Depends(_get_pay_context),
     credits: Any = Depends(_get_credits_service),
 ) -> dict[str, Any]:
     try:
-        balance = await credits.get_balance("admin")
-        available = float(balance)
+        amount = _normalize_amount(amount)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    agent_id = _context_agent_id(context)
+    zone_id = _context_zone_id(context)
+    try:
+        balance = Decimal(str(await credits.get_balance(agent_id, zone_id)))
+        available = balance
     except Exception:
-        available = 999999999.0
+        available = Decimal("999999999")
     return {
         "can_afford": available >= amount,
-        "available": str(available),
-        "requested": str(amount),
+        "amount": _format_amount(amount),
     }
 
 
@@ -295,20 +412,33 @@ async def get_budget(
 # =============================================================================
 
 
-@router.post("/transfer")
+@router.post("/transfer", status_code=status.HTTP_201_CREATED)
 async def transfer(
     body: TransferRequest,
     _request: Request,
+    context: Any = Depends(_get_pay_context),
     record_store: Any = Depends(_get_record_store),
     credits: Any = Depends(_get_credits_service),
+    idempotency_key_header: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     _ensure_tables(record_store)
     tx_id = str(uuid.uuid4())
     now = datetime.now(UTC)
+    from_agent = _context_agent_id(context)
+    zone_id = _context_zone_id(context)
+    idempotency_key = body.idempotency_key or idempotency_key_header
+    transfer_id: str | None = None
 
     # Attempt real transfer via CreditsService
     try:
-        await credits.transfer("admin", body.to, Decimal(str(body.amount)), memo=body.memo)
+        transfer_id = await credits.transfer(
+            from_agent,
+            body.to,
+            body.amount,
+            memo=body.memo,
+            idempotency_key=idempotency_key,
+            zone_id=zone_id,
+        )
     except Exception as e:
         logger.debug("Credits transfer skipped (disabled mode): %s", e)
 
@@ -319,13 +449,14 @@ async def transfer(
         with record_store.session_factory() as session:
             txn = PaymentTransactionMeta(
                 id=tx_id,
-                from_agent_id="admin",
+                zone_id=zone_id,
+                from_agent_id=from_agent,
                 to_agent_id=body.to,
-                amount=int(body.amount * 100),
+                amount=_amount_to_micro(body.amount),
                 currency="credits",
-                method="credits",
+                method=body.method,
                 memo=body.memo,
-                tigerbeetle_transfer_id=uuid.uuid4().int >> 64,
+                tigerbeetle_transfer_id=_transfer_id_to_int(transfer_id),
                 status="completed",
             )
             session.add(txn)
@@ -335,9 +466,9 @@ async def transfer(
 
     return {
         "id": tx_id,
-        "method": "credits",
-        "amount": f"{body.amount:.2f}",
-        "from_agent": "admin",
+        "method": body.method,
+        "amount": _format_amount(body.amount),
+        "from_agent": from_agent,
         "to_agent": body.to,
         "memo": body.memo,
         "timestamp": now.isoformat(),
@@ -345,12 +476,93 @@ async def transfer(
     }
 
 
+@router.post("/transfer/batch", status_code=status.HTTP_201_CREATED)
+async def transfer_batch(
+    body: BatchTransferRequest,
+    _request: Request,
+    context: Any = Depends(_get_pay_context),
+    record_store: Any = Depends(_get_record_store),
+    credits: Any = Depends(_get_credits_service),
+) -> list[dict[str, Any]]:
+    _ensure_tables(record_store)
+    from_agent = _context_agent_id(context)
+    zone_id = _context_zone_id(context)
+    now = datetime.now(UTC)
+    transfer_ids: list[str | None] = [None] * len(body.transfers)
+
+    try:
+        if hasattr(credits, "transfer_batch"):
+            from nexus.bricks.pay.credits import TransferRequest as CreditsTransferRequest
+
+            credit_transfers = [
+                CreditsTransferRequest(
+                    from_id=from_agent,
+                    to_id=item.to,
+                    amount=item.amount,
+                    memo=item.memo,
+                )
+                for item in body.transfers
+            ]
+            transfer_ids = list(await credits.transfer_batch(credit_transfers, zone_id=zone_id))
+        else:
+            for i, item in enumerate(body.transfers):
+                transfer_ids[i] = await credits.transfer(
+                    from_agent,
+                    item.to,
+                    item.amount,
+                    memo=item.memo,
+                    zone_id=zone_id,
+                )
+    except Exception as e:
+        logger.debug("Credits batch transfer skipped (disabled mode): %s", e)
+
+    receipts: list[dict[str, Any]] = []
+    try:
+        from nexus.storage.models.payments import PaymentTransactionMeta
+
+        with record_store.session_factory() as session:
+            for i, item in enumerate(body.transfers):
+                tx_id = str(uuid.uuid4())
+                txn = PaymentTransactionMeta(
+                    id=tx_id,
+                    zone_id=zone_id,
+                    from_agent_id=from_agent,
+                    to_agent_id=item.to,
+                    amount=_amount_to_micro(item.amount),
+                    currency="credits",
+                    method="credits",
+                    memo=item.memo,
+                    tigerbeetle_transfer_id=_transfer_id_to_int(transfer_ids[i]),
+                    status="completed",
+                )
+                session.add(txn)
+                receipts.append(
+                    {
+                        "id": tx_id,
+                        "method": "credits",
+                        "amount": _format_amount(item.amount),
+                        "from_agent": from_agent,
+                        "to_agent": item.to,
+                        "memo": item.memo,
+                        "timestamp": now.isoformat(),
+                        "tx_hash": None,
+                    }
+                )
+            session.commit()
+    except Exception as e:
+        logger.warning("Failed to record batch transaction in SQL: %s", e)
+
+    return receipts
+
+
 # =============================================================================
 # Transactions (SQL-backed audit trail)
 # =============================================================================
 
 
-def _list_transactions(record_store: Any, limit: int, cursor: str | None) -> dict[str, Any]:
+def _list_transactions(
+    record_store: Any, limit: int, cursor: str | None, zone_id: str | None = None
+) -> dict[str, Any]:
     _ensure_tables(record_store)
     try:
         from sqlalchemy import desc, func, select
@@ -358,13 +570,18 @@ def _list_transactions(record_store: Any, limit: int, cursor: str | None) -> dic
         from nexus.storage.models.payments import PaymentTransactionMeta
 
         with record_store.session_factory() as session:
-            total = session.scalar(select(func.count(PaymentTransactionMeta.id))) or 0
+            total_stmt = select(func.count(PaymentTransactionMeta.id))
+            if zone_id is not None:
+                total_stmt = total_stmt.where(PaymentTransactionMeta.zone_id == zone_id)
+            total = session.scalar(total_stmt) or 0
 
             stmt = (
                 select(PaymentTransactionMeta)
                 .order_by(desc(PaymentTransactionMeta.created_at))
                 .limit(limit)
             )
+            if zone_id is not None:
+                stmt = stmt.where(PaymentTransactionMeta.zone_id == zone_id)
             if cursor:
                 stmt = stmt.offset(int(cursor))
             rows = session.scalars(stmt).all()
@@ -380,7 +597,7 @@ def _list_transactions(record_store: Any, limit: int, cursor: str | None) -> dic
                     "protocol": r.method,
                     "buyer_agent_id": r.from_agent_id,
                     "seller_agent_id": r.to_agent_id,
-                    "amount": f"{r.amount / 100:.2f}",
+                    "amount": _format_micro_amount(r.amount),
                     "currency": r.currency,
                     "status": r.status,
                     "zone_id": r.zone_id,
@@ -415,26 +632,29 @@ def _list_transactions(record_store: Any, limit: int, cursor: str | None) -> dic
 async def list_pay_transactions(
     limit: int = 20,
     cursor: str | None = None,
+    context: Any = Depends(_get_pay_context),
     record_store: Any = Depends(_get_record_store),
 ) -> dict[str, Any]:
-    return _list_transactions(record_store, limit, cursor)
+    return _list_transactions(record_store, limit, cursor, _context_zone_id(context))
 
 
 @audit_router.get("/transactions")
 async def list_audit_transactions(
     limit: int = 20,
     cursor: str | None = None,
+    context: Any = Depends(_get_pay_context),
     record_store: Any = Depends(_get_record_store),
 ) -> dict[str, Any]:
-    return _list_transactions(record_store, limit, cursor)
+    return _list_transactions(record_store, limit, cursor, _context_zone_id(context))
 
 
 @router.get("/transactions/integrity")
 async def verify_integrity(
     _request: Request,
+    context: Any = Depends(_get_pay_context),
     record_store: Any = Depends(_get_record_store),
 ) -> list[dict[str, Any]]:
-    result = _list_transactions(record_store, 100, None)
+    result = _list_transactions(record_store, 100, None, _context_zone_id(context))
     return [
         {"record_id": t["id"], "is_valid": True, "record_hash": t["record_hash"]}
         for t in result["transactions"]
@@ -449,9 +669,12 @@ async def verify_integrity(
 @router.get("/reservations")
 async def list_reservations(
     _request: Request,
+    context: Any = Depends(_get_pay_context),
     record_store: Any = Depends(_get_record_store),
 ) -> list[dict[str, Any]]:
     _ensure_tables(record_store)
+    agent_id = _context_agent_id(context)
+    zone_id = _context_zone_id(context)
     try:
         from sqlalchemy import select
 
@@ -459,12 +682,16 @@ async def list_reservations(
 
         with record_store.session_factory() as session:
             rows = session.scalars(
-                select(CreditReservationMeta).where(CreditReservationMeta.status == "pending")
+                select(CreditReservationMeta).where(
+                    CreditReservationMeta.agent_id == agent_id,
+                    CreditReservationMeta.zone_id == zone_id,
+                    CreditReservationMeta.status == "pending",
+                )
             ).all()
             return [
                 {
                     "id": r.id,
-                    "amount": f"{r.amount / 100:.2f}",
+                    "amount": _format_micro_amount(r.amount),
                     "purpose": r.purpose,
                     "expires_at": r.expires_at.isoformat() if r.expires_at else None,
                     "status": r.status,
@@ -476,27 +703,43 @@ async def list_reservations(
         return []
 
 
-@router.post("/reserve")
+@router.post("/reserve", status_code=status.HTTP_201_CREATED)
 async def reserve(
     body: ReserveRequest,
     _request: Request,
+    context: Any = Depends(_get_pay_context),
     record_store: Any = Depends(_get_record_store),
+    credits: Any = Depends(_get_credits_service),
 ) -> dict[str, Any]:
     _ensure_tables(record_store)
-    res_id = str(uuid.uuid4())
+    agent_id = _context_agent_id(context)
+    zone_id = _context_zone_id(context)
     now = datetime.now(UTC)
+    expires_at = now + timedelta(seconds=body.timeout)
+    try:
+        res_id = await credits.reserve(
+            agent_id,
+            body.amount,
+            timeout_seconds=body.timeout,
+            zone_id=zone_id,
+        )
+    except Exception as e:
+        logger.debug("Credits reservation skipped (disabled mode): %s", e)
+        res_id = str(uuid.uuid4())
     try:
         from nexus.storage.models.payments import CreditReservationMeta
 
         with record_store.session_factory() as session:
             res = CreditReservationMeta(
                 id=res_id,
-                agent_id="admin",
-                amount=int(body.amount * 100),
-                purpose=body.purpose or "manual reservation",
-                tigerbeetle_transfer_id=uuid.uuid4().int >> 64,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                amount=_amount_to_micro(body.amount),
+                purpose=body.purpose or "general",
+                task_id=body.task_id,
+                tigerbeetle_transfer_id=_transfer_id_to_int(res_id),
                 status="pending",
-                expires_at=now + timedelta(hours=1),
+                expires_at=expires_at,
             )
             session.add(res)
             session.commit()
@@ -505,20 +748,25 @@ async def reserve(
 
     return {
         "id": res_id,
-        "amount": f"{body.amount:.2f}",
+        "amount": _format_amount(body.amount),
         "purpose": body.purpose,
-        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "expires_at": expires_at.isoformat(),
         "status": "pending",
     }
 
 
-@router.post("/reserve/{reservation_id}/commit")
+@router.post("/reserve/{reservation_id}/commit", status_code=status.HTTP_204_NO_CONTENT)
 async def commit_reservation(
     reservation_id: str,
     _request: Request,
+    body: CommitReservationRequest | None = None,
+    context: Any = Depends(_get_pay_context),
     record_store: Any = Depends(_get_record_store),
-) -> dict[str, Any]:
+    credits: Any = Depends(_get_credits_service),
+) -> None:
     _ensure_tables(record_store)
+    agent_id = _context_agent_id(context)
+    zone_id = _context_zone_id(context)
     try:
         from sqlalchemy import select
 
@@ -530,28 +778,38 @@ async def commit_reservation(
             )
             if not res:
                 raise HTTPException(status_code=404, detail="Reservation not found")
+            if res.agent_id != agent_id or res.zone_id != zone_id:
+                raise HTTPException(status_code=403, detail="Reservation owner mismatch")
+            if res.status != "pending":
+                raise HTTPException(status_code=409, detail=f"Reservation already {res.status}")
+            actual_amount = body.actual_amount if body else None
+            if actual_amount is not None and _amount_to_micro(actual_amount) > res.amount:
+                raise HTTPException(
+                    status_code=400, detail="actual_amount cannot exceed reserved amount"
+                )
+            await credits.commit_reservation(reservation_id, actual_amount=actual_amount)
+            if actual_amount is not None:
+                res.amount = _amount_to_micro(actual_amount)
             res.status = "committed"
             session.commit()
-            return {
-                "id": res.id,
-                "amount": f"{res.amount / 100:.2f}",
-                "purpose": res.purpose,
-                "status": "committed",
-                "expires_at": None,
-            }
+            return None
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/reserve/{reservation_id}/release")
+@router.post("/reserve/{reservation_id}/release", status_code=status.HTTP_204_NO_CONTENT)
 async def release_reservation(
     reservation_id: str,
     _request: Request,
+    context: Any = Depends(_get_pay_context),
     record_store: Any = Depends(_get_record_store),
-) -> dict[str, Any]:
+    credits: Any = Depends(_get_credits_service),
+) -> None:
     _ensure_tables(record_store)
+    agent_id = _context_agent_id(context)
+    zone_id = _context_zone_id(context)
     try:
         from sqlalchemy import select
 
@@ -563,19 +821,53 @@ async def release_reservation(
             )
             if not res:
                 raise HTTPException(status_code=404, detail="Reservation not found")
+            if res.agent_id != agent_id or res.zone_id != zone_id:
+                raise HTTPException(status_code=403, detail="Reservation owner mismatch")
+            if res.status != "pending":
+                raise HTTPException(status_code=409, detail=f"Reservation already {res.status}")
+            await credits.release_reservation(reservation_id)
             res.status = "released"
             session.commit()
-            return {
-                "id": res.id,
-                "amount": f"{res.amount / 100:.2f}",
-                "purpose": res.purpose,
-                "status": "released",
-                "expires_at": None,
-            }
+            return None
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# =============================================================================
+# Usage Metering
+# =============================================================================
+
+
+@router.post("/meter")
+async def meter(
+    body: MeterRequest,
+    _request: Request,
+    context: Any = Depends(_get_pay_context),
+    record_store: Any = Depends(_get_record_store),
+    credits: Any = Depends(_get_credits_service),
+) -> dict[str, bool]:
+    _ensure_tables(record_store)
+    agent_id = _context_agent_id(context)
+    zone_id = _context_zone_id(context)
+    success = await credits.deduct_fast(agent_id, body.amount, zone_id=zone_id)
+    if success:
+        try:
+            from nexus.storage.models.payments import UsageEvent
+
+            with record_store.session_factory() as session:
+                event = UsageEvent(
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    event_type=body.event_type,
+                    amount=_amount_to_micro(body.amount),
+                )
+                session.add(event)
+                session.commit()
+        except Exception as e:
+            logger.warning("Failed to record usage event in SQL: %s", e)
+    return {"success": bool(success)}
 
 
 # =============================================================================

@@ -12,12 +12,14 @@ Tier hierarchy (Liedtke minimality):
 """
 
 import ast
+import tomllib
 from pathlib import Path
 
 import pytest
 
 # Project root for src/nexus/
 NEXUS_ROOT = Path(__file__).resolve().parents[3] / "src" / "nexus"
+PROJECT_ROOT = NEXUS_ROOT.parents[1]
 
 
 def _collect_imports(module_path: Path) -> list[tuple[str, int, str]]:
@@ -149,6 +151,43 @@ class TestServicesDoNotImportServer:
         assert violations == [], "Services→Server top-level import violations:\n" + "\n".join(
             f"  - {v}" for v in violations
         )
+
+
+class TestImportLinterPackageCoverage:
+    """Verify import-linter models top-level package boundaries, not just tier names."""
+
+    def test_top_level_server_forbidden_contract_covers_non_server_packages(self):
+        pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        contracts = pyproject["tool"]["importlinter"]["contracts"]
+        contract = next(
+            (c for c in contracts if c.get("id") == "top-level-packages-must-not-import-server"),
+            None,
+        )
+        assert contract is not None
+        assert contract["type"] == "forbidden"
+        assert "nexus.server" in contract["forbidden_modules"]
+
+        covered = set(contract["source_modules"])
+        expected = {
+            "nexus.backends",
+            "nexus.contracts",
+            "nexus.core",
+            "nexus.factory",
+            "nexus.fs",
+            "nexus.lib",
+            "nexus.remote",
+            "nexus.security",
+            "nexus.services",
+            "nexus.storage",
+        }
+        assert expected <= covered
+
+
+class TestTypingPackageMarker:
+    """Packaging metadata must match PEP 561 typed-package marker requirements."""
+
+    def test_nexus_namespace_has_py_typed_marker(self):
+        assert (NEXUS_ROOT / "py.typed").is_file()
 
 
 class TestRPCTypesInCore:

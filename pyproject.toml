@@ -1066,6 +1066,35 @@ ignore_imports = [
 ]
 unmatched_ignore_imports_alerting = "warn"
 
+# Contract 3: Explicit top-level package boundary coverage.
+# This complements the layered contract above, which intentionally models the
+# core tier names but does not enumerate every top-level package in src/nexus.
+[[tool.importlinter.contracts]]
+id = "top-level-packages-must-not-import-server"
+name = "Non-server top-level packages must not import server"
+type = "forbidden"
+source_modules = [
+    "nexus.backends",
+    "nexus.contracts",
+    "nexus.core",
+    "nexus.factory",
+    "nexus.fs",
+    "nexus.lib",
+    "nexus.remote",
+    "nexus.security",
+    "nexus.services",
+    "nexus.storage",
+]
+forbidden_modules = ["nexus.server"]
+allow_indirect_imports = true
+# Known lazy direct imports used for optional server-side wiring/debug metadata.
+# Remove entries as these dependencies move behind protocols.
+ignore_imports = [
+    "nexus.factory._system -> nexus.server.observability.observability_subsystem",
+    "nexus.remote.rpc_proxy -> nexus.server._rpc_params_generated",
+]
+unmatched_ignore_imports_alerting = "warn"
+
 [dependency-groups]
 dev = [
     "freezegun>=1.5.5",

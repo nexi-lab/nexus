@@ -27,6 +27,9 @@ export class FetchClient extends BaseFetchClient {
       timeout: options.timeout,
       maxRetries: options.maxRetries,
       fetch: options.fetch,
+      agentId: options.agentId,
+      subject: options.subject,
+      zoneId: options.zoneId,
       // Disable auto key transform — NexusPay client handles mapping manually
       // to preserve backward compatibility with existing response types
       transformKeys: false,

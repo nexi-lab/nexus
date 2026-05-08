@@ -63,6 +63,27 @@ describe("FetchClient", () => {
       const headers = new Headers(init.headers);
       expect(headers.get("Content-Type")).toBe("application/json");
     });
+
+    it("forwards configured identity headers to the shared API client", async () => {
+      const identityClient = new FetchClient({
+        apiKey: "nx_test_agent1",
+        baseUrl: "https://api.example.com",
+        maxRetries: 0,
+        agentId: "agent-1",
+        subject: "user:alice",
+        zoneId: "zone-a",
+        fetch: mockFetch,
+      });
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      await identityClient.get("/test");
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      const headers = new Headers(init.headers);
+      expect(headers.get("X-Agent-ID")).toBe("agent-1");
+      expect(headers.get("X-Nexus-Subject")).toBe("user:alice");
+      expect(headers.get("X-Nexus-Zone-ID")).toBe("zone-a");
+    });
   });
 
   // =========================================================================

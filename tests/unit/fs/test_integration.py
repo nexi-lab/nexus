@@ -432,26 +432,20 @@ class TestSQLiteMetastore:
     # backing store.
 
     def test_put_and_get(self, tmp_path: Path):
-        """Basic put/get on the SQLite metastore."""
-        from datetime import UTC, datetime
-
-        from nexus.contracts.metadata import FileMetadata
-
+        """Basic setattr/stat roundtrip on the kernel metastore."""
         db_path = str(tmp_path / "test.db")
         meta = SQLiteMetastore(db_path)
 
-        fm = FileMetadata(
-            path="/test/file.txt",
+        # Create DT_REG via sys_setattr (entry_type=0 with upsert)
+        meta.sys_setattr(
+            "/test/file.txt",
+            0,
+            zone_id=ROOT_ZONE_ID,
+            mime_type="text/plain",
             size=42,
             content_id="abc123",
-            mime_type="text/plain",
-            created_at=datetime.now(UTC),
-            modified_at=datetime.now(UTC),
-            version=1,
-            zone_id=ROOT_ZONE_ID,
         )
-        meta.metastore_put(fm)
-        result = meta.metastore_get("/test/file.txt")
+        result = meta.sys_stat("/test/file.txt", ROOT_ZONE_ID)
         assert result is not None
-        assert result.path == "/test/file.txt"
-        assert result.size == 42
+        assert result["path"] == "/test/file.txt"
+        assert result["size"] == 42

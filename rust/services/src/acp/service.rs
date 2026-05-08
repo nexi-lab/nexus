@@ -1304,7 +1304,7 @@ mod tests {
     #[test]
     fn registry_returns_not_bound_when_unset() {
         let kernel = Arc::new(Kernel::new());
-        let svc = AcpService::new(kernel, "root".into());
+        let svc = AcpService::<Kernel>::new(kernel, "root".into());
         match svc.registry() {
             Ok(_) => panic!("expected NotBound error"),
             Err(e) => assert!(matches!(e, AcpServiceError::NotBound("AgentRegistry"))),

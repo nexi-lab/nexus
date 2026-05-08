@@ -14,7 +14,7 @@ Architecture:
 
     Background consumer (async)
       -> _consume() loop
-        -> sys_read() (async, blocking)
+        -> sys_read(timeout_ms=0) in a worker thread
         -> accumulate paths in set
         -> debounce via asyncio.wait_for timeout
         -> trigger_reindex_async() on ZoektIndexManager
@@ -25,7 +25,7 @@ import contextlib
 import json
 import logging
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from nexus.bricks.search.zoekt_client import ZoektIndexManager
@@ -162,7 +162,7 @@ class ZoektPipeConsumer:
                 while self._write_buffer:
                     data = self._write_buffer.popleft()
                     try:
-                        nx.sys_write(_ZOEKT_PIPE_PATH, data)
+                        await asyncio.to_thread(nx.sys_write, _ZOEKT_PIPE_PATH, data)
                     except Exception:
                         logger.warning("Zoekt pipe write failed, dropping event")
             await asyncio.sleep(0.01)  # 10ms poll interval
@@ -171,24 +171,45 @@ class ZoektPipeConsumer:
     # Background consumer with debounce
     # ------------------------------------------------------------------
 
+    async def _read_pipe(self) -> bytes:
+        nx = self._nx
+        assert nx is not None
+
+        def _read() -> bytes:
+            nowait = getattr(nx, "pipe_read_nowait", None)
+            if callable(nowait):
+                data = nowait(_ZOEKT_PIPE_PATH)
+                return cast(bytes, data) if data is not None else b""
+            try:
+                return cast(bytes, nx.sys_read(_ZOEKT_PIPE_PATH, timeout_ms=0))
+            except TypeError as exc:
+                if "timeout_ms" not in str(exc):
+                    raise
+                return cast(bytes, nx.sys_read(_ZOEKT_PIPE_PATH))
+
+        return await asyncio.to_thread(_read)
+
     async def _consume(self) -> None:
         """Background consumer: read from pipe via sys_read, debounce, trigger reindex."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         assert self._nx is not None
 
-        nx = self._nx
         pending_paths: set[str] = set()
         has_sync = False
+        read_task: asyncio.Task[bytes] | None = None
 
         while True:
-            # If nothing pending, block until first event (in thread to avoid blocking event loop)
+            # If nothing pending, poll until the first event.
             if not pending_paths and not has_sync:
                 try:
-                    first = await asyncio.to_thread(nx.sys_read, _ZOEKT_PIPE_PATH)
+                    first = await self._read_pipe()
                 except NexusFileNotFoundError:
                     logger.debug("Zoekt pipe closed, consumer exiting")
                     break
+                if not first:
+                    await asyncio.sleep(0.01)
+                    continue
                 # DT_PIPE returns raw bytes (only DT_STREAM uses the dict shape).
                 assert isinstance(first, bytes)
                 msg = json.loads(first)
@@ -203,8 +224,19 @@ class ZoektPipeConsumer:
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
                     break
+                if read_task is None:
+                    read_task = asyncio.create_task(self._read_pipe())
+                done, _ = await asyncio.wait({read_task}, timeout=remaining)
+                if read_task not in done:
+                    read_task.cancel()
+                    read_task = None
+                    break
                 try:
-                    data = await asyncio.to_thread(nx.sys_read, _ZOEKT_PIPE_PATH)
+                    data = read_task.result()
+                    read_task = None
+                    if not data:
+                        await asyncio.sleep(min(remaining, 0.01))
+                        continue
                     assert isinstance(data, bytes)
                     msg = json.loads(data)
                     if msg["type"] == "write":
@@ -212,10 +244,13 @@ class ZoektPipeConsumer:
                     elif msg["type"] == "sync":
                         has_sync = True
                 except TimeoutError:
+                    read_task = None
                     break
                 except NexusFileNotFoundError:
+                    read_task = None
                     break
                 except Exception:
+                    read_task = None
                     break
 
             # Trigger reindex

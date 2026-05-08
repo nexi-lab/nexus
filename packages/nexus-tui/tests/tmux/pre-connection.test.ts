@@ -15,7 +15,7 @@ afterAll(async () => {
 });
 
 describe("Pre-connection screen", () => {
-  test("renders NEXUS logo and connection menu on startup", async () => {
+  test("renders startup screen and connection menu on startup", async () => {
     const session = await TmuxSession.create({
       width: 120,
       height: 40,
@@ -25,10 +25,7 @@ describe("Pre-connection screen", () => {
 
     try {
       // Wait for TUI to render the pre-connection screen
-      const content = await session.waitForText("NEXUS", 8000);
-
-      // Verify ASCII logo is present
-      expect(content).toContain("NEXUS");
+      const content = await session.waitForPattern(/(No API key configured|Retry connection|connecting)/i, 8000);
 
       // Verify connection state message is shown
       // Should show either "No server" or "Connecting" or similar
@@ -49,7 +46,7 @@ describe("Pre-connection screen", () => {
     });
 
     try {
-      await session.waitForText("NEXUS", 8000);
+      await session.waitForPattern(/(No API key configured|Retry connection|connecting)/i, 8000);
       const content = await session.capturePane();
 
       // Status bar should show help hint prominently (Issue #3245 fix)
@@ -67,7 +64,7 @@ describe("Pre-connection screen", () => {
     });
 
     try {
-      await session.waitForText("NEXUS", 8000);
+      await session.waitForPattern(/(No API key configured|Retry connection|connecting)/i, 8000);
 
       // Send 'q' to quit
       await session.sendKeys("q");

@@ -45,6 +45,10 @@ class MockNexusFS:
 
     def pipe_read_nowait(self, path: str) -> bytes | None:
         """Non-blocking drain — returns None when empty (matches Rust semantics)."""
+        if path in self._closed:
+            from nexus.contracts.exceptions import NexusFileNotFoundError
+
+            raise NexusFileNotFoundError(path=path)
         queue = self._pipes.get(path)
         if queue is None or queue.empty():
             return None
@@ -208,6 +212,29 @@ class TestZoektPipeConsumerE2E:
 
             # Should coalesce into a small number of reindex calls (not 20)
             assert 1 <= zoekt.trigger_reindex_async.call_count <= 3
+        finally:
+            await consumer.stop()
+
+    @pytest.mark.asyncio
+    async def test_debounce_does_not_wait_for_empty_blocking_pipe_read(self) -> None:
+        """A drained pipe must not stretch debounce by waiting on blocking sys_read."""
+        from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
+
+        mock_nx = MockNexusFS()
+
+        zoekt = MagicMock()
+        zoekt.debounce_seconds = 0.02
+        zoekt.trigger_reindex_async = AsyncMock()
+
+        consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.02)
+        consumer.bind_fs(mock_nx)
+        await consumer.start()
+
+        try:
+            consumer.notify_write("/workspace/file.txt")
+            await asyncio.sleep(0.12)
+
+            assert zoekt.trigger_reindex_async.call_count >= 1
         finally:
             await consumer.stop()
 

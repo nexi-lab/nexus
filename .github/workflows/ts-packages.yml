@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "24"
 
       - run: npm install
       - run: npm run lint
@@ -40,7 +40,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "24"
 
       # Build api-client first (nexus-pay-ts depends on it)
       - run: cd ../nexus-api-client && npm install && npm run build

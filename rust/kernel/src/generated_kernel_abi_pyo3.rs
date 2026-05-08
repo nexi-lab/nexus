@@ -1278,6 +1278,30 @@ impl PyKernel {
         })
     }
 
+    #[pyo3(signature = (path, zone_id="root"))]
+    fn get_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner.get_content_id(path, zone_id)
+    }
+
+    #[pyo3(signature = (path, zone_id="root"))]
+    fn is_directory(&self, path: &str, zone_id: &str) -> bool {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner.is_directory(path, zone_id)
+    }
+
+    #[pyo3(signature = (zone_id="root"))]
+    fn get_top_level_mounts(&self, zone_id: &str) -> Vec<String> {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner.get_top_level_mounts(zone_id)
+    }
+
+    #[pyo3(signature = (paths, zone_id="root"))]
+    fn exists_batch(&self, paths: Vec<String>, zone_id: &str) -> Vec<bool> {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner.exists_batch(&paths, zone_id)
+    }
+
     #[pyo3(signature = (parent_path, zone_id="root", is_admin=false, limit=0, cursor=None))]
     fn readdir_paged(
         &self,

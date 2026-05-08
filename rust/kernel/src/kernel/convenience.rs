@@ -10,7 +10,7 @@
 
 use super::{Kernel, KernelError, OperationContext, StatResult, SysWriteResult};
 use crate::abi::KernelAbi;
-use crate::meta_store::{DT_DIR, DT_MOUNT};
+use crate::meta_store::{DT_DIR, DT_EXTERNAL_STORAGE, DT_MOUNT};
 
 // ── KernelConvenience trait ──────────────────────────────────────────
 
@@ -65,6 +65,47 @@ pub trait KernelConvenience: KernelAbi {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError>;
+
+    /// `sys_stat(path).content_id` — single-field convenience.
+    fn get_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
+        self.sys_stat(path, zone_id).and_then(|s| s.content_id)
+    }
+
+    /// `sys_stat(path).is_directory` — single-field convenience.
+    fn is_directory(&self, path: &str, zone_id: &str) -> bool {
+        self.sys_stat(path, zone_id)
+            .map(|s| s.is_directory)
+            .unwrap_or(false)
+    }
+
+    /// Top-level mount names: `readdir("/")` filtered to DT_MOUNT / DT_EXTERNAL_STORAGE.
+    fn get_top_level_mounts(&self, zone_id: &str) -> Vec<String> {
+        let entries = self.readdir("/", zone_id, true);
+        let mut names: Vec<String> = entries
+            .into_iter()
+            .filter(|(_, et)| *et == DT_MOUNT || *et == DT_EXTERNAL_STORAGE)
+            .filter_map(|(name, _)| {
+                let top = name.trim_start_matches('/').split('/').next()?;
+                if top.is_empty() {
+                    None
+                } else {
+                    Some(top.to_string())
+                }
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Batch existence check: `stat_batch` → `Vec<bool>`.
+    fn exists_batch(&self, paths: &[String], zone_id: &str) -> Vec<bool> {
+        self.stat_batch(paths, zone_id)
+            .into_iter()
+            .map(|opt| opt.is_some())
+            .collect()
+    }
 }
 
 // ── `impl KernelConvenience for Kernel` — optimized overrides ────────

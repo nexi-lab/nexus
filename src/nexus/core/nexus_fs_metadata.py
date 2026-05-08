@@ -258,38 +258,17 @@ class MetadataMixin:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> bool:
-        """Tier 2: convenience wrapper — derives from sys_stat.
-
-        Equivalent to ``(await sys_stat(path)).get("is_directory", False)``.
-        """
-        try:
-            stat = self.sys_stat(path, context=context)
-            return stat is not None and stat.get("is_directory", False)
-        except (InvalidPathError, NexusFileNotFoundError):
-            return False
+        """Tier 2: convenience wrapper — derives from sys_stat."""
+        return self._kernel.is_directory(path, self._zone_id)
 
     # ── Tier 1 syscalls ───────────────────────────────────────────────
 
     @rpc_expose(description="Get available namespaces")
-    def get_top_level_mounts(self, context: OperationContext | None = None) -> builtins.list[str]:
-        """Return top-level mount names visible to the current user.
-
-        Reads DT_MOUNT entries from metastore (kernel's single source of
-        truth for mount points).
-        """
-        self._resolve_cred(context)
-        names: set[str] = set()
-        _page = self._kernel.metastore_list_paginated("/", True, 100000, None)
-        for meta in _page["items"]:
-            if not (meta.is_mount or meta.is_external_storage):
-                continue
-            top = meta.path.lstrip("/").split("/")[0]
-            if not top:
-                continue
-            names.add(top)
-        return sorted(names)
+    def get_top_level_mounts(self, context: OperationContext | None = None) -> builtins.list[str]:  # noqa: ARG002
+        """Return top-level mount names visible to the current user."""
+        return self._kernel.get_top_level_mounts(self._zone_id)
 
     # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_stat(
@@ -638,8 +617,7 @@ class MetadataMixin:
         context: OperationContext | None = None,  # noqa: ARG002
     ) -> str | None:
         """Get content hash for HTTP If-None-Match checks."""
-        stat = self._kernel.sys_stat(path, self._zone_id)
-        return stat.get("content_id") if stat else None
+        return self._kernel.get_content_id(path, self._zone_id)
 
     # ── Tier 2 directory ──────────────────────────────────────────────
 
@@ -1333,40 +1311,13 @@ class MetadataMixin:
 
     @rpc_expose(description="Check existence of multiple paths in single call")
     def exists_batch(
-        self, paths: list[str], context: OperationContext | None = None
+        self,
+        paths: list[str],
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, bool]:
-        """
-        Check existence of multiple paths in a single call (Issue #859).
-
-        This reduces network round trips when checking many paths at once.
-        Processing 10 paths requires 1 round trip instead of 10.
-
-        Args:
-            paths: List of virtual paths to check
-            context: Operation context for permission checks (uses default if None)
-
-        Returns:
-            Dictionary mapping each path to its existence status (True/False)
-
-        Performance:
-            - Single RPC call instead of N calls
-            - 10x fewer round trips for multi-path operations
-            - Each path is checked independently (errors don't affect others)
-
-        Examples:
-            >>> results = nx.exists_batch(["/file1.txt", "/file2.txt", "/missing.txt"])
-            >>> print(results)
-            {"/file1.txt": True, "/file2.txt": True, "/missing.txt": False}
-        """
-        results: dict[str, bool] = {}
-        for path in paths:
-            try:
-                results[path] = self.access(path, context=context)
-            except Exception as exc:
-                # Any error means file doesn't exist or isn't accessible
-                logger.debug("Exists check failed for %s: %s", path, exc)
-                results[path] = False
-        return results
+        """Check existence of multiple paths in a single call (Issue #859)."""
+        bools = self._kernel.exists_batch(paths, self._zone_id)
+        return dict(zip(paths, bools, strict=True))
 
     @rpc_expose(description="Get metadata for multiple paths in single call")
     def metadata_batch(

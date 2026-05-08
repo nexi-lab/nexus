@@ -32,9 +32,12 @@ Duplicate registration is rejected unless the caller uses the replace API.
 This keeps boot order deterministic and makes override intent visible in
 tests.
 
-The Rust registry stores handlers in an `ahash::AHashMap` behind a
-`parking_lot::RwLock`. The `ops_registry_bench` Criterion benchmark tracks the
-direct default path against registry lookup cost for hot-path changes.
+The Rust registry keeps built-in operation/filetype/backend keys in fixed
+arrays with a precomputed resolved table for the hot path. Custom
+`Other(...)` keys are stored separately and merged with the same specificity
+rules only when present. Registration is mutable during boot; steady-state
+resolution is lock-free. The `ops_registry_bench` Criterion benchmark tracks
+the direct default path against registry lookup cost for hot-path changes.
 
 To add an override:
 

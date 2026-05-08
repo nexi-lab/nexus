@@ -791,7 +791,7 @@ impl Kernel {
             file_watches: Arc::new(FileWatchRegistry::new()),
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
-            ops_registry: OpsRegistry::new(),
+            ops_registry: Self::default_ops_registry(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: RwLock::new(NativeHookRegistry::new()),
@@ -827,35 +827,36 @@ impl Kernel {
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
-        k.register_default_ops();
         k
     }
 
-    fn register_default_ops(&self) {
-        self.ops_registry
+    fn default_ops_registry() -> OpsRegistry {
+        let mut registry = OpsRegistry::new();
+        registry
             .register(
                 OpKey::new(OpName::new("cat"), None, None),
                 OpHandler::Cat(CatHandlerKind::Default),
             )
             .expect("default cat handler registration must be unique");
-        self.ops_registry
+        registry
             .register(
                 OpKey::new(OpName::new("cat"), Some(FileType::Json), None),
                 OpHandler::Cat(CatHandlerKind::JsonPretty),
             )
             .expect("json cat handler registration must be unique");
-        self.ops_registry
+        registry
             .register(
                 OpKey::new(OpName::new("grep"), None, None),
                 OpHandler::Grep(GrepHandlerKind::Default),
             )
             .expect("default grep handler registration must be unique");
-        self.ops_registry
+        registry
             .register(
                 OpKey::new(OpName::new("fingerprint"), None, Some(BackendKind::S3)),
                 OpHandler::Fingerprint(FingerprintHandlerKind::S3),
             )
             .expect("s3 fingerprint handler registration must be unique");
+        registry
     }
 
     pub fn resolve_op_handler(

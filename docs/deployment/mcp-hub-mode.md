@@ -15,8 +15,18 @@ The MCP server (`nexus.bricks.mcp.server`) supports three transports — `stdio`
 | `NEXUS_MCP_RATE_LIMIT_PREMIUM` | `1000/minute` | Quota for admin / premium tokens |
 | `NEXUS_REDIS_URL` | unset | Redis/Dragonfly URL for rate limiter + audit publish |
 | `DRAGONFLY_URL` | unset | Alternative to `NEXUS_REDIS_URL` (both accepted) |
+| `NEXUS_MCP_METRICS_ENABLED` | unset | Set to `1` / `true` to expose Prometheus metrics at `/metrics` |
 
 Rate limiting falls back to in-process `memory://` storage when the Redis URL is unset or unreachable. Rate-limit checks fail open on runtime Redis errors so infrastructure outages don't block legitimate traffic.
+
+## Prometheus metrics
+
+When `NEXUS_MCP_METRICS_ENABLED=true`, the MCP HTTP server exposes
+Prometheus text format at `GET /metrics`. The endpoint reports
+`nexus_mcp_requests_total`, `nexus_mcp_request_latency_seconds`,
+`nexus_mcp_active_clients`, and `nexus_mcp_errors_total`. Existing
+Redis counters continue to back `nexus hub status` as a compatibility
+fallback.
 
 ## Audit log
 

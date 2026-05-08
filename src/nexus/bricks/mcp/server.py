@@ -2301,6 +2301,16 @@ async def _async_main() -> None:
     #   3. APIKey    — set `_request_api_key` contextvar for tool handlers
     if transport in ["http", "sse"]:
         try:
+            from nexus.bricks.mcp.metrics import install_metrics_route
+
+            install_metrics_route(mcp)
+        except Exception as e:
+            import logging
+
+            logger_ = logging.getLogger(__name__)
+            logger_.warning("Failed to add MCP metrics route: %s", e)
+
+        try:
             from starlette.middleware.base import BaseHTTPMiddleware
 
             from nexus.bricks.mcp.middleware_audit import MCPAuditLogMiddleware

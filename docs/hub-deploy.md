@@ -94,6 +94,10 @@ URL + one of the headers above.
 - **Audit logs** — every MCP request emits a JSON line to stdout
   (`docker compose logs -f nexus`) and publishes to Redis channel
   `nexus:audit:mcp` for external consumers.
+- **Prometheus metrics** — the reference hub compose enables
+  `NEXUS_MCP_METRICS_ENABLED=true`; scrape
+  `http://<hub-host>:8081/metrics` for MCP request counts, latency,
+  active clients, and errors.
 - **Rate limits** — configured per tier in the existing rate-limit
   middleware. See `src/nexus/bricks/mcp/middleware_ratelimit.py`.
 
@@ -154,6 +158,5 @@ Tracked as follow-up issues to #3784:
 
 - Multi-zone tokens
 - Remote admin CLI (admin over MCP with a bootstrap token)
-- Prometheus `/metrics` endpoint
 - Richer `hub status` (Zoekt/txtai queue depth, per-zone breakdown)
 - Kubernetes/Helm deploy

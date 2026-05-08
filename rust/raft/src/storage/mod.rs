@@ -10,7 +10,7 @@
 //!
 //! # Storage Backend
 //!
-//! Uses [`RedbStore`]: Pure Rust embedded key-value database backed by redb 2.x.
+//! Uses [`RedbStore`]: Pure Rust embedded key-value database backed by redb.
 //!
 //! # Example
 //!

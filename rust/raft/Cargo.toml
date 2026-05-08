@@ -39,7 +39,7 @@ contracts = { workspace = true }
 # `kernel::hal::distributed_coordinator::DistributedCoordinator`,
 # etc.) without closing a Cargo cycle.
 kernel = { workspace = true }
-# Embedded KV storage — redb 2.x (stable since 1.0, June 2023).
+# Embedded KV storage — redb (stable since 1.0, June 2023).
 # Issue #1330: Replaced sled 0.34 with redb for reliability + maintenance.
 redb = "4"
 tempfile = "3"

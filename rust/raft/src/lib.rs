@@ -38,7 +38,7 @@
 //!
 //! # Storage Backend
 //!
-//! Uses **redb 2.x** — stable, pure Rust embedded KV database.
+//! Uses **redb** — stable, pure Rust embedded KV database.
 //!
 //! # Issue Reference
 //!

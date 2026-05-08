@@ -104,7 +104,7 @@ fn nx_managed_agent_install(py_kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
     install_managed_agent_with_spawn(&kernel_arc, provider).map_err(PyRuntimeError::new_err)
 }
 
-#[pymodule]
+#[pymodule(gil_used = true)]
 fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     // §6 lib (libc analogue) — pure-Rust algorithm wrappers.
     lib::python::register(m)?;

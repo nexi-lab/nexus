@@ -215,38 +215,11 @@ impl KernelConvenience for Kernel {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
-        // Tier 2 create-or-overwrite: try sys_write first; on miss + offset==0,
-        // create DT_REG via route-scoped metastore (same metastore sys_write
-        // reads from — SSOT), then retry.
+        // Pure Tier 1 composition: sys_write → miss? → sys_setattr(DT_REG) → sys_write.
+        // Mirrors POSIX open(O_CREAT|O_WRONLY) + write(2) + close(2).
         let result = self.sys_write(path, ctx, content, offset)?;
         if !result.hit && offset == 0 {
-            // Route to the correct per-mount metastore.
-            let route = self
-                .vfs_router
-                .route(path, &ctx.zone_id)
-                .map_err(|_| KernelError::FileNotFound(path.to_string()))?;
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0);
-            let new_meta = self.build_metadata(
-                path,
-                &route.zone_id,
-                crate::meta_store::DT_REG,
-                0,
-                None,
-                1,
-                None,
-                Some(now_ms),
-                Some(now_ms),
-            );
-            self.with_metastore_route(&route, |ms| ms.put(path, new_meta))
-                .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
-                .and_then(|r| {
-                    r.map_err(|e| {
-                        KernelError::IOError(format!("Tier 2 write create({path}): {e:?}"))
-                    })
-                })?;
+            self.setattr_update(path, &ctx.zone_id, None, None, None, None, None, None)?;
             return self.sys_write(path, ctx, content, offset);
         }
         Ok(result)

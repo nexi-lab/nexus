@@ -47,6 +47,7 @@ KERNEL_SYSCALL_NAMES: frozenset[str] = frozenset(
         "close",
         "delete",
         "exists",
+        "is_directory",
         "list",
         "lock_acquire",
         "mkdir",

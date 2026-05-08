@@ -268,6 +268,9 @@ class TaskDispatchPipeConsumer:
     def _build_worker_prompt(self, task_id: str, instruction: str) -> str:
         """Build an enriched prompt that gives the worker agent API context."""
         base = self._server_base_url
+        auth_header = (
+            f'     -H "Authorization: Bearer {self._api_key}" \\\n' if self._api_key else ""
+        )
         return f"""\
 You are a worker agent assigned to task {task_id}.
 
@@ -279,11 +282,13 @@ After completing your work, use curl to report results:
 
 1. Add a comment with your work output:
    curl -X POST {base}/api/v2/comments \\
+{auth_header}
      -H "Content-Type: application/json" \\
      -d '{{"task_id":"{task_id}","author":"worker","content":"YOUR_RESULT"}}'
 
 2. Update the task status to "in_review":
    curl -X PATCH {base}/api/v2/tasks/{task_id} \\
+{auth_header}
      -H "Content-Type: application/json" \\
      -d '{{"status":"in_review"}}'
 

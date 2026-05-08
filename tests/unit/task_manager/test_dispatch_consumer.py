@@ -57,3 +57,23 @@ async def test_blocking_pipe_read_does_not_block_event_loop() -> None:
         assert nx.read_timeouts == [0]
     finally:
         await consumer.stop()
+
+
+def test_worker_prompt_includes_authorization_header_when_api_key_configured() -> None:
+    consumer = TaskDispatchPipeConsumer()
+    consumer.set_server_info("http://127.0.0.1:2026", "server-secret")
+
+    prompt = consumer._build_worker_prompt("task-123", "do the thing")
+
+    assert "Authorization: Bearer server-secret" in prompt
+
+
+def test_bricks_module_aliases_live_dispatch_consumer() -> None:
+    from nexus.bricks.task_manager.dispatch_consumer import (
+        TaskDispatchPipeConsumer as BricksTaskDispatchPipeConsumer,
+    )
+    from nexus.task_manager.dispatch_consumer import (
+        TaskDispatchPipeConsumer as LiveTaskDispatchPipeConsumer,
+    )
+
+    assert BricksTaskDispatchPipeConsumer is LiveTaskDispatchPipeConsumer

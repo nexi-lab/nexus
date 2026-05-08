@@ -223,6 +223,33 @@ describe("FetchClient", () => {
       expect(result).toEqual({ ok: true });
       expect(fetchFn).toHaveBeenCalledTimes(2);
     });
+
+    it("does NOT retry POST on 500 without idempotency key", async () => {
+      const fetchFn = mockFetch([
+        { status: 500, body: { detail: "fail" } },
+        { status: 200, body: { ok: true } },
+      ]);
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 1 });
+
+      await expect(client.post("/test", { hello: "world" })).rejects.toThrow(ServerError);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries POST on 500 when idempotency key is provided", async () => {
+      const fetchFn = mockFetch([
+        { status: 500, body: { detail: "fail" } },
+        { status: 200, body: { ok: true } },
+      ]);
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 1 });
+
+      const result = await client.post<{ ok: boolean }>(
+        "/test",
+        { hello: "world" },
+        { idempotencyKey: "idem-123" },
+      );
+      expect(result).toEqual({ ok: true });
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe("headers", () => {

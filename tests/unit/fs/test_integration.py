@@ -25,7 +25,6 @@ from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.fs import _make_mount_entry
 from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
 from nexus.fs._sqlite_meta import SQLiteMetastore
 
@@ -56,11 +55,9 @@ def slim_fs(tmp_path: Path):
         is_admin=True,
     )
 
-    # Mount via coordinator (registers in backend pool + routing table + hooks)
+    # Mount via coordinator (registers in backend pool + routing table + hooks).
+    # sys_setattr(DT_MOUNT) handles metadata persistence internally.
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-
-    # Create DT_MOUNT entry so stat("/local") works
-    metastore.metastore_put(_make_mount_entry("/local", backend.name))
 
     return kernel
 
@@ -109,13 +106,10 @@ def dual_fs(tmp_path: Path):
         is_admin=True,
     )
 
-    # Mount via coordinator (registers in backend pool + routing table + hooks)
+    # Mount via coordinator (registers in backend pool + routing table + hooks).
+    # sys_setattr(DT_MOUNT) handles metadata persistence internally.
     kernel.sys_setattr("/a", entry_type=DT_MOUNT, backend=backend_a)
     kernel.sys_setattr("/b", entry_type=DT_MOUNT, backend=backend_b)
-
-    # Create DT_MOUNT entries
-    for mp, be in [("/a", backend_a), ("/b", backend_b)]:
-        metastore.metastore_put(_make_mount_entry(mp, be.name))
 
     return kernel
 

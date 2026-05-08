@@ -174,6 +174,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "api"
+version = "0.1.4"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+dependencies = [
+ "base64",
+ "reqwest",
+ "runtime",
+ "serde",
+ "serde_json",
+ "telemetry",
+ "tokio",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -639,6 +653,16 @@ name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+
+[[package]]
+name = "commands"
+version = "0.1.4"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+dependencies = [
+ "plugins",
+ "runtime",
+ "serde_json",
+]
 
 [[package]]
 name = "compare"
@@ -2089,6 +2113,7 @@ dependencies = [
  "raft 0.1.0",
  "runtime",
  "services",
+ "tools",
  "transport",
 ]
 
@@ -2111,7 +2136,7 @@ dependencies = [
 [[package]]
 name = "nexus-vfs-client"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=7c24866#7c24866557c1c1078a899c9dbc4534f65a2e2755"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
 dependencies = [
  "prost",
  "protoc-bin-vendored",
@@ -2319,7 +2344,7 @@ dependencies = [
 [[package]]
 name = "plugins"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=7c24866#7c24866557c1c1078a899c9dbc4534f65a2e2755"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
 dependencies = [
  "serde",
  "serde_json",
@@ -2976,6 +3001,7 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",
@@ -3071,7 +3097,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=7c24866#7c24866557c1c1078a899c9dbc4534f65a2e2755"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
@@ -3641,7 +3667,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 [[package]]
 name = "telemetry"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=7c24866#7c24866557c1c1078a899c9dbc4534f65a2e2755"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
 dependencies = [
  "serde",
  "serde_json",
@@ -3903,6 +3929,24 @@ dependencies = [
  "prost-types",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tools"
+version = "0.1.4"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+dependencies = [
+ "api",
+ "async-trait",
+ "commands",
+ "flate2",
+ "futures",
+ "plugins",
+ "reqwest",
+ "runtime",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -36,47 +36,34 @@ use services::managed_agent::{
 // ── Sudo-code adapter ──────────────────────────────────────────────────
 //
 // Concrete `SpawnTask<Kernel>` impl that wraps
-// `sudocode_runtime::spawn_task::spawn_task_echo::<K>(...)`.
+// `sudocode_tools::managed_agent::spawn_managed_agent::<K>(...)`.
 //
 // Lives in the cdylib (not services rlib, not in a dedicated adapter
 // crate) because the binary-edge cdylib is the allowed seam for
 // cross-repo runtime deps — services rlib stays runtime-agnostic so
 // the cluster slim binary can ship without sudocode.
 //
-// ## v1 echo → v2 ConversationRuntime upgrade path
-//
-// sudocode PR#100 introduced `spawn_task` v2 which drives a full
-// `ConversationRuntime` per-pid. The v2 signature requires
-// `ApiClient + ToolExecutor + SystemPrompt + PermissionPolicy +
-// state_callback` — providers that the cdylib adapter must construct.
-// Until those factories land (tracked as `spawn_task v2 full
-// integration`), the adapter calls `spawn_task_echo` which retains
-// the v1 echo round-trip body. The v2 upgrade is:
-//
-//   1. Add `sudocode_runtime::spawn_task::spawn_task` (7-param) call
-//   2. Construct ApiClient from StartSessionRequest.model label
-//   3. Construct ToolExecutor using KernelFsBackend
-//   4. Build SystemPrompt from VFS `/agents/{name}/config/`
-//   5. Wire state_callback → AgentRegistry::update_state
-//
-// Generic-K monomorphisation: `spawn_task_echo` is generic over
-// `K: KernelAbi + Send + Sync + 'static` and `SudoCodeSpawnAdapter`
-// impls `SpawnTask<Kernel>` — the compiler monomorphises against
-// the concrete kernel type (no per-`sys_read` vtable cost).
+// v2 ConversationRuntime integration (sudocode PR#121):
+// The factory in `tools::managed_agent` constructs
+// `ProviderRuntimeClient` (ApiClient), `ManagedToolExecutor`
+// (ToolExecutor), `SystemPrompt`, and `PermissionPolicy` from the
+// `AgentDescriptor` metadata, then calls `spawn_task` v2 to launch
+// the full LLM loop. Generic-K monomorphisation: the factory is
+// generic over `K: KernelAbi` and `SudoCodeSpawnAdapter` impls
+// `SpawnTask<Kernel>` — the compiler monomorphises against the
+// concrete kernel type (no per-`sys_read` vtable cost).
 
 struct SudoCodeSpawnHandle(sudocode_runtime::spawn_task::SpawnHandle);
 
 impl ServiceSpawnHandle for SudoCodeSpawnHandle {
     fn abort(&self) {
-        // Idempotent — `HookAbortSignal::abort` flips an
-        // `AtomicBool::store(true, Ordering::Release)` so concurrent
-        // callers (on_terminate observer + an in-flight
-        // `cancel(Session)`) both succeed.
         self.0.abort_signal.abort();
     }
 }
 
-struct SudoCodeSpawnAdapter;
+struct SudoCodeSpawnAdapter {
+    agent_registry: Arc<kernel::core::agents::registry::AgentRegistry>,
+}
 
 impl SpawnTask<Kernel> for SudoCodeSpawnAdapter {
     fn spawn(
@@ -84,10 +71,22 @@ impl SpawnTask<Kernel> for SudoCodeSpawnAdapter {
         kernel: Arc<Kernel>,
         desc: AgentDescriptor,
     ) -> Box<dyn ServiceSpawnHandle> {
-        // v1 echo body — polls /proc/{pid}/chat-with-me and echoes
-        // inbound prompts back. Swapped for the full ConversationRuntime
-        // body once the ApiClient/ToolExecutor factory wiring lands.
-        let handle = sudocode_runtime::spawn_task::spawn_task_echo::<Kernel>(kernel, desc);
+        let pid = desc.pid.clone();
+        let registry = Arc::clone(&self.agent_registry);
+        let state_callback = move |state: sudocode_runtime::spawn_task::AgentLoopState| {
+            use kernel::core::agents::registry::AgentState;
+            let target = match state {
+                sudocode_runtime::spawn_task::AgentLoopState::WarmingUp => AgentState::WarmingUp,
+                sudocode_runtime::spawn_task::AgentLoopState::Ready => AgentState::Ready,
+                sudocode_runtime::spawn_task::AgentLoopState::Busy => AgentState::Busy,
+            };
+            let _ = registry.update_state(&pid, target);
+        };
+        let handle = sudocode_tools::managed_agent::spawn_managed_agent(
+            kernel,
+            desc,
+            state_callback,
+        );
         Box::new(SudoCodeSpawnHandle(handle))
     }
 }
@@ -106,8 +105,10 @@ impl SpawnTask<Kernel> for SudoCodeSpawnAdapter {
 #[pyfunction]
 #[pyo3(name = "nx_managed_agent_install")]
 fn nx_managed_agent_install(py_kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
-    let provider: Arc<dyn SpawnTask<Kernel>> = Arc::new(SudoCodeSpawnAdapter);
-    install_managed_agent_with_spawn(&py_kernel.kernel_arc(), provider)
+    let kernel_arc = py_kernel.kernel_arc();
+    let agent_registry = Arc::clone(kernel_arc.agent_registry());
+    let provider: Arc<dyn SpawnTask<Kernel>> = Arc::new(SudoCodeSpawnAdapter { agent_registry });
+    install_managed_agent_with_spawn(&kernel_arc, provider)
         .map_err(PyRuntimeError::new_err)
 }
 

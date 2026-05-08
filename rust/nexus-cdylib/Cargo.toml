@@ -66,5 +66,5 @@ pyo3 = { version = "0.27.2", features = ["extension-module"] }
 # Pin to sudocode PR#121 — spawn_task v2 factory + FsBackend
 # complete migration. `tools::managed_agent::spawn_managed_agent()`
 # drives the full ConversationRuntime per-pid loop.
-sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "49c7615" }
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "49c7615" }
+sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "0686ed9" }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "0686ed9" }

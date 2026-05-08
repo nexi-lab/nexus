@@ -176,7 +176,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 [[package]]
 name = "api"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
 dependencies = [
  "base64",
  "reqwest",
@@ -657,7 +657,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 [[package]]
 name = "commands"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
 dependencies = [
  "plugins",
  "runtime",
@@ -2136,7 +2136,7 @@ dependencies = [
 [[package]]
 name = "nexus-vfs-client"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
 dependencies = [
  "prost",
  "protoc-bin-vendored",
@@ -2344,7 +2344,7 @@ dependencies = [
 [[package]]
 name = "plugins"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
 dependencies = [
  "serde",
  "serde_json",
@@ -3097,7 +3097,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
@@ -3667,7 +3667,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 [[package]]
 name = "telemetry"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
 dependencies = [
  "serde",
  "serde_json",
@@ -3934,7 +3934,7 @@ dependencies = [
 [[package]]
 name = "tools"
 version = "0.1.4"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=49c7615#49c76156f2e257bd950fc17a28fd526d5f0df42b"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=0686ed9#0686ed9bb1b55674d9b298615e212cecb7e8579a"
 dependencies = [
  "api",
  "async-trait",

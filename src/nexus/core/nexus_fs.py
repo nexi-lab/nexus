@@ -238,6 +238,10 @@ class NexusFS(  # type: ignore[misc]
 
         self._init_dispatch()
 
+        from nexus.core.dispatch import get_global_registry
+
+        self._ops_registry = get_global_registry()
+
         import os as _os_ipc
 
         _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")

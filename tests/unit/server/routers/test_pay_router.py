@@ -152,6 +152,7 @@ def test_transfer_requires_auth_and_uses_authenticated_actor_with_decimal_micro_
     body = response.json()
     assert body["from_agent"] == "agent-alice"
     assert body["amount"] == "2.55"
+    assert body["method"] == "credits"
     assert credits.transfer_calls == [
         ("agent-alice", "agent-bob", Decimal("2.55"), "idem-1", "zone-a")
     ]
@@ -162,6 +163,23 @@ def test_transfer_requires_auth_and_uses_authenticated_actor_with_decimal_micro_
         assert txn.from_agent_id == "agent-alice"
         assert txn.zone_id == "zone-a"
         assert txn.amount == 2_550_000
+        assert txn.method == "credits"
+
+
+def test_transfer_rejects_x402_method_without_debiting_credits(tmp_path):
+    client, credits, record_store = _build_client(tmp_path)
+
+    response = client.post(
+        "/api/v2/pay/transfer",
+        json={"to": "agent-bob", "amount": "2.55", "method": "x402"},
+        headers=_headers(),
+    )
+
+    assert response.status_code == 400
+    assert "x402" in response.json()["detail"]
+    assert credits.transfer_calls == []
+    with record_store.session_factory() as session:
+        assert session.scalar(select(func.count(PaymentTransactionMeta.id))) == 0
 
 
 def test_non_admin_user_cannot_debit_x_agent_id_wallet(tmp_path):
@@ -316,3 +334,33 @@ def test_reservation_ledger_failure_returns_error_without_sql_reservation(tmp_pa
     assert "Insufficient balance" in response.json()["detail"]
     with record_store.session_factory() as session:
         assert session.scalar(select(func.count(CreditReservationMeta.id))) == 0
+
+
+def test_reservation_sql_failure_returns_error_and_releases_ledger_reservation(tmp_path):
+    client, credits, record_store = _build_client(tmp_path)
+
+    class FailingSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def add(self, _record):
+            return None
+
+        def commit(self):
+            raise RuntimeError("sql write failed")
+
+    record_store._session_factory = lambda: FailingSession()
+
+    response = client.post(
+        "/api/v2/pay/reserve",
+        json={"amount": "5.50", "timeout": 600, "purpose": "gpu"},
+        headers=_headers(),
+    )
+
+    assert response.status_code == 503
+    assert "Failed to persist reservation" in response.json()["detail"]
+    assert credits.reserve_calls == [("agent-alice", Decimal("5.50"), 600, "zone-a")]
+    assert credits.release_calls == ["123456789"]

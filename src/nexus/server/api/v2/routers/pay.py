@@ -189,6 +189,15 @@ def _credits_http_exception(exc: CreditsError) -> HTTPException:
     return HTTPException(status_code=502, detail=str(exc))
 
 
+def _resolve_transfer_method(method: str) -> str:
+    if method == "x402":
+        raise HTTPException(
+            status_code=400,
+            detail="x402 transfers are not supported by /api/v2/pay/transfer",
+        )
+    return "credits"
+
+
 # =============================================================================
 # Request models
 # =============================================================================
@@ -442,6 +451,7 @@ async def transfer(
     from_agent = _context_agent_id(context)
     zone_id = _context_zone_id(context)
     idempotency_key = body.idempotency_key or idempotency_key_header
+    method = _resolve_transfer_method(body.method)
     transfer_id: str | None = None
 
     # Attempt real transfer via CreditsService
@@ -469,7 +479,7 @@ async def transfer(
                 to_agent_id=body.to,
                 amount=_amount_to_micro(body.amount),
                 currency="credits",
-                method=body.method,
+                method=method,
                 memo=body.memo,
                 tigerbeetle_transfer_id=_transfer_id_to_int(transfer_id),
                 status="completed",
@@ -481,7 +491,7 @@ async def transfer(
 
     return {
         "id": tx_id,
-        "method": body.method,
+        "method": method,
         "amount": _format_amount(body.amount),
         "from_agent": from_agent,
         "to_agent": body.to,
@@ -759,6 +769,14 @@ async def reserve(
             session.commit()
     except Exception as e:
         logger.warning("Failed to create reservation: %s", e)
+        try:
+            await credits.release_reservation(res_id)
+        except Exception as release_error:
+            logger.warning(
+                "Failed to release reservation after SQL persistence failure: %s",
+                release_error,
+            )
+        raise HTTPException(status_code=503, detail="Failed to persist reservation") from e
 
     return {
         "id": res_id,

@@ -49,6 +49,13 @@ class MetadataMixin:
 
     # ── Internal helpers ──────────────────────────────────────────────
 
+    def _forget_mounted_backend_instance(self, path: str) -> None:
+        mounted = getattr(self, "_mounted_backend_instances", None)
+        if not isinstance(mounted, dict):
+            return
+        normalized = "/" + str(path).strip("/")
+        mounted.pop(normalized, None)
+
     @staticmethod
     def _extract_rust_backend_params(backend: Any, cls_name: str) -> dict[str, Any] | None:
         """Extract typed params for Rust native backend construction.
@@ -513,6 +520,11 @@ class MetadataMixin:
                 )
             _backend_name = backend.name if isinstance(backend.name, str) else str(backend.name)
 
+            def _remember_mounted_backend() -> None:
+                mounted = getattr(self, "_mounted_backend_instances", None)
+                if isinstance(mounted, dict):
+                    mounted[path] = backend
+
             # R20.18.6: federation DT_MOUNT auto-resolves its raft backing via
             # kernel-internal `resolve_federation_mount_backing`; no Python
             # ZoneHandle crosses the PyO3 boundary here. Non-federation mounts
@@ -538,6 +550,7 @@ class MetadataMixin:
                     is_external=_is_external,
                     **_rust_typed,
                 )
+                _remember_mounted_backend()
                 return result
 
             # ── Local backend detection — Rust takes ownership natively ──
@@ -564,6 +577,7 @@ class MetadataMixin:
                     metastore_path=_ms_path_str,
                     is_external=_is_external,
                 )
+                _remember_mounted_backend()
                 return result
             _local_root = str(_root)
 
@@ -586,6 +600,7 @@ class MetadataMixin:
                 metastore_path=_ms_path_str,
                 is_external=_is_external,
             )
+            _remember_mounted_backend()
             return result
 
         # ── All other FS types → Rust kernel sys_setattr ─────────────
@@ -779,36 +794,40 @@ class MetadataMixin:
 
         if _unlink_result.hit:
             # Rust handled the full operation (§12e: DT_DIR inlined via sys_rmdir).
-            if _unlink_result.post_hook_needed:
-                et = _unlink_result.entry_type
-                if et == DT_DIR:
-                    from nexus.contracts.vfs_hooks import RmdirHookContext
+            try:
+                if _unlink_result.post_hook_needed:
+                    et = _unlink_result.entry_type
+                    if et == DT_DIR:
+                        from nexus.contracts.vfs_hooks import RmdirHookContext
 
-                    ctx = self._resolve_cred(context)
-                    self._kernel.dispatch_post_hooks(
-                        "rmdir",
-                        RmdirHookContext(
-                            path=path,
-                            context=ctx,
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            recursive=recursive,
-                            metadata=_pre_delete_meta,
-                        ),
-                    )
-                else:
-                    from nexus.contracts.vfs_hooks import DeleteHookContext
+                        ctx = self._resolve_cred(context)
+                        self._kernel.dispatch_post_hooks(
+                            "rmdir",
+                            RmdirHookContext(
+                                path=path,
+                                context=ctx,
+                                zone_id=zone_id,
+                                agent_id=agent_id,
+                                recursive=recursive,
+                                metadata=_pre_delete_meta,
+                            ),
+                        )
+                    else:
+                        from nexus.contracts.vfs_hooks import DeleteHookContext
 
-                    self._kernel.dispatch_post_hooks(
-                        "delete",
-                        DeleteHookContext(
-                            path=path,
-                            context=context,
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            metadata=_pre_delete_meta,
-                        ),
-                    )
+                        self._kernel.dispatch_post_hooks(
+                            "delete",
+                            DeleteHookContext(
+                                path=path,
+                                context=context,
+                                zone_id=zone_id,
+                                agent_id=agent_id,
+                                metadata=_pre_delete_meta,
+                            ),
+                        )
+            finally:
+                if _unlink_result.entry_type == DT_MOUNT:
+                    self._forget_mounted_backend_instance(path)
             return {}
 
         # ── Rust miss: only DT_EXTERNAL_STORAGE (5) or not-found ─────
@@ -860,6 +879,7 @@ class MetadataMixin:
                     path,
                     stranded_zone,
                 )
+                self._forget_mounted_backend_instance(path)
                 return {}
             raise NexusFileNotFoundError(path)
 
@@ -905,6 +925,7 @@ class MetadataMixin:
                     f"sys_unlink: mount route remains after teardown for {path!r}",
                     path=path,
                 )
+            self._forget_mounted_backend_instance(path)
             if not removed:
                 logger.warning(
                     "sys_unlink: connector teardown returned False for %s "

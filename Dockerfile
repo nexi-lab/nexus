@@ -86,6 +86,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Cache is scoped per TARGETARCH so amd64/arm64 builds never share artifacts.
 COPY proto/ ./proto/
 COPY rust/ ./rust/
+# BuildKit cache mounts preserve Cargo target artifacts across Docker builds.
+# Files copied into the image can be older than those cached artifacts, so
+# Cargo may incorrectly consider a workspace crate fresh. Touch copied Rust
+# sources before maturin so source changes cannot produce a stale wheel.
+RUN find rust proto -type f -exec touch {} +
 
 ENV CARGO_TARGET_DIR=/build/target \
     CARGO_BUILD_JOBS=2 \
@@ -205,8 +210,12 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 # (SIGILL) instead of a runtime crash (Issue #3125).
 # Always verifiable (present regardless of extras): Rust extensions.
 RUN python3 -c "\
+import importlib; \
 import nexus_runtime; \
-print('✓ Core imports passed (always-present subset)')"
+groups = importlib.import_module('nexus._kernel_api_groups'); \
+missing = sorted(m for m in groups.KERNEL_REQUIRED_METHODS if not hasattr(nexus_runtime.PyKernel, m)); \
+assert not missing, f'nexus_runtime.PyKernel ABI stale; missing: {missing}'; \
+print('✓ Core imports and PyKernel ABI passed (always-present subset)')"
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
 RUN set -eux; \

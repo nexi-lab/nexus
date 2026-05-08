@@ -65,6 +65,9 @@ def unmount(kernel: NexusFS, mount_point: str) -> None:
         raise ValueError(f"'{normalized}' is not a mount point")
 
     kernel.sys_unlink(normalized, context=LOCAL_CONTEXT)
+    mounted = getattr(kernel, "_mounted_backend_instances", None)
+    if isinstance(mounted, dict):
+        mounted.pop(normalized, None)
 
     with contextlib.suppress(OSError):
         from nexus.fs._paths import load_persisted_mounts, save_persisted_mounts
@@ -186,6 +189,19 @@ def grep(
     pattern.  Returns a list of `{file, line, content, match}` dicts —
     same shape as before so existing callers keep working unchanged.
     """
+    from nexus.core.dispatch import grep_path
+
+    pushed_down = grep_path(
+        kernel,
+        pattern,
+        path,
+        context=LOCAL_CONTEXT,
+        ignore_case=ignore_case,
+        max_results=max_results,
+    )
+    if pushed_down is not None:
+        return pushed_down
+
     inner: Any = getattr(kernel, "_kernel", kernel)
     return list(
         inner.sys_grep(

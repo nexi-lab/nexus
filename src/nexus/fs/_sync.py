@@ -121,6 +121,11 @@ class SyncNexusFS:
     def read(self, path: str) -> bytes:
         return cast(bytes, self._kernel.sys_read(path, context=LOCAL_CONTEXT))
 
+    def cat(self, path: str, *, strict: bool = True) -> bytes:
+        from nexus.core.dispatch import cat_path
+
+        return cat_path(self._kernel, path, context=LOCAL_CONTEXT, strict=strict)
+
     def write(self, path: str, content: bytes) -> dict[str, Any]:
         return cast(dict[str, Any], self._kernel.write(path, content, context=LOCAL_CONTEXT))
 

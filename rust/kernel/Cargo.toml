@@ -70,7 +70,9 @@ base64 = "0.22"
 mimalloc = { workspace = true, optional = true }
 
 [features]
-default = ["mimalloc", "connectors", "py-hook-adapters"]
+# Keep direct `cargo test -p kernel` pure-Rust by default. The Python
+# wheel cdylib explicitly enables `py-hook-adapters` and `python`.
+default = ["mimalloc", "connectors"]
 mimalloc = ["dep:mimalloc"]
 connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
 # Python binding support (PyO3). Enables #[pyclass]/#[pymethods] on kernel
@@ -78,9 +80,8 @@ connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
 # Off by default — `nexus-cdylib` enables it explicitly. Pure Rust consumers
 # (e.g. `nexus-cluster` via raft) never need this.
 python = ["dep:pyo3", "lib/python"]
-# Python hook/resolver adapters. Enabled by default (POST hooks still use
-# PyInterceptHookAdapter). Disable to compile out all Python-to-Rust adapter
-# bridging — requires ALL hooks to be NativeInterceptHook impls.
+# Python hook/resolver adapters for the Python wheel runtime (POST hooks still
+# use PyInterceptHookAdapter). Pure Rust tests and consumers keep this disabled.
 py-hook-adapters = ["python"]
 
 [build-dependencies]
@@ -97,4 +98,8 @@ tempfile = "3"
 
 [[bench]]
 name = "prefix_bench"
+harness = false
+
+[[bench]]
+name = "ops_registry_bench"
 harness = false

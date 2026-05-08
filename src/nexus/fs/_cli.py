@@ -970,13 +970,15 @@ def cat(path: str) -> None:
     from nexus.fs._sync import run_sync
 
     async def _run() -> bytes:
+        from nexus.core.dispatch import cat_path
         from nexus.fs._helpers import LOCAL_CONTEXT
         from nexus.fs._helpers import close as _close_kernel
 
         kernel = await _boot_kernel()
-        content: bytes = kernel.sys_read(path, context=LOCAL_CONTEXT)
-        _close_kernel(kernel)
-        return content
+        try:
+            return cat_path(kernel, path, context=LOCAL_CONTEXT, strict=True)
+        finally:
+            _close_kernel(kernel)
 
     try:
         content = run_sync(_run())

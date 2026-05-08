@@ -20,8 +20,10 @@ Directions:
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 from dataclasses import dataclass, field
+from itertools import zip_longest
 from pathlib import Path
 
 # ── Paths ──────────────────────────────────────────────────────────
@@ -45,7 +47,6 @@ KERNEL_DISPATCH_PATH = ROOT / "src" / "nexus" / "server" / "_kernel_syscall_disp
 # generated_lib_abi_pyo3.rs (Phase H — `lib::python::*` wrappers) can
 # coexist without filename collision.
 GENERATED_PYO3_PATH = RUST_SRC / "generated_kernel_abi_pyo3.rs"
-
 
 # Phase C compat: lib.rs still references modules under their flat
 # pre-Phase-C names via `pub use core::… as <flat_name>` re-exports.
@@ -4517,6 +4518,54 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        }",
             "    }",
             "",
+            '    #[pyo3(signature = (path, zone_id="root", strict_json=true))]',
+            "    fn sys_cat<'py>(",
+            "        &self,",
+            "        py: Python<'py>,",
+            "        path: &str,",
+            "        zone_id: &str,",
+            "        strict_json: bool,",
+            "    ) -> PyResult<Py<PyBytes>> {",
+            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
+            "        let result = self",
+            "            .inner",
+            "            .sys_cat(path, &ctx, strict_json)",
+            "            .map_err(|e| -> PyErr { e.into() })?;",
+            "        Ok(PyBytes::new(py, &result.data).unbind())",
+            "    }",
+            "",
+            '    #[pyo3(signature = (path, zone_id="root"))]',
+            "    fn op_metadata_for_path<'py>(",
+            "        &self,",
+            "        py: Python<'py>,",
+            "        path: &str,",
+            "        zone_id: &str,",
+            "    ) -> PyResult<Bound<'py, PyDict>> {",
+            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
+            "        let result = self",
+            "            .inner",
+            "            .op_metadata_for_path(path, &ctx)",
+            "            .map_err(|e| -> PyErr { e.into() })?;",
+            "        let dict = PyDict::new(py);",
+            '        dict.set_item("filetype", result.filetype.as_str())?;',
+            '        dict.set_item("backend", result.backend.as_str())?;',
+            '        dict.set_item("mime_type", result.mime_type.as_deref())?;',
+            '        dict.set_item("backend_name", result.backend_name)?;',
+            "        Ok(dict)",
+            "    }",
+            "",
+            '    #[pyo3(signature = (path, zone_id="root"))]',
+            "    fn backend_fingerprint(",
+            "        &self,",
+            "        path: &str,",
+            "        zone_id: &str,",
+            "    ) -> PyResult<Option<String>> {",
+            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
+            "        self.inner",
+            "            .backend_fingerprint(path, &ctx)",
+            "            .map_err(|e| -> PyErr { e.into() })",
+            "    }",
+            "",
             "    // ── Internal batch functions ──────────────────────────────────────",
             "",
             "    /// Batch write: validate + route + lock + write + metastore + dcache.",
@@ -5682,8 +5731,6 @@ async def dispatch_kernel_syscall(
 
 def _ruff_cmd() -> list[str] | None:
     """Return a ruff command usable from plain and pre-commit hook envs."""
-    import shutil
-
     ruff = shutil.which("ruff")
     if ruff:
         return [ruff]
@@ -5719,7 +5766,6 @@ def main() -> int:
 
     if check_mode:
         # For Python files, ruff-format the expected content before comparing
-        import shutil
         import subprocess
         import tempfile
 
@@ -5768,16 +5814,21 @@ def main() -> int:
             if actual != expected:
                 print(f"STALE: {path.relative_to(ROOT)}")
                 # Show first differing line
-                from itertools import zip_longest
-
+                sentinel = object()
                 for i, (a, e) in enumerate(
-                    zip_longest(actual.splitlines(), expected.splitlines(), fillvalue=""),
+                    zip_longest(
+                        actual.splitlines(),
+                        expected.splitlines(),
+                        fillvalue=sentinel,
+                    ),
                     1,
                 ):
                     if a != e:
                         print(f"  line {i}:")
-                        print(f"    actual:   {a!r}")
-                        print(f"    expected: {e!r}")
+                        actual_line = "<missing>" if a is sentinel else repr(a)
+                        expected_line = "<missing>" if e is sentinel else repr(e)
+                        print(f"    actual:   {actual_line}")
+                        print(f"    expected: {expected_line}")
                         break
                 ok = False
             else:
@@ -5814,7 +5865,6 @@ def main() -> int:
         # Auto-format generated Rust files so codegen --check matches cargo fmt
         rs_files = [p for p, _ in outputs if p.suffix == ".rs"]
         if rs_files:
-            import shutil
             import subprocess
 
             rustfmt = shutil.which("rustfmt")

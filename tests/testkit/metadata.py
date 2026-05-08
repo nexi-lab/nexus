@@ -208,6 +208,9 @@ class InMemoryNexusFS:
                     names.add(rest.split("/", 1)[0])
         return sorted(names)
 
+    def sys_setattr(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        return {"path": path, "created": path not in self._files}
+
     def sys_unlink(self, path: str, **kwargs: Any) -> dict[str, Any]:
         if path not in self._files:
             raise FileNotFoundError(path)

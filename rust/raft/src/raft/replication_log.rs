@@ -24,6 +24,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use redb::ReadableDatabase;
+
 use crate::storage::RedbTree;
 
 use super::Result;

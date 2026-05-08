@@ -389,7 +389,6 @@ impl<K: KernelAbi> AcpService<K> {
         self.fire_on_terminate(pid);
         Ok(())
     }
-
 }
 
 // `install` + `handle` live in a `K = Kernel` specific impl because
@@ -535,7 +534,9 @@ impl<K: KernelAbi> AcpService<K> {
 
         // Spawn the agent CLI + register DT_PIPEs.
         let mut subproc =
-            match AcpSubprocess::spawn(&cfg, &host_cwd, self.kernel.as_ref(), &req.zone_id, &pid).await {
+            match AcpSubprocess::spawn(&cfg, &host_cwd, self.kernel.as_ref(), &req.zone_id, &pid)
+                .await
+            {
                 Ok(s) => s,
                 Err(e) => {
                     let _ = reg.kill(&pid, 127);
@@ -929,7 +930,10 @@ struct AcpCallReq {
     context: AcpContext,
 }
 
-fn dispatch_acp_call<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+fn dispatch_acp_call<K: KernelAbi>(
+    svc: &AcpService<K>,
+    payload: &[u8],
+) -> Result<Vec<u8>, RustCallError> {
     #[cfg(unix)]
     {
         let req: AcpCallReq = decode(payload)?;
@@ -962,7 +966,10 @@ fn dispatch_acp_call<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Resul
     }
 }
 
-fn dispatch_list_configs<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+fn dispatch_list_configs<K: KernelAbi>(
+    svc: &AcpService<K>,
+    payload: &[u8],
+) -> Result<Vec<u8>, RustCallError> {
     let req: AcpContextOnly = decode(payload).unwrap_or_default();
     let zone = req.context.zone_or(&svc.default_zone);
     let configs = svc.list_agent_configs(Some(zone));
@@ -980,7 +987,10 @@ fn dispatch_list_configs<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> R
     encode(&out)
 }
 
-fn dispatch_list_processes<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+fn dispatch_list_processes<K: KernelAbi>(
+    svc: &AcpService<K>,
+    payload: &[u8],
+) -> Result<Vec<u8>, RustCallError> {
     let req: AcpContextOnly = decode(payload).unwrap_or_default();
     let zone = req.context.zone_or(&svc.default_zone).to_string();
     let agents = svc.list_agents(Some(&zone), None).map_err(map_svc_err)?;
@@ -1007,7 +1017,10 @@ struct AcpKillReq {
     context: AcpContext,
 }
 
-fn dispatch_kill<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+fn dispatch_kill<K: KernelAbi>(
+    svc: &AcpService<K>,
+    payload: &[u8],
+) -> Result<Vec<u8>, RustCallError> {
     let req: AcpKillReq = decode(payload)?;
     svc.kill_agent(&req.pid).map_err(map_svc_err)?;
     encode(&json!({
@@ -1025,7 +1038,10 @@ struct AcpSetSystemPromptReq {
     context: AcpContext,
 }
 
-fn dispatch_set_system_prompt<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+fn dispatch_set_system_prompt<K: KernelAbi>(
+    svc: &AcpService<K>,
+    payload: &[u8],
+) -> Result<Vec<u8>, RustCallError> {
     let req: AcpSetSystemPromptReq = decode(payload)?;
     let zone = req.context.zone_or(&svc.default_zone).to_string();
     svc.set_system_prompt(&req.agent_id, &req.content, &zone)
@@ -1043,7 +1059,10 @@ struct AcpAgentReq {
     context: AcpContext,
 }
 
-fn dispatch_get_system_prompt<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+fn dispatch_get_system_prompt<K: KernelAbi>(
+    svc: &AcpService<K>,
+    payload: &[u8],
+) -> Result<Vec<u8>, RustCallError> {
     let req: AcpAgentReq = decode(payload)?;
     let zone = req.context.zone_or(&svc.default_zone);
     let content = svc.get_system_prompt(&req.agent_id, zone);
@@ -1061,7 +1080,10 @@ struct AcpSetEnabledSkillsReq {
     context: AcpContext,
 }
 
-fn dispatch_set_enabled_skills<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+fn dispatch_set_enabled_skills<K: KernelAbi>(
+    svc: &AcpService<K>,
+    payload: &[u8],
+) -> Result<Vec<u8>, RustCallError> {
     let req: AcpSetEnabledSkillsReq = decode(payload)?;
     let zone = req.context.zone_or(&svc.default_zone).to_string();
     svc.set_enabled_skills(&req.agent_id, &req.skills, &zone)
@@ -1072,7 +1094,10 @@ fn dispatch_set_enabled_skills<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]
     }))
 }
 
-fn dispatch_get_enabled_skills<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+fn dispatch_get_enabled_skills<K: KernelAbi>(
+    svc: &AcpService<K>,
+    payload: &[u8],
+) -> Result<Vec<u8>, RustCallError> {
     let req: AcpAgentReq = decode(payload)?;
     let zone = req.context.zone_or(&svc.default_zone);
     let skills = svc.get_enabled_skills(&req.agent_id, zone);
@@ -1094,7 +1119,10 @@ fn default_history_limit() -> usize {
     50
 }
 
-fn dispatch_history<K: KernelAbi>(svc: &AcpService<K>, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+fn dispatch_history<K: KernelAbi>(
+    svc: &AcpService<K>,
+    payload: &[u8],
+) -> Result<Vec<u8>, RustCallError> {
     let req: AcpHistoryReq = decode(payload).unwrap_or_else(|_| AcpHistoryReq {
         limit: default_history_limit(),
         context: AcpContext::default(),
@@ -1181,7 +1209,7 @@ mod tests {
         }
     }
 
-    fn fresh_service() -> (Arc<AcpService>, Arc<MockRegistry>) {
+    fn fresh_service() -> (Arc<AcpService<Kernel>>, Arc<MockRegistry>) {
         let kernel = Arc::new(Kernel::new());
         let svc = Arc::new(AcpService::new(kernel, "root".to_string()));
         let reg = MockRegistry::new();
@@ -1266,7 +1294,7 @@ mod tests {
 
     #[test]
     fn ctx_is_a_system_principal_with_admin() {
-        let c = AcpService::ctx();
+        let c = AcpService::<Kernel>::ctx();
         assert_eq!(c.user_id, "system");
         assert!(c.is_admin);
         assert!(c.is_system);

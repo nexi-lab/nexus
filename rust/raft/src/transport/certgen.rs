@@ -9,7 +9,7 @@
 
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256,
+    Issuer, KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256,
 };
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
@@ -41,11 +41,8 @@ pub fn generate_node_cert(
     // Parse CA certificate
     let ca_cert_str =
         std::str::from_utf8(ca_cert_pem).map_err(|e| format!("CA cert is not valid UTF-8: {e}"))?;
-    let ca_cert_params = CertificateParams::from_ca_cert_pem(ca_cert_str)
+    let ca_issuer = Issuer::from_ca_cert_pem(ca_cert_str, ca_key_pair)
         .map_err(|e| format!("Failed to parse CA cert: {e}"))?;
-    let ca_cert = ca_cert_params
-        .self_signed(&ca_key_pair)
-        .map_err(|e| format!("Failed to reconstruct CA cert: {e}"))?;
 
     // Generate node key pair (EC P-256)
     let node_key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
@@ -112,7 +109,7 @@ pub fn generate_node_cert(
 
     // Sign with CA
     let node_cert = params
-        .signed_by(&node_key_pair, &ca_cert, &ca_key_pair)
+        .signed_by(&node_key_pair, &ca_issuer)
         .map_err(|e| format!("Failed to sign node cert: {e}"))?;
 
     let cert_pem = node_cert.pem().into_bytes();
@@ -162,16 +159,19 @@ pub fn generate_zone_ca(zone_id: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
 /// The token is given to operators; the hash is stored on the leader for
 /// constant-time verification of incoming `JoinCluster` requests.
 pub fn generate_join_token(ca_pem: &[u8]) -> Result<(String, String), String> {
-    use rand::RngCore;
+    use rand::Rng;
     use sha2::{Digest, Sha256};
 
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     let password: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
 
     let fingerprint = ca_fingerprint_from_pem(ca_pem)?;
     let token = format!("K10{password}::server:{fingerprint}");
-    let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
+    let hash = Sha256::digest(password.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
 
     Ok((token, hash))
 }

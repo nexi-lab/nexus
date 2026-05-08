@@ -29,7 +29,7 @@ clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-gethostname = "0.5"
+gethostname = "1.1"
 
 # C3 will add a workspace [profile.release.package."nexus-cluster"]
 # entry for size optimization (LTO, panic=abort, strip).

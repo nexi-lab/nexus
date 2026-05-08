@@ -49,7 +49,12 @@ fn lowercase(s: &str) -> String {
 /// underlying state through `PyAgentRegistry` methods. Field names match
 /// `contracts/process_types.py:AgentDescriptor` so legacy callers keep
 /// using `desc.pid` / `desc.state` after the cutover.
-#[pyclass(module = "nexus_runtime", name = "AgentDescriptor", frozen)]
+#[pyclass(
+    module = "nexus_runtime",
+    name = "AgentDescriptor",
+    frozen,
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyAgentDescriptor {
     inner: AgentDescriptor,

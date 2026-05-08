@@ -2,7 +2,8 @@
 //!
 //! Run: cd rust/kernel && cargo bench prefix
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 
 // Import the prefix functions from the lib crate.
 // Since nexus_runtime is a cdylib, we access the module directly.

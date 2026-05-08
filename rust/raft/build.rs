@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Only compile protos when grpc feature is enabled
     #[cfg(feature = "grpc")]
     {
-        // Point tonic_build (→ prost-build) at the vendored protoc binary so
+        // Point tonic_prost_build (via prost-build) at the vendored protoc binary so
         // the crate builds without a system-wide protobuf-compiler. Respect
         // an externally-set PROTOC if the caller already chose one.
         if std::env::var_os("PROTOC").is_none() {
@@ -43,9 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // First compile core/metadata.proto separately
         let core_protos = &[core_proto];
-        let includes = &[proto_root];
+        let includes = &[proto_root.to_string()];
 
-        tonic_build::configure()
+        tonic_prost_build::configure()
             .build_server(false)
             .build_client(false)
             .out_dir(std::env::var("OUT_DIR")?)
@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{}/nexus/raft/commands.proto", proto_root),
         ];
 
-        tonic_build::configure()
+        tonic_prost_build::configure()
             .build_server(true)
             .build_client(true)
             // Map nexus.core.FileMetadata to our generated core module

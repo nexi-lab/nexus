@@ -43,7 +43,7 @@ use dashmap::DashMap;
 // also uses redb underneath. The distinguishing axis is "single-node vs
 // raft-replicated", captured by the Local / Zone naming pair.
 
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use std::path::Path;
 use std::sync::Arc;
 

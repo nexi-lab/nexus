@@ -2829,7 +2829,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PyOperationContext ──────────────────────────────────────────",
             "",
             "/// Python-facing OperationContext (wraps pure Rust OperationContext).",
-            "#[pyclass(get_all)]",
+            "#[pyclass(get_all, from_py_object)]",
             "#[derive(Clone, Debug)]",
             "pub struct PyOperationContext {",
             "    pub user_id: String,",
@@ -5738,7 +5738,16 @@ def main() -> int:
                 with tempfile.NamedTemporaryFile(mode="wb", suffix=suffix, delete=False) as f:
                     f.write(content.encode("utf-8"))
                     f.flush()
-                    subprocess.run([*ruff, "format", f.name], capture_output=True)
+                    subprocess.run(
+                        [
+                            *ruff,
+                            "format",
+                            "--config",
+                            str(ROOT / "pyproject.toml"),
+                            f.name,
+                        ],
+                        capture_output=True,
+                    )
                     return Path(f.name).read_bytes().decode("utf-8")
             if rustfmt and suffix == ".rs":
                 with tempfile.NamedTemporaryFile(mode="wb", suffix=suffix, delete=False) as f:
@@ -5793,7 +5802,13 @@ def main() -> int:
                 import subprocess
 
                 subprocess.run(
-                    [*ruff, "format", *[str(p) for p in py_files]],
+                    [
+                        *ruff,
+                        "format",
+                        "--config",
+                        str(ROOT / "pyproject.toml"),
+                        *[str(p) for p in py_files],
+                    ],
                     capture_output=True,
                 )
         # Auto-format generated Rust files so codegen --check matches cargo fmt

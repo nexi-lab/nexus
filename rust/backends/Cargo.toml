@@ -89,9 +89,9 @@ memmap2 = "0.9.9"
 tempfile = "3"
 dashmap = "6.1"
 parking_lot = "0.12"
-redb = "2"
+redb = "4"
 uuid = { version = "1", features = ["v4"] }
-lru = "0.16"
+lru = "0.18"
 simdutf8 = "0.1"
 tonic = { workspace = true }
 prost = { workspace = true }
@@ -102,14 +102,14 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 base64 = "0.22"
 # pyo3 features unioned by cargo when kernel cdylib enables `extension-module`
 # on its own pyo3 dep — backends does not need to set extension-module here.
-pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
 # Connector / cloud HTTP stack — feature-gated so non-connector builds
 # stay slim.
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false, optional = true }
-hmac = { version = "0.12", optional = true }
-sha2 = { version = "0.10", optional = true }
+reqwest = { version = "0.13", features = ["json", "stream", "rustls"], default-features = false, optional = true }
+hmac = { version = "0.13", optional = true }
+sha2 = { version = "0.11", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
 
 [dev-dependencies]
-rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+rcgen = { version = "0.14", features = ["pem", "x509-parser"] }
 tempfile = "3"

@@ -87,7 +87,7 @@ fn lock_mode_str(mode: crate::prelude::LockMode) -> &'static str {
 }
 
 /// Python-compatible holder info.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyHolderInfo {
     #[pyo3(get)]
@@ -119,7 +119,7 @@ impl From<RustHolderInfo> for PyHolderInfo {
 }
 
 /// Python-compatible lock state result.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyLockState {
     #[pyo3(get)]
@@ -144,7 +144,7 @@ impl From<RustLockAcquireResult> for PyLockState {
 }
 
 /// Python-compatible lock info.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyLockInfo {
     #[pyo3(get)]

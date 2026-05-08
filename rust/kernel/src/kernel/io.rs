@@ -577,7 +577,7 @@ impl Kernel {
         self.sys_write_with_link_depth(path, ctx, content, offset, 1)
     }
 
-    pub(crate) fn sys_write_with_link_depth(
+    fn sys_write_with_link_depth(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -680,33 +680,11 @@ impl Kernel {
             }
         }
 
-        // 3b. Auto-create DT_REG on first write (offset==0).
-        //     Uses the same route-scoped metastore as the read in step 3
-        //     so the freshly created entry is immediately visible to step 5+.
-        //     DT_PIPE / DT_STREAM are always pre-created via sys_setattr.
-        //     Partial writes (offset>0) to a non-existent file → step 5 error.
+        // 3b. POSIX write(2) contract: file must exist.
+        //     File creation goes through Tier 2 write() which composes
+        //     route-scoped metastore create + sys_write.
         if entry.is_none() && offset == 0 {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0);
-            let new_meta = self.build_metadata(
-                path,
-                &route.zone_id,
-                crate::meta_store::DT_REG,
-                0,
-                None,
-                1,
-                None,
-                Some(now_ms),
-                Some(now_ms),
-            );
-            // Write through the same route metastore (SSOT).
-            self.with_metastore_route(&route, |ms| ms.put(path, new_meta))
-                .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
-                .and_then(|r| {
-                    r.map_err(|e| KernelError::IOError(format!("auto-create put({path}): {e:?}")))
-                })?;
+            return miss();
         }
 
         // 3c. DT_PIPE / DT_STREAM: try Rust IPC registry

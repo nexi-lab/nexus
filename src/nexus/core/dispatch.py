@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import io
 import json
 from collections.abc import Callable
@@ -116,6 +117,9 @@ def default_cat(req: OperationRequest) -> bytes:
 
 def json_cat(req: OperationRequest) -> bytes:
     raw = req.content or b""
+    suffix = req.path.rsplit(".", 1)[-1].lower() if "." in req.path else ""
+    if suffix in {"jsonl", "ndjson"}:
+        return raw
     try:
         parsed = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -130,11 +134,15 @@ def parquet_cat(req: OperationRequest) -> bytes:
     try:
         import pyarrow.parquet as pq
     except ImportError:
-        if req.strict:
-            raise RuntimeError("pyarrow is required for parquet cat") from None
         return raw
 
-    table = pq.read_table(io.BytesIO(raw))
+    try:
+        table = pq.read_table(io.BytesIO(raw))
+    except Exception:
+        if req.strict:
+            raise
+        return raw
+
     rows = table.to_pylist()
     return (json.dumps(rows, indent=2, default=str, ensure_ascii=False) + "\n").encode("utf-8")
 
@@ -173,6 +181,109 @@ def s3_fingerprint(req: OperationRequest) -> str | None:
         zone_id = getattr(req.context, "zone_id", None) or getattr(kernel, "_zone_id", "root")
         return cast(str | None, kernel._kernel.backend_fingerprint(req.path, zone_id))
     return None
+
+
+def _call_kernel_sys_read(kernel: Any, path: str, context: Any = None) -> Any:
+    return _call_kernel_path_method(kernel.sys_read, path, context)
+
+
+def _call_kernel_sys_stat(kernel: Any, path: str, context: Any = None) -> Any:
+    return _call_kernel_path_method(kernel.sys_stat, path, context)
+
+
+def _call_kernel_path_method(method: Callable[..., Any], path: str, context: Any = None) -> Any:
+    if context is None:
+        return method(path)
+
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return method(path, context=context)
+
+    parameters = signature.parameters.values()
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters):
+        return method(path, context=context)
+    context_param = signature.parameters.get("context")
+    if context_param is not None and context_param.kind in {
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    }:
+        return method(path, context=context)
+    if any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in parameters):
+        return method(path, context)
+    positional_params = [
+        param
+        for param in parameters
+        if param.kind
+        in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+    ]
+    if len(positional_params) >= 2:
+        return method(path, context)
+    return method(path)
+
+
+def _read_result_to_bytes(result: Any) -> bytes:
+    if isinstance(result, bytes):
+        return result
+    if isinstance(result, (bytearray, memoryview)):
+        return bytes(result)
+    if isinstance(result, dict):
+        if "data" in result:
+            return _read_result_to_bytes(result["data"])
+        if "content" in result:
+            return _read_result_to_bytes(result["content"])
+        msg = "sys_read result dict must contain bytes under 'data' or 'content'"
+        raise TypeError(msg)
+    msg = f"sys_read returned unsupported result type: {type(result).__name__}"
+    raise TypeError(msg)
+
+
+def _metadata_from_kernel(kernel: Any, path: str, context: Any = None) -> dict[str, Any]:
+    py_kernel = getattr(kernel, "_kernel", None)
+    zone_id = getattr(context, "zone_id", None) or getattr(kernel, "_zone_id", "root")
+    metadata_for_path = getattr(py_kernel, "op_metadata_for_path", None)
+    if callable(metadata_for_path):
+        try:
+            return dict(metadata_for_path(path, zone_id))
+        except FileNotFoundError:
+            pass
+    stat = (
+        _call_kernel_sys_stat(kernel, path, context=context) if hasattr(kernel, "sys_stat") else {}
+    )
+    mime_type = stat.get("mime_type") if isinstance(stat, dict) else None
+    return {
+        "filetype": normalize_filetype(path, mime_type).value,
+        "backend": BackendKind.UNKNOWN.value,
+        "mime_type": mime_type,
+        "backend_name": "",
+    }
+
+
+def cat_path(kernel: Any, path: str, *, context: Any = None, strict: bool = True) -> bytes:
+    metadata = _metadata_from_kernel(kernel, path, context=context)
+    mime_type = metadata.get("mime_type")
+    raw_filetype = metadata.get("filetype")
+    try:
+        filetype = FileType(raw_filetype or FileType.UNKNOWN)
+    except ValueError:
+        filetype = normalize_filetype(path, str(mime_type) if mime_type is not None else None)
+    backend = normalize_backend(str(metadata.get("backend") or metadata.get("backend_name") or ""))
+    content = _read_result_to_bytes(_call_kernel_sys_read(kernel, path, context=context))
+    req = OperationRequest(
+        op="cat",
+        path=path,
+        filetype=filetype,
+        backend=backend,
+        content=content,
+        kernel=kernel,
+        context=context,
+        metadata=metadata,
+        strict=strict,
+    )
+    handler = get_global_registry().resolve("cat", filetype, backend)
+    if handler is None:
+        return content
+    return cast(bytes, handler(req))
 
 
 def register_default_ops(registry: OpsRegistry) -> None:

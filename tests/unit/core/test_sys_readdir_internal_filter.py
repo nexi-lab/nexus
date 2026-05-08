@@ -69,6 +69,7 @@ class _FakeMeta:
     owner_id: str | None = None
     modified_at: object = None
     version: int = 1
+    gen: int = 0
     backend_name: str = ""
     physical_path: str = ""
 

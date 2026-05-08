@@ -266,7 +266,7 @@ class RPCTransport:
         """Write file content via typed Write RPC — no JSON/base64 overhead.
 
         Returns:
-            Dict with ``content_id`` and ``size``.
+            Dict with ``content_id``, ``size``, and ``gen``.
         """
         request = vfs_pb2.WriteRequest(
             path=path,
@@ -281,7 +281,7 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Write")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
-        return {"content_id": response.content_id, "size": response.size}
+        return {"content_id": response.content_id, "size": response.size, "gen": response.gen}
 
     @retry(
         stop=stop_after_attempt(3),

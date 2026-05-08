@@ -141,13 +141,14 @@ fn test_successful_stat() {
         .mock("POST", "/api/nfs/stat")
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"size":42,"is_directory":false,"etag":"abc","modified_at":"2024-01-01T00:00:00Z"}}"#)
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"size":42,"gen":7,"is_directory":false,"etag":"abc","modified_at":"2024-01-01T00:00:00Z"}}"#)
         .create();
 
     let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
     let meta = client.stat("/test.txt").unwrap();
 
     assert_eq!(meta.size, 42);
+    assert_eq!(meta.gen, 7);
     assert!(!meta.is_directory);
     assert_eq!(meta.etag, Some("abc".to_string()));
 }

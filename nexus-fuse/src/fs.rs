@@ -5,9 +5,9 @@ use crate::client::{FileEntry, NexusClient, ReadResponse};
 use crate::metrics;
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyWrite,
-    Request, FUSE_ROOT_ID,
+    ReplyXattr, Request, FUSE_ROOT_ID,
 };
-use libc::{EIO, EISDIR, ENOENT, ENOTDIR, ENOTEMPTY};
+use libc::{EIO, EISDIR, ENODATA, ENOENT, ENOTDIR, ENOTEMPTY, ERANGE, EROFS};
 use log::{debug, error};
 use lru::LruCache;
 use std::ffi::OsStr;
@@ -25,6 +25,8 @@ const BLOCK_SIZE: u32 = 512;
 /// Prevents unbounded memory growth (Issue #1569 / 1A).
 /// At ~200 bytes per entry, 100K entries ≈ 20MB.
 const MAX_INODE_ENTRIES: usize = 100_000;
+
+const XATTR_GEN: &str = "user.nexus.gen";
 
 /// Maximum number of open file contents to keep for range reads.
 const MAX_OPEN_FILE_HANDLES: usize = 128;
@@ -417,6 +419,37 @@ impl NexusFs {
         }
     }
 
+    fn generation_xattr_value(gen: u64) -> Vec<u8> {
+        gen.to_string().into_bytes()
+    }
+
+    fn generation_xattr_name_list() -> Vec<u8> {
+        let mut names = XATTR_GEN.as_bytes().to_vec();
+        names.push(0);
+        names
+    }
+
+    fn reply_xattr(reply: ReplyXattr, value: &[u8], size: u32) {
+        if size == 0 {
+            reply.size(value.len() as u32);
+        } else if value.len() > size as usize {
+            reply.error(ERANGE);
+        } else {
+            reply.data(value);
+        }
+    }
+
+    fn stat_gen(&self, path: &str) -> Result<u64, i32> {
+        self.client.stat(path).map(|meta| meta.gen).map_err(|e| {
+            if e.is_not_found() {
+                ENOENT
+            } else {
+                error!("stat error for {}: {}", path, e);
+                EIO
+            }
+        })
+    }
+
     /// Invalidate caches for a path.
     ///
     /// H22 fix: Release inodes lock before acquiring attr_cache/dir_cache
@@ -505,10 +538,10 @@ impl NexusFs {
     /// 4. If server returns 304 -> touch cache, return cached content
     /// 5. If server returns 200 -> update cache, return new content
     /// 6. If miss -> fetch from server, store in cache
-    fn read_cached(&self, path: &str) -> anyhow::Result<ReadCachedResult> {
+    fn read_cached(&self, path: &str, gen: u64) -> anyhow::Result<ReadCachedResult> {
         // Check persistent cache first
         if let Some(ref cache) = self.file_cache {
-            match cache.get(path) {
+            match cache.get(path, gen) {
                 CacheLookup::Hit(entry) => {
                     debug!("SQLite cache hit for {}", path);
                     return Ok(ReadCachedResult {
@@ -541,7 +574,7 @@ impl NexusFs {
                             // Update cache with new content
                             metrics::record_cache_etag_revalidate("updated");
                             metrics::record_etag_check("updated");
-                            cache.put(path, &content, etag.as_deref());
+                            cache.put(path, &content, etag.as_deref(), gen);
                             return Ok(ReadCachedResult {
                                 content,
                                 etag,
@@ -577,7 +610,7 @@ impl NexusFs {
             Ok(ReadResponse::Content { content, etag }) => {
                 // Store in cache
                 if let Some(ref cache) = self.file_cache {
-                    cache.put(path, &content, etag.as_deref());
+                    cache.put(path, &content, etag.as_deref(), gen);
                 }
                 Ok(ReadCachedResult {
                     content,
@@ -757,6 +790,7 @@ impl Filesystem for NexusFs {
         debug!("read: ino={}, offset={}, size={}", ino, offset, size);
 
         let path = resolve_path!(self, ino, reply);
+        let gen = self.client.stat(&path).map(|m| m.gen).unwrap_or(0);
 
         let started_at = std::time::Instant::now();
 
@@ -773,7 +807,7 @@ impl Filesystem for NexusFs {
         }
 
         // Read using SQLite cache with ETag support
-        let read_result = match self.read_cached(&path) {
+        let read_result = match self.read_cached(&path, gen) {
             Ok(result) => result,
             Err(e) => {
                 metrics::record_read("error", 0, started_at.elapsed());
@@ -833,8 +867,9 @@ impl Filesystem for NexusFs {
         // For simplicity, we only support full file writes (offset 0)
         // For partial writes, we'd need to read-modify-write
         if offset != 0 {
+            let gen = self.client.stat(&path).map(|m| m.gen).unwrap_or(0);
             // Read existing content first (use cache if available)
-            let existing = match self.read_cached(&path) {
+            let existing = match self.read_cached(&path, gen) {
                 Ok(result) => result.content,
                 Err(e) => {
                     error!("partial write: read failed for {}: {}", path, e);
@@ -1115,7 +1150,8 @@ impl Filesystem for NexusFs {
                 }
             } else {
                 // Truncate to specific size - read and rewrite (use cache if available)
-                match self.read_cached(&path) {
+                let gen = self.client.stat(&path).map(|m| m.gen).unwrap_or(0);
+                match self.read_cached(&path, gen) {
                     Ok(result) => {
                         let mut data = result.content;
                         data.resize(new_size as usize, 0);
@@ -1147,6 +1183,71 @@ impl Filesystem for NexusFs {
         match self.get_attr(ino, &path) {
             Ok(attr) => reply.attr(&ATTR_TTL, &attr),
             Err(e) => reply.error(e),
+        }
+    }
+
+    fn getxattr(&mut self, _req: &Request, ino: u64, name: &OsStr, size: u32, reply: ReplyXattr) {
+        debug!("getxattr: ino={}, name={:?}, size={}", ino, name, size);
+
+        let path = resolve_path!(self, ino, reply);
+        if name != OsStr::new(XATTR_GEN) {
+            reply.error(ENODATA);
+            return;
+        }
+
+        match self.stat_gen(&path) {
+            Ok(gen) => {
+                let value = Self::generation_xattr_value(gen);
+                Self::reply_xattr(reply, &value, size);
+            }
+            Err(errno) => reply.error(errno),
+        }
+    }
+
+    fn listxattr(&mut self, _req: &Request, ino: u64, size: u32, reply: ReplyXattr) {
+        debug!("listxattr: ino={}, size={}", ino, size);
+
+        let path = resolve_path!(self, ino, reply);
+        match self.client.stat(&path) {
+            Ok(_) => {
+                let names = Self::generation_xattr_name_list();
+                Self::reply_xattr(reply, &names, size);
+            }
+            Err(e) => {
+                if e.is_not_found() {
+                    reply.error(ENOENT);
+                } else {
+                    error!("listxattr stat error for {}: {}", path, e);
+                    reply.error(EIO);
+                }
+            }
+        }
+    }
+
+    fn setxattr(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        name: &OsStr,
+        _value: &[u8],
+        _flags: i32,
+        _position: u32,
+        reply: fuser::ReplyEmpty,
+    ) {
+        debug!("setxattr: ino={}, name={:?}", ino, name);
+
+        let path = resolve_path!(self, ino, reply);
+        match self.client.stat(&path) {
+            Ok(_) if name == OsStr::new(XATTR_GEN) => reply.error(EROFS),
+            Ok(_) => reply.error(ENODATA),
+            Err(e) => {
+                if e.is_not_found() {
+                    reply.error(ENOENT);
+                } else {
+                    error!("setxattr stat error for {}: {}", path, e);
+                    reply.error(EIO);
+                }
+            }
         }
     }
 
@@ -1307,13 +1408,13 @@ mod tests {
             .create();
 
         let cache = FileCache::open_in_memory_for_tests();
-        cache.put("/stale.txt", b"stale-data", Some("etag-1"));
+        cache.put("/stale.txt", b"stale-data", Some("etag-1"), 0);
         cache.set_cached_at_for_tests("/stale.txt", 0);
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
         let fs = NexusFs::new(client, Some(cache));
 
-        let result = fs.read_cached("/stale.txt").unwrap();
+        let result = fs.read_cached("/stale.txt", 0).unwrap();
 
         assert_eq!(result.content, b"stale-data");
         assert_eq!(result.etag, Some("etag-1".to_string()));
@@ -1340,13 +1441,13 @@ mod tests {
             .create();
 
         let cache = FileCache::open_in_memory_for_tests();
-        cache.put("/not-modified.txt", b"cached-data", Some("etag-1"));
+        cache.put("/not-modified.txt", b"cached-data", Some("etag-1"), 0);
         cache.set_cached_at_for_tests("/not-modified.txt", 0);
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
         let fs = NexusFs::new(client, Some(cache));
 
-        let result = fs.read_cached("/not-modified.txt").unwrap();
+        let result = fs.read_cached("/not-modified.txt", 0).unwrap();
 
         assert_eq!(result.content, b"cached-data");
         assert_eq!(result.etag, Some("etag-1".to_string()));
@@ -1469,6 +1570,19 @@ mod tests {
         assert_eq!(removed, Some(inode));
         assert_eq!(table.peek_inode("/to-delete"), None);
         assert_eq!(table.get_path(inode), None);
+    }
+
+    #[test]
+    fn test_generation_xattr_name_list_is_nul_terminated() {
+        assert_eq!(
+            NexusFs::generation_xattr_name_list(),
+            b"user.nexus.gen\0".to_vec()
+        );
+    }
+
+    #[test]
+    fn test_generation_xattr_value_is_decimal_bytes() {
+        assert_eq!(NexusFs::generation_xattr_value(42), b"42".to_vec());
     }
 
     #[test]

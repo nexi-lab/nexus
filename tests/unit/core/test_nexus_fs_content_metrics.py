@@ -29,6 +29,7 @@ class _Kernel:
             data=b"abc",
             post_hook_needed=False,
             content_id="cid",
+            gen=1,
             entry_type=1,
             stream_next_offset=None,
         )
@@ -40,6 +41,7 @@ class _Kernel:
             content_id="cid",
             post_hook_needed=False,
             version=1,
+            gen=1,
             size=len(content),
             is_new=True,
             old_content_id=None,
@@ -54,6 +56,7 @@ class _Kernel:
                 size=3,
                 content_id=f"cid-{index}",
                 version=1,
+                gen=1,
                 modified_at=None,
             )
             for index, _path in enumerate(paths)
@@ -64,6 +67,7 @@ class _Kernel:
             SimpleNamespace(
                 data=f"b{index}".encode(),
                 content_id=f"cid-{index}",
+                gen=index + 1,
             )
             for index, _path in enumerate(paths)
         ]
@@ -74,6 +78,7 @@ class _Kernel:
                 hit=True,
                 content_id=f"cid-{index}",
                 version=1,
+                gen=1,
                 size=len(content),
             )
             for index, (_path, content) in enumerate(files)
@@ -101,6 +106,7 @@ class _FallbackKernel(_Kernel):
             SimpleNamespace(
                 data=None,
                 content_id=f"cid-{index}",
+                gen=index + 1,
             )
             for index, _path in enumerate(paths)
         ]

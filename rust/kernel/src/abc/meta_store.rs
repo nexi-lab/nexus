@@ -56,6 +56,9 @@ pub struct FileMetadata {
     pub path: String,
     pub size: u64,
     pub content_id: Option<String>,
+    /// Monotonic per-file content generation. Existing migrated records and
+    /// non-content metadata entries use 0.
+    pub gen: u64,
     pub version: u32,
     pub entry_type: u8,
     pub zone_id: Option<String>,

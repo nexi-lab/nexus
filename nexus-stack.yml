@@ -91,6 +91,10 @@ services:
       # consumed by ``SQLAlchemyRecordStore._build_pool_kwargs``.
       NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-5}
       NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-5}
+      # Local compose is single-process, so prefer bounded async Postgres
+      # connections. Without this, asyncpg uses NullPool and bursty
+      # search/indexer jobs can exceed Postgres max_connections.
+      NEXUS_DB_ASYNC_USE_POOL: ${NEXUS_DB_ASYNC_USE_POOL:-1}
       # Auth
       NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}

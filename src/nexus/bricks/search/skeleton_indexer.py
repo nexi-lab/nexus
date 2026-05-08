@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 SKELETON_HEAD_BYTES: int = 2048
 
 
+def _utcnow_naive() -> datetime:
+    """UTC timestamp for TIMESTAMP WITHOUT TIME ZONE columns."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
 class FileReaderProtocol(Protocol):
     """Minimal file-reading interface needed by SkeletonIndexer."""
 
@@ -223,7 +228,7 @@ class SkeletonIndexer:
 
             from nexus.storage.models.document_skeleton import DocumentSkeletonModel
 
-            now = datetime.now(UTC)
+            now = _utcnow_naive()
             async with self._session_factory() as session:
                 # Use upsert semantics: INSERT OR REPLACE (SQLite) / ON CONFLICT DO UPDATE (PG)
                 stmt = sqlite_insert(DocumentSkeletonModel).values(
@@ -262,7 +267,7 @@ class SkeletonIndexer:
 
             from nexus.storage.models.document_skeleton import DocumentSkeletonModel
 
-            now = datetime.now(UTC)
+            now = _utcnow_naive()
             async with self._session_factory() as session:
                 stmt = pg_insert(DocumentSkeletonModel).values(
                     path_id=path_id,

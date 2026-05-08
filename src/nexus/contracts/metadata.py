@@ -53,10 +53,8 @@ class FileMetadata:
     target_zone_id: str | None = None
     ttl_seconds: float = 0.0
     last_writer_address: str | None = None
-    # DT_LINK target — absolute or workspace-relative VFS path the link
-    # resolves to. ``None`` for any other ``entry_type``. See
-    # ``docs/architecture/KERNEL-ARCHITECTURE.md`` §4.5.
     link_target: str | None = None
+    gen: int = 0
 
     @property
     def is_reg(self) -> bool:
@@ -107,6 +105,7 @@ class FileMetadata:
             "ttl_seconds": self.ttl_seconds,
             "last_writer_address": self.last_writer_address,
             "link_target": self.link_target,
+            "gen": self.gen,
         }
 
     def validate(self) -> None:
@@ -125,6 +124,9 @@ class FileMetadata:
 
         if "\x00" in self.path:
             raise ValidationError("path contains null bytes", path=self.path)
+
+        if self.gen < 0:
+            raise ValidationError(f"gen cannot be negative, got {self.gen}", path=self.path)
 
         # DT_PIPE/DT_STREAM inodes: in-memory buffers, no backend storage required
         if self.entry_type in (3, 4):  # DT_PIPE, DT_STREAM

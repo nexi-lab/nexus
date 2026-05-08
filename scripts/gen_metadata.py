@@ -39,6 +39,7 @@ GENERATED_NAMES: dict[str, set[str]] = {
         "DT_PIPE",
         "DT_STREAM",
         "DT_EXTERNAL_STORAGE",
+        "DT_LINK",
     },
     "metastore": {
         "MetastoreABC",
@@ -60,6 +61,7 @@ RENAMES: dict[str, str] = {}
 PROTO_TYPE_MAP: dict[str, str] = {
     "string": "str",
     "int64": "int",
+    "uint64": "int",
     "int32": "int",
     "double": "float",
     "bool": "bool",
@@ -78,6 +80,7 @@ NULLABLE_STRING_FIELDS: set[str] = {
     "owner_id",
     "target_zone_id",
     "last_writer_address",
+    "link_target",
 }
 
 # Non-default defaults
@@ -85,6 +88,7 @@ FIELD_DEFAULTS: dict[str, str] = {
     "version": "1",
     "entry_type": "0",
     "ttl_seconds": "0.0",
+    "gen": "0",
 }
 
 # String fields that get interned in CompactFileMetadata
@@ -97,6 +101,7 @@ INTERNED_FIELDS: list[str] = [
     "owner_id",
     "target_zone_id",
     "last_writer_address",
+    "link_target",
 ]
 
 # Compact field name mapping
@@ -109,6 +114,7 @@ COMPACT_FIELD_NAMES: dict[str, str] = {
     "owner_id": "owner_id_intern",
     "target_zone_id": "target_zone_id_intern",
     "last_writer_address": "last_writer_address_id",
+    "link_target": "link_target_id",
 }
 
 # from_proto fallback: when a proto field is empty, use another field's value
@@ -119,6 +125,7 @@ DIRECT_COMPACT_FIELDS: dict[str, str] = {
     "size": "int",
     "version": "int",
     "entry_type": "int",
+    "gen": "int",
 }
 
 
@@ -323,6 +330,20 @@ def generate_metadata_py(
     enum_properties = _generate_enum_properties(fields, enums)
     enum_properties_block = f"\n{enum_properties}" if enum_properties else ""
     to_dict_block = _generate_to_dict(fields)
+    uint64_validation_lines = []
+    for f in fields:
+        if f["type"] == "uint64":
+            name = f["name"]
+            uint64_validation_lines.extend(
+                [
+                    f"        if self.{name} < 0:",
+                    f'            raise ValidationError(f"{name} cannot be negative, got {{self.{name}}}", path=self.path)',
+                    "",
+                ]
+            )
+    uint64_validation_block = "\n".join(uint64_validation_lines).rstrip()
+    if uint64_validation_block:
+        uint64_validation_block = f"\n{uint64_validation_block}"
 
     return f'''\
 """Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT.
@@ -385,6 +406,7 @@ class FileMetadata:
 
         if "\\x00" in self.path:
             raise ValidationError("path contains null bytes", path=self.path)
+{uint64_validation_block}
 
         # DT_PIPE/DT_STREAM inodes: in-memory buffers, no backend storage required
         if self.entry_type in (3, 4):  # DT_PIPE, DT_STREAM
@@ -582,7 +604,7 @@ def clear_intern_pool() -> None:
 def _field_category(field: dict[str, str]) -> str:
     """Classify a proto field for mapper code generation.
 
-    Returns one of: 'datetime', 'nullable_string', 'int', 'required_string'.
+    Returns one of: 'datetime', 'nullable_string', 'int', 'enum', 'required_string'.
     """
     name = field["name"]
     if name in DATETIME_FIELDS:
@@ -590,9 +612,9 @@ def _field_category(field: dict[str, str]) -> str:
     if name in NULLABLE_STRING_FIELDS:
         return "nullable_string"
     proto_type = field["type"]
-    if proto_type in ("int64", "int32"):
+    if proto_type in ("int64", "uint64", "int32"):
         return "int"
-    if proto_type in PROTO_TYPE_MAP and PROTO_TYPE_MAP[proto_type] == "int":
+    if proto_type == "DirEntryType":
         return "enum"
     return "required_string"
 
@@ -736,6 +758,7 @@ PROTO_TO_SQL: dict[str, str | None] = {{
     "created_at": "created_at",
     "modified_at": "updated_at",
     "version": "current_version",
+    "gen": None,  # Rust/metastore generation, not persisted in FilePathModel
     "zone_id": "zone_id",
     "created_by": None,  # TODO(#1246): Add to FilePathModel
     "entry_type": None,  # TODO(#1246): Add to FilePathModel

@@ -171,6 +171,8 @@ pub struct SysReadResult {
     pub post_hook_needed: bool,
     /// Content hash (content_id) for post-hook context.
     pub content_id: Option<String>,
+    /// Content generation after this read.
+    pub gen: u64,
     /// DT_REG(1), DT_PIPE(3), DT_STREAM(4).
     pub entry_type: u8,
     /// DT_STREAM: next read offset (message index) for cursor advancement.
@@ -188,6 +190,8 @@ pub struct SysWriteResult {
     pub post_hook_needed: bool,
     /// Metadata version after write (for event dispatch).
     pub version: u32,
+    /// Content generation after write.
+    pub gen: u64,
     /// Content size in bytes.
     pub size: u64,
     /// True if the file did not exist before this write.
@@ -269,6 +273,8 @@ pub struct SysCopyResult {
     pub size: u64,
     /// Metadata version of the destination file.
     pub version: u32,
+    /// Destination content generation.
+    pub gen: u64,
 }
 
 /// Result of sys_setattr(): Rust handles ALL filesystem entry types.
@@ -307,6 +313,7 @@ pub struct StatResult {
     pub entry_type: u8,
     pub mode: u32,
     pub version: u32,
+    pub gen: u64,
     pub zone_id: Option<String>,
     pub created_at_ms: Option<i64>,
     pub modified_at_ms: Option<i64>,
@@ -946,6 +953,7 @@ impl Kernel {
         entry_type: u8,
         size: u64,
         content_id: Option<String>,
+        gen: u64,
         version: u32,
         mime_type: Option<String>,
         created_at_ms: Option<i64>,
@@ -955,6 +963,7 @@ impl Kernel {
             path: path.to_string(),
             size,
             content_id,
+            gen,
             version,
             entry_type,
             zone_id: Some(zone_id.to_string()),
@@ -1617,6 +1626,7 @@ impl Kernel {
             path: path.to_string(),
             size: 0,
             content_id: None,
+            gen: 0,
             version: 1,
             entry_type: DT_LINK,
             zone_id: Some(zone_id.to_string()),
@@ -1853,6 +1863,7 @@ impl Kernel {
             DT_PIPE,
             capacity as u64,
             None,
+            0,
             1,
             None,
             None,
@@ -1870,6 +1881,7 @@ impl Kernel {
             DT_STREAM,
             capacity as u64,
             None,
+            0,
             1,
             None,
             None,
@@ -1923,6 +1935,7 @@ impl Kernel {
             DT_DIR,
             0,
             Some(contracts::BLAKE3_EMPTY.to_string()),
+            0,
             1,
             Some("inode/directory".to_string()),
             Some(now_ms),
@@ -2737,6 +2750,114 @@ pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
 mod tests {
     use super::*;
 
+    #[derive(Default)]
+    struct TestObjectStore {
+        blobs: parking_lot::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+    }
+
+    impl crate::abc::object_store::ObjectStore for TestObjectStore {
+        fn name(&self) -> &str {
+            "test"
+        }
+
+        fn write_content(
+            &self,
+            content: &[u8],
+            content_id: &str,
+            _ctx: &OperationContext,
+            offset: u64,
+        ) -> Result<crate::abc::object_store::WriteResult, crate::abc::object_store::StorageError>
+        {
+            let key = content_id.to_string();
+            let mut blobs = self.blobs.lock();
+            let mut data = if offset > 0 {
+                blobs.get(&key).cloned().unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let start = offset as usize;
+            if start > data.len() {
+                data.resize(start, 0);
+            }
+            let end = start + content.len();
+            if end > data.len() {
+                data.resize(end, 0);
+            }
+            data[start..end].copy_from_slice(content);
+            let size = data.len() as u64;
+            blobs.insert(key.clone(), data);
+            Ok(crate::abc::object_store::WriteResult {
+                content_id: key.clone(),
+                version: key,
+                size,
+            })
+        }
+
+        fn read_content(
+            &self,
+            content_id: &str,
+            _ctx: &OperationContext,
+        ) -> Result<Vec<u8>, crate::abc::object_store::StorageError> {
+            self.blobs
+                .lock()
+                .get(content_id)
+                .cloned()
+                .ok_or_else(|| crate::abc::object_store::StorageError::NotFound(content_id.into()))
+        }
+
+        fn delete_file(&self, path: &str) -> Result<(), crate::abc::object_store::StorageError> {
+            self.blobs.lock().remove(path);
+            Ok(())
+        }
+
+        fn get_content_size(
+            &self,
+            content_id: &str,
+        ) -> Result<u64, crate::abc::object_store::StorageError> {
+            self.blobs
+                .lock()
+                .get(content_id)
+                .map(|data| data.len() as u64)
+                .ok_or_else(|| crate::abc::object_store::StorageError::NotFound(content_id.into()))
+        }
+
+        fn copy_file(
+            &self,
+            src_path: &str,
+            dst_path: &str,
+        ) -> Result<crate::abc::object_store::WriteResult, crate::abc::object_store::StorageError>
+        {
+            let mut blobs = self.blobs.lock();
+            let data = blobs
+                .get(src_path)
+                .cloned()
+                .ok_or_else(|| crate::abc::object_store::StorageError::NotFound(src_path.into()))?;
+            let size = data.len() as u64;
+            blobs.insert(dst_path.to_string(), data);
+            Ok(crate::abc::object_store::WriteResult {
+                content_id: dst_path.to_string(),
+                version: dst_path.to_string(),
+                size,
+            })
+        }
+    }
+
+    fn kernel_with_root_backend() -> Kernel {
+        let k = Kernel::new();
+        let backend: std::sync::Arc<dyn crate::abc::object_store::ObjectStore> =
+            std::sync::Arc::new(TestObjectStore::default());
+        k.add_mount(
+            "/",
+            contracts::ROOT_ZONE_ID,
+            Some(backend),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        k
+    }
+
     #[test]
     fn test_validate_path_fast() {
         assert!(validate_path_fast("/valid/path").is_ok());
@@ -2748,6 +2869,161 @@ mod tests {
         assert!(validate_path_fast("/has\0null").is_err());
         assert!(validate_path_fast("/has/../traversal").is_err());
         assert!(validate_path_fast("/..").is_err());
+    }
+
+    #[test]
+    fn sys_write_increments_content_generation() {
+        let k = kernel_with_root_backend();
+        let ctx = OperationContext::new("test", "root", true, None, true);
+
+        let first = k.sys_write("/gen.txt", &ctx, b"one", 0).unwrap();
+        let second = k.sys_write("/gen.txt", &ctx, b"two", 0).unwrap();
+        let stat = k.sys_stat("/gen.txt", "root").unwrap();
+
+        assert_eq!(first.gen, 1);
+        assert_eq!(second.gen, 2);
+        assert_eq!(stat.gen, 2);
+    }
+
+    #[test]
+    fn sys_setattr_metadata_update_preserves_generation() {
+        let k = kernel_with_root_backend();
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        k.sys_write("/mime.txt", &ctx, b"body", 0).unwrap();
+
+        k.sys_setattr(
+            "/mime.txt",
+            0,
+            "",
+            None,
+            None,
+            None,
+            "memory",
+            "root",
+            false,
+            0,
+            None,
+            None,
+            Some("text/plain"),
+            Some(1234),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let stat = k.sys_stat("/mime.txt", "root").unwrap();
+        assert_eq!(stat.gen, 1);
+    }
+
+    #[test]
+    fn copy_uses_destination_generation() {
+        let k = kernel_with_root_backend();
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
+
+        let copied = k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
+        let dst = k.sys_stat("/dst.txt", "root").unwrap();
+
+        assert_eq!(copied.gen, 1);
+        assert_eq!(dst.gen, 1);
+
+        let copied_again = k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
+        let dst_again = k.sys_stat("/dst.txt", "root").unwrap();
+
+        assert_eq!(copied_again.gen, 2);
+        assert_eq!(dst_again.gen, 2);
+    }
+
+    #[test]
+    fn copy_rejects_non_regular_destination() {
+        let k = kernel_with_root_backend();
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_mkdir("/dst", &ctx, true, true).unwrap();
+
+        match k.sys_copy("/src.txt", "/dst", &ctx) {
+            Err(KernelError::InvalidPath(msg)) => {
+                assert!(msg.contains("destination is not a regular file"));
+            }
+            Ok(_) => panic!("expected non-regular destination copy to fail"),
+            Err(other) => {
+                panic!("expected InvalidPath for non-regular destination, got {other:?}");
+            }
+        }
+        assert_eq!(
+            k.sys_stat("/dst", "root").unwrap().entry_type,
+            crate::meta_store::DT_DIR
+        );
+    }
+
+    #[test]
+    fn copy_overwrite_preserves_destination_created_at() {
+        let k = kernel_with_root_backend();
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
+
+        let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
+        dst_meta.created_at_ms = Some(123);
+        k.metastore_put("/dst.txt", dst_meta).unwrap();
+
+        k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
+        let dst = k.sys_stat("/dst.txt", "root").unwrap();
+
+        assert_eq!(dst.created_at_ms, Some(123));
+        assert_eq!(dst.gen, 2);
+    }
+
+    #[test]
+    fn copy_snapshot_failure_releases_vfs_locks() {
+        let k = kernel_with_root_backend();
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
+
+        let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
+        dst_meta.content_id = Some("/missing-destination-content.txt".to_string());
+        k.metastore_put("/dst.txt", dst_meta).unwrap();
+
+        assert!(matches!(
+            k.sys_copy("/src.txt", "/dst.txt", &ctx),
+            Err(KernelError::BackendError(msg)) if msg.contains("failed to snapshot destination")
+        ));
+
+        let lm = k.lock_manager_arc();
+        let dst_handle = lm.blocking_acquire("/dst.txt", crate::lock_manager::LockMode::Write, 0);
+        assert_ne!(dst_handle, 0, "destination VFS lock leaked");
+        lm.do_release(dst_handle);
+
+        let src_handle = lm.blocking_acquire("/src.txt", crate::lock_manager::LockMode::Write, 0);
+        assert_ne!(src_handle, 0, "source VFS lock leaked");
+        lm.do_release(src_handle);
+    }
+
+    #[test]
+    fn batch_write_increments_each_path_generation() {
+        let k = kernel_with_root_backend();
+        let ctx = OperationContext::new("test", "root", true, None, true);
+
+        let first = k
+            ._write_batch(
+                &[
+                    ("/a.txt".to_string(), b"a1".to_vec()),
+                    ("/b.txt".to_string(), b"b1".to_vec()),
+                ],
+                &ctx,
+            )
+            .unwrap();
+        let second = k
+            ._write_batch(&[("/a.txt".to_string(), b"a2".to_vec())], &ctx)
+            .unwrap();
+
+        assert_eq!(first[0].gen, 1);
+        assert_eq!(first[1].gen, 1);
+        assert_eq!(second[0].gen, 2);
+        assert_eq!(k.sys_stat("/a.txt", "root").unwrap().gen, 2);
+        assert_eq!(k.sys_stat("/b.txt", "root").unwrap().gen, 1);
     }
 
     // ── §11 OBSERVE ThreadPool tests ───────────────────────────────
@@ -3069,6 +3345,7 @@ mod tests {
                 path: "/update-test.txt".to_string(),
                 size: 0,
                 content_id: None,
+                gen: 0,
                 version: 1,
                 entry_type: 0,
                 zone_id: None,
@@ -3263,6 +3540,7 @@ mod tests {
         let meta = FileMetadata {
             path: "/mnt_a/file.txt".to_string(),
             size: 42,
+            gen: 0,
             entry_type: DT_REG,
             ..Default::default()
         };
@@ -3326,6 +3604,7 @@ mod tests {
             "/mnt_a/docs",
             FileMetadata {
                 path: "/mnt_a/docs".into(),
+                gen: 0,
                 entry_type: DT_DIR,
                 ..Default::default()
             },
@@ -3336,6 +3615,7 @@ mod tests {
             FileMetadata {
                 path: "/mnt_a/docs/a.md".into(),
                 size: 10,
+                gen: 0,
                 entry_type: DT_REG,
                 ..Default::default()
             },
@@ -3376,6 +3656,7 @@ mod tests {
         // Seed a DT_MOUNT entry at the mount root and a child file.
         let mount_meta = FileMetadata {
             path: "/mnt".to_string(),
+            gen: 0,
             entry_type: DT_MOUNT,
             zone_id: Some(zone.to_string()),
             ..Default::default()
@@ -3487,6 +3768,7 @@ mod tests {
                 path: path.to_string(),
                 size: 0,
                 content_id: None,
+                gen: 0,
                 version: 1,
                 entry_type: DT_LINK_TYPE,
                 zone_id: Some("root".to_string()),
@@ -3504,6 +3786,7 @@ mod tests {
                 path: path.to_string(),
                 size: 0,
                 content_id: None,
+                gen: 0,
                 version: 1,
                 entry_type: 0, // DT_REG
                 zone_id: Some("root".to_string()),

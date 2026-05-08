@@ -129,6 +129,8 @@ pub struct FileEvent {
     pub(crate) user_id: Option<String>,
     /// Write-specific: file version counter.
     pub(crate) version: Option<u32>,
+    /// Write-specific: content generation counter.
+    pub(crate) gen: Option<u64>,
     /// Write-specific: True if file was newly created (not overwritten).
     pub(crate) is_new: bool,
     /// Rename-specific: destination path.
@@ -191,6 +193,9 @@ impl FileEvent {
         if let Some(v) = self.version {
             map.insert("version".to_string(), serde_json::Value::from(v));
         }
+        if let Some(v) = self.gen {
+            map.insert("gen".to_string(), serde_json::Value::from(v));
+        }
         if self.is_new {
             map.insert("is_new".to_string(), serde_json::Value::Bool(true));
         }
@@ -222,6 +227,7 @@ impl FileEvent {
             sequence_number: None,
             user_id: None,
             version: None,
+            gen: None,
             is_new: false,
             new_path: None,
             old_content_id: None,

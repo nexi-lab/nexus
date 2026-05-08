@@ -1107,6 +1107,7 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
     ///     for this node commits.  Bounded by 30s so syscall
     ///     callers see a fail rather than hang forever; operators
     ///     re-issue.
+    #[allow(clippy::result_large_err)]
     fn create_zone(&self, kernel: &Kernel, zone_id: &str) -> CoordinatorResult<()> {
         let zm = self.zm().ok_or("federation not active")?;
         if zm.get_zone(zone_id).is_some() {

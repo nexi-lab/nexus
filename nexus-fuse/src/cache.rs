@@ -27,6 +27,7 @@ const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
 pub struct CacheEntry {
     pub content: Vec<u8>,
     pub etag: Option<String>,
+    pub gen: u64,
 }
 
 /// Result of a cache lookup.
@@ -66,6 +67,7 @@ impl FileCache {
                 content BLOB NOT NULL,
                 etag TEXT,
                 size INTEGER NOT NULL,
+                gen INTEGER NOT NULL DEFAULT 0,
                 cached_at INTEGER NOT NULL
             );
 
@@ -81,6 +83,10 @@ impl FileCache {
             CREATE INDEX IF NOT EXISTS idx_file_cache_size ON file_cache(size);
             ",
         )?;
+        let _ = conn.execute(
+            "ALTER TABLE file_cache ADD COLUMN gen INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
 
         let cache = Self {
             conn: Mutex::new(conn),
@@ -159,23 +165,32 @@ impl FileCache {
     ///          freshness without deserializing the (potentially large) BLOB.
     /// Phase 2: Only fetch content if the entry is fresh; stale entries with an
     ///          etag return NeedsRevalidation without touching the BLOB column.
-    pub fn get(&self, path: &str) -> CacheLookup {
+    pub fn get(&self, path: &str, gen: u64) -> CacheLookup {
         let conn = self.conn.lock().unwrap();
         let now = Self::now();
 
         // Phase 1: metadata-only query — avoids reading the content BLOB
-        let meta: Option<(Option<String>, u64)> = conn
+        let meta: Option<(Option<String>, u64, u64)> = conn
             .query_row(
-                "SELECT etag, cached_at FROM file_cache WHERE path = ?",
+                "SELECT etag, cached_at, gen FROM file_cache WHERE path = ?",
                 params![path],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .ok()
             .flatten();
 
         match meta {
-            Some((etag, cached_at)) => {
+            Some((etag, cached_at, cached_gen)) => {
+                if cached_gen != gen {
+                    debug!(
+                        "Cache generation mismatch for {} (cached={}, current={})",
+                        path, cached_gen, gen
+                    );
+                    let _ = conn.execute("DELETE FROM file_cache WHERE path = ?", params![path]);
+                    return CacheLookup::Miss;
+                }
+
                 let age = now.saturating_sub(cached_at);
 
                 if age < MAX_CACHE_AGE_SECS {
@@ -194,7 +209,7 @@ impl FileCache {
                         Some(content) => {
                             debug!("Cache hit for {} (age: {}s)", path, age);
                             metrics::record_cache_request("sqlite", "hit");
-                            CacheLookup::Hit(CacheEntry { content, etag })
+                            CacheLookup::Hit(CacheEntry { content, etag, gen })
                         }
                         None => {
                             // Shouldn't happen (metadata existed but content gone)
@@ -237,12 +252,13 @@ impl FileCache {
         let conn = self.conn.lock().unwrap();
 
         conn.query_row(
-            "SELECT content, etag FROM file_cache WHERE path = ?",
+            "SELECT content, etag, gen FROM file_cache WHERE path = ?",
             params![path],
             |row| {
                 Ok(CacheEntry {
                     content: row.get(0)?,
                     etag: row.get(1)?,
+                    gen: row.get(2)?,
                 })
             },
         )
@@ -267,7 +283,7 @@ impl FileCache {
 
     /// Store file content in the cache.
     /// Files larger than MAX_FILE_SIZE are not cached.
-    pub fn put(&self, path: &str, content: &[u8], etag: Option<&str>) {
+    pub fn put(&self, path: &str, content: &[u8], etag: Option<&str>, gen: u64) {
         // Skip caching large files
         if content.len() > MAX_FILE_SIZE {
             debug!(
@@ -284,9 +300,9 @@ impl FileCache {
             let now = Self::now();
 
             match conn.execute(
-                "INSERT OR REPLACE INTO file_cache (path, content, etag, size, cached_at)
-                 VALUES (?, ?, ?, ?, ?)",
-                params![path, content, etag, content.len() as i64, now],
+                "INSERT OR REPLACE INTO file_cache (path, content, etag, size, gen, cached_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params![path, content, etag, content.len() as i64, gen, now],
             ) {
                 Ok(_) => true,
                 Err(e) => {
@@ -446,12 +462,12 @@ mod tests {
         let cache = test_cache("basic");
 
         // Miss on empty cache
-        assert!(matches!(cache.get("/test.txt"), CacheLookup::Miss));
+        assert!(matches!(cache.get("/test.txt", 0), CacheLookup::Miss));
 
         // Put and get
-        cache.put("/test.txt", b"hello world", Some("abc123"));
+        cache.put("/test.txt", b"hello world", Some("abc123"), 0);
 
-        match cache.get("/test.txt") {
+        match cache.get("/test.txt", 0) {
             CacheLookup::Hit(entry) => {
                 assert_eq!(entry.content, b"hello world");
                 assert_eq!(entry.etag, Some("abc123".to_string()));
@@ -461,7 +477,7 @@ mod tests {
 
         // Invalidate
         cache.invalidate("/test.txt");
-        assert!(matches!(cache.get("/test.txt"), CacheLookup::Miss));
+        assert!(matches!(cache.get("/test.txt", 0), CacheLookup::Miss));
     }
 
     #[test]
@@ -470,14 +486,20 @@ mod tests {
         crate::metrics::reset_for_tests();
         let cache = test_cache("metrics");
 
-        assert!(matches!(cache.get("/metrics-miss.txt"), CacheLookup::Miss));
+        assert!(matches!(
+            cache.get("/metrics-miss.txt", 0),
+            CacheLookup::Miss
+        ));
         assert_metric_at_least(
             "nexus_cache_requests_total{tier=\"sqlite\",result=\"miss\"} ",
             1,
         );
 
-        cache.put("/metrics-hit.txt", b"data", Some("etag-1"));
-        assert!(matches!(cache.get("/metrics-hit.txt"), CacheLookup::Hit(_)));
+        cache.put("/metrics-hit.txt", b"data", Some("etag-1"), 0);
+        assert!(matches!(
+            cache.get("/metrics-hit.txt", 0),
+            CacheLookup::Hit(_)
+        ));
         assert_metric_at_least(
             "nexus_cache_requests_total{tier=\"sqlite\",result=\"hit\"} ",
             1,
@@ -493,7 +515,7 @@ mod tests {
             .unwrap();
         }
         assert!(matches!(
-            cache.get("/metrics-hit.txt"),
+            cache.get("/metrics-hit.txt", 0),
             CacheLookup::NeedsRevalidation { .. }
         ));
         assert_metric_at_least(
@@ -508,7 +530,7 @@ mod tests {
         crate::metrics::reset_for_tests();
         let cache = test_cache("bytes");
 
-        cache.put("/metrics-bytes.txt", b"data", Some("etag-1"));
+        cache.put("/metrics-bytes.txt", b"data", Some("etag-1"), 0);
 
         assert_eq!(
             metric_value(
@@ -525,7 +547,7 @@ mod tests {
         crate::metrics::reset_for_tests();
         let cache = test_cache("invalidate-bytes");
 
-        cache.put("/metrics-invalidated.txt", b"data", Some("etag-1"));
+        cache.put("/metrics-invalidated.txt", b"data", Some("etag-1"), 0);
         cache.invalidate("/metrics-invalidated.txt");
 
         assert_eq!(
@@ -545,9 +567,9 @@ mod tests {
     fn test_put_without_etag() {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("no-etag");
-        cache.put("/no-etag.txt", b"data", None);
+        cache.put("/no-etag.txt", b"data", None, 0);
 
-        match cache.get("/no-etag.txt") {
+        match cache.get("/no-etag.txt", 0) {
             CacheLookup::Hit(entry) => {
                 assert_eq!(entry.content, b"data");
                 assert_eq!(entry.etag, None);
@@ -564,10 +586,10 @@ mod tests {
     fn test_overwrite_entry() {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("overwrite");
-        cache.put("/f.txt", b"v1", Some("e1"));
-        cache.put("/f.txt", b"v2", Some("e2"));
+        cache.put("/f.txt", b"v1", Some("e1"), 0);
+        cache.put("/f.txt", b"v2", Some("e2"), 0);
 
-        match cache.get("/f.txt") {
+        match cache.get("/f.txt", 0) {
             CacheLookup::Hit(entry) => {
                 assert_eq!(entry.content, b"v2");
                 assert_eq!(entry.etag, Some("e2".to_string()));
@@ -586,10 +608,10 @@ mod tests {
         let cache = test_cache("etag");
         assert_eq!(cache.get_etag("/missing.txt"), None);
 
-        cache.put("/e.txt", b"x", Some("etag-42"));
+        cache.put("/e.txt", b"x", Some("etag-42"), 0);
         assert_eq!(cache.get_etag("/e.txt"), Some("etag-42".to_string()));
 
-        cache.put("/no-e.txt", b"x", None);
+        cache.put("/no-e.txt", b"x", None, 0);
         assert_eq!(cache.get_etag("/no-e.txt"), None);
     }
 
@@ -601,12 +623,12 @@ mod tests {
     fn test_touch_refreshes_entry() {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("touch");
-        cache.put("/t.txt", b"data", Some("e1"));
+        cache.put("/t.txt", b"data", Some("e1"), 0);
 
         // Touch should succeed and entry should still be a hit
         cache.touch("/t.txt");
 
-        match cache.get("/t.txt") {
+        match cache.get("/t.txt", 0) {
             CacheLookup::Hit(entry) => assert_eq!(entry.content, b"data"),
             _ => panic!("Expected cache hit after touch"),
         }
@@ -621,10 +643,10 @@ mod tests {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("large");
         let big = vec![0u8; MAX_FILE_SIZE + 1];
-        cache.put("/big.bin", &big, Some("e1"));
+        cache.put("/big.bin", &big, Some("e1"), 0);
 
         // Should still be a miss — file was too large
-        assert!(matches!(cache.get("/big.bin"), CacheLookup::Miss));
+        assert!(matches!(cache.get("/big.bin", 0), CacheLookup::Miss));
     }
 
     // ──────────────────────────────────────────────────────
@@ -636,9 +658,9 @@ mod tests {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("maxsize");
         let data = vec![42u8; MAX_FILE_SIZE];
-        cache.put("/exact.bin", &data, Some("e1"));
+        cache.put("/exact.bin", &data, Some("e1"), 0);
 
-        match cache.get("/exact.bin") {
+        match cache.get("/exact.bin", 0) {
             CacheLookup::Hit(entry) => assert_eq!(entry.content.len(), MAX_FILE_SIZE),
             _ => panic!("Expected cache hit for file at exact max size"),
         }
@@ -658,12 +680,33 @@ mod tests {
         cache.invalidate("/stat-b.txt");
         let baseline = cache.stats();
 
-        cache.put("/stat-a.txt", b"aaa", Some("e1"));
-        cache.put("/stat-b.txt", b"bb", Some("e2"));
+        cache.put("/stat-a.txt", b"aaa", Some("e1"), 0);
+        cache.put("/stat-b.txt", b"bb", Some("e2"), 0);
 
         let stats = cache.stats();
         assert_eq!(stats.file_count, baseline.file_count + 2);
         assert_eq!(stats.total_size, baseline.total_size + 5); // 3 + 2
+    }
+
+    #[test]
+    fn test_generation_mismatch_invalidates_cache() {
+        let cache = test_cache("generation-mismatch");
+        cache.put("/gen.txt", b"v1", Some("e1"), 1);
+
+        assert!(matches!(cache.get("/gen.txt", 1), CacheLookup::Hit(_)));
+        assert!(matches!(cache.get("/gen.txt", 2), CacheLookup::Miss));
+        assert!(matches!(cache.get("/gen.txt", 2), CacheLookup::Miss));
+    }
+
+    #[test]
+    fn test_generation_stored_with_entry() {
+        let cache = test_cache("generation-stored");
+        cache.put("/gen.txt", b"v1", Some("e1"), 9);
+
+        match cache.get("/gen.txt", 9) {
+            CacheLookup::Hit(entry) => assert_eq!(entry.gen, 9),
+            other => panic!("expected hit, got {other:?}"),
+        }
     }
 
     // ──────────────────────────────────────────────────────
@@ -674,7 +717,7 @@ mod tests {
     fn test_stats_after_invalidation() {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("stats-inv");
-        cache.put("/x.txt", b"12345", None);
+        cache.put("/x.txt", b"12345", None, 0);
 
         let stats = cache.stats();
         assert_eq!(stats.file_count, 1);
@@ -695,16 +738,16 @@ mod tests {
     fn test_multiple_independent_paths() {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("multi");
-        cache.put("/a.txt", b"aaa", Some("ea"));
-        cache.put("/b.txt", b"bbb", Some("eb"));
-        cache.put("/c.txt", b"ccc", Some("ec"));
+        cache.put("/a.txt", b"aaa", Some("ea"), 0);
+        cache.put("/b.txt", b"bbb", Some("eb"), 0);
+        cache.put("/c.txt", b"ccc", Some("ec"), 0);
 
         // Invalidate only /b.txt
         cache.invalidate("/b.txt");
 
-        assert!(matches!(cache.get("/a.txt"), CacheLookup::Hit(_)));
-        assert!(matches!(cache.get("/b.txt"), CacheLookup::Miss));
-        assert!(matches!(cache.get("/c.txt"), CacheLookup::Hit(_)));
+        assert!(matches!(cache.get("/a.txt", 0), CacheLookup::Hit(_)));
+        assert!(matches!(cache.get("/b.txt", 0), CacheLookup::Miss));
+        assert!(matches!(cache.get("/c.txt", 0), CacheLookup::Hit(_)));
     }
 
     // ──────────────────────────────────────────────────────
@@ -715,9 +758,9 @@ mod tests {
     fn test_empty_content_cached() {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("empty");
-        cache.put("/empty.txt", b"", Some("e0"));
+        cache.put("/empty.txt", b"", Some("e0"), 0);
 
-        match cache.get("/empty.txt") {
+        match cache.get("/empty.txt", 0) {
             CacheLookup::Hit(entry) => {
                 assert!(entry.content.is_empty());
                 assert_eq!(entry.etag, Some("e0".to_string()));
@@ -735,9 +778,9 @@ mod tests {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("binary");
         let binary: Vec<u8> = (0..=255).collect();
-        cache.put("/bin.dat", &binary, Some("ebin"));
+        cache.put("/bin.dat", &binary, Some("ebin"), 0);
 
-        match cache.get("/bin.dat") {
+        match cache.get("/bin.dat", 0) {
             CacheLookup::Hit(entry) => assert_eq!(entry.content, binary),
             _ => panic!("Expected cache hit for binary content"),
         }
@@ -761,8 +804,8 @@ mod tests {
                 thread::spawn(move || {
                     let path = format!("/thread-{}.txt", i);
                     let content = format!("data-{}", i);
-                    cache.put(&path, content.as_bytes(), Some(&format!("e{}", i)));
-                    let _ = cache.get(&path);
+                    cache.put(&path, content.as_bytes(), Some(&format!("e{}", i)), 0);
+                    let _ = cache.get(&path, 0);
                     let _ = cache.stats();
                 })
             })
@@ -787,7 +830,7 @@ mod tests {
         let cache = test_cache("cleanup");
 
         // Insert an entry, then manually backdate it
-        cache.put("/old.txt", b"old-data", Some("e1"));
+        cache.put("/old.txt", b"old-data", Some("e1"), 0);
 
         {
             let conn = cache.conn.lock().unwrap();
@@ -800,13 +843,13 @@ mod tests {
         }
 
         // Insert a fresh entry
-        cache.put("/new.txt", b"new-data", Some("e2"));
+        cache.put("/new.txt", b"new-data", Some("e2"), 0);
 
         // Run cleanup — should remove the backdated entry
         cache.cleanup().unwrap();
 
-        assert!(matches!(cache.get("/old.txt"), CacheLookup::Miss));
-        assert!(matches!(cache.get("/new.txt"), CacheLookup::Hit(_)));
+        assert!(matches!(cache.get("/old.txt", 0), CacheLookup::Miss));
+        assert!(matches!(cache.get("/new.txt", 0), CacheLookup::Hit(_)));
     }
 
     // ──────────────────────────────────────────────────────
@@ -820,7 +863,7 @@ mod tests {
         // Should not panic or error
         cache.invalidate("/does-not-exist.txt");
         assert!(matches!(
-            cache.get("/does-not-exist.txt"),
+            cache.get("/does-not-exist.txt", 0),
             CacheLookup::Miss
         ));
     }

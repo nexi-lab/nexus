@@ -171,8 +171,7 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
         }
     }
 
-    buf.push(3); // version tag — v3 dropped backend_name/physical_path,
-                 // added last_writer_address as the trailing optional slot.
+    buf.push(4); // version tag - v4 appends gen:u64 after the v3 fields.
     write_str(&mut buf, &meta.path);
     buf.extend_from_slice(&meta.size.to_le_bytes());
     write_opt_str(&mut buf, &meta.content_id);
@@ -185,6 +184,7 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     write_opt_str(&mut buf, &meta.last_writer_address);
     write_opt_str(&mut buf, &meta.target_zone_id);
     write_opt_str(&mut buf, &meta.link_target);
+    buf.extend_from_slice(&meta.gen.to_le_bytes());
 
     buf
 }
@@ -193,14 +193,10 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
     if data.is_empty() {
         return Err(MetaStoreError::IOError("empty record".into()));
     }
-    // Only the current v3 format is recognised. Older v1/v2 records are
-    // intentionally not supported — the schema cleanup that introduced v3
-    // dropped backend_name and physical_path slots and added
-    // last_writer_address, so any pre-cleanup data is wipe-and-rebuild.
-    if data[0] != 3 {
+    let tag = data[0];
+    if tag != 3 && tag != 4 {
         return Err(MetaStoreError::IOError(format!(
-            "unsupported FileMetadata serialization tag {}; expected 3 (older formats no longer readable — data dir must be wiped post-schema-cleanup)",
-            data[0]
+            "unsupported FileMetadata serialization tag {tag}; expected 3 or 4"
         )));
     }
     let mut pos = 1usize;
@@ -281,13 +277,20 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
     let last_writer_address = read_opt_str(data, &mut pos).ok().flatten();
     let target_zone_id = read_opt_str(data, &mut pos).ok().flatten();
     let link_target = read_opt_str(data, &mut pos).ok().flatten();
-
-    let _ = pos;
+    let gen = if tag >= 4 {
+        if pos + 8 > data.len() {
+            return Err(MetaStoreError::IOError("truncated gen".into()));
+        }
+        u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap())
+    } else {
+        0
+    };
 
     Ok(FileMetadata {
         path,
         size,
         content_id,
+        gen,
         version,
         entry_type,
         zone_id,
@@ -759,6 +762,82 @@ impl MetaStore for LocalMetaStore {
 mod tests {
     use super::*;
 
+    #[test]
+    fn serialize_roundtrip_preserves_gen() {
+        let meta = FileMetadata {
+            path: "/gen.txt".to_string(),
+            size: 9,
+            content_id: Some("hash".to_string()),
+            version: 2,
+            entry_type: 0,
+            zone_id: Some("root".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            created_at_ms: Some(10),
+            modified_at_ms: Some(20),
+            last_writer_address: Some("nexus-1:2028".to_string()),
+            target_zone_id: None,
+            link_target: None,
+            gen: 42,
+        };
+
+        let restored = deserialize_metadata(&serialize_metadata(&meta)).unwrap();
+
+        assert_eq!(restored.gen, 42);
+        assert_eq!(restored.path, "/gen.txt");
+        assert_eq!(restored.content_id.as_deref(), Some("hash"));
+    }
+
+    #[test]
+    fn deserialize_v3_metadata_defaults_gen_to_zero() {
+        let meta = FileMetadata {
+            path: "/old.txt".to_string(),
+            size: 1,
+            content_id: Some("oldhash".to_string()),
+            version: 1,
+            entry_type: 0,
+            zone_id: None,
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: None,
+            target_zone_id: None,
+            link_target: None,
+            gen: 99,
+        };
+        let mut bytes = serialize_metadata(&meta);
+        bytes[0] = 3;
+        bytes.truncate(bytes.len() - 8);
+
+        let restored = deserialize_metadata(&bytes).unwrap();
+
+        assert_eq!(restored.gen, 0);
+    }
+
+    #[test]
+    fn deserialize_truncated_v4_generation_errors() {
+        let meta = FileMetadata {
+            path: "/truncated.txt".to_string(),
+            size: 1,
+            content_id: Some("hash".to_string()),
+            version: 1,
+            entry_type: 0,
+            zone_id: None,
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: None,
+            target_zone_id: None,
+            link_target: None,
+            gen: 7,
+        };
+        let mut bytes = serialize_metadata(&meta);
+        bytes.truncate(bytes.len() - 1);
+
+        let err = deserialize_metadata(&bytes).unwrap_err();
+
+        assert!(matches!(err, MetaStoreError::IOError(msg) if msg == "truncated gen"));
+    }
+
     /// Binary serialize↔deserialize round-trip covers both a DT_REG
     /// entry and a DT_MOUNT entry so entry_type survives intact.
     #[test]
@@ -768,6 +847,7 @@ mod tests {
                 path: "/test/file.txt".to_string(),
                 size: 1024,
                 content_id: Some("hash123".to_string()),
+                gen: 0,
                 version: 3,
                 entry_type: 0, // DT_REG
                 zone_id: Some("root".to_string()),
@@ -782,6 +862,7 @@ mod tests {
                 path: "/mnt/peer".to_string(),
                 size: 0,
                 content_id: None,
+                gen: 0,
                 version: 1,
                 entry_type: 2, // DT_MOUNT
                 zone_id: Some("zone-a".to_string()),
@@ -812,6 +893,7 @@ mod tests {
             path: path.to_string(),
             size: 0,
             content_id: None,
+            gen: 0,
             version,
             entry_type: 0,
             zone_id: None,
@@ -932,6 +1014,7 @@ mod tests {
             path: "/x".to_string(),
             size: 0,
             content_id: None,
+            gen: 0,
             version: 1,
             entry_type: 0,
             zone_id: None,

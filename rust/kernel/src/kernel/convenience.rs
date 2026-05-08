@@ -102,6 +102,7 @@ impl KernelConvenience for Kernel {
                                 entry_type: entry.entry_type,
                                 mode: if is_dir { 0o755 } else { 0o644 },
                                 version: entry.version,
+                                gen: entry.gen,
                                 zone_id: entry.zone_id.clone(),
                                 created_at_ms: entry.created_at_ms,
                                 modified_at_ms: entry.modified_at_ms,

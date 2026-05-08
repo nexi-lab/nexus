@@ -76,6 +76,7 @@ class FileEvent:
     # Identity & write-specific context
     user_id: str | None = None
     version: int | None = None  # write-specific: file version counter
+    gen: int | None = None  # write-specific: content generation counter
     is_new: bool = False  # write-specific: True if file was created (not overwritten)
     new_path: str | None = None  # rename-specific: destination path
     old_content_id: str | None = (
@@ -109,6 +110,8 @@ class FileEvent:
             result["user_id"] = self.user_id
         if self.version is not None:
             result["version"] = self.version
+        if self.gen is not None:
+            result["gen"] = self.gen
         if self.is_new:
             result["is_new"] = self.is_new
         if self.new_path is not None:
@@ -138,6 +141,7 @@ class FileEvent:
             sequence_number=data.get("sequence_number"),
             user_id=data.get("user_id"),
             version=data.get("version"),
+            gen=data.get("gen"),
             is_new=data.get("is_new", False),
             new_path=data.get("new_path"),
             old_content_id=data.get("old_content_id"),

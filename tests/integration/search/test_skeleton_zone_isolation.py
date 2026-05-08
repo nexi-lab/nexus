@@ -163,6 +163,66 @@ async def test_skeleton_indexer_stamps_zone_id_on_upsert() -> None:
 
 
 @pytest.mark.asyncio
+async def test_skeleton_db_upsert_binds_naive_indexed_at() -> None:
+    """document_skeleton.indexed_at is TIMESTAMP WITHOUT TIME ZONE."""
+
+    class _CaptureSession:
+        def __init__(self) -> None:
+            self.statements: list[Any] = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def execute(self, stmt):
+            self.statements.append(stmt)
+
+        async def commit(self) -> None:
+            pass
+
+    class _NoopBM25:
+        async def upsert_skeleton(self, *args, **kwargs) -> None:
+            pass
+
+        async def delete_skeleton(self, *args, **kwargs) -> None:
+            pass
+
+    class _FakeReader:
+        async def read_head(self, virtual_path, max_bytes) -> bytes:
+            return b"# header\n"
+
+    def _value_for_column(stmt, column_name: str) -> Any:
+        for column, bind in stmt._values.items():
+            if getattr(column, "name", None) == column_name:
+                return bind.value
+        raise AssertionError(f"{column_name} not bound in {stmt!r}")
+
+    session = _CaptureSession()
+
+    def _session_factory() -> _CaptureSession:
+        return session
+
+    indexer = SkeletonIndexer(
+        file_reader=_FakeReader(),
+        bm25=_NoopBM25(),
+        async_session_factory=_session_factory,
+    )
+
+    await indexer._upsert_db_row_pg(
+        path_id="pid-naive-ts",
+        zone_id="root",
+        title=None,
+        content_id="hash",
+    )
+
+    assert session.statements, "upsert did not execute"
+    indexed_at = _value_for_column(session.statements[0], "indexed_at")
+    assert indexed_at.tzinfo is None
+
+
+@pytest.mark.asyncio
 async def test_two_zone_full_pipeline_zone_isolation() -> None:
     """Full two-zone scenario: index files in both zones, verify query isolation.
 

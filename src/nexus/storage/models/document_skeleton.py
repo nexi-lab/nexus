@@ -25,6 +25,10 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base
 
 
+def _utcnow_naive() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
 class DocumentSkeletonModel(Base):
     """Global file skeleton index for lightweight path+title search.
 
@@ -56,8 +60,8 @@ class DocumentSkeletonModel(Base):
     indexed_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
+        default=_utcnow_naive,
+        onupdate=_utcnow_naive,
     )
 
     __table_args__ = (

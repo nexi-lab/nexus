@@ -1,4 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-changed=../../proto/nexus/grpc/vfs/vfs.proto");
+
     // Point tonic_build (→ prost-build) at the vendored protoc binary so the
     // crate builds without a system-wide protobuf-compiler. Respect an
     // externally-set PROTOC if the caller already chose one.

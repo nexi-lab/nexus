@@ -27,6 +27,7 @@ PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     "created_at": "created_at",
     "modified_at": "updated_at",
     "version": "current_version",
+    "gen": None,  # Rust/metastore generation, not persisted in FilePathModel
     "zone_id": "zone_id",
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # DT_MOUNT target, not in SQL
@@ -180,6 +181,7 @@ class TestRoundtripConsistency:
             "link_target",
             "ttl_seconds",
             "last_writer_address",
+            "gen",
         }
         assert none_mapped == expected, (
             f"Expected SQL-excluded fields {expected}, got {none_mapped}. "

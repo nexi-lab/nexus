@@ -80,6 +80,8 @@ class CompactFileMetadata:
     entry_type: int
     target_zone_id_intern: int
     last_writer_address_id: int
+    link_target_id: int
+    gen: int
 
     @classmethod
     def from_file_metadata(cls, m: FileMetadata) -> CompactFileMetadata:
@@ -97,6 +99,8 @@ class CompactFileMetadata:
             entry_type=m.entry_type,
             target_zone_id_intern=_intern(m.target_zone_id),
             last_writer_address_id=_intern(m.last_writer_address),
+            link_target_id=_intern(m.link_target),
+            gen=m.gen,
         )
 
     def to_file_metadata(self) -> FileMetadata:
@@ -116,6 +120,8 @@ class CompactFileMetadata:
             entry_type=self.entry_type,
             target_zone_id=_resolve(self.target_zone_id_intern),
             last_writer_address=_resolve(self.last_writer_address_id),
+            link_target=_resolve(self.link_target_id),
+            gen=self.gen,
         )
 
 

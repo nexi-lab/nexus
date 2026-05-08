@@ -440,6 +440,7 @@ class PySysReadResult:
     data: bytes | None
     post_hook_needed: bool
     content_id: str | None
+    gen: int
     entry_type: int
     stream_next_offset: int | None
 
@@ -448,6 +449,7 @@ class PySysWriteResult:
     content_id: str | None
     post_hook_needed: bool
     version: int
+    gen: int
     size: int
     is_new: bool
     old_content_id: str | None

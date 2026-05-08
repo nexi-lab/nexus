@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use kernel::abc::object_store::{ExternalTransport, ObjectStore, StorageError, WriteResult};
 use kernel::kernel::OperationContext;
 use sha2::{Digest, Sha256};

@@ -70,7 +70,7 @@ class DatabaseLocalAuth(LocalAuth):
         with self.session_factory() as session, session.begin():
             validate_user_uniqueness(session, email=email, username=username)
 
-            password_bytes = password.encode("utf-8")
+            password_bytes = self._bcrypt_password_bytes(password)
             salt = bcrypt_lib.gensalt(rounds=12)
             password_hash = bcrypt_lib.hashpw(password_bytes, salt).decode("utf-8")
 
@@ -140,7 +140,7 @@ class DatabaseLocalAuth(LocalAuth):
                 logger.debug("Login failed: no password set (%s)", identifier)
                 return None
 
-            password_bytes = password.encode("utf-8")
+            password_bytes = self._bcrypt_password_bytes(password)
             stored_hash = user.password_hash.encode("utf-8")
             if not bcrypt_lib.checkpw(password_bytes, stored_hash):
                 logger.debug("Login failed: invalid password (%s)", identifier)
@@ -204,7 +204,7 @@ class DatabaseLocalAuth(LocalAuth):
             if not bcrypt_lib.checkpw(password_bytes, stored_hash):
                 raise ValueError("Incorrect current password")
 
-            new_password_bytes = new_password.encode("utf-8")
+            new_password_bytes = self._bcrypt_password_bytes(new_password)
             salt = bcrypt_lib.gensalt(rounds=12)
             new_password_hash = bcrypt_lib.hashpw(new_password_bytes, salt).decode("utf-8")
 

@@ -4,10 +4,10 @@ use crate::cache::{CacheLookup, FileCache};
 use crate::client::{FileEntry, NexusClient, ReadResponse};
 use crate::metrics;
 use fuser::{
-    FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyWrite,
-    ReplyXattr, Request, FUSE_ROOT_ID,
+    AccessFlags, BsdFileFlags, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
+    Generation, INodeNo, LockOwner, OpenFlags, RenameFlags, ReplyAttr, ReplyData, ReplyDirectory,
+    ReplyEntry, ReplyWrite, ReplyXattr, Request, WriteFlags,
 };
-use libc::{EIO, EISDIR, ENODATA, ENOENT, ENOTDIR, ENOTEMPTY, ERANGE, EROFS};
 use log::{debug, error};
 use lru::LruCache;
 use std::ffi::OsStr;
@@ -20,6 +20,8 @@ const ATTR_TTL: Duration = Duration::from_secs(30);
 
 /// Default block size.
 const BLOCK_SIZE: u32 = 512;
+
+const FUSE_ROOT_ID: u64 = INodeNo::ROOT.0;
 
 /// Maximum number of inode entries to keep in the LRU maps.
 /// Prevents unbounded memory growth (Issue #1569 / 1A).
@@ -227,7 +229,7 @@ macro_rules! resolve_path {
         match $self.inodes.lock().unwrap().get_path($inode) {
             Some(p) => p,
             None => {
-                $reply.error(ENOENT);
+                $reply.error(Errno::ENOENT);
                 return;
             }
         }
@@ -314,7 +316,7 @@ impl NexusFs {
         };
 
         FileAttr {
-            ino: inode,
+            ino: INodeNo(inode),
             size,
             blocks: size.div_ceil(BLOCK_SIZE as u64),
             atime,
@@ -361,7 +363,7 @@ impl NexusFs {
     }
 
     /// Get attributes for a path, using cache.
-    fn get_attr(&self, inode: u64, path: &str) -> Result<FileAttr, i32> {
+    fn get_attr(&self, inode: u64, path: &str) -> Result<FileAttr, Errno> {
         // Check cache first
         {
             let mut cache = self.attr_cache.lock().unwrap();
@@ -401,10 +403,10 @@ impl NexusFs {
             }
             Err(e) => {
                 if e.is_not_found() {
-                    Err(ENOENT)
+                    Err(Errno::ENOENT)
                 } else {
                     error!("get_attr error for {}: {}", path, e);
-                    Err(EIO)
+                    Err(Errno::EIO)
                 }
             }
         }
@@ -433,19 +435,19 @@ impl NexusFs {
         if size == 0 {
             reply.size(value.len() as u32);
         } else if value.len() > size as usize {
-            reply.error(ERANGE);
+            reply.error(Errno::ERANGE);
         } else {
             reply.data(value);
         }
     }
 
-    fn stat_gen(&self, path: &str) -> Result<u64, i32> {
+    fn stat_gen(&self, path: &str) -> Result<u64, Errno> {
         self.client.stat(path).map(|meta| meta.gen).map_err(|e| {
             if e.is_not_found() {
-                ENOENT
+                Errno::ENOENT
             } else {
                 error!("stat error for {}: {}", path, e);
-                EIO
+                Errno::EIO
             }
         })
     }
@@ -501,12 +503,7 @@ impl NexusFs {
         fh
     }
 
-    fn reply_data_slice(content: &[u8], offset: i64, size: u32, reply: ReplyData) {
-        if offset < 0 {
-            reply.error(EIO);
-            return;
-        }
-
+    fn reply_data_slice(content: &[u8], offset: u64, size: u32, reply: ReplyData) {
         let offset = offset as usize;
         if offset >= content.len() {
             reply.data(&[]);
@@ -516,11 +513,7 @@ impl NexusFs {
         }
     }
 
-    fn slice_len(content: &[u8], offset: i64, size: u32) -> usize {
-        if offset < 0 {
-            return 0;
-        }
-
+    fn slice_len(content: &[u8], offset: u64, size: u32) -> usize {
         let offset = offset as usize;
         if offset >= content.len() {
             0
@@ -629,52 +622,52 @@ impl NexusFs {
 }
 
 impl Filesystem for NexusFs {
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         let name = name.to_string_lossy();
         debug!("lookup: parent={}, name={}", parent, name);
 
-        let parent_path = resolve_path!(self, parent, reply);
+        let parent_path = resolve_path!(self, parent.0, reply);
 
         let path = Self::join_path(&parent_path, &name);
         let inode = self.inodes.lock().unwrap().get_or_create(&path);
 
         match self.get_attr(inode, &path) {
-            Ok(attr) => reply.entry(&ATTR_TTL, &attr, 0),
+            Ok(attr) => reply.entry(&ATTR_TTL, &attr, Generation(0)),
             Err(e) => reply.error(e),
         }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+    fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
         debug!("getattr: ino={}", ino);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
 
-        match self.get_attr(ino, &path) {
+        match self.get_attr(ino.0, &path) {
             Ok(attr) => reply.attr(&ATTR_TTL, &attr),
             Err(e) => reply.error(e),
         }
     }
 
     fn readdir(
-        &mut self,
+        &self,
         _req: &Request,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
         mut reply: ReplyDirectory,
     ) {
         debug!("readdir: ino={}, offset={}", ino, offset);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
 
         // Check directory cache - use Option to distinguish cache miss from empty directory
         let cached_entries: Option<Vec<FileEntry>> = {
             let mut cache = self.dir_cache.lock().unwrap();
-            if let Some((entries, cached_at)) = cache.get(&ino) {
+            if let Some((entries, cached_at)) = cache.get(&ino.0) {
                 if cached_at.elapsed().unwrap_or(Duration::MAX) < ATTR_TTL {
                     Some(entries.clone()) // Cache hit (may be empty dir)
                 } else {
-                    cache.pop(&ino);
+                    cache.pop(&ino.0);
                     None // Cache expired
                 }
             } else {
@@ -690,15 +683,15 @@ impl Filesystem for NexusFs {
                     Ok(entries) => {
                         // Cache the result
                         let mut cache = self.dir_cache.lock().unwrap();
-                        cache.put(ino, (entries.clone(), SystemTime::now()));
+                        cache.put(ino.0, (entries.clone(), SystemTime::now()));
                         entries
                     }
                     Err(e) => {
                         if e.is_not_found() {
-                            reply.error(ENOENT);
+                            reply.error(Errno::ENOENT);
                         } else {
                             error!("readdir error for {}: {}", path, e);
-                            reply.error(EIO);
+                            reply.error(Errno::EIO);
                         }
                         return;
                     }
@@ -708,8 +701,8 @@ impl Filesystem for NexusFs {
 
         // Build entries with . and ..
         let mut all_entries: Vec<(u64, FileType, String)> = vec![
-            (ino, FileType::Directory, ".".to_string()),
-            (ino, FileType::Directory, "..".to_string()),
+            (ino.0, FileType::Directory, ".".to_string()),
+            (ino.0, FileType::Directory, "..".to_string()),
         ];
 
         // Phase 1: Acquire inodes lock once, resolve all child inodes, release.
@@ -768,7 +761,7 @@ impl Filesystem for NexusFs {
 
         // Return entries starting from offset
         for (i, (inode, kind, name)) in all_entries.iter().enumerate().skip(offset as usize) {
-            if reply.add(*inode, (i + 1) as i64, *kind, name) {
+            if reply.add(INodeNo(*inode), (i + 1) as u64, *kind, name) {
                 break;
             }
         }
@@ -777,26 +770,26 @@ impl Filesystem for NexusFs {
     }
 
     fn read(
-        &mut self,
+        &self,
         _req: &Request,
-        ino: u64,
-        fh: u64,
-        offset: i64,
+        ino: INodeNo,
+        fh: FileHandle,
+        offset: u64,
         size: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
         debug!("read: ino={}, offset={}, size={}", ino, offset, size);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
         let gen = self.client.stat(&path).map(|m| m.gen).unwrap_or(0);
 
         let started_at = std::time::Instant::now();
 
-        if fh != 0 {
+        if fh.0 != 0 {
             let mut open_cache = self.open_file_cache.lock().unwrap();
-            if let Some(entry) = open_cache.get(&fh) {
+            if let Some(entry) = open_cache.get(&fh.0) {
                 if entry.path == path {
                     let slice_len = Self::slice_len(&entry.content, offset, size);
                     metrics::record_read("cache", slice_len, started_at.elapsed());
@@ -814,10 +807,10 @@ impl Filesystem for NexusFs {
                 if e.downcast_ref::<crate::error::NexusClientError>()
                     .map_or(false, |ne| ne.is_not_found())
                 {
-                    reply.error(ENOENT);
+                    reply.error(Errno::ENOENT);
                 } else {
                     error!("read error for {}: {}", path, e);
-                    reply.error(EIO);
+                    reply.error(Errno::EIO);
                 }
                 return;
             }
@@ -829,17 +822,17 @@ impl Filesystem for NexusFs {
             tier,
         } = read_result;
 
-        if fh != 0 && content.len() <= MAX_OPEN_FILE_CACHE_BYTES {
+        if fh.0 != 0 && content.len() <= MAX_OPEN_FILE_CACHE_BYTES {
             let mut open_cache = self.open_file_cache.lock().unwrap();
-            open_cache.put(fh, path, content);
-            if let Some(entry) = open_cache.get(&fh) {
+            open_cache.put(fh.0, path, content);
+            if let Some(entry) = open_cache.get(&fh.0) {
                 let slice_len = Self::slice_len(&entry.content, offset, size);
                 metrics::record_read(tier, slice_len, started_at.elapsed());
                 Self::reply_data_slice(&entry.content, offset, size, reply);
                 return;
             }
             metrics::record_read("error", 0, started_at.elapsed());
-            reply.error(EIO);
+            reply.error(Errno::EIO);
             return;
         }
 
@@ -849,20 +842,20 @@ impl Filesystem for NexusFs {
     }
 
     fn write(
-        &mut self,
+        &self,
         _req: &Request,
-        ino: u64,
-        fh: u64,
-        offset: i64,
+        ino: INodeNo,
+        fh: FileHandle,
+        offset: u64,
         data: &[u8],
-        _write_flags: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _write_flags: WriteFlags,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         reply: ReplyWrite,
     ) {
         debug!("write: ino={}, offset={}, size={}", ino, offset, data.len());
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
 
         // For simplicity, we only support full file writes (offset 0)
         // For partial writes, we'd need to read-modify-write
@@ -873,7 +866,7 @@ impl Filesystem for NexusFs {
                 Ok(result) => result.content,
                 Err(e) => {
                     error!("partial write: read failed for {}: {}", path, e);
-                    reply.error(EIO);
+                    reply.error(Errno::EIO);
                     return;
                 }
             };
@@ -895,39 +888,39 @@ impl Filesystem for NexusFs {
             match self.client.write(&path, &new_content) {
                 Ok(_) => {
                     metrics::record_write_backend_rpc();
-                    if fh != 0 {
-                        self.open_file_cache.lock().unwrap().remove(fh);
+                    if fh.0 != 0 {
+                        self.open_file_cache.lock().unwrap().remove(fh.0);
                     }
                     self.invalidate_path(&path);
                     reply.written(data.len() as u32);
                 }
                 Err(e) => {
                     error!("write error for {}: {}", path, e);
-                    reply.error(EIO);
+                    reply.error(Errno::EIO);
                 }
             }
         } else {
             match self.client.write(&path, data) {
                 Ok(_) => {
                     metrics::record_write_backend_rpc();
-                    if fh != 0 {
-                        self.open_file_cache.lock().unwrap().remove(fh);
+                    if fh.0 != 0 {
+                        self.open_file_cache.lock().unwrap().remove(fh.0);
                     }
                     self.invalidate_path(&path);
                     reply.written(data.len() as u32);
                 }
                 Err(e) => {
                     error!("write error for {}: {}", path, e);
-                    reply.error(EIO);
+                    reply.error(Errno::EIO);
                 }
             }
         }
     }
 
     fn create(
-        &mut self,
+        &self,
         _req: &Request,
-        parent: u64,
+        parent: INodeNo,
         name: &OsStr,
         _mode: u32,
         _umask: u32,
@@ -937,7 +930,7 @@ impl Filesystem for NexusFs {
         let name = name.to_string_lossy();
         debug!("create: parent={}, name={}", parent, name);
 
-        let parent_path = resolve_path!(self, parent, reply);
+        let parent_path = resolve_path!(self, parent.0, reply);
 
         let path = Self::join_path(&parent_path, &name);
 
@@ -949,19 +942,25 @@ impl Filesystem for NexusFs {
                 self.invalidate_path(&path);
 
                 let attr = self.make_attr(inode, "file", 0, None, None);
-                reply.created(&ATTR_TTL, &attr, 0, 0, 0);
+                reply.created(
+                    &ATTR_TTL,
+                    &attr,
+                    Generation(0),
+                    FileHandle(0),
+                    FopenFlags::empty(),
+                );
             }
             Err(e) => {
                 error!("create error for {}: {}", path, e);
-                reply.error(EIO);
+                reply.error(Errno::EIO);
             }
         }
     }
 
     fn mkdir(
-        &mut self,
+        &self,
         _req: &Request,
-        parent: u64,
+        parent: INodeNo,
         name: &OsStr,
         _mode: u32,
         _umask: u32,
@@ -970,7 +969,7 @@ impl Filesystem for NexusFs {
         let name = name.to_string_lossy();
         debug!("mkdir: parent={}, name={}", parent, name);
 
-        let parent_path = resolve_path!(self, parent, reply);
+        let parent_path = resolve_path!(self, parent.0, reply);
 
         let path = Self::join_path(&parent_path, &name);
 
@@ -980,20 +979,20 @@ impl Filesystem for NexusFs {
                 self.invalidate_path(&path);
 
                 let attr = self.make_attr(inode, "directory", 0, None, None);
-                reply.entry(&ATTR_TTL, &attr, 0);
+                reply.entry(&ATTR_TTL, &attr, Generation(0));
             }
             Err(e) => {
                 error!("mkdir error for {}: {}", path, e);
-                reply.error(EIO);
+                reply.error(Errno::EIO);
             }
         }
     }
 
-    fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
+    fn unlink(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: fuser::ReplyEmpty) {
         let name = name.to_string_lossy();
         debug!("unlink: parent={}, name={}", parent, name);
 
-        let parent_path = resolve_path!(self, parent, reply);
+        let parent_path = resolve_path!(self, parent.0, reply);
 
         let path = Self::join_path(&parent_path, &name);
 
@@ -1004,35 +1003,35 @@ impl Filesystem for NexusFs {
             }
             Err(e) => {
                 if e.is_not_found() {
-                    reply.error(ENOENT);
+                    reply.error(Errno::ENOENT);
                 } else {
                     error!("unlink error for {}: {}", path, e);
-                    reply.error(EIO);
+                    reply.error(Errno::EIO);
                 }
             }
         }
     }
 
-    fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
+    fn rmdir(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: fuser::ReplyEmpty) {
         let name = name.to_string_lossy();
         debug!("rmdir: parent={}, name={}", parent, name);
 
-        let parent_path = resolve_path!(self, parent, reply);
+        let parent_path = resolve_path!(self, parent.0, reply);
 
         let path = Self::join_path(&parent_path, &name);
 
         // Check if directory is empty
         match self.client.list(&path) {
             Ok(entries) if !entries.is_empty() => {
-                reply.error(ENOTEMPTY);
+                reply.error(Errno::ENOTEMPTY);
                 return;
             }
             Err(e) => {
                 if e.is_not_found() {
-                    reply.error(ENOENT);
+                    reply.error(Errno::ENOENT);
                 } else {
                     error!("rmdir list error for {}: {}", path, e);
-                    reply.error(EIO);
+                    reply.error(Errno::EIO);
                 }
                 return;
             }
@@ -1046,19 +1045,19 @@ impl Filesystem for NexusFs {
             }
             Err(e) => {
                 error!("rmdir error for {}: {}", path, e);
-                reply.error(EIO);
+                reply.error(Errno::EIO);
             }
         }
     }
 
     fn rename(
-        &mut self,
+        &self,
         _req: &Request,
-        parent: u64,
+        parent: INodeNo,
         name: &OsStr,
-        newparent: u64,
+        newparent: INodeNo,
         newname: &OsStr,
-        flags: u32,
+        flags: RenameFlags,
         reply: fuser::ReplyEmpty,
     ) {
         let name = name.to_string_lossy();
@@ -1068,8 +1067,8 @@ impl Filesystem for NexusFs {
             parent, name, newparent, newname, flags
         );
 
-        let parent_path = resolve_path!(self, parent, reply);
-        let new_parent_path = resolve_path!(self, newparent, reply);
+        let parent_path = resolve_path!(self, parent.0, reply);
+        let new_parent_path = resolve_path!(self, newparent.0, reply);
 
         let old_path = Self::join_path(&parent_path, &name);
         let new_path = Self::join_path(&new_parent_path, &newname);
@@ -1079,7 +1078,7 @@ impl Filesystem for NexusFs {
         // The server's rename() implements atomic replace when destination exists.
         // Only log if RENAME_NOREPLACE (flag bit 0) is set — the server should
         // handle this, but we note it for debugging.
-        if flags & 1 != 0 {
+        if flags.bits() & 1 != 0 {
             debug!(
                 "rename: RENAME_NOREPLACE flag set for {} -> {}",
                 old_path, new_path
@@ -1099,19 +1098,19 @@ impl Filesystem for NexusFs {
             }
             Err(e) => {
                 if e.is_not_found() {
-                    reply.error(ENOENT);
+                    reply.error(Errno::ENOENT);
                 } else {
                     error!("rename error: {} -> {}: {}", old_path, new_path, e);
-                    reply.error(EIO);
+                    reply.error(Errno::EIO);
                 }
             }
         }
     }
 
     fn setattr(
-        &mut self,
+        &self,
         _req: &Request,
-        ino: u64,
+        ino: INodeNo,
         _mode: Option<u32>,
         _uid: Option<u32>,
         _gid: Option<u32>,
@@ -1119,16 +1118,16 @@ impl Filesystem for NexusFs {
         _atime: Option<fuser::TimeOrNow>,
         _mtime: Option<fuser::TimeOrNow>,
         _ctime: Option<SystemTime>,
-        fh: Option<u64>,
+        fh: Option<FileHandle>,
         _crtime: Option<SystemTime>,
         _chgtime: Option<SystemTime>,
         _bkuptime: Option<SystemTime>,
-        _flags: Option<u32>,
+        _flags: Option<BsdFileFlags>,
         reply: ReplyAttr,
     ) {
         debug!("setattr: ino={}, size={:?}", ino, size);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
 
         // Handle truncate
         if let Some(new_size) = size {
@@ -1138,13 +1137,13 @@ impl Filesystem for NexusFs {
                     Ok(_) => {
                         metrics::record_write_backend_rpc();
                         if let Some(fh) = fh {
-                            self.open_file_cache.lock().unwrap().remove(fh);
+                            self.open_file_cache.lock().unwrap().remove(fh.0);
                         }
                         self.invalidate_path(&path);
                     }
                     Err(e) => {
                         error!("truncate error for {}: {}", path, e);
-                        reply.error(EIO);
+                        reply.error(Errno::EIO);
                         return;
                     }
                 }
@@ -1159,20 +1158,20 @@ impl Filesystem for NexusFs {
                             Ok(_) => {
                                 metrics::record_write_backend_rpc();
                                 if let Some(fh) = fh {
-                                    self.open_file_cache.lock().unwrap().remove(fh);
+                                    self.open_file_cache.lock().unwrap().remove(fh.0);
                                 }
                                 self.invalidate_path(&path);
                             }
                             Err(e) => {
                                 error!("truncate write error for {}: {}", path, e);
-                                reply.error(EIO);
+                                reply.error(Errno::EIO);
                                 return;
                             }
                         }
                     }
                     Err(e) => {
                         error!("truncate read error for {}: {}", path, e);
-                        reply.error(EIO);
+                        reply.error(Errno::EIO);
                         return;
                     }
                 }
@@ -1180,18 +1179,18 @@ impl Filesystem for NexusFs {
         }
 
         // Return updated attributes
-        match self.get_attr(ino, &path) {
+        match self.get_attr(ino.0, &path) {
             Ok(attr) => reply.attr(&ATTR_TTL, &attr),
             Err(e) => reply.error(e),
         }
     }
 
-    fn getxattr(&mut self, _req: &Request, ino: u64, name: &OsStr, size: u32, reply: ReplyXattr) {
+    fn getxattr(&self, _req: &Request, ino: INodeNo, name: &OsStr, size: u32, reply: ReplyXattr) {
         debug!("getxattr: ino={}, name={:?}, size={}", ino, name, size);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
         if name != OsStr::new(XATTR_GEN) {
-            reply.error(ENODATA);
+            reply.error(Errno::NO_XATTR);
             return;
         }
 
@@ -1204,10 +1203,10 @@ impl Filesystem for NexusFs {
         }
     }
 
-    fn listxattr(&mut self, _req: &Request, ino: u64, size: u32, reply: ReplyXattr) {
+    fn listxattr(&self, _req: &Request, ino: INodeNo, size: u32, reply: ReplyXattr) {
         debug!("listxattr: ino={}, size={}", ino, size);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
         match self.client.stat(&path) {
             Ok(_) => {
                 let names = Self::generation_xattr_name_list();
@@ -1215,19 +1214,19 @@ impl Filesystem for NexusFs {
             }
             Err(e) => {
                 if e.is_not_found() {
-                    reply.error(ENOENT);
+                    reply.error(Errno::ENOENT);
                 } else {
                     error!("listxattr stat error for {}: {}", path, e);
-                    reply.error(EIO);
+                    reply.error(Errno::EIO);
                 }
             }
         }
     }
 
     fn setxattr(
-        &mut self,
+        &self,
         _req: &Request,
-        ino: u64,
+        ino: INodeNo,
         name: &OsStr,
         _value: &[u8],
         _flags: i32,
@@ -1236,51 +1235,51 @@ impl Filesystem for NexusFs {
     ) {
         debug!("setxattr: ino={}, name={:?}", ino, name);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
         match self.client.stat(&path) {
-            Ok(_) if name == OsStr::new(XATTR_GEN) => reply.error(EROFS),
-            Ok(_) => reply.error(ENODATA),
+            Ok(_) if name == OsStr::new(XATTR_GEN) => reply.error(Errno::EROFS),
+            Ok(_) => reply.error(Errno::NO_XATTR),
             Err(e) => {
                 if e.is_not_found() {
-                    reply.error(ENOENT);
+                    reply.error(Errno::ENOENT);
                 } else {
                     error!("setxattr stat error for {}: {}", path, e);
-                    reply.error(EIO);
+                    reply.error(Errno::EIO);
                 }
             }
         }
     }
 
-    fn open(&mut self, _req: &Request, ino: u64, _flags: i32, reply: fuser::ReplyOpen) {
+    fn open(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: fuser::ReplyOpen) {
         debug!("open: ino={}", ino);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
 
         // Issue 13A: Use stat() via check_is_directory() instead of the old
         // is_directory() which listed the entire parent directory.
         match self.check_is_directory(&path) {
             Some(true) => {
-                reply.error(EISDIR);
+                reply.error(Errno::EISDIR);
             }
             Some(false) => {
                 let fh = self.allocate_file_handle();
-                reply.opened(fh, 0);
+                reply.opened(FileHandle(fh), FopenFlags::empty());
             }
             None => {
                 // Path doesn't exist
-                reply.error(ENOENT);
+                reply.error(Errno::ENOENT);
             }
         }
     }
 
-    fn opendir(&mut self, _req: &Request, ino: u64, _flags: i32, reply: fuser::ReplyOpen) {
+    fn opendir(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: fuser::ReplyOpen) {
         debug!("opendir: ino={}", ino);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
 
         // Root always exists and is a directory
         if path == "/" {
-            reply.opened(0, 0);
+            reply.opened(FileHandle(0), FopenFlags::empty());
             return;
         }
 
@@ -1288,64 +1287,64 @@ impl Filesystem for NexusFs {
         // is_directory() which listed the entire parent directory.
         match self.check_is_directory(&path) {
             Some(true) => {
-                reply.opened(0, 0);
+                reply.opened(FileHandle(0), FopenFlags::empty());
             }
             Some(false) => {
-                reply.error(ENOTDIR);
+                reply.error(Errno::ENOTDIR);
             }
             None => {
-                reply.error(ENOENT);
+                reply.error(Errno::ENOENT);
             }
         }
     }
 
     fn flush(
-        &mut self,
+        &self,
         _req: &Request,
-        _ino: u64,
-        _fh: u64,
-        _lock_owner: u64,
+        _ino: INodeNo,
+        _fh: FileHandle,
+        _lock_owner: LockOwner,
         reply: fuser::ReplyEmpty,
     ) {
         reply.ok();
     }
 
     fn release(
-        &mut self,
+        &self,
         _req: &Request,
-        _ino: u64,
-        fh: u64,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _ino: INodeNo,
+        fh: FileHandle,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         _flush: bool,
         reply: fuser::ReplyEmpty,
     ) {
-        if fh != 0 {
-            self.open_file_cache.lock().unwrap().remove(fh);
+        if fh.0 != 0 {
+            self.open_file_cache.lock().unwrap().remove(fh.0);
         }
         reply.ok();
     }
 
     fn releasedir(
-        &mut self,
+        &self,
         _req: &Request,
-        _ino: u64,
-        _fh: u64,
-        _flags: i32,
+        _ino: INodeNo,
+        _fh: FileHandle,
+        _flags: OpenFlags,
         reply: fuser::ReplyEmpty,
     ) {
         reply.ok();
     }
 
-    fn access(&mut self, _req: &Request, ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
+    fn access(&self, _req: &Request, ino: INodeNo, _mask: AccessFlags, reply: fuser::ReplyEmpty) {
         debug!("access: ino={}", ino);
 
-        let path = resolve_path!(self, ino, reply);
+        let path = resolve_path!(self, ino.0, reply);
 
         if self.client.exists(&path) {
             reply.ok();
         } else {
-            reply.error(ENOENT);
+            reply.error(Errno::ENOENT);
         }
     }
 }

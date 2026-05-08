@@ -1,10 +1,10 @@
 #![allow(clippy::result_large_err)]
-//! Embedded key-value storage using redb 2.x.
+//! Embedded key-value storage using redb.
 //!
 //! Pure Rust embedded database with typed tables, ACID transactions,
 //! and a reliable on-disk format. Sole MetaStore KV driver for Nexus.
 //!
-//! - Stable: redb 2.x has a committed on-disk format
+//! - Stable: redb has a committed on-disk format
 //! - ACID: Full MVCC transactions with crash safety
 //! - Pure Rust: No C++ dependencies
 //! - Typed: Compile-time type safety for table definitions
@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
 
-use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 
 /// Global deduplication map for leaked table name strings.
 ///

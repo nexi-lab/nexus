@@ -12,6 +12,8 @@ from nexus.bricks.auth.providers.base import AuthProvider, AuthResult
 
 logger = logging.getLogger(__name__)
 
+_BCRYPT_MAX_PASSWORD_BYTES = 72
+
 
 class LocalAuth(AuthProvider):
     """Local username/password authentication with JWT tokens.
@@ -44,6 +46,11 @@ class LocalAuth(AuthProvider):
             )
         logger.info("Initialized LocalAuth with %d users", len(self.users))
 
+    @staticmethod
+    def _bcrypt_password_bytes(password: str) -> bytes:
+        # bcrypt 5 raises on >72 bytes; older bcrypt truncated to this limit.
+        return password.encode("utf-8")[:_BCRYPT_MAX_PASSWORD_BYTES]
+
     def create_user(
         self,
         email: str,
@@ -66,7 +73,7 @@ class LocalAuth(AuthProvider):
         if email in self.users:
             raise ValueError(f"User {email} already exists")
 
-        password_bytes = password.encode("utf-8")
+        password_bytes = self._bcrypt_password_bytes(password)
         salt = bcrypt_lib.gensalt()
         password_hash = bcrypt_lib.hashpw(password_bytes, salt).decode("utf-8")
 
@@ -97,7 +104,7 @@ class LocalAuth(AuthProvider):
         if not user:
             return None
 
-        password_bytes = password.encode("utf-8")
+        password_bytes = self._bcrypt_password_bytes(password)
         stored_hash = user["password_hash"].encode("utf-8")
         if not bcrypt_lib.checkpw(password_bytes, stored_hash):
             return None

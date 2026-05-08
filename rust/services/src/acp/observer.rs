@@ -136,13 +136,11 @@ impl AgentObserver {
                 s.num_turns += 1;
                 s.tool_calls.push(update.clone());
             }
-            "user_message_chunk" => {
+            "user_message_chunk" if s.prompt_active => {
                 // History replay during an active prompt — drop the
                 // accumulated model text so only the post-replay
                 // response survives. Mirror of Python observer.
-                if s.prompt_active {
-                    s.accumulated_text.clear();
-                }
+                s.accumulated_text.clear();
             }
             _ => {}
         }

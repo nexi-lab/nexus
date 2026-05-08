@@ -322,7 +322,7 @@ impl TofuTrustStore {
 
 #[cfg(feature = "python")]
 /// Read-only view of a trusted zone entry exposed to Python.
-#[pyclass(get_all)]
+#[pyclass(get_all, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTrustedZone {
     pub zone_id: String,

@@ -4,7 +4,7 @@
 //! fast startup time (<100ms vs ~10s for Python version).
 
 use clap::{Parser, Subcommand};
-use fuser::MountOption;
+use fuser::{Config, MountOption, SessionACL};
 use log::{error, info};
 use nexus_fuse::{cache, client, daemon, fs, metrics};
 use std::path::PathBuf;
@@ -184,15 +184,17 @@ fn main() -> anyhow::Result<()> {
             let filesystem = fs::NexusFs::new(client, file_cache);
 
             // Build mount options
-            let mut options = vec![
+            let mut options = Config::default();
+            options.mount_options = vec![
                 MountOption::FSName("nexus".to_string()),
                 MountOption::AutoUnmount,
                 MountOption::DefaultPermissions,
             ];
-
-            if allow_other {
-                options.push(MountOption::AllowOther);
-            }
+            options.acl = if allow_other {
+                SessionACL::All
+            } else {
+                SessionACL::RootAndOwner
+            };
 
             // Mount
             info!("Mounting filesystem...");

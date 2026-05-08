@@ -28,11 +28,11 @@ use std::sync::Arc;
 /// Minimum content size to trigger CDC chunking (16 MiB).
 pub(crate) const CDC_THRESHOLD_BYTES: usize = 16 * 1024 * 1024;
 /// FastCDC minimum chunk size (256 KiB).
-const CDC_MIN_CHUNK_SIZE: u32 = 256 * 1024;
+const CDC_MIN_CHUNK_SIZE: usize = 256 * 1024;
 /// FastCDC average chunk size target (1 MiB).
-const CDC_AVG_CHUNK_SIZE: u32 = 1024 * 1024;
+const CDC_AVG_CHUNK_SIZE: usize = 1024 * 1024;
 /// FastCDC maximum chunk size (4 MiB).
-const CDC_MAX_CHUNK_SIZE: u32 = 4 * 1024 * 1024;
+const CDC_MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // ChunkAssembler trait

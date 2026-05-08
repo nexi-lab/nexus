@@ -30,7 +30,7 @@ lib = { workspace = true, features = ["transport"] }
 # unifies pyo3 features at link time, so all transitive users see the
 # cdylib-correct linkage. rlibs must NOT enable it themselves (would
 # break `cargo test` on the rlib alone, and pollutes other consumers).
-pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ahash = { workspace = true }
@@ -49,20 +49,21 @@ memmap2 = "0.9.9"
 tempfile = "3"
 dashmap = "6.1"
 parking_lot = "0.12"
-redb = "2"
+redb = "4"
 uuid = { version = "1", features = ["v4"] }
-lru = "0.16"
+lru = "0.18"
 simdutf8 = "0.1"
 simsimd = "6"
 crc32fast = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
+tonic-prost = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros", "process", "io-util"] }
 futures = "0.3"
 tracing = "0.1"
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false, optional = true }
-hmac = { version = "0.12", optional = true }
-sha2 = { version = "0.10", optional = true }
+reqwest = { version = "0.13", features = ["json", "stream", "rustls"], default-features = false, optional = true }
+hmac = { version = "0.13", optional = true }
+sha2 = { version = "0.11", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 base64 = "0.22"
@@ -83,15 +84,15 @@ python = ["dep:pyo3", "lib/python"]
 py-hook-adapters = ["python"]
 
 [build-dependencies]
-tonic-build = "0.13"
+tonic-prost-build = "0.14"
 # Vendored protoc binary so kernel build works on any host without a
 # system-wide protobuf-compiler install. Tier-1 platforms (linux/macos/windows
 # × x86_64/aarch64) all covered by the pre-compiled binary the crate ships.
 protoc-bin-vendored = "3"
 
 [dev-dependencies]
-criterion = "0.5"
-rcgen = { version = "0.13", features = ["pem", "x509-parser"] }  # Self-signed CAs for federation_client tests
+criterion = "0.8"
+rcgen = { version = "0.14", features = ["pem", "x509-parser"] }  # Self-signed CAs for federation_client tests
 tempfile = "3"
 
 [[bench]]

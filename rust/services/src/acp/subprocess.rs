@@ -496,7 +496,7 @@ mod tests {
         let mut sub = AcpSubprocess::spawn(
             &cat_subprocess_cfg(),
             &cwd,
-            &kernel,
+            kernel.as_ref(),
             "root",
             "pid-cat-roundtrip",
         )
@@ -526,7 +526,7 @@ mod tests {
         drop(stdin);
         drop(stdout);
 
-        sub.unregister_pipes(&kernel);
+        sub.unregister_pipes(kernel.as_ref());
         let exit = tokio::time::timeout(Duration::from_secs(5), sub.wait())
             .await
             .expect("wait timed out");
@@ -548,9 +548,10 @@ mod tests {
         let cwd = std::env::temp_dir();
         for i in 0..10 {
             let pid = format!("pid-stress-{i}");
-            let mut sub = AcpSubprocess::spawn(&cat_subprocess_cfg(), &cwd, &kernel, "root", &pid)
-                .await
-                .unwrap_or_else(|e| panic!("spawn iter {i}: {e}"));
+            let mut sub =
+                AcpSubprocess::spawn(&cat_subprocess_cfg(), &cwd, kernel.as_ref(), "root", &pid)
+                    .await
+                    .unwrap_or_else(|e| panic!("spawn iter {i}: {e}"));
             let (mut stdin, mut stdout, _stderr) = sub.take_stdio_for_connection().unwrap();
             let line = format!("iter {i}\n");
             stdin.write_all(line.as_bytes()).await.unwrap();
@@ -567,7 +568,7 @@ mod tests {
             );
             drop(stdin);
             drop(stdout);
-            sub.unregister_pipes(&kernel);
+            sub.unregister_pipes(kernel.as_ref());
             sub.kill().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), sub.wait()).await;
         }

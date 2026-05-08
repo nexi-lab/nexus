@@ -108,7 +108,7 @@ jobs:
           # Phase 0: nexus-cdylib joins the fmt loop alongside the other
           # workspace crates.  Phase 4 (full): cluster moved to
           # `profiles/cluster` (deployment-profile binary folder).
-          for crate in tasks lib kernel raft profiles/cluster nexus-cdylib; do
+          for crate in lib kernel raft profiles/cluster nexus-cdylib; do
             echo "::group::fmt $crate"
             cd rust/$crate && cargo fmt --check && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
@@ -116,7 +116,7 @@ jobs:
 
       - name: Run Clippy
         run: |
-          for crate in tasks lib kernel; do
+          for crate in lib kernel; do
             echo "::group::clippy $crate"
             cd rust/$crate && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
@@ -138,7 +138,7 @@ jobs:
         env:
           PYO3_PYTHON: python3
         run: |
-          for crate in tasks lib kernel; do
+          for crate in lib kernel; do
             echo "::group::test $crate"
             cd rust/$crate && cargo test && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"

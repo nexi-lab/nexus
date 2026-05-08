@@ -30,7 +30,7 @@ use parking_lot::{Mutex, RwLock};
 use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use pyo3::types::PyBytes;
-use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};

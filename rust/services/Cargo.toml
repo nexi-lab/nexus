@@ -59,7 +59,7 @@ kernel = { workspace = true }
 # backend or raft-replicated behaviour reach it through `kernel.sys_*`
 # syscalls (the same path Python takes), never via direct cross-crate
 # imports. See `services/src/lib.rs` for the rationale.
-redb = "2"
+redb = "4"
 # Tasks engine storage backend.
 fjall = "3"
 # `acp::subprocess` calls libc::dup() to hand kernel-side OwnedFds
@@ -87,11 +87,11 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-uti
 futures = "0.3"
 # pyo3 feature unioned by cargo when nexus-cdylib enables `extension-module`
 # on its own pyo3 dep — services does not need to set extension-module here.
-pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
 # Matrix C-S adapter HTTP surface. Lazily pulled in by the
 # `service-matrix-adapter` feature so non-adapter builds (cluster
 # binary, raft-witness, slim WASM) do not pay the axum compile time.
-axum = { version = "0.7", default-features = false, features = ["json", "http1", "tokio", "matched-path", "query"], optional = true }
+axum = { version = "0.8", default-features = false, features = ["json", "http1", "tokio", "matched-path", "query"], optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 # base32 alphabet for Matrix room-id encoding (`!{base32(stream_path)}:nexus.local`).
 base32 = { version = "0.5", optional = true }

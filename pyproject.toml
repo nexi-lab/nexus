@@ -37,269 +37,269 @@ classifiers = [
 
 dependencies = [
     # CLI (needed for basic CLI stub)
-    "click>=8.1.7",
-    "rich>=13.7.0",
-    "tqdm>=4.66.0", # Progress bars for sync operations
+    "click>=8.3.3",
+    "rich>=15.0.0",
+    "tqdm>=4.67.3", # Progress bars for sync operations
     # Configuration
-    "pydantic[email]>=2.5.0",
-    "pyyaml>=6.0.1",
+    "pydantic[email]>=2.13.4",
+    "pyyaml>=6.0.3",
     # HTTP client (for remote mode)
     "httpx[http2]>=0.28.1",
-    "requests>=2.31.0",
-    "tenacity>=8.2.0", # Retry logic with exponential backoff
+    "requests>=2.33.1",
+    "tenacity>=9.1.4", # Retry logic with exponential backoff
     # Python 3.14 compatibility - pin transitive deps with wheels
-    "aiohttp>=3.11.0",
-    "frozenlist>=1.5.0",
-    "protobuf>=6.31.1",
-    "grpcio>=1.78.0",
+    "aiohttp>=3.13.5",
+    "frozenlist>=1.8.0",
+    "protobuf>=6.33.6",
+    "grpcio>=1.80.0",
     # HTTP server (FastAPI + ASGI)
-    "fastapi>=0.124.0",
-    "uvicorn>=0.38.0", # ASGI server (base profile; use [server-standard] for full stack)
+    "fastapi>=0.136.1",
+    "uvicorn>=0.46.0", # ASGI server (base profile; use [server-standard] for full stack)
     # Required by FastAPI's Form(...) — token-exchange (#3818) parses
     # application/x-www-form-urlencoded per RFC 6749 §3.2 / RFC 8693 §2.1.
     # FastAPI raises at route registration time without this; declared
     # directly so we don't depend on `mcp` (current transitive owner).
-    "python-multipart>=0.0.20",
+    "python-multipart>=0.0.27",
     # File watching (cross-platform, Rust-backed via notify crate)
-    "watchdog>=4.0.0",  # fsnotify wrapper for daemon source watchers (#3804)
-    "keyring>=25.0.0",  # OS keychain/secret service for daemon JWT cache (#3804)
+    "watchdog>=6.0.0",  # fsnotify wrapper for daemon source watchers (#3804)
+    "keyring>=25.7.0",  # OS keychain/secret service for daemon JWT cache (#3804)
     # Database
     "sqlalchemy>=2.0.49",
-    "alembic>=1.13.0",
-    "greenlet>=3.0.0", # Required for SQLAlchemy async (run_sync in async context)
-    "psycopg2-binary>=2.9.10", # PostgreSQL driver (sync)
+    "alembic>=1.18.4",
+    "greenlet>=3.5.0", # Required for SQLAlchemy async (run_sync in async context)
+    "psycopg2-binary>=2.9.12", # PostgreSQL driver (sync)
     "asyncpg>=0.31.0", # PostgreSQL driver (async)
-    "aiosqlite>=0.20.0", # SQLite driver (async)
+    "aiosqlite>=0.22.1", # SQLite driver (async)
     # Caching
-    "cachetools>=6.2.2",
-    "cachebox>=4.0.0", # Rust-backed TTLCache via PyO3 (Issue #3192)
-    "fastbloom-rs>=0.5.0", # Rust Bloom filter for Tiger cache pre-gate (Issue #3192)
-    "redis>=7.0.0", # Redis/Dragonfly client (async support)
-    "nats-py>=2.9.0", # NATS JetStream event bus (Issue #1331)
+    "cachetools>=7.1.1",
+    "cachebox>=5.2.3", # Rust-backed TTLCache via PyO3 (Issue #3192)
+    "fastbloom-rs>=0.5.10", # Rust Bloom filter for Tiger cache pre-gate (Issue #3192)
+    "redis>=7.4.0", # Redis/Dragonfly client (async support)
+    "nats-py>=2.14.0", # NATS JetStream event bus (Issue #1331)
     # Authentication
-    "authlib>=1.6.5", # JWT and OAuth support for OIDC auth
-    "bcrypt>=4.0.0", # Password hashing for local auth
-    "cryptography>=41.0.0", # OAuth token encryption (Fernet) + Ed25519 identity signing
-    "PyJWT>=2.8.0", # JWT-VC issuance/verification for agent identity (Issue #1355)
+    "authlib>=1.7.2", # JWT and OAuth support for OIDC auth
+    "bcrypt>=5.0.0", # Password hashing for local auth
+    "cryptography>=48.0.0", # OAuth token encryption (Fernet) + Ed25519 identity signing
+    "PyJWT>=2.12.1", # JWT-VC issuance/verification for agent identity (Issue #1355)
     "pyotp>=2.9.0", # RFC 6238 TOTP for server-side password-vault totp codes
     "itsdangerous>=2.2.0", # Signed, TTL-bounded OAuth state tokens (URLSafeTimedSerializer)
-    "tiktoken>=0.12", # Token counting for chunking
-    "markdown-it-py>=3.0.0", # CommonMark-compliant markdown AST parser (Issue #3718)
-    "mdit-py-plugins>=0.4.0", # markdown-it-py plugins: front_matter (Issue #3718)
+    "tiktoken>=0.12.0", # Token counting for chunking
+    "markdown-it-py>=4.2.0", # CommonMark-compliant markdown AST parser (Issue #3718)
+    "mdit-py-plugins>=0.6.0", # markdown-it-py plugins: front_matter (Issue #3718)
     # MCP Server (v0.7.0)
-    "fastmcp>=2.0.0", # Model Context Protocol server
+    "fastmcp>=3.2.4", # Model Context Protocol server
     # Default local PDF parser (Rust + PyO3, ~2-3 MB, zero Python deps).
     # On Python 3.14 without a cp314 wheel, pip builds from sdist and needs
     # Rust plus ``PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`` (both present in
     # the Nexus Docker image and typical dev setups).
     "pdf-inspector>=0.1.1",
     # Fast JSON serialization (2-3x faster than stdlib json)
-    "orjson>=3.10.0",
+    "orjson>=3.11.9",
     # Roaring Bitmaps for Tiger Cache (Issue #682)
-    "pyroaring>=1.0.0",
-    "blake3>=1.0.0",
+    "pyroaring>=1.1.0",
+    "blake3>=1.0.8",
     # Binary delta sync for rsync-style incremental updates (Issue #869)
-    "bsdiff4>=1.2.0",
+    "bsdiff4>=1.2.6",
     # Content-Defined Chunking for large file deduplication (Issue #1074)
-    "fastcdc>=1.5.0",
+    "fastcdc>=1.7.0",
     # BM25S for 500x faster ranked text search (Issue #796)
-    "bm25s>=0.2.0",
+    "bm25s>=0.3.8",
     # Rapidfuzz for fast fuzzy string matching in edit engine (Issue #800)
     # 10-100x faster than difflib (Rust-backed)
-    "rapidfuzz>=3.0.0",
+    "rapidfuzz>=3.14.5",
     # LZ4 compression for ContentCache 3-4x capacity (Issue #908)
-    "lz4>=4.3.0",
+    "lz4>=4.4.5",
     # Rate limiting for DoS protection (Issue #780)
     "slowapi>=0.1.9",
-    "limits>=3.6.0",
+    "limits>=5.8.0",
     # Prometheus metrics endpoint (Issue #761)
-    "prometheus_client>=0.20.0",
+    "prometheus_client>=0.25.0",
     # OpenTelemetry observability (Issue #764)
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp>=1.20.0",
-    "opentelemetry-instrumentation-fastapi>=0.41b0",
-    "opentelemetry-instrumentation-httpx>=0.41b0",
-    "opentelemetry-instrumentation-sqlalchemy>=0.41b0",
-    "opentelemetry-instrumentation-redis>=0.41b0",
-    "opentelemetry-instrumentation-aiohttp-client>=0.41b0",
+    "opentelemetry-api>=1.41.1",
+    "opentelemetry-sdk>=1.41.1",
+    "opentelemetry-exporter-otlp>=1.41.1",
+    "opentelemetry-instrumentation-fastapi>=0.62b1",
+    "opentelemetry-instrumentation-httpx>=0.62b1",
+    "opentelemetry-instrumentation-sqlalchemy>=0.62b1",
+    "opentelemetry-instrumentation-redis>=0.62b1",
+    "opentelemetry-instrumentation-aiohttp-client>=0.62b1",
     "aiofiles>=25.1.0",
     # Structured logging with JSON output and context propagation (Issue #1002)
-    "structlog>=24.4.0",
+    "structlog>=25.5.0",
 ]
 
 [project.optional-dependencies]
 performance = [
     # BLAKE3 hashing fallback when Rust extension unavailable (Issue #582)
     # Local embeddings without API (fast ONNX inference)
-    "fastembed>=0.4.0",
+    "fastembed>=0.8.0",
     # Rust-backed markdown parser — 10x faster structure indexing (Issue #3718)
     # Optional: falls back to markdown-it-py (pure Python) when unavailable.
-    "markdown-it-pyrs>=0.3.0",
+    "markdown-it-pyrs>=0.4.0",
 ]
 
 pay = [
     # TigerBeetle client for Nexus Pay credits ledger (Issue #3250)
-    "tigerbeetle>=0.16.4",
+    "tigerbeetle>=0.17.3",
 ]
 
 monitoring = [
     # System resource monitoring for agent eviction (Issue #2170)
-    "psutil>=5.9",
+    "psutil>=7.2.2",
 ]
 
 mobile = [
     # GGUF model support via llama.cpp (Issue #1214)
     # For local embedding inference on mobile/edge devices
-    "llama-cpp-python>=0.2.0",
+    "llama-cpp-python>=0.3.22",
 ]
 
 sandbox-monty = [
     # Pydantic Monty — lightweight in-process Python sandbox (Issue #1316)
-    "pydantic-monty>=0.0.4",
+    "pydantic-monty>=0.0.17",
 ]
 
 sandbox = [
     # Issue #3778: SANDBOX profile — agent sandbox runtime (zero external services)
     # pdf-inspector comes from core deps (see top of file) when Python 3.12
-    "bm25s>=0.2",
-    "cachetools>=5.0",
-    "tokenizers>=0.15",
+    "bm25s>=0.3.8",
+    "cachetools>=7.1.1",
+    "tokenizers>=0.23.1",
     # Local vector storage (sqlite-vec = SQLite extension, ~3 MB wheel).
     # Loaded into the same nexus.db file via conn.enable_load_extension().
-    "sqlite-vec>=0.1",
+    "sqlite-vec>=0.1.9",
     # Remote embeddings via any provider (OpenAI / Cohere / Azure / etc.).
     # BYO API key — picked up from the standard env vars by litellm.
-    "litellm>=1.74.0",
+    "litellm>=1.83.0",
     # Local ONNX embeddings — keeps SANDBOX's "zero external services"
     # promise when no API key is available. Auto-selected by
     # SqliteVecBackend when no embedding API key is in the environment;
     # default model BAAI/bge-small-en-v1.5 (384 dim, ~30 MB ONNX, downloads
     # on first use). Override via NEXUS_OFFLINE_EMBED=1 / NEXUS_EMBEDDER.
-    "fastembed>=0.4.0",
+    "fastembed>=0.8.0",
 ]
 
 sentry = [
     # Sentry error tracking and performance monitoring (Issue #759)
-    "sentry-sdk[fastapi]>=2.0.0",
+    "sentry-sdk[fastapi]>=2.59.0",
 ]
 
 profiling = [
     # Pyroscope continuous profiling (Issue #763)
-    "pyroscope-io>=0.8.16",
+    "pyroscope-io>=1.0.6",
     "pyroscope-otel",
 ]
 
 vault = [
     # HashiCorp Vault client for VaultTransitProvider envelope encryption (Issue #3803)
-    "hvac>=1.2.0",
+    "hvac>=2.4.0",
 ]
 
 aws = [
     # AWS SDK for AwsKmsProvider envelope encryption (Issue #3803)
-    "boto3>=1.42.4",
+    "boto3>=1.43.6",
 ]
 
 server-standard = [
     # Opt-in production ASGI stack: uvloop, httptools, websockets, watchfiles, etc.
-    "uvicorn[standard]>=0.38.0",
+    "uvicorn[standard]>=0.46.0",
 ]
 
 s3 = [
     # AWS S3 connector runtime (PathS3/CASS3 + auth tooling)
-    "boto3>=1.42.4",
+    "boto3>=1.43.6",
 ]
 
 gcs = [
     # Google Cloud Storage connector runtime
-    "google-cloud-storage>=3.6.0",
-    "google-auth>=2.43.0",
-    "google-auth-httplib2>=0.2.1",
+    "google-cloud-storage>=3.10.1",
+    "google-auth>=2.52.0",
+    "google-auth-httplib2>=0.4.0",
 ]
 
 gdrive = [
     # Google Drive/Gmail/Calendar connector runtime
-    "google-api-python-client>=2.187.0",
-    "google-auth>=2.43.0",
-    "google-auth-httplib2>=0.2.1",
-    "google-auth-oauthlib>=1.2.0",
+    "google-api-python-client>=2.196.0",
+    "google-auth>=2.52.0",
+    "google-auth-httplib2>=0.4.0",
+    "google-auth-oauthlib>=1.4.0",
 ]
 
 gws = [
     # Google Workspace connector runtime alias (Drive/Gmail/Calendar)
-    "google-api-python-client>=2.187.0",
-    "google-auth>=2.43.0",
-    "google-auth-httplib2>=0.2.1",
-    "google-auth-oauthlib>=1.2.0",
+    "google-api-python-client>=2.196.0",
+    "google-auth>=2.52.0",
+    "google-auth-httplib2>=0.4.0",
+    "google-auth-oauthlib>=1.4.0",
 ]
 
 slack = [
     # Slack connector runtime
-    "slack-sdk>=3.39.0",
+    "slack-sdk>=3.41.0",
 ]
 
 cloud = [
     # Aggregate cloud connector runtime stack
-    "boto3>=1.42.4",
-    "google-cloud-storage>=3.6.0",
-    "google-api-python-client>=2.187.0",
-    "google-auth>=2.43.0",
-    "google-auth-httplib2>=0.2.1",
-    "google-auth-oauthlib>=1.2.0",
-    "slack-sdk>=3.39.0",
+    "boto3>=1.43.6",
+    "google-cloud-storage>=3.10.1",
+    "google-api-python-client>=2.196.0",
+    "google-auth>=2.52.0",
+    "google-auth-httplib2>=0.4.0",
+    "google-auth-oauthlib>=1.4.0",
+    "slack-sdk>=3.41.0",
 ]
 
 governance = [
     # Governance/ML stack (EigenTrust, graph/ring analysis, clustering helpers)
-    "numpy>=1.26.0",
-    "scikit-learn>=1.4.0",
-    "networkx>=3.2",
-    "scipy>=1.11.0",
+    "numpy>=2.4.4",
+    "scikit-learn>=1.8.0",
+    "networkx>=3.6.1",
+    "scipy>=1.17.1",
 ]
 dev = [
     # Testing
-    "pytest>=9.0.2",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
-    "pytest-cov>=7.0.0",
-    "pytest-mock>=3.12.0",
-    "pytest-benchmark>=4.0.0",
+    "pytest-cov>=7.1.0",
+    "pytest-mock>=3.15.1",
+    "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",  # Parallel test execution
-    "pytest-timeout>=2.3.0",  # Per-test timeout enforcement
-    "freezegun>=1.4.0",  # Time mocking for tests
-    "hypothesis>=6.0.0",  # Property-based testing for crypto/identity (Issue #1355)
-    "syrupy>=4.6.0",  # Snapshot testing for doctor output (Issue #3741)
-    "respx>=0.22.0",  # httpx mocking for daemon JWT client tests (#3804)
+    "pytest-timeout>=2.4.0",  # Per-test timeout enforcement
+    "freezegun>=1.5.5",  # Time mocking for tests
+    "hypothesis>=6.152.4",  # Property-based testing for crypto/identity (Issue #1355)
+    "syrupy>=5.1.0",  # Snapshot testing for doctor output (Issue #3741)
+    "respx>=0.23.1",  # httpx mocking for daemon JWT client tests (#3804)
 
     # Code Quality
-    "ruff>=0.14.0",
-    "mypy>=1.8.0",
-    "pre-commit>=3.6.0",
-    "import-linter>=2.0",  # Architecture boundary enforcement (Issue #2286)
-    "maturin-import-hook>=0.2.0",  # Auto-rebuild Rust extensions on source change (Issue #3712)
+    "ruff>=0.15.12",
+    "mypy>=2.0.0",
+    "pre-commit>=4.6.0",
+    "import-linter>=2.11",  # Architecture boundary enforcement (Issue #2286)
+    "maturin-import-hook>=0.3.0",  # Auto-rebuild Rust extensions on source change (Issue #3712)
 
     # Documentation
-    "mkdocs>=1.5.3",
-    "mkdocs-material>=9.5.0",
-    "mkdocs-git-revision-date-localized-plugin>=1.2.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.6",
+    "mkdocs-git-revision-date-localized-plugin>=1.5.1",
     "mkdocs-minify-plugin>=0.8.0",
 
     # Type stubs
-    "types-pyyaml>=6.0.12",
-    "types-cachetools>=5.3.0",
-    "types-requests>=2.31.0",
+    "types-pyyaml>=6.0.12.20260408",
+    "types-cachetools>=7.0.0.20260503",
+    "types-requests>=2.33.0.20260503",
 ]
 
 test = [
-    "pytest>=7.4.4",
-    "pytest-asyncio>=0.23.3",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
-    "pytest-benchmark>=4.0.0",
-    "pytest-xdist>=3.5.0",  # Parallel test execution
-    "pytest-alembic>=0.11.0",  # Alembic migration test harness (#1296)
-    "freezegun>=1.4.0",  # Time mocking for tests
-    "hypothesis>=6.0.0",  # Property-based testing (kernel invariant tests)
-    "pydantic-monty>=0.0.4",  # Monty sandbox integration/e2e tests (#1317)
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "pytest-mock>=3.15.1",
+    "pytest-benchmark>=5.2.3",
+    "pytest-xdist>=3.8.0",  # Parallel test execution
+    "pytest-alembic>=0.12.1",  # Alembic migration test harness (#1296)
+    "freezegun>=1.5.5",  # Time mocking for tests
+    "hypothesis>=6.152.4",  # Property-based testing (kernel invariant tests)
+    "pydantic-monty>=0.0.17",  # Monty sandbox integration/e2e tests (#1317)
 ]
 
 fuse = [
@@ -309,11 +309,11 @@ fuse = [
 
 postgres = [
     # PostgreSQL support
-    "psycopg2-binary>=2.9.9",  # PostgreSQL adapter
+    "psycopg2-binary>=2.9.12",  # PostgreSQL adapter
 ]
 
 cloud-sql = [
-    "cloud-sql-python-connector[asyncpg]>=1.14.0",
+    "cloud-sql-python-connector[asyncpg]>=1.20.2",
 ]
 
 semantic-search = [
@@ -322,25 +322,25 @@ semantic-search = [
     # Keyword search support - uses existing SQLite/PostgreSQL FTS
     # BM25S is now in core dependencies (Issue #796)
     # Vector database extensions for semantic/hybrid search:
-    "sqlite-vec>=0.1.0",  # SQLite vector search (pip installable)
-    "pgvector>=0.3.0",    # PostgreSQL vector search (Python client - requires pgvector extension in database)
+    "sqlite-vec>=0.1.9",  # SQLite vector search (pip installable)
+    "pgvector>=0.4.2",    # PostgreSQL vector search (Python client - requires pgvector extension in database)
 ]
 
 semantic-search-remote = [
     # Remote embedding providers (lightweight, requires API keys)
     # Recommended: OpenAI embeddings (default for semantic search)
-    "litellm>=1.74.0",
-    "openai>=1.0.0",
+    "litellm>=1.83.0",
+    "openai>=2.36.0",
 ]
 
 e2b = [
     # E2B cloud sandbox support (stateful Python execution via Jupyter kernel)
-    "e2b-code-interpreter>=1.0.0",
+    "e2b-code-interpreter>=2.6.2",
 ]
 
 docker = [
     # Docker sandbox provider (local containerized execution)
-    "docker>=7.0.0",
+    "docker>=7.1.0",
 ]
 
 # First-party plugins (install manually for now - not yet published to PyPI)
@@ -358,15 +358,15 @@ docker = [
 # ]
 
 # Event stream export (Issue #1138)
-kafka = ["aiokafka>=0.11.0"]
-nats-export = ["nats-py>=2.9.0"]
-pubsub = ["gcloud-aio-pubsub>=6.0.0"]
-sse = ["sse-starlette>=2.2.0"]
+kafka = ["aiokafka>=0.14.0"]
+nats-export = ["nats-py>=2.14.0"]
+pubsub = ["gcloud-aio-pubsub>=6.3.0"]
+sse = ["sse-starlette>=3.4.2"]
 event-streaming = [
-    "aiokafka>=0.11.0",
-    "nats-py>=2.9.0",
-    "gcloud-aio-pubsub>=6.0.0",
-    "sse-starlette>=2.2.0",
+    "aiokafka>=0.14.0",
+    "nats-py>=2.14.0",
+    "gcloud-aio-pubsub>=6.3.0",
+    "sse-starlette>=3.4.2",
 ]
 
 all = [
@@ -376,24 +376,24 @@ all = [
     # Note: fusepy removed - Rust nexus-fuse binary is bundled in the package
     # Note: bm25s is now in core dependencies (Issue #796)
     # Note: txtai + faiss-cpu removed (Issue #3699) — direct pgvector path
-    "psycopg2-binary>=2.9.9",
-    "sqlite-vec>=0.1.0",
-    "pgvector>=0.3.0",
-    "litellm>=1.74.0",
-    "openai>=1.0.0",
-    "e2b-code-interpreter>=1.0.0",
-    "uvicorn[standard]>=0.38.0",
-    "boto3>=1.42.4",
-    "google-cloud-storage>=3.6.0",
-    "google-api-python-client>=2.187.0",
-    "google-auth>=2.43.0",
-    "google-auth-httplib2>=0.2.1",
-    "google-auth-oauthlib>=1.2.0",
-    "slack-sdk>=3.39.0",
-    "numpy>=1.26.0",
-    "scikit-learn>=1.4.0",
-    "networkx>=3.2",
-    "scipy>=1.11.0",
+    "psycopg2-binary>=2.9.12",
+    "sqlite-vec>=0.1.9",
+    "pgvector>=0.4.2",
+    "litellm>=1.83.0",
+    "openai>=2.36.0",
+    "e2b-code-interpreter>=2.6.2",
+    "uvicorn[standard]>=0.46.0",
+    "boto3>=1.43.6",
+    "google-cloud-storage>=3.10.1",
+    "google-api-python-client>=2.196.0",
+    "google-auth>=2.52.0",
+    "google-auth-httplib2>=0.4.0",
+    "google-auth-oauthlib>=1.4.0",
+    "slack-sdk>=3.41.0",
+    "numpy>=2.4.4",
+    "scikit-learn>=1.8.0",
+    "networkx>=3.6.1",
+    "scipy>=1.17.1",
 ]
 
 [project.urls]
@@ -408,7 +408,7 @@ nexusd = "nexus.daemon:main"
 nexus-extensions-index = "nexus.extensions.index:_cli_entry"
 
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -1098,14 +1098,14 @@ unmatched_ignore_imports_alerting = "warn"
 [dependency-groups]
 dev = [
     "freezegun>=1.5.5",
-    "grpcio-tools>=1.78.0",
-    "maturin-import-hook>=0.2.0",
-    "mypy>=1.18.2",
+    "grpcio-tools>=1.80.0",
+    "maturin-import-hook>=0.3.0",
+    "mypy>=2.0.0",
     "pytest-asyncio>=1.3.0",
-    "pytest-cov>=7.0.0",
+    "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
     "respx>=0.23.1",
-    "types-aiofiles>=25.1.0.20251011",
-    "types-protobuf>=6.32.1.20251210",
+    "types-aiofiles>=25.1.0.20260409",
+    "types-protobuf>=7.34.1.20260503",
     "types-redis>=4.6.0.20241004",
 ]

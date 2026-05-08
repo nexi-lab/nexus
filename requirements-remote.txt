@@ -2,12 +2,12 @@
 # Only packages needed by the remote code path (gRPC transport).
 # No SQLAlchemy, no numpy, no FastAPI, no Rust extensions.
 # Lower bounds must match pyproject.toml / generated stubs (#3790)
-grpcio>=1.78.0
-protobuf>=6.31.1
+grpcio>=1.80.0
+protobuf>=6.33.6
 httpx[http2]>=0.28.1
-tenacity>=8.2.0
-pydantic[email]>=2.5.0
-pyyaml>=6.0.1
-click>=8.1.7
-rich>=13.7.0
-tqdm>=4.66.0
+tenacity>=9.1.4
+pydantic[email]>=2.13.4
+pyyaml>=6.0.3
+click>=8.3.3
+rich>=15.0.0
+tqdm>=4.67.3

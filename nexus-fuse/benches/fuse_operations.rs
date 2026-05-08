@@ -11,8 +11,9 @@
 //!
 //! Run with: cargo bench
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use nexus_fuse::client::NexusClient;
+use std::hint::black_box;
 use std::time::Duration;
 
 /// Setup test server connection

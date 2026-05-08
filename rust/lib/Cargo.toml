@@ -60,7 +60,7 @@ crc32fast = { workspace = true }
 # `extension-module` and other cdylib-only features intentionally omitted —
 # kernel cdylib enables those on its own pyo3 dep; cargo unifies to the
 # right featureset at link time.
-pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
 # PyO3 wrapper deps — needed by `lib::python::*` only. Pure-Rust
 # algorithm files in `lib::*` siblings stay WASM-clean.
 rayon = { version = "1.11", optional = true }
@@ -68,7 +68,7 @@ memmap2 = { version = "0.9.9", optional = true }
 simdutf8 = { version = "0.1", optional = true }
 simsimd = { version = "6", optional = true }
 encoding_rs = { version = "0.8.35", optional = true }
-lru = { version = "0.16", optional = true }
+lru = { version = "0.18", optional = true }
 parking_lot = { version = "0.12", optional = true }
 dashmap = { version = "6.1", optional = true }
 # `BloomFilter` pyclass uses the `bloomfilter` crate as its backing
@@ -84,17 +84,17 @@ tonic = { workspace = true, optional = true }
 tokio = { version = "1", features = ["rt", "net", "sync", "time"], optional = true }
 thiserror = { version = "2", optional = true }
 tracing = { version = "0.1", optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "0.11", optional = true }
 pem = { version = "3", optional = true }
 base64 = { version = "0.22", optional = true }
 time = { version = "0.3", features = ["parsing", "formatting"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [dev-dependencies]
 proptest = "1.5"
 tempfile = "3"
 # transport_primitives unit tests need self-signed cert generation +
 # tempdirs. Only compiled when running tests with `--features transport`.
-rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+rcgen = { version = "0.14", features = ["pem", "x509-parser"] }

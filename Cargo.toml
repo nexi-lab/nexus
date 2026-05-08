@@ -53,19 +53,20 @@ kernel = { path = "rust/kernel", default-features = false }
 raft = { path = "rust/raft", default-features = false, features = ["grpc"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-ahash = "0.8"
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
 regex = "1.10"
 memchr = "2.7"
-roaring = "0.10"
+roaring = "0.11"
 globset = "0.4"
 blake3 = "1.5"
-string-interner = "0.17"
+string-interner = "0.20"
 regex-syntax = "0.8"
 crc32fast = "1.4"
-fastcdc = "3.2"
+fastcdc = "4.0"
 mimalloc = { version = "0.1", default-features = false }
-tonic = { version = "0.13", features = ["transport", "tls-ring"] }
-prost = "0.13"
+tonic = { version = "0.14", features = ["transport", "tls-ring"] }
+prost = "0.14"
+tonic-prost = "0.14"
 
 [profile.dev]
 opt-level = 1

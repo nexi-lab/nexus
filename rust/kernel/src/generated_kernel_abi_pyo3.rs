@@ -844,7 +844,7 @@ impl PermissionProvider for PyPermissionProviderAdapter {
 // ── PyOperationContext ──────────────────────────────────────────
 
 /// Python-facing OperationContext (wraps pure Rust OperationContext).
-#[pyclass(get_all)]
+#[pyclass(get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyOperationContext {
     pub user_id: String,

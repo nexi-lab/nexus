@@ -140,8 +140,8 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
                     data = self.pipe_read_nowait(path)
                     if data is not None:
                         return bytes(data)
-                    # No data available — yield and retry
-                    await asyncio.sleep(0.001)
+                    # No data available; yield and retry.
+                    time.sleep(0.001)
                 except RuntimeError as exc:
                     if "PipeClosed" in str(exc) or "not found" in str(exc):
                         raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None

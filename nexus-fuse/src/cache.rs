@@ -154,7 +154,7 @@ impl FileCache {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE file_cache SET cached_at = ? WHERE path = ?",
-            params![cached_at, path],
+            params![cached_at as i64, path],
         )
         .unwrap();
     }
@@ -170,7 +170,7 @@ impl FileCache {
         let now = Self::now();
 
         // Phase 1: metadata-only query — avoids reading the content BLOB
-        let meta: Option<(Option<String>, u64, u64)> = conn
+        let meta: Option<(Option<String>, i64, i64)> = conn
             .query_row(
                 "SELECT etag, cached_at, gen FROM file_cache WHERE path = ?",
                 params![path],
@@ -182,6 +182,7 @@ impl FileCache {
 
         match meta {
             Some((etag, cached_at, cached_gen)) => {
+                let cached_gen = cached_gen.max(0) as u64;
                 if cached_gen != gen {
                     debug!(
                         "Cache generation mismatch for {} (cached={}, current={})",
@@ -191,7 +192,7 @@ impl FileCache {
                     return CacheLookup::Miss;
                 }
 
-                let age = now.saturating_sub(cached_at);
+                let age = now.saturating_sub(cached_at.max(0) as u64);
 
                 if age < MAX_CACHE_AGE_SECS {
                     // Fresh — Phase 2: fetch content
@@ -255,10 +256,11 @@ impl FileCache {
             "SELECT content, etag, gen FROM file_cache WHERE path = ?",
             params![path],
             |row| {
+                let gen: i64 = row.get(2)?;
                 Ok(CacheEntry {
                     content: row.get(0)?,
                     etag: row.get(1)?,
-                    gen: row.get(2)?,
+                    gen: gen.max(0) as u64,
                 })
             },
         )
@@ -299,10 +301,11 @@ impl FileCache {
             let conn = self.conn.lock().unwrap();
             let now = Self::now();
 
+            let gen = i64::try_from(gen).unwrap_or(i64::MAX);
             match conn.execute(
                 "INSERT OR REPLACE INTO file_cache (path, content, etag, size, gen, cached_at)
                  VALUES (?, ?, ?, ?, ?, ?)",
-                params![path, content, etag, content.len() as i64, gen, now],
+                params![path, content, etag, content.len() as i64, gen, now as i64],
             ) {
                 Ok(_) => true,
                 Err(e) => {
@@ -330,7 +333,7 @@ impl FileCache {
 
         if let Err(e) = conn.execute(
             "UPDATE file_cache SET cached_at = ? WHERE path = ?",
-            params![now, path],
+            params![now as i64, path],
         ) {
             warn!("Failed to touch cache entry {}: {}", path, e);
         } else {
@@ -361,14 +364,15 @@ impl FileCache {
         // Delete very old entries
         conn.execute(
             "DELETE FROM file_cache WHERE cached_at < ?",
-            params![max_age],
+            params![max_age as i64],
         )?;
 
         // Check total cache size
-        let total_size: u64 =
+        let total_size: i64 =
             conn.query_row("SELECT COALESCE(SUM(size), 0) FROM file_cache", [], |row| {
                 row.get(0)
             })?;
+        let total_size = total_size.max(0) as u64;
 
         if total_size > MAX_CACHE_SIZE {
             info!(
@@ -390,7 +394,7 @@ impl FileCache {
         // Cleanup metadata cache
         conn.execute(
             "DELETE FROM metadata_cache WHERE cached_at < ?",
-            params![max_age],
+            params![max_age as i64],
         )?;
 
         Ok(())
@@ -400,15 +404,17 @@ impl FileCache {
     pub fn stats(&self) -> CacheStats {
         let conn = self.conn.lock().unwrap();
 
-        let file_count: u64 = conn
+        let file_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM file_cache", [], |row| row.get(0))
             .unwrap_or(0);
+        let file_count = file_count.max(0) as u64;
 
-        let total_size: u64 = conn
+        let total_size: i64 = conn
             .query_row("SELECT COALESCE(SUM(size), 0) FROM file_cache", [], |row| {
                 row.get(0)
             })
             .unwrap_or(0);
+        let total_size = total_size.max(0) as u64;
 
         metrics::set_cache_bytes_in_use("sqlite", total_size);
 
@@ -510,7 +516,7 @@ mod tests {
             let conn = cache.conn.lock().unwrap();
             conn.execute(
                 "UPDATE file_cache SET cached_at = ? WHERE path = ?",
-                params![old_cached_at, "/metrics-hit.txt"],
+                params![old_cached_at as i64, "/metrics-hit.txt"],
             )
             .unwrap();
         }

@@ -50,7 +50,7 @@ pub struct VfsGrpcConfig {
     pub server_version: String,
 }
 
-/// Python callbacks invoked from Rust handlers. Held as `Arc<PyObject>`
+/// Python callbacks invoked from Rust handlers. Held as `Py<PyAny>`
 /// so the service impl is `Clone`-able across tonic worker tasks.
 pub struct PyBridge {
     /// `(token: str) -> dict | None`. Returns the auth result dict

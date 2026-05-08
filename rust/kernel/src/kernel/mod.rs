@@ -2207,7 +2207,17 @@ impl Kernel {
         version: Option<u32>,
         created_at_ms: Option<i64>,
     ) -> Result<SysSetAttrResult, KernelError> {
-        let existing = self.metastore_get(path)?;
+        // Route-scoped metastore resolution — same path sys_write/sys_read
+        // use, ensuring SSOT. Falls back to global metastore_get/metastore_put
+        // when no VFS route covers the path (e.g. boot-time, tests).
+        let route = self.vfs_router.route(path, zone_id).ok();
+
+        let existing: Option<crate::meta_store::FileMetadata> = if let Some(ref r) = route {
+            self.with_metastore_route(r, |ms| ms.get(path).ok().flatten())
+                .flatten()
+        } else {
+            self.metastore_get(path)?
+        };
 
         // ── CREATE: path does not exist — build new DT_REG ──────────
         let Some(meta) = existing else {
@@ -2216,9 +2226,13 @@ impl Kernel {
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
 
+            let effective_zone = route
+                .as_ref()
+                .map(|r| r.zone_id.as_str())
+                .unwrap_or(zone_id);
             let new_meta = self.build_metadata(
                 path,
-                zone_id,
+                effective_zone,
                 crate::meta_store::DT_REG,
                 size.unwrap_or(0),
                 content_id.map(|s| s.to_string()),
@@ -2227,7 +2241,17 @@ impl Kernel {
                 Some(created_at_ms.unwrap_or(now_ms)),
                 Some(modified_at_ms.unwrap_or(now_ms)),
             );
-            self.metastore_put(path, new_meta)?;
+            if let Some(ref r) = route {
+                self.with_metastore_route(r, |ms| ms.put(path, new_meta))
+                    .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
+                    .and_then(|r| {
+                        r.map_err(|e| {
+                            KernelError::IOError(format!("setattr_update put({path}): {e:?}"))
+                        })
+                    })?;
+            } else {
+                self.metastore_put(path, new_meta)?;
+            }
 
             return Ok(SysSetAttrResult {
                 path: path.to_string(),
@@ -2291,17 +2315,17 @@ impl Kernel {
             updated_fields.push("created_at_ms".to_string());
         }
 
-        // metastore_put owns dcache coherence after PR #4027 collapsed
-        // commit_metadata/commit_delete into the metastore layer: the
-        // put() write atomically invalidates the dcache so a
-        // follow-up sys_stat sees the new mime_type/modified_at_ms
-        // instead of the stale cached entry. Earlier this method
-        // wrote via metastore_put without the dcache update; service-
-        // tier readers using metastore_get (dcache-bypassing) papered
-        // over the bug. Since v2 services route through sys_stat
-        // (which consults dcache first), the post-#4027 metastore_put
-        // is the right SSOT.
-        self.metastore_put(path, new_meta)?;
+        if let Some(ref r) = route {
+            self.with_metastore_route(r, |ms| ms.put(path, new_meta))
+                .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
+                .and_then(|r| {
+                    r.map_err(|e| {
+                        KernelError::IOError(format!("setattr_update put({path}): {e:?}"))
+                    })
+                })?;
+        } else {
+            self.metastore_put(path, new_meta)?;
+        }
 
         Ok(SysSetAttrResult {
             path: path.to_string(),

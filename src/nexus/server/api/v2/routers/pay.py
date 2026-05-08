@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from nexus.bricks.pay.constants import credits_to_micro, micro_to_credits
+from nexus.bricks.pay.credits import CreditsError, InsufficientCreditsError, ReservationError
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import get_operation_context, require_auth
 
@@ -121,7 +122,13 @@ def _get_pay_context(auth_result: dict[str, Any] = Depends(require_auth)) -> Any
 
 def _context_agent_id(context: Any) -> str:
     """Resolve the wallet actor from an operation context."""
-    agent_id = getattr(context, "agent_id", None) or getattr(context, "subject_id", None)
+    agent_id = getattr(context, "agent_id", None)
+    subject_id = getattr(context, "subject_id", None)
+    subject_type = getattr(context, "subject_type", None)
+    is_admin = bool(getattr(context, "is_admin", False))
+    if agent_id and (subject_type == "agent" or is_admin):
+        return str(agent_id)
+    agent_id = subject_id
     if not agent_id:
         raise HTTPException(status_code=403, detail="Agent identity required")
     return str(agent_id)
@@ -174,6 +181,14 @@ def _transfer_id_to_int(transfer_id: str | None = None) -> int:
     return uuid.uuid4().int % (2**63)
 
 
+def _credits_http_exception(exc: CreditsError) -> HTTPException:
+    if isinstance(exc, InsufficientCreditsError):
+        return HTTPException(status_code=402, detail=str(exc))
+    if isinstance(exc, ReservationError):
+        return HTTPException(status_code=409, detail=str(exc))
+    return HTTPException(status_code=502, detail=str(exc))
+
+
 # =============================================================================
 # Request models
 # =============================================================================
@@ -205,7 +220,7 @@ class BatchTransferItem(_AmountModel):
 
 
 class BatchTransferRequest(_StrictModel):
-    transfers: list[BatchTransferItem] = Field(..., min_length=1, max_length=1000)
+    transfers: list[BatchTransferItem] = Field(..., max_length=1000)
 
 
 class ReserveRequest(_AmountModel):
@@ -439,8 +454,8 @@ async def transfer(
             idempotency_key=idempotency_key,
             zone_id=zone_id,
         )
-    except Exception as e:
-        logger.debug("Credits transfer skipped (disabled mode): %s", e)
+    except CreditsError as exc:
+        raise _credits_http_exception(exc) from exc
 
     # Record in SQL
     try:
@@ -513,8 +528,8 @@ async def transfer_batch(
                     memo=item.memo,
                     zone_id=zone_id,
                 )
-    except Exception as e:
-        logger.debug("Credits batch transfer skipped (disabled mode): %s", e)
+    except CreditsError as exc:
+        raise _credits_http_exception(exc) from exc
 
     receipts: list[dict[str, Any]] = []
     try:
@@ -723,9 +738,8 @@ async def reserve(
             timeout_seconds=body.timeout,
             zone_id=zone_id,
         )
-    except Exception as e:
-        logger.debug("Credits reservation skipped (disabled mode): %s", e)
-        res_id = str(uuid.uuid4())
+    except CreditsError as exc:
+        raise _credits_http_exception(exc) from exc
     try:
         from nexus.storage.models.payments import CreditReservationMeta
 
@@ -787,7 +801,10 @@ async def commit_reservation(
                 raise HTTPException(
                     status_code=400, detail="actual_amount cannot exceed reserved amount"
                 )
-            await credits.commit_reservation(reservation_id, actual_amount=actual_amount)
+            try:
+                await credits.commit_reservation(reservation_id, actual_amount=actual_amount)
+            except CreditsError as exc:
+                raise _credits_http_exception(exc) from exc
             if actual_amount is not None:
                 res.amount = _amount_to_micro(actual_amount)
             res.status = "committed"
@@ -825,7 +842,10 @@ async def release_reservation(
                 raise HTTPException(status_code=403, detail="Reservation owner mismatch")
             if res.status != "pending":
                 raise HTTPException(status_code=409, detail=f"Reservation already {res.status}")
-            await credits.release_reservation(reservation_id)
+            try:
+                await credits.release_reservation(reservation_id)
+            except CreditsError as exc:
+                raise _credits_http_exception(exc) from exc
             res.status = "released"
             session.commit()
             return None
@@ -851,7 +871,10 @@ async def meter(
     _ensure_tables(record_store)
     agent_id = _context_agent_id(context)
     zone_id = _context_zone_id(context)
-    success = await credits.deduct_fast(agent_id, body.amount, zone_id=zone_id)
+    try:
+        success = await credits.deduct_fast(agent_id, body.amount, zone_id=zone_id)
+    except CreditsError as exc:
+        raise _credits_http_exception(exc) from exc
     if success:
         try:
             from nexus.storage.models.payments import UsageEvent

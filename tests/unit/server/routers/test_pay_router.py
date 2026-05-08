@@ -1,10 +1,12 @@
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
+from nexus.bricks.pay.credits import CreditsError, InsufficientCreditsError
 from nexus.server.api.v2.routers import pay as pay_router_module
 from nexus.server.api.v2.routers.pay import router as pay_router
 from nexus.storage.models.payments import CreditReservationMeta, PaymentTransactionMeta, UsageEvent
@@ -17,10 +19,14 @@ class DummyCredits:
     def __init__(self) -> None:
         self.balance_calls: list[tuple[str, str]] = []
         self.transfer_calls: list[tuple[str, str, Decimal, str | None, str]] = []
+        self.batch_transfer_calls: list[tuple[int, str]] = []
         self.reserve_calls: list[tuple[str, Decimal, int, str]] = []
         self.commit_calls: list[tuple[str, Decimal | None]] = []
         self.release_calls: list[str] = []
         self.deduct_calls: list[tuple[str, Decimal, str]] = []
+        self.transfer_error: Exception | None = None
+        self.batch_error: Exception | None = None
+        self.reserve_error: Exception | None = None
 
     async def get_balance(self, agent_id: str, zone_id: str = "root") -> Decimal:
         self.balance_calls.append((agent_id, zone_id))
@@ -42,8 +48,16 @@ class DummyCredits:
         idempotency_key: str | None = None,
         zone_id: str = "root",
     ) -> str:
+        if self.transfer_error is not None:
+            raise self.transfer_error
         self.transfer_calls.append((from_id, to_id, amount, idempotency_key, zone_id))
         return "tb-transfer-id"
+
+    async def transfer_batch(self, transfers: list[Any], *, zone_id: str = "root") -> list[str]:
+        if self.batch_error is not None:
+            raise self.batch_error
+        self.batch_transfer_calls.append((len(transfers), zone_id))
+        return [str(1000 + i) for i, _transfer in enumerate(transfers)]
 
     async def reserve(
         self,
@@ -53,6 +67,8 @@ class DummyCredits:
         *,
         zone_id: str = "root",
     ) -> str:
+        if self.reserve_error is not None:
+            raise self.reserve_error
         self.reserve_calls.append((agent_id, amount, timeout_seconds, zone_id))
         return "123456789"
 
@@ -76,6 +92,30 @@ def _build_client(tmp_path) -> tuple[TestClient, DummyCredits, SQLAlchemyRecordS
     app.state.api_key = "secret"
     app.state.auth_provider = None
     record_store = SQLAlchemyRecordStore(db_path=tmp_path / "pay.db", create_tables=True)
+    app.state.record_store = record_store
+    credits = DummyCredits()
+    app.dependency_overrides[pay_router_module._get_credits_service] = lambda: credits
+    app.include_router(pay_router)
+    return TestClient(app), credits, record_store
+
+
+def _build_provider_client(tmp_path) -> tuple[TestClient, DummyCredits, SQLAlchemyRecordStore]:
+    class UserAuthProvider:
+        async def authenticate(self, _token: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                authenticated=True,
+                is_admin=False,
+                subject_type="user",
+                subject_id="user-alice",
+                zone_id="zone-a",
+                inherit_permissions=True,
+                metadata={},
+            )
+
+    app = FastAPI()
+    app.state.api_key = None
+    app.state.auth_provider = UserAuthProvider()
+    record_store = SQLAlchemyRecordStore(db_path=tmp_path / "pay-provider.db", create_tables=True)
     app.state.record_store = record_store
     credits = DummyCredits()
     app.dependency_overrides[pay_router_module._get_credits_service] = lambda: credits
@@ -124,6 +164,24 @@ def test_transfer_requires_auth_and_uses_authenticated_actor_with_decimal_micro_
         assert txn.amount == 2_550_000
 
 
+def test_non_admin_user_cannot_debit_x_agent_id_wallet(tmp_path):
+    client, credits, _record_store = _build_provider_client(tmp_path)
+
+    response = client.post(
+        "/api/v2/pay/transfer",
+        json={"to": "agent-bob", "amount": "2.55"},
+        headers={
+            "Authorization": "Bearer provider-token",
+            "X-Agent-ID": "agent-victim",
+            "X-Nexus-Zone-ID": "zone-a",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["from_agent"] == "user-alice"
+    assert credits.transfer_calls == [("user-alice", "agent-bob", Decimal("2.55"), None, "zone-a")]
+
+
 def test_can_afford_returns_contract_amount_for_authenticated_actor(tmp_path):
     client, credits, _record_store = _build_client(tmp_path)
 
@@ -155,6 +213,7 @@ def test_batch_transfer_and_meter_routes_match_exchange_contract(tmp_path):
     receipts = batch.json()
     assert [r["from_agent"] for r in receipts] == ["agent-alice", "agent-alice"]
     assert [r["amount"] for r in receipts] == ["1.25", "0.001"]
+    assert credits.batch_transfer_calls == [(2, "zone-a")]
 
     meter = client.post(
         "/api/v2/pay/meter",
@@ -171,6 +230,38 @@ def test_batch_transfer_and_meter_routes_match_exchange_contract(tmp_path):
         assert len(usages) == 1
         assert usages[0].agent_id == "agent-alice"
         assert usages[0].amount == 1_000
+
+
+def test_empty_batch_transfer_matches_sdk_noop_contract(tmp_path):
+    client, credits, record_store = _build_client(tmp_path)
+
+    response = client.post(
+        "/api/v2/pay/transfer/batch",
+        json={"transfers": []},
+        headers=_headers(),
+    )
+
+    assert response.status_code == 201
+    assert response.json() == []
+    assert credits.batch_transfer_calls == [(0, "zone-a")]
+    with record_store.session_factory() as session:
+        assert session.scalar(select(func.count(PaymentTransactionMeta.id))) == 0
+
+
+def test_batch_transfer_ledger_failure_returns_error_without_sql_receipts(tmp_path):
+    client, credits, record_store = _build_client(tmp_path)
+    credits.batch_error = CreditsError("Batch transfer failed")
+
+    response = client.post(
+        "/api/v2/pay/transfer/batch",
+        json={"transfers": [{"to": "agent-bob", "amount": "1.25"}]},
+        headers=_headers(),
+    )
+
+    assert response.status_code == 502
+    assert "Batch transfer failed" in response.json()["detail"]
+    with record_store.session_factory() as session:
+        assert session.scalar(select(func.count(PaymentTransactionMeta.id))) == 0
 
 
 def test_reservation_uses_owner_timeout_task_and_enforces_owner_on_commit(tmp_path):
@@ -209,3 +300,19 @@ def test_reservation_uses_owner_timeout_task_and_enforces_owner_on_commit(tmp_pa
         assert reservation.amount == 4_250_000
         assert reservation.task_id == "task-1"
         assert reservation.status == "committed"
+
+
+def test_reservation_ledger_failure_returns_error_without_sql_reservation(tmp_path):
+    client, credits, record_store = _build_client(tmp_path)
+    credits.reserve_error = InsufficientCreditsError("Insufficient balance to reserve")
+
+    response = client.post(
+        "/api/v2/pay/reserve",
+        json={"amount": "5.50", "timeout": 600, "purpose": "gpu"},
+        headers=_headers(),
+    )
+
+    assert response.status_code == 402
+    assert "Insufficient balance" in response.json()["detail"]
+    with record_store.session_factory() as session:
+        assert session.scalar(select(func.count(CreditReservationMeta.id))) == 0

@@ -16,7 +16,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 
-from nexus.services.activity.metrics import AGENT_LOG_LINES_DROPPED
+from nexus.services.activity.metrics import AGENT_LOG_BYTES, AGENT_LOG_LINES_DROPPED
 
 _MOUNT_PREFIX = "/.activity/"
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -60,6 +60,7 @@ class MemoryBackend:
                 with self._counter_lock:
                     self.lines_evicted += 1
                     AGENT_LOG_LINES_DROPPED.labels(reason="ring_evict").inc()
+            AGENT_LOG_BYTES.labels(agent_id=agent_id).set(self._sizes[key])
 
     def read_path(self, path: str) -> bytes:
         parsed = _parse_file_path(path)
@@ -84,6 +85,7 @@ class MemoryBackend:
     def drop_date(self, date: str) -> None:
         with self._global_lock:
             keys = [k for k in self._buffers if k.date == date]
+            affected_agents = {k.agent_id for k in keys}
             # Safety: keys we iterate are already registered in _buffers, so they
             # are also in _locks (fast path in _lock_for). _lock_for therefore
             # never tries to acquire _global_lock for these keys while we hold
@@ -101,6 +103,10 @@ class MemoryBackend:
                     self._buffers.pop(k, None)
                     self._sizes.pop(k, None)
                 self._locks.pop(k, None)
+            # For each affected agent, zero the gauge if no other date remains.
+            for agent_id in affected_agents:
+                if not any(k.agent_id == agent_id for k in self._buffers):
+                    AGENT_LOG_BYTES.labels(agent_id=agent_id).set(0)
 
 
 def _parse_file_path(path: str) -> tuple[str, str] | None:

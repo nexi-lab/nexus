@@ -63,10 +63,6 @@ class MemoryFileCache:
     async def invalidate(self, key: FileKey) -> None:
         with self._entry_lock:
             self._entries.pop(key, None)
-        with self._lock_guard:
-            lock = self._locks.get(key)
-            if lock is not None and not lock.locked():
-                self._locks.pop(key, None)
 
     async def lock(self, key: FileKey) -> asyncio.Lock:
         with self._lock_guard:

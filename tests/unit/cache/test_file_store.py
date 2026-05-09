@@ -87,3 +87,26 @@ async def test_memory_file_cache_keeps_active_singleflight_lock_on_invalidate() 
         next_lock = await cache.lock(key)
 
     assert next_lock is active_lock
+
+
+@pytest.mark.asyncio
+async def test_memory_file_cache_keeps_waiting_singleflight_lock_on_invalidate() -> None:
+    cache = MemoryFileCache(now_fn=lambda: 100.0)
+    key = FileKey("path_s3", "zone1", "/bucket/foo.txt")
+    active_lock = await cache.lock(key)
+    await active_lock.acquire()
+
+    async def waiter() -> None:
+        async with active_lock:
+            pass
+
+    waiter_task = asyncio.create_task(waiter())
+    await asyncio.sleep(0)
+
+    active_lock.release()
+    await cache.invalidate(key)
+    next_lock = await cache.lock(key)
+
+    await waiter_task
+
+    assert next_lock is active_lock

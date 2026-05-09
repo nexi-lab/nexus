@@ -783,6 +783,7 @@ mod tests {
             target_zone_id: None,
             link_target: None,
             gen: 42,
+            owner_id: None,
         };
 
         let restored = deserialize_metadata(&serialize_metadata(&meta)).unwrap();
@@ -808,10 +809,12 @@ mod tests {
             target_zone_id: None,
             link_target: None,
             gen: 99,
+            owner_id: None,
         };
         let mut bytes = serialize_metadata(&meta);
         bytes[0] = 3;
-        bytes.truncate(bytes.len() - 8);
+        // Truncate gen (8 bytes) + owner_id opt-str (1 byte for None tag)
+        bytes.truncate(bytes.len() - 9);
 
         let restored = deserialize_metadata(&bytes).unwrap();
 
@@ -834,9 +837,11 @@ mod tests {
             target_zone_id: None,
             link_target: None,
             gen: 7,
+            owner_id: None,
         };
         let mut bytes = serialize_metadata(&meta);
-        bytes.truncate(bytes.len() - 1);
+        // Remove owner_id opt-str (1 byte for None tag) + last byte of gen
+        bytes.truncate(bytes.len() - 2);
 
         let err = deserialize_metadata(&bytes).unwrap_err();
 

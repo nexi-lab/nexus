@@ -16,6 +16,13 @@ class _FakeTransport:
         self.calls.append((method, params))
         if method == "sys_read":
             return b"rpc-read"
+        if method == "sys_stat":
+            return {
+                "path": params["path"],
+                "content_id": "cid-123",
+                "version": 7,
+                "size": 8,
+            }
         if method in {"write", "sys_write"}:
             return {"path": params["path"], "bytes_written": len(params["buf"])}
         if method == "sys_rename":
@@ -44,6 +51,25 @@ def test_remote_sys_read_uses_generic_rpc_for_server_side_scoping() -> None:
     assert transport.calls == [
         ("sys_read", {"path": "/workspace/file.txt"}),
         ("sys_read", {"path": "/workspace/file.txt", "count": 4, "offset": 2}),
+    ]
+
+
+def test_remote_sys_stat_uses_generic_rpc_for_authoritative_metadata() -> None:
+    transport = _FakeTransport()
+    nfs = SimpleNamespace()
+
+    install_remote_kernel_rpc_overrides(cast(Any, nfs), cast(Any, transport))
+
+    remote_sys_stat = getattr(nfs, "sys_stat", None)
+    assert callable(remote_sys_stat)
+    assert remote_sys_stat("/workspace/file.txt") == {
+        "path": "/workspace/file.txt",
+        "content_id": "cid-123",
+        "version": 7,
+        "size": 8,
+    }
+    assert transport.calls == [
+        ("sys_stat", {"path": "/workspace/file.txt"}),
     ]
 
 

@@ -1763,12 +1763,20 @@ class MetadataMixin:
         if hasattr(self, "resolve_list"):
             _handled, _virt = self.resolve_list(path, context=context, recursive=recursive)
             if _handled and _virt is not None:
-                if details:
-                    return [
-                        {"path": p, "size": 0, "content_id": "", "entry_type": et}
-                        for p, et in _virt
-                    ]
-                return [p for p, _ in _virt]
+                _emit_list()
+                # Always return rich dict entries (with size from try_stat)
+                # so virtual files render correctly regardless of the wire
+                # `details` arg. Both `_format_file_entry` shapes (CLI and
+                # API v2) consume dicts; strings would lose size+type info.
+                out: list[dict[str, Any]] = []
+                for p, et in _virt:
+                    size = 0
+                    if et == 0 and hasattr(self, "resolve_stat"):
+                        _ok, _stat = self.resolve_stat(p, context=context)
+                        if _ok and _stat is not None:
+                            size = int(_stat.get("size", 0))
+                    out.append({"path": p, "size": size, "content_id": "", "entry_type": et})
+                return out
 
         # /__sys__/locks intercept moved to Rust readdir_paged (C3/C7).
 

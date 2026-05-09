@@ -179,19 +179,21 @@ class TestMetastoreCleanup:
     async def test_cleanup_deletes_expired_entries(self, mock_transport) -> None:
         metastore = MagicMock()
         # Two expired entries (ttl=60s, modified 10 min ago) + one live
-        metastore.metastore_list.return_value = [
-            self._make_meta("/tmp/a.txt", ttl=60.0, modified_minutes_ago=10),
-            self._make_meta("/tmp/b.txt", ttl=60.0, modified_minutes_ago=10),
-            self._make_meta(
-                "/tmp/c.txt", ttl=3600.0, modified_minutes_ago=10
-            ),  # 1h TTL, still live
-        ]
+        metastore.metastore_list_paginated.return_value = {
+            "items": [
+                self._make_meta("/tmp/a.txt", ttl=60.0, modified_minutes_ago=10),
+                self._make_meta("/tmp/b.txt", ttl=60.0, modified_minutes_ago=10),
+                self._make_meta(
+                    "/tmp/c.txt", ttl=3600.0, modified_minutes_ago=10
+                ),  # 1h TTL, still live
+            ]
+        }
 
         sweeper = TTLVolumeSweeper(mock_transport, metastore=metastore)
         await sweeper.sweep_once()
 
-        metastore.metastore_delete.assert_called()
-        deleted_paths = {c.args[0] for c in metastore.metastore_delete.call_args_list}
+        metastore.sys_unlink.assert_called()
+        deleted_paths = {c.args[0] for c in metastore.sys_unlink.call_args_list}
         assert "/tmp/a.txt" in deleted_paths
         assert "/tmp/b.txt" in deleted_paths
         assert "/tmp/c.txt" not in deleted_paths
@@ -199,14 +201,16 @@ class TestMetastoreCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_skips_permanent_entries(self, mock_transport) -> None:
         metastore = MagicMock()
-        metastore.metastore_list.return_value = [
-            self._make_meta("/docs/readme.md", ttl=0.0, modified_minutes_ago=999),  # permanent
-        ]
+        metastore.metastore_list_paginated.return_value = {
+            "items": [
+                self._make_meta("/docs/readme.md", ttl=0.0, modified_minutes_ago=999),  # permanent
+            ]
+        }
 
         sweeper = TTLVolumeSweeper(mock_transport, metastore=metastore)
         await sweeper.sweep_once()
 
-        metastore.metastore_delete.assert_not_called()
+        metastore.sys_unlink.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cleanup_no_metastore(self, mock_transport) -> None:
@@ -218,7 +222,7 @@ class TestMetastoreCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_failure_doesnt_crash(self, mock_transport) -> None:
         metastore = MagicMock()
-        metastore.metastore_list.side_effect = RuntimeError("db down")
+        metastore.metastore_list_paginated.side_effect = RuntimeError("db down")
 
         sweeper = TTLVolumeSweeper(mock_transport, metastore=metastore)
         entries, sealed = await sweeper.sweep_once()
@@ -232,8 +236,8 @@ class TestMetastoreCleanup:
         assert sweeper._metastore is None
 
         metastore = MagicMock()
-        metastore.metastore_list.return_value = []
+        metastore.metastore_list_paginated.return_value = {"items": []}
         sweeper.set_metastore(metastore)
 
         await sweeper.sweep_once()
-        metastore.metastore_list.assert_called_once()
+        metastore.metastore_list_paginated.assert_called_once()

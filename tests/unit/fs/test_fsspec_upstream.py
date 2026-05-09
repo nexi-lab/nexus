@@ -33,7 +33,6 @@ from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
-from nexus.fs import _make_mount_entry  # noqa: E402
 from nexus.fs._fsspec import NexusFileSystem  # noqa: E402
 from nexus.fs._kernel_factory import create_kernel  # noqa: E402
 
@@ -59,7 +58,7 @@ def _build_nexus_fsspec(tmp_path: Path) -> NexusFileSystem:
         permissions=PermissionConfig(enforce=False),
     )
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-    metastore.metastore_put(_make_mount_entry("/local", backend.name))
+    metastore.sys_setattr("/local", DT_MOUNT)
     kernel._init_cred = OperationContext(
         user_id="test",
         groups=[],

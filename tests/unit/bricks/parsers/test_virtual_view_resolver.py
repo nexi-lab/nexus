@@ -22,7 +22,7 @@ def metadata() -> MagicMock:
 
     Post-C10a the resolver stores ``self._kernel = metadata`` directly
     and calls ``sys_stat`` (try_read) and ``access`` (try_write/try_delete)
-    instead of the legacy ``metastore_get`` / ``metastore_exists``.
+    instead of the deleted ``metastore_get`` / ``metastore_exists``.
     """
     mock = MagicMock()
     # sys_stat returns a dict (truthy) or None (falsy) — used by try_read

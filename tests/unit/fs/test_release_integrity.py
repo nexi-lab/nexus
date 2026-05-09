@@ -12,14 +12,12 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import FileMetadata
 from nexus.fs._helpers import LOCAL_CONTEXT
 from nexus.fs._helpers import close as _close_fs
 from nexus.fs._kernel_factory import _retry_on_busy, create_kernel
@@ -103,21 +101,6 @@ class TestMountCleanupOnFailure:
 # =========================================================================
 
 
-def _make_metadata(path: str) -> FileMetadata:
-    """Create a minimal FileMetadata for testing."""
-    now = datetime.now(UTC)
-    return FileMetadata(
-        path=path,
-        size=42,
-        content_id="etag123",
-        mime_type="text/plain",
-        created_at=now,
-        modified_at=now,
-        version=1,
-        zone_id=ROOT_ZONE_ID,
-    )
-
-
 class TestRetryOnBusy:
     """Unit tests for the _retry_on_busy decorator."""
 
@@ -191,17 +174,16 @@ class TestConcurrentMetastore:
             try:
                 for i in range(n_ops):
                     path = f"/thread{thread_id}/file{i}.txt"
-                    meta = _make_metadata(path)
                     try:
-                        ms.metastore_put(meta)
-                        result = ms.metastore_get(path)
+                        ms.sys_setattr(path, 1)
+                        result = ms.sys_stat(path, "root")
                         if result is None:
                             errors.append(
                                 f"Thread {thread_id}: get({path}) returned None after put"
                             )
-                        elif result.path != path:
+                        elif result["path"] != path:
                             errors.append(
-                                f"Thread {thread_id}: path mismatch {result.path} != {path}"
+                                f"Thread {thread_id}: path mismatch {result['path']} != {path}"
                             )
                     except Exception as exc:
                         errors.append(f"Thread {thread_id}: {exc}")
@@ -501,7 +483,6 @@ class TestKernelLifecycle:
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
-        from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
         metastore = create_kernel(db_path)
@@ -524,7 +505,7 @@ class TestKernelLifecycle:
         from nexus.contracts.metadata import DT_MOUNT
 
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-        metastore.metastore_put(_make_mount_entry("/local", backend.name))
+        metastore.sys_setattr("/local", DT_MOUNT)
 
         _close_fs(kernel)
         _close_fs(kernel)  # should not raise
@@ -536,7 +517,6 @@ class TestKernelLifecycle:
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
-        from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
         metastore = create_kernel(db_path)
@@ -559,7 +539,7 @@ class TestKernelLifecycle:
         from nexus.contracts.metadata import DT_MOUNT
 
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-        metastore.metastore_put(_make_mount_entry("/local", backend.name))
+        metastore.sys_setattr("/local", DT_MOUNT)
 
         fs = kernel
         try:

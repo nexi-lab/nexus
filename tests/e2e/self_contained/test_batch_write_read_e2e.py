@@ -20,7 +20,6 @@ from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.fs import _make_mount_entry
 from nexus.fs._kernel_factory import create_kernel
 from nexus.server.api.v2.routers.async_files import create_async_files_router
 from nexus.server.dependencies import get_auth_result
@@ -62,7 +61,7 @@ def real_fs(tmp_path: Path) -> NexusFS:
         is_admin=True,
     )
     kernel.sys_setattr("/files", entry_type=DT_MOUNT, backend=backend)
-    metastore.metastore_put(_make_mount_entry("/files", backend.name))
+    metastore.sys_setattr("/files", DT_MOUNT)
 
     return kernel
 

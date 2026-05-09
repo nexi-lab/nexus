@@ -30,7 +30,7 @@ def _mock_nexus_fs(*, permission_ok: bool = True) -> MagicMock:
     nx.service.return_value = rebac_svc
     # kernel mocks (post-C10a/C11: mount_service routes through
     # access, metastore_list_paginated, sys_unlink instead of the
-    # legacy metastore_get / metastore_list / metastore_delete)
+    # legacy metastore ABIs)
     nx._kernel.metastore_list_paginated.return_value = {
         "items": [],
         "has_more": False,
@@ -38,7 +38,7 @@ def _mock_nexus_fs(*, permission_ok: bool = True) -> MagicMock:
         "total_count": 0,
     }
     nx._kernel.access.return_value = False
-    nx._kernel.metastore_delete.return_value = True
+    nx._kernel.sys_unlink.return_value = {}
     nx._record_store = None
     return nx
 
@@ -118,7 +118,7 @@ class TestAddMountRollback:
     def test_mkdir_failure_is_best_effort_no_rollback(self) -> None:
         """metadata.put failure is non-critical -- mount stays active (best effort)."""
         service, nx = _build_service()
-        nx._kernel.metastore_put.side_effect = RuntimeError("Metastore down")
+        nx._kernel.sys_setattr.side_effect = RuntimeError("Metastore down")
 
         # metadata.put fails but is caught in _setup_mount_point -- mount succeeds
         result = service.add_mount_sync(

@@ -50,15 +50,15 @@ class _Kernel:
             old_modified_at_ms=None,
         )
 
-    def metastore_get_batch(self, paths: list[str]) -> list[Any]:
+    def stat_batch(self, paths: list[str], zone_id: str = "root") -> list[Any]:
         return [
-            SimpleNamespace(
-                size=3,
-                content_id=f"cid-{index}",
-                version=1,
-                gen=1,
-                modified_at=None,
-            )
+            {
+                "size": 3,
+                "content_id": f"cid-{index}",
+                "version": 1,
+                "gen": 1,
+                "modified_at": None,
+            }
             for index, _path in enumerate(paths)
         ]
 

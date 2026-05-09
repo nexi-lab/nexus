@@ -21,7 +21,6 @@ from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.fs import _make_mount_entry
 from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
 from nexus.fs._kernel_factory import create_kernel
 
@@ -59,7 +58,7 @@ def s3_fs(tmp_path: Path):
             is_admin=True,
         )
         kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
-        metastore.metastore_put(_make_mount_entry(mount_point, backend.name))
+        metastore.sys_setattr(mount_point, DT_MOUNT)
 
         yield kernel, mount_point
 

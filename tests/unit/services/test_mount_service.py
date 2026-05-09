@@ -44,7 +44,7 @@ def mock_nexus_fs():
     fs.mkdir = MagicMock()
     fs.sys_write = MagicMock()
     fs.sys_unlink = MagicMock()
-    fs._kernel.metastore_delete = MagicMock()
+    fs._kernel.sys_unlink = MagicMock()
     fs._kernel.metastore_list_paginated = MagicMock(
         return_value={
             "items": [],
@@ -424,16 +424,16 @@ class TestGrantMountOwnerPermission:
 
     def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
         """Mount point directory entries are created via _setup_mount_point."""
-        # access returns False → dirs don't exist yet, so metastore_put is called
+        # access returns False → dirs don't exist yet, so sys_setattr is called
         mock_nexus_fs._kernel.access.return_value = False
         mount_service._setup_mount_point("/mnt/test", operation_context)
-        # metadata.put called for /mnt and /mnt/test
-        assert mock_nexus_fs._kernel.metastore_put.call_count == 2
+        # sys_setattr called for /mnt and /mnt/test
+        assert mock_nexus_fs._kernel.sys_setattr.call_count == 2
 
     def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
         """Errors creating directory do not prevent permission grant."""
         mock_nexus_fs._kernel.access.return_value = False
-        mock_nexus_fs._kernel.metastore_put.side_effect = RuntimeError("put failed")
+        mock_nexus_fs._kernel.sys_setattr.side_effect = RuntimeError("put failed")
 
         # Should not raise — errors in directory creation are logged but not fatal
         mount_service._setup_mount_point("/mnt/test", operation_context)

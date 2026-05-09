@@ -242,7 +242,6 @@ def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
     from nexus.contracts.types import OperationContext
     from nexus.core.config import PermissionConfig
     from nexus.core.nexus_fs import NexusFS
-    from nexus.fs import _make_mount_entry
     from nexus.fs._kernel_factory import create_kernel
 
     class _ExplodingBackend:
@@ -264,7 +263,7 @@ def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
     kernel.sys_setattr("/ext", entry_type=DT_MOUNT, backend=backend, is_external=True)
-    metastore.metastore_put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
+    metastore.sys_setattr("/ext", DT_EXTERNAL_STORAGE)
 
     # Rust readdir swallows errors and returns empty Vec;
     # the Python sys_readdir layer surfaces an empty list (or only

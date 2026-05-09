@@ -812,6 +812,9 @@ class ContentMixin:
         ttl: float | None = None,
     ) -> dict[str, Any]:
         """Inner write body — caller holds ``_occ_path_lock(path)``."""
+        # Issue #4081: capture timing for OP event emission. Mirrors sys_write.
+        _write_locked_start = time.perf_counter()
+
         # PRE-DISPATCH: virtual path resolvers (e.g. /__sys__ writers).
         _handled, _result = self.resolve_write(path, buf, context=context)
         if _handled:
@@ -933,6 +936,18 @@ class ContentMixin:
                 new_version=result.version,
             ),
         )
+
+        # Issue #4081: emit OP event for self-observability. Only on hit
+        # (mirrors the io_metrics gate for sys_write — a miss is not a
+        # completed write).
+        if result.hit:
+            emit_op_completed(
+                agent_id=agent_id,
+                op="write",
+                path=path,
+                bytes_count=len(buf),
+                latency_ms=int((time.perf_counter() - _write_locked_start) * 1000),
+            )
 
         return {
             "content_id": _cid,

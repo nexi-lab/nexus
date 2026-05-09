@@ -324,6 +324,8 @@ class TestCoordinatorWithLeaseManager:
 
             # Populate cache
             bare_cache.cache_attr("/file.txt", {"st_size": 100})
+            bare_cache.cache_attr("/file.txt", {"st_size": 200}, scope_id="agent:one")
+            bare_cache.cache_attr("/file.txt", {"st_size": 300}, scope_id="agent:two")
             coord._set_validity("/file.txt", time.monotonic() + 30.0)
 
             # Simulate revocation of OUR lease (caused by another mount's write)
@@ -337,6 +339,8 @@ class TestCoordinatorWithLeaseManager:
                 loop.close()
 
             assert coord.get_attr("/file.txt") is None
+            assert coord.get_attr("/file.txt", scope_id="agent:one") is None
+            assert coord.get_attr("/file.txt", scope_id="agent:two") is None
             assert not coord._check_validity("/file.txt")
         finally:
             coord.close()

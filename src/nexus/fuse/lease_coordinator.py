@@ -166,7 +166,7 @@ class FUSELeaseCoordinator:
             if path.startswith(_FUSE_RESOURCE_PREFIX):
                 path = path[len(_FUSE_RESOURCE_PREFIX) :]
             self._clear_validity(path)
-            self._cache.invalidate_path(path)
+            self._cache.invalidate_path_all_scopes(path)
 
             # Mark FileContentCache content stale (Issue #3400, Decision 3A)
             if self._file_cache is not None and self._zone_id is not None:

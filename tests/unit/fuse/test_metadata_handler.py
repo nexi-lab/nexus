@@ -151,6 +151,10 @@ def test_readdir_cache_hit_isolated_by_operation_context(
     entries = fuse_ops.readdir("/secure")
 
     assert entries == [".", "..", "public.txt"]
+    assert fuse_ops.cache.get_attr("/secure/public.txt") is None
+    scoped_attrs = fuse_ops.cache.get_attr("/secure/public.txt", scope_id="agent:two")
+    assert scoped_attrs is not None
+    assert scoped_attrs["st_size"] == 1
     mock_nexus_fs.sys_readdir.assert_called_once()
 
 
@@ -182,6 +186,17 @@ def test_metadata_cache_metrics_report_logical_index_sizes() -> None:
 
     assert metrics["cache_sizes"]["attr"] == 1
     assert metrics["cache_sizes"]["listing"] == 1
+
+
+def test_lease_revocation_invalidates_metadata_across_scopes() -> None:
+    cache = FUSECacheManager()
+    cache.cache_attr("/lease.txt", {"st_size": 1})
+    cache.cache_attr("/lease.txt", {"st_size": 2}, scope_id="agent:one")
+
+    cache.on_lease_revoked("/lease.txt")
+
+    assert cache.get_attr("/lease.txt") is None
+    assert cache.get_attr("/lease.txt", scope_id="agent:one") is None
 
 
 class TestResolveFileSize:

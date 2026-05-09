@@ -442,10 +442,10 @@ class FUSECacheManager:
         """Handle lease revocation by invalidating caches for the path.
 
         This is the sync entry point called by the lease revocation
-        callback bridge.  It delegates to ``invalidate_path()`` which
-        clears attribute, content, and parsed caches for the path.
+        callback bridge.  It delegates to ``invalidate_path_all_scopes()``
+        so scoped metadata cannot survive a remote lease revocation.
 
         Args:
             path: Virtual file path whose lease was revoked.
         """
-        self.invalidate_path(path)
+        self.invalidate_path_all_scopes(path)

@@ -292,7 +292,7 @@ class MetadataHandler:
             else:
                 file_path = str(file_info.get("path", ""))
                 is_dir = file_info.get("is_directory", False)
-                cache_file_attrs_from_list(ctx, file_path, file_info, is_dir)
+                cache_file_attrs_from_list(ctx, file_path, file_info, is_dir, scope_id)
 
             name = file_path.rstrip("/").split("/")[-1]
             if name and name not in entries:

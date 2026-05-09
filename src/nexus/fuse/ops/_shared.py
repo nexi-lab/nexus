@@ -655,7 +655,11 @@ def build_dir_attrs(metadata: Any = None) -> dict[str, Any]:
 
 
 def cache_file_attrs_from_list(
-    ctx: FUSESharedContext, file_path: str, file_info: dict[str, Any], is_dir: bool
+    ctx: FUSESharedContext,
+    file_path: str,
+    file_info: dict[str, Any],
+    is_dir: bool,
+    scope_id: str,
 ) -> None:
     """Cache file attributes from list() results to avoid N+1 queries."""
     now = time.time()
@@ -685,4 +689,4 @@ def cache_file_attrs_from_list(
             "st_gid": gid,
         }
 
-    ctx.cache.cache_attr(file_path, attrs)
+    ctx.cache.cache_attr(file_path, attrs, scope_id=scope_id)

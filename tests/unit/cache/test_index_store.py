@@ -28,6 +28,20 @@ def test_memory_index_cache_invalidates_only_parent_listing() -> None:
     assert cache.get(child_key) is None
 
 
+def test_memory_index_cache_uses_literal_relative_parent_listing_key() -> None:
+    cache = MemoryIndexCache(now_fn=lambda: 100.0)
+    relative_parent_key = IndexKey("path_s3", "zone1", ".", "listing")
+    root_key = IndexKey("path_s3", "zone1", "/", "listing")
+
+    cache.put(relative_parent_key, [".", "..", "file.txt"], ttl_seconds=60)
+    cache.put(root_key, [".", "..", "file.txt"], ttl_seconds=60)
+
+    cache.invalidate_parent_listing("path_s3", "zone1", "file.txt")
+
+    assert cache.get(relative_parent_key) is None
+    assert cache.get(root_key) == [".", "..", "file.txt"]
+
+
 def test_memory_index_cache_expires_negative_entry_with_short_ttl() -> None:
     now = [100.0]
     cache = MemoryIndexCache(now_fn=lambda: now[0])

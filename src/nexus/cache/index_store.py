@@ -50,9 +50,7 @@ class MemoryIndexCache:
             self._entries.pop(key, None)
 
     def invalidate_parent_listing(self, backend_id: str, scope_id: str, path: str) -> None:
-        parent = str(PurePosixPath(path).parent)
-        if parent == ".":
-            parent = "/"
+        parent = str(PurePosixPath(path).parent) or "/"
         listing_key = IndexKey(
             backend_id=backend_id,
             scope_id=scope_id,

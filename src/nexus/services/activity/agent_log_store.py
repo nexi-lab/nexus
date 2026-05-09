@@ -67,20 +67,29 @@ class MemoryBackend:
             return b"".join(buf)
 
     def list_dir(self, path: str) -> Iterable[str]:
-        if path == _MOUNT_PREFIX or path == _MOUNT_PREFIX.rstrip("/"):
-            return sorted({k.date for k in self._buffers})
-        date = _parse_date_dir(path)
-        if date is None:
-            return []
-        return sorted(f"{k.agent_id}.jsonl" for k in self._buffers if k.date == date)
+        with self._global_lock:
+            if path == _MOUNT_PREFIX or path == _MOUNT_PREFIX.rstrip("/"):
+                return sorted({k.date for k in self._buffers})
+            date = _parse_date_dir(path)
+            if date is None:
+                return []
+            return sorted(f"{k.agent_id}.jsonl" for k in self._buffers if k.date == date)
 
     def drop_date(self, date: str) -> None:
         with self._global_lock:
             keys = [k for k in self._buffers if k.date == date]
             for k in keys:
-                with self._lock_for(k):
+                # Acquire the per-key lock before discarding it, so any in-flight
+                # append/read finishes first.
+                lock = self._locks.get(k)
+                if lock is not None:
+                    with lock:
+                        self._buffers.pop(k, None)
+                        self._sizes.pop(k, None)
+                else:
                     self._buffers.pop(k, None)
                     self._sizes.pop(k, None)
+                self._locks.pop(k, None)
 
 
 def _parse_file_path(path: str) -> tuple[str, str] | None:
@@ -94,6 +103,9 @@ def _parse_file_path(path: str) -> tuple[str, str] | None:
         return None
     agent_id = fname[: -len(".jsonl")]
     if not agent_id or not date:
+        return None
+    # Reject paths with extra slashes (e.g., /.activity/2026-05-09/extra/alice.jsonl)
+    if "/" in agent_id:
         return None
     return agent_id, date
 

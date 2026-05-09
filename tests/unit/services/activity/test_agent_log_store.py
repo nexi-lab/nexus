@@ -74,3 +74,17 @@ def test_drop_date_removes_buffer():
     store.append_line("alice", "2026-05-09", b"a\n")
     store.drop_date("2026-05-09")
     assert store.read_path("/.activity/2026-05-09/alice.jsonl") == b""
+
+
+def test_path_with_extra_slashes_returns_empty():
+    store = MemoryBackend(cap_bytes=1024)
+    store.append_line("alice", "2026-05-09", b"a\n")
+    assert store.read_path("/.activity/2026-05-09/extra/alice.jsonl") == b""
+
+
+def test_drop_date_releases_lock_entry():
+    store = MemoryBackend(cap_bytes=1024)
+    store.append_line("alice", "2026-05-09", b"a\n")
+    store.drop_date("2026-05-09")
+    # Internal lock dict should not retain stale keys for dropped dates.
+    assert not any(k.date == "2026-05-09" for k in store._locks)

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.cli_backend import PathCLIBackend, sanitize_filename
 from nexus.backends.base.registry import register_connector
@@ -32,6 +32,9 @@ from nexus.backends.connectors.github.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
 
 
 @register_connector("github_connector")
@@ -162,3 +165,10 @@ class GitHubConnector(PathCLIBackend):
             return f"{folder}/{number}.yaml"
 
         return f"{folder}/{item_id}.yaml"
+
+    def fingerprint(self, path: str, context: "OperationContext | None" = None) -> str | None:
+        parent, _, name = path.rpartition("/")
+        metadata = self.list_dir_metadata(parent or "/", context=context) or {}
+        row = metadata.get(name) or {}
+        candidate = row.get("sha") or row.get("blob_sha") or row.get("etag")
+        return str(candidate) if candidate else None

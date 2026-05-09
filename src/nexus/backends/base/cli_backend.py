@@ -963,6 +963,9 @@ class PathCLIBackend(
         """
         return None
 
+    def fingerprint(self, path: str, context: "OperationContext | None" = None) -> str | None:
+        return None
+
     # --- Stub implementations for Backend ABC ---
 
     def delete_content(

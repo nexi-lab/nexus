@@ -813,7 +813,6 @@ class TestFsspecIntegration:
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
-        from nexus.fs import _make_mount_entry
         from nexus.fs._kernel_factory import create_kernel
 
         db_path = str(tmp_path / "metadata.db")
@@ -834,7 +833,7 @@ class TestFsspecIntegration:
             is_admin=True,
         )
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-        metastore.metastore_put(_make_mount_entry("/local", backend.name))
+        metastore.sys_setattr("/local", DT_MOUNT)
 
         fs = NexusFileSystem(nexus_fs=kernel)
         yield fs

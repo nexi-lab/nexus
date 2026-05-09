@@ -18,7 +18,6 @@ from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.fs import _make_mount_entry
 from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
 from nexus.fs._kernel_factory import create_kernel
 from nexus.fs._sync import SyncNexusFS
@@ -48,7 +47,7 @@ def _build_fs(tmp_path: Path) -> NexusFS:
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-    metastore.metastore_put(_make_mount_entry("/local", backend.name))
+    metastore.sys_setattr("/local", DT_MOUNT)
 
     return kernel
 

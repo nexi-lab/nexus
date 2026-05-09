@@ -379,7 +379,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def get_meta():
-            return nx._kernel.metastore_get("/test_small.bin")
+            return nx._kernel.sys_stat("/test_small.bin", "root")
 
         result = benchmark(get_meta)
         assert result is not None
@@ -389,7 +389,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def get_meta():
-            return nx._kernel.metastore_get("/nonexistent.txt")
+            return nx._kernel.sys_stat("/nonexistent.txt", "root")
 
         result = benchmark(get_meta)
         assert result is None

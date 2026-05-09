@@ -30,7 +30,6 @@ from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
-from nexus.fs import _make_mount_entry  # noqa: E402
 from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts  # noqa: E402
 from nexus.fs._kernel_factory import create_kernel  # noqa: E402
 
@@ -145,7 +144,7 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[NexusFS, str]:
     kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
 
     # Create DT_MOUNT entry
-    metastore.metastore_put(_make_mount_entry(mount_point, backend.name))
+    metastore.sys_setattr(mount_point, DT_MOUNT)
 
     return kernel, mount_point
 

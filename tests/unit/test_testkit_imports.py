@@ -113,9 +113,9 @@ def test_dict_metastore_factory_returns_usable_store(tmp_path: Path) -> None:
 
     store = DictMetastore(tmp_path / "metadata.redb")
     try:
-        assert hasattr(store, "metastore_get")
-        assert hasattr(store, "metastore_put")
-        assert store.metastore_get("/missing") is None
+        assert hasattr(store, "sys_stat")
+        assert hasattr(store, "sys_setattr")
+        assert store.sys_stat("/missing", "root") is None
     finally:
         pass  # kernel manages redb lifecycle
 

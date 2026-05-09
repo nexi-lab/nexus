@@ -27,6 +27,8 @@ class EventKind(StrEnum):
     ZONE_ACCESS = "zone_access"
     POLICY_BLOCK = "policy_block"
     APPROVAL = "approval"
+    OP = "op"
+    EXEC = "exec"
 
 
 class Result(StrEnum):

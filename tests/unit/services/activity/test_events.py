@@ -16,7 +16,16 @@ from nexus.services.activity.events import (
 
 
 def test_event_kinds_match_issue_schema() -> None:
-    expected = {"search", "fetch", "mcp_tool_call", "zone_access", "policy_block", "approval"}
+    expected = {
+        "search",
+        "fetch",
+        "mcp_tool_call",
+        "zone_access",
+        "policy_block",
+        "approval",
+        "op",
+        "exec",
+    }
     assert {k.value for k in EventKind} == expected
 
 

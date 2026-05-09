@@ -16,6 +16,8 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 
+from nexus.services.activity.metrics import AGENT_LOG_LINES_DROPPED
+
 _MOUNT_PREFIX = "/.activity/"
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -57,6 +59,7 @@ class MemoryBackend:
                 self._sizes[key] -= len(old)
                 with self._counter_lock:
                     self.lines_evicted += 1
+                    AGENT_LOG_LINES_DROPPED.labels(reason="ring_evict").inc()
 
     def read_path(self, path: str) -> bytes:
         parsed = _parse_file_path(path)

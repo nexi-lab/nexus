@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from nexus.contracts.protocols.activity import EventKind
 from nexus.services.activity.agent_log_store import MemoryBackend
 from nexus.services.activity.events import ActivityEvent
+from nexus.services.activity.metrics import AGENT_LOG_LINES_DROPPED
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,13 @@ class JsonlActivitySink:
             agent = e.actor.agent if e.actor else None
             if not agent:
                 self.no_agent_dropped += 1
+                AGENT_LOG_LINES_DROPPED.labels(reason="no_agent").inc()
                 continue
             meta = e.meta or {}
             path = meta.get("path")
             if isinstance(path, str) and path.startswith(_MOUNT_PREFIX):
                 self.recursion_skipped += 1
+                AGENT_LOG_LINES_DROPPED.labels(reason="recursion").inc()
                 continue
             try:
                 line = self._build_line(e, meta)

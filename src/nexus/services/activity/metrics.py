@@ -68,6 +68,18 @@ ACTIVITY_RETENTION_PRUNED = Counter(
     "Activity events pruned by retention task",
 )
 
+AGENT_LOG_LINES_DROPPED = Counter(
+    "nexus_activity_agent_log_lines_dropped_total",
+    "Lines not written to agent_log mount, by reason",
+    ["reason"],  # ring_evict | recursion | no_agent
+)
+
+AGENT_LOG_BYTES = Gauge(
+    "nexus_activity_agent_log_bytes",
+    "Current bytes held in the agent_log MemoryBackend",
+    ["agent_id"],
+)
+
 
 def record_metrics(
     *,

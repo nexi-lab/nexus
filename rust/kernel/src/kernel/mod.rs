@@ -15,6 +15,7 @@
 //!
 //! Kernel struct + syscalls — pure Rust kernel boundary.
 
+use crate::cache::{file_cache::FileCache, index_cache::IndexCache};
 use crate::core::permission_cache::PermissionLeaseCache;
 use crate::dispatch::ops_registry::{
     BackendKind, CatHandlerKind, FileType, FingerprintHandlerKind, GrepHandlerKind, OpHandler,
@@ -633,6 +634,8 @@ pub struct Kernel {
     pub(crate) agent_registry: Arc<crate::core::agents::registry::AgentRegistry>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
+    index_cache: IndexCache,
+    file_cache: FileCache,
     pub(crate) ops_registry: OpsRegistry,
     // Per-mount metastores now live inside `VFSRouter::entries` as
     // `MountEntry::metastore: Option<Arc<dyn MetaStore>>` (our v20
@@ -791,6 +794,8 @@ impl Kernel {
             file_watches: Arc::new(FileWatchRegistry::new()),
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
+            index_cache: IndexCache::default(),
+            file_cache: FileCache::default(),
             ops_registry: Self::default_ops_registry(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
@@ -3852,6 +3857,81 @@ mod tests {
                 .unwrap()
                 .unwrap_err();
             assert!(matches!(err, RustCallError::NotFound));
+        }
+    }
+
+    // ── Logical cache split ───────────────────────────────────────────
+    mod logical_cache_split {
+        use super::*;
+        use crate::cache::{
+            file_cache::FileCacheKey,
+            index_cache::{IndexCacheKey, IndexKind},
+        };
+        use crate::meta_store::{FileMetadata, LocalMetaStore, MetaStore};
+        use std::time::Duration;
+
+        #[test]
+        fn sys_read_serves_matching_fingerprint_from_file_cache() {
+            let k = Kernel::new();
+            let _td = tempfile::tempdir().unwrap();
+            let ms: Arc<dyn MetaStore> =
+                Arc::new(LocalMetaStore::open(&_td.path().join("meta.redb")).unwrap());
+            k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
+                .unwrap();
+
+            ms.put(
+                "/data/a.txt",
+                FileMetadata {
+                    path: "/data/a.txt".to_string(),
+                    size: 6,
+                    content_id: Some("etag:1".to_string()),
+                    version: 1,
+                    entry_type: DT_REG,
+                    zone_id: Some("root".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            k.file_cache.put(
+                FileCacheKey::new("root", "/data/a.txt", "raw"),
+                b"cached".to_vec(),
+                Some("etag:1".to_string()),
+                None,
+            );
+
+            let ctx = OperationContext::new("test", "root", true, None, true);
+            let read = k.sys_read("/data/a.txt", &ctx, 5000, 0).unwrap();
+
+            assert_eq!(read.data.as_deref(), Some(&b"cached"[..]));
+            assert_eq!(read.content_id.as_deref(), Some("etag:1"));
+        }
+
+        #[test]
+        fn sys_mkdir_invalidates_parent_listing_index_cache() {
+            let k = Kernel::new();
+            let _td = tempfile::tempdir().unwrap();
+            let ms: Arc<dyn MetaStore> =
+                Arc::new(LocalMetaStore::open(&_td.path().join("meta.redb")).unwrap());
+            k.add_mount("/data", "root", None, Some(ms), None, false)
+                .unwrap();
+
+            let key = IndexCacheKey::new("root", "/data", IndexKind::Listing);
+            k.index_cache.put_listing(
+                key,
+                vec![("/data/stale.txt".to_string(), DT_REG)],
+                Duration::from_secs(60),
+            );
+            assert_eq!(
+                k.readdir("/data", "root", false),
+                vec![("/data/stale.txt".to_string(), DT_REG)]
+            );
+
+            let ctx = OperationContext::new("test", "root", true, None, true);
+            k.sys_mkdir("/data/fresh", &ctx, false, false).unwrap();
+
+            let entries = k.readdir("/data", "root", false);
+            assert!(entries.contains(&("/data/fresh".to_string(), DT_DIR)));
+            assert!(!entries.contains(&("/data/stale.txt".to_string(), DT_REG)));
         }
     }
 

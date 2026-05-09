@@ -6,6 +6,10 @@
 
 use std::sync::atomic::Ordering;
 
+use crate::cache::{
+    file_cache::FileCacheKey,
+    index_cache::{ttl_for_backend, IndexCacheKey, IndexKind},
+};
 use crate::dispatch::ops_registry::{
     BackendKind, CatHandlerKind, FileType, FingerprintHandlerKind, OpHandler,
 };
@@ -357,6 +361,13 @@ impl Kernel {
             Some(id) => id,
             None => return Err(not_found()),
         };
+        let expected_fingerprint = entry
+            .content_id
+            .as_ref()
+            .filter(|id| !id.is_empty())
+            .cloned()
+            .or_else(|| (entry.version > 0).then(|| entry.version.to_string()));
+        let file_key = FileCacheKey::new(&ctx.zone_id, path, "raw");
 
         // 4. VFS lock (blocking acquire — wrapper releases GIL before calling this)
         let lock_handle =
@@ -366,6 +377,36 @@ impl Kernel {
             return Err(KernelError::IOError(format!(
                 "vfs read lock timeout: {path}"
             )));
+        }
+
+        if let Some(bytes) = self
+            .file_cache
+            .get(&file_key, expected_fingerprint.as_deref())
+        {
+            self.lock_manager.do_release(lock_handle);
+            return Ok(SysReadResult {
+                data: Some(bytes),
+                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                content_id: expected_fingerprint.clone(),
+                gen: entry.gen,
+                entry_type: DT_REG,
+                stream_next_offset: None,
+            });
+        }
+        let _file_fill_guard = self.file_cache.lock(&file_key);
+        if let Some(bytes) = self
+            .file_cache
+            .get(&file_key, expected_fingerprint.as_deref())
+        {
+            self.lock_manager.do_release(lock_handle);
+            return Ok(SysReadResult {
+                data: Some(bytes),
+                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                content_id: expected_fingerprint.clone(),
+                gen: entry.gen,
+                entry_type: DT_REG,
+                stream_next_offset: None,
+            });
         }
 
         // 5. Backend read (Rust-native ObjectStore)
@@ -379,14 +420,18 @@ impl Kernel {
 
         // 7. Return result
         match content {
-            Some(data) => Ok(SysReadResult {
-                data: Some(data),
-                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_id: entry.content_id.clone(),
-                gen: entry.gen,
-                entry_type: DT_REG,
-                stream_next_offset: None,
-            }),
+            Some(data) => {
+                self.file_cache
+                    .put(file_key, data.clone(), expected_fingerprint.clone(), None);
+                Ok(SysReadResult {
+                    data: Some(data),
+                    post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                    content_id: entry.content_id.clone(),
+                    gen: entry.gen,
+                    entry_type: DT_REG,
+                    stream_next_offset: None,
+                })
+            }
             // Local backend miss + metadata exists → federation path:
             // try the origin encoded in backend_name. Otherwise it's a
             // genuine miss.
@@ -483,6 +528,20 @@ impl Kernel {
                 .backend
                 .as_ref()
                 .map(|b| b.write_content(&data, cache_key, ctx, 0));
+        }
+        let expected_fingerprint = entry
+            .content_id
+            .as_ref()
+            .filter(|id| !id.is_empty())
+            .cloned()
+            .or_else(|| (entry.version > 0).then(|| entry.version.to_string()));
+        if expected_fingerprint.is_some() {
+            self.file_cache.put(
+                FileCacheKey::new(&ctx.zone_id, path, "raw"),
+                data.clone(),
+                expected_fingerprint.clone(),
+                None,
+            );
         }
 
         Ok(SysReadResult {
@@ -883,6 +942,13 @@ impl Kernel {
             }
             None => miss(),
         };
+        if let Ok(result) = &result {
+            if result.hit {
+                self.file_cache.invalidate_path(&ctx.zone_id, path, "raw");
+                self.index_cache
+                    .invalidate_parent_listing(&ctx.zone_id, path);
+            }
+        }
 
         // 7. Release VFS lock (always, even on miss)
         self.lock_manager.do_release(lock_handle);
@@ -1225,6 +1291,9 @@ impl Kernel {
             .backend
             .as_ref()
             .map(|b| b.delete_file(&route.backend_path));
+        self.file_cache.invalidate_path(&ctx.zone_id, path, "raw");
+        self.index_cache
+            .invalidate_parent_listing(&ctx.zone_id, path);
 
         // 8. Release VFS lock
         self.lock_manager.do_release(lock_handle);
@@ -1510,6 +1579,14 @@ impl Kernel {
         // already invalidated old_path / repopulated new_path during
         // ``rename_path`` above. The kernel side has nothing left to do
         // — there is no kernel-global metadata cache to keep in sync.
+        self.file_cache
+            .invalidate_path(&ctx.zone_id, old_path, "raw");
+        self.file_cache
+            .invalidate_path(&ctx.zone_id, new_path, "raw");
+        self.index_cache
+            .invalidate_parent_listing(&ctx.zone_id, old_path);
+        self.index_cache
+            .invalidate_parent_listing(&ctx.zone_id, new_path);
 
         // 10. Release sorted locks
         release_locks(&self.lock_manager, lock1, lock2);
@@ -2076,6 +2153,8 @@ impl Kernel {
         // ensure_parent_directories don't get individual events; the
         // top-level mkdir event is enough for observers like
         // FileWatchRegistry to invalidate their dcache for the subtree.
+        self.index_cache
+            .invalidate_parent_listing(&ctx.zone_id, path);
         self.dispatch_mutation(FileEventType::DirCreate, path, ctx, |_ev| {});
 
         Ok(SysMkdirResult {
@@ -2225,6 +2304,8 @@ impl Kernel {
         // (observers needing per-child notifications can list the
         // directory before unlink themselves; the top-level event is
         // the cache-invalidation signal).
+        self.index_cache
+            .invalidate_parent_listing(&ctx.zone_id, path);
         self.dispatch_mutation(FileEventType::DirDelete, path, ctx, |_ev| {});
 
         Ok(SysRmdirResult {
@@ -2555,6 +2636,15 @@ impl Kernel {
         } else {
             parent_path
         };
+        let cache_scope = if is_admin {
+            format!("{zone_id}:admin")
+        } else {
+            zone_id.to_string()
+        };
+        let cache_key = IndexCacheKey::new(cache_scope, normalized, IndexKind::Listing);
+        if let Some(entries) = self.index_cache.get_listing(&cache_key) {
+            return entries;
+        }
         let route = match self.vfs_router.route(normalized, zone_id) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
@@ -2616,7 +2706,7 @@ impl Kernel {
             }
         }
 
-        if needs_zone_filter {
+        let entries: Vec<(String, u8)> = if needs_zone_filter {
             seen.into_iter()
                 .filter(|(_, (_, entry_zone))| {
                     let ez = entry_zone.as_deref().unwrap_or(contracts::ROOT_ZONE_ID);
@@ -2628,7 +2718,10 @@ impl Kernel {
             seen.into_iter()
                 .map(|(path, (etype, _))| (path, etype))
                 .collect()
-        }
+        };
+        self.index_cache
+            .put_listing(cache_key, entries.clone(), ttl_for_backend("kernel"));
+        entries
     }
 
     /// Paginated readdir: returns a page of children with cursor-based

@@ -505,7 +505,6 @@ class TestKernelLifecycle:
         from nexus.contracts.metadata import DT_MOUNT
 
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-        metastore.sys_setattr("/local", DT_MOUNT)
 
         _close_fs(kernel)
         _close_fs(kernel)  # should not raise
@@ -539,7 +538,6 @@ class TestKernelLifecycle:
         from nexus.contracts.metadata import DT_MOUNT
 
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-        metastore.sys_setattr("/local", DT_MOUNT)
 
         fs = kernel
         try:

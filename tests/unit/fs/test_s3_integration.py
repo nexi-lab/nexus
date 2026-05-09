@@ -58,7 +58,6 @@ def s3_fs(tmp_path: Path):
             is_admin=True,
         )
         kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
-        metastore.sys_setattr(mount_point, DT_MOUNT)
 
         yield kernel, mount_point
 

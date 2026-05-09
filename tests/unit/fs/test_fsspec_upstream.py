@@ -58,7 +58,6 @@ def _build_nexus_fsspec(tmp_path: Path) -> NexusFileSystem:
         permissions=PermissionConfig(enforce=False),
     )
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-    metastore.sys_setattr("/local", DT_MOUNT)
     kernel._init_cred = OperationContext(
         user_id="test",
         groups=[],

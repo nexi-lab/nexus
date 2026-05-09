@@ -143,9 +143,6 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[NexusFS, str]:
     # Mount via coordinator (registers in backend pool + routing table + hooks)
     kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
 
-    # Create DT_MOUNT entry
-    metastore.sys_setattr(mount_point, DT_MOUNT)
-
     return kernel, mount_point
 
 

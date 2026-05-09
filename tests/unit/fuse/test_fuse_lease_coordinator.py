@@ -95,6 +95,19 @@ class TestCoordinatorWithoutLeaseManager:
         assert coord.get_attr("/file.txt") is None
         assert coord.get_content("/file.txt") is None
 
+    def test_invalidate_and_revoke_clears_scoped_metadata(
+        self,
+        bare_cache: FUSECacheManager,
+    ) -> None:
+        coord = FUSELeaseCoordinator(cache=bare_cache)
+        coord.cache_attr("/file.txt", {"st_size": 1}, scope_id="agent:one")
+        coord.cache_attr("/file.txt", {"st_size": 2}, scope_id="agent:two")
+
+        coord.invalidate_and_revoke(["/file.txt"])
+
+        assert coord.get_attr("/file.txt", scope_id="agent:one") is None
+        assert coord.get_attr("/file.txt", scope_id="agent:two") is None
+
     def test_delegated_methods(self, bare_cache: FUSECacheManager) -> None:
         coord = FUSELeaseCoordinator(cache=bare_cache)
 

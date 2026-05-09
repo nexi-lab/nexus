@@ -341,6 +341,30 @@ class FUSECacheManager:
             with self._metrics_lock:
                 self._metrics["invalidations"] += 1
 
+    def invalidate_path_all_scopes(self, path: str) -> None:
+        """Invalidate stat entries for a path across all logical scopes."""
+        with self._index_lock:
+            keys = [
+                key
+                for key in self._index_order
+                if key.path == path and key.kind in {"stat", "negative"}
+            ]
+            for key in keys:
+                self._index_cache.invalidate_path(key)
+                self._forget_index_key(key)
+
+        with self._content_lock:
+            self._content_cache.pop(path, None)
+
+        with self._parsed_lock:
+            keys_to_remove = [key for key in self._parsed_cache if key.startswith(f"{path}:")]
+            for key in keys_to_remove:
+                self._parsed_cache.pop(key, None)
+
+        if self._enable_metrics:
+            with self._metrics_lock:
+                self._metrics["invalidations"] += 1
+
     def invalidate_all(self) -> None:
         """Invalidate all caches.
 

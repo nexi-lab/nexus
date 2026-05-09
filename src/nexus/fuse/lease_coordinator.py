@@ -365,7 +365,7 @@ class FUSELeaseCoordinator:
         """
         for path in paths:
             # Immediate local invalidation
-            self._cache.invalidate_path(path)
+            self._cache.invalidate_path_all_scopes(path)
             self._clear_validity(path)
             # Mark shared disk cache stale for this mount too —
             # the revocation callback only covers other mounts
@@ -431,6 +431,11 @@ class FUSELeaseCoordinator:
     def invalidate_path(self, path: str, scope_id: str = "default") -> None:
         """Invalidate all caches for a path (local only, no lease revocation)."""
         self._cache.invalidate_path(path, scope_id=scope_id)
+        self._clear_validity(path)
+
+    def invalidate_path_all_scopes(self, path: str) -> None:
+        """Invalidate all cached metadata scopes for a path."""
+        self._cache.invalidate_path_all_scopes(path)
         self._clear_validity(path)
 
     def invalidate_all(self) -> None:

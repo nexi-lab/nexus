@@ -5,6 +5,7 @@ import pytest
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.cli_backend import PathCLIBackend
 from nexus.backends.connectors.github.connector import GitHubConnector
+from nexus.backends.storage.delegating import DelegatingBackend
 from nexus.backends.storage.path_gcs import PathGCSBackend
 from nexus.backends.storage.path_s3 import PathS3Backend
 
@@ -107,6 +108,17 @@ def test_path_gcs_fingerprint_preserves_metadata_errors() -> None:
 def test_cli_backend_fingerprint_defaults_to_none() -> None:
     backend = object.__new__(PathCLIBackend)
     assert backend.fingerprint("/issues/1_test.yaml") is None
+
+
+def test_delegating_backend_fingerprint_delegates_to_inner() -> None:
+    context = MagicMock()
+    inner = MagicMock()
+    inner.backend_features = frozenset()
+    inner.fingerprint.return_value = "etag:inner"
+    backend = DelegatingBackend(inner)
+
+    assert backend.fingerprint("/file.txt", context=context) == "etag:inner"
+    inner.fingerprint.assert_called_once_with("/file.txt", context=context)
 
 
 def test_github_connector_fingerprint_uses_sha_blob_sha_then_etag() -> None:

@@ -596,6 +596,19 @@ def _register_vfs_hooks(
     else:
         logger.debug("[BOOT:BRICK] task_manager disabled by profile")
 
+    # ── AgentLogResolver (issue #4081 — /.activity/ virtual overlay) ──
+    try:
+        from nexus.bricks.agent_log.resolver import AgentLogResolver
+        from nexus.services.activity.lifespan import get_agent_log_store
+
+        # Lazy getter — store is constructed by setup_activity() during
+        # observability startup, which runs after orchestrator boot. The
+        # resolver tolerates a None store (returns None from try_read so
+        # dispatch falls through to the standard not-found surface).
+        _enlist("agent_log_resolver", AgentLogResolver(get_agent_log_store))
+    except Exception as exc:
+        logger.warning("[BOOT:HOOKS] AgentLogResolver wiring failed: %s", exc)
+
     # ── Snapshot write tracker (Issue #1770) ─────────────────────────
     _snapshot_svc = nx.service("snapshot_service") if hasattr(nx, "service") else None
     if _snapshot_svc is not None:

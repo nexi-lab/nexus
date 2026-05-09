@@ -59,9 +59,10 @@ class JsonlActivitySink:
         return None
 
     def _build_line(self, e: ActivityEvent, meta: dict) -> bytes:
+        ts = _normalize_ts(e.ts)
         if e.kind == EventKind.OP:
             rec = {
-                "ts": e.ts,
+                "ts": ts,
                 "kind": "op",
                 "op": meta.get("op", ""),
                 "path": meta.get("path", ""),
@@ -76,7 +77,7 @@ class JsonlActivitySink:
                 cmd = cmd_b[: self._cmd_max].decode("utf-8", errors="ignore") + "…"
                 truncated = True
             rec = {
-                "ts": e.ts,
+                "ts": ts,
                 "kind": "exec",
                 "cmd": cmd,
                 "exit_code": int(meta.get("exit_code", 0)),
@@ -88,5 +89,25 @@ class JsonlActivitySink:
 
 
 def _utc_date(ts_iso: str) -> str:
-    # Expected: "YYYY-MM-DDTHH:MM:SS.sssZ" — caller controls format.
+    # ts is ISO-8601; the date is always the first 10 chars regardless of
+    # whether the suffix is "Z" or "+00:00".
     return ts_iso[:10]
+
+
+def _normalize_ts(ts_iso: str) -> str:
+    """Normalize emitter timestamp to spec form: YYYY-MM-DDTHH:MM:SS.sssZ.
+
+    The activity emitter currently formats with `+00:00` and microsecond
+    precision (e.g. ``2026-05-09T18:18:07.112815+00:00``). The doc and
+    JSONL schema promise millisecond precision and a `Z` suffix. Trim
+    microseconds → milliseconds and replace timezone offset with `Z`.
+    """
+    if "+00:00" in ts_iso:
+        ts_iso = ts_iso.replace("+00:00", "")
+    if ts_iso.endswith("Z"):
+        ts_iso = ts_iso[:-1]
+    # Trim sub-millisecond digits if present (e.g. ".112815" → ".112").
+    if "." in ts_iso:
+        head, _, frac = ts_iso.partition(".")
+        ts_iso = f"{head}.{frac[:3]}"
+    return ts_iso + "Z"

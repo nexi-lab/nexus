@@ -36,6 +36,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def emit_op_completed(
+    *,
+    agent_id: str | None,
+    op: str,
+    path: str,
+    bytes_count: int,
+    latency_ms: int,
+    trace_id: str | None = None,
+) -> None:
+    """Emit an OP ActivityEvent for self-observability (issue #4081).
+
+    Called from dispatch post-hooks on success paths. Path predicates
+    and agent-id checks live in JsonlActivitySink; keep this helper
+    unconditional so other sinks (SQLite, etc.) get every record.
+    """
+    from nexus.contracts.protocols.activity import EventKind, Result, emit
+
+    emit(
+        kind=EventKind.OP,
+        result=Result.OK,
+        actor_agent=agent_id,
+        latency_ms=latency_ms,
+        trace_id=trace_id,
+        meta={"op": op, "path": path, "bytes": bytes_count},
+    )
+
+
 class ContentMixin:
     """Content I/O: sys_read, sys_write, and Tier 2 convenience methods."""
 
@@ -167,6 +194,15 @@ class ContentMixin:
                 self._kernel.dispatch_post_hooks("read", _read_ctx)
                 data = _read_ctx.content or data
 
+            _latency_ms = int((time.perf_counter() - start) * 1000)
+            _, _agent_id, _ = self._get_context_identity(context)
+            emit_op_completed(
+                agent_id=_agent_id,
+                op="read",
+                path=path,
+                bytes_count=len(data),
+                latency_ms=_latency_ms,
+            )
             io_metrics.record_read(
                 tier="backend",
                 bytes_read=len(data),
@@ -573,6 +609,7 @@ class ContentMixin:
         zero GIL). Metastore.put stays in Python [TRANSITIONAL] — migrates to
         Rust metastore in PR 7.
         """
+        _start = time.perf_counter()
         # Normalize input
         if isinstance(buf, str):
             buf = buf.encode("utf-8")
@@ -648,6 +685,15 @@ class ContentMixin:
                 ),
             )
 
+        _write_latency_ms = int((time.perf_counter() - _start) * 1000)
+        _, _write_agent_id, _ = self._get_context_identity(context)
+        emit_op_completed(
+            agent_id=_write_agent_id,
+            op="write",
+            path=path,
+            bytes_count=len(buf),
+            latency_ms=_write_latency_ms,
+        )
         return {"path": path, "bytes_written": len(buf)}
 
     # @rpc_expose removed — kernel syscall, served by the thin dispatcher.

@@ -1,4 +1,16 @@
+import pytest
+
 from nexus.services.activity.agent_log_store import MemoryBackend
+
+
+def test_cap_bytes_zero_rejected():
+    with pytest.raises(ValueError):
+        MemoryBackend(cap_bytes=0)
+
+
+def test_cap_bytes_negative_rejected():
+    with pytest.raises(ValueError):
+        MemoryBackend(cap_bytes=-1)
 
 
 def test_append_and_read_one_line():
@@ -31,6 +43,7 @@ def test_ring_buffer_evicts_oldest():
     out = store.read_path("/.activity/2026-05-09/alice.jsonl")
     # Last lines preserved, earliest evicted, total <= cap
     assert b"line4\n" in out
+    assert b"line0\n" not in out
     assert len(out) <= 10
     # Always at least one line
     assert out
@@ -88,3 +101,11 @@ def test_drop_date_releases_lock_entry():
     store.drop_date("2026-05-09")
     # Internal lock dict should not retain stale keys for dropped dates.
     assert not any(k.date == "2026-05-09" for k in store._locks)
+
+
+def test_invalid_date_segment_rejected():
+    store = MemoryBackend(cap_bytes=1024)
+    store.append_line("alice", "2026-05-09", b"a\n")
+    assert store.read_path("/.activity/not-a-date/alice.jsonl") == b""
+    assert store.read_path("/.activity/../alice.jsonl") == b""
+    assert list(store.list_dir("/.activity/not-a-date/")) == []

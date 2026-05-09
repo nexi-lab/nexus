@@ -11,12 +11,13 @@ read so a snapshot returned to a reader is internally consistent.
 
 from __future__ import annotations
 
+import re
 import threading
 from collections import deque
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 _MOUNT_PREFIX = "/.activity/"
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,7 @@ class MemoryBackend:
         self._sizes: dict[_Key, int] = {}
         self._locks: dict[_Key, threading.Lock] = {}
         self._global_lock = threading.Lock()
+        self._counter_lock = threading.Lock()
         self.lines_evicted = 0
 
     def _lock_for(self, key: _Key) -> threading.Lock:
@@ -53,7 +55,8 @@ class MemoryBackend:
             while self._sizes[key] > self._cap and len(buf) > 1:
                 old = buf.popleft()
                 self._sizes[key] -= len(old)
-                self.lines_evicted += 1
+                with self._counter_lock:
+                    self.lines_evicted += 1
 
     def read_path(self, path: str) -> bytes:
         parsed = _parse_file_path(path)
@@ -66,7 +69,7 @@ class MemoryBackend:
                 return b""
             return b"".join(buf)
 
-    def list_dir(self, path: str) -> Iterable[str]:
+    def list_dir(self, path: str) -> list[str]:
         with self._global_lock:
             if path == _MOUNT_PREFIX or path == _MOUNT_PREFIX.rstrip("/"):
                 return sorted({k.date for k in self._buffers})
@@ -78,6 +81,11 @@ class MemoryBackend:
     def drop_date(self, date: str) -> None:
         with self._global_lock:
             keys = [k for k in self._buffers if k.date == date]
+            # Safety: keys we iterate are already registered in _buffers, so they
+            # are also in _locks (fast path in _lock_for). _lock_for therefore
+            # never tries to acquire _global_lock for these keys while we hold
+            # it. Concurrent _lock_for slow-path calls for unrelated keys queue
+            # behind us — that's latency, not deadlock.
             for k in keys:
                 # Acquire the per-key lock before discarding it, so any in-flight
                 # append/read finishes first.
@@ -107,6 +115,8 @@ def _parse_file_path(path: str) -> tuple[str, str] | None:
     # Reject paths with extra slashes (e.g., /.activity/2026-05-09/extra/alice.jsonl)
     if "/" in agent_id:
         return None
+    if not _DATE_RE.match(date):
+        return None
     return agent_id, date
 
 
@@ -115,5 +125,7 @@ def _parse_date_dir(path: str) -> str | None:
         return None
     rest = path[len(_MOUNT_PREFIX) :].rstrip("/")
     if "/" in rest or not rest:
+        return None
+    if not _DATE_RE.match(rest):
         return None
     return rest

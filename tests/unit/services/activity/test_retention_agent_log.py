@@ -52,3 +52,13 @@ def test_sweep_idempotent():
     second = sweep_agent_log(store, retention_days=7, now=datetime.now(UTC))
     assert first == 1
     assert second == 0
+
+
+def test_sweep_disabled_when_retention_days_zero():
+    store = MemoryBackend(cap_bytes=1024)
+    today = datetime.now(UTC).date()
+    old = (today - timedelta(days=10)).isoformat()
+    store.append_line("alice", old, b"x\n")
+    dropped = sweep_agent_log(store, retention_days=0, now=datetime.now(UTC))
+    assert dropped == 0
+    assert store.read_path(f"/.activity/{old}/alice.jsonl") == b"x\n"

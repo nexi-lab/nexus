@@ -19,14 +19,15 @@ def sweep_agent_log(
 ) -> int:
     """Drop (agent, date) buffers older than `retention_days`.
 
-    Returns the count of date keys dropped. Idempotent.
+    Returns the count of date keys dropped. Idempotent. retention_days <= 0
+    is treated as "retention disabled" — no keys are dropped.
     """
+    if retention_days <= 0:
+        return 0
     n = now or datetime.now(tz=UTC)
     cutoff = (n.date() - timedelta(days=retention_days)).isoformat()
-    # Snapshot the dates to avoid mutating during iteration. Touching the
-    # store internals here is a deliberate sibling-package access; if you
-    # prefer, add a `MemoryBackend.iter_dates() -> set[str]` method.
-    dates = list({k.date for k in store._buffers})  # noqa: SLF001
+    # Snapshot the dates to avoid mutating during iteration.
+    dates = store.iter_dates()
     dropped = 0
     for date in dates:
         if date < cutoff:
@@ -148,7 +149,8 @@ class RetentionTask:
                 store = get_agent_log_store()
                 retention_days = get_agent_log_retention_days()
                 if store is not None and isinstance(retention_days, int):
-                    sweep_agent_log(store, retention_days=retention_days)
+                    dropped = sweep_agent_log(store, retention_days=retention_days)
+                    self._total_pruned += dropped
             except Exception:
                 logger.warning("agent_log retention sweep failed", exc_info=True)
             try:

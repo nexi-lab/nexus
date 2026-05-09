@@ -73,6 +73,11 @@ class MemoryBackend:
                 return b""
             return b"".join(buf)
 
+    def iter_dates(self) -> list[str]:
+        """Snapshot the set of dates currently held."""
+        with self._global_lock:
+            return sorted({k.date for k in self._buffers})
+
     def list_dir(self, path: str) -> list[str]:
         with self._global_lock:
             if path == _MOUNT_PREFIX or path == _MOUNT_PREFIX.rstrip("/"):

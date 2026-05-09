@@ -109,3 +109,33 @@ def test_invalid_date_segment_rejected():
     assert store.read_path("/.activity/not-a-date/alice.jsonl") == b""
     assert store.read_path("/.activity/../alice.jsonl") == b""
     assert list(store.list_dir("/.activity/not-a-date/")) == []
+
+
+def test_invalid_agent_id_dropped():
+    store = MemoryBackend(cap_bytes=1024)
+    # Invalid characters
+    store.append_line("ali ce", "2026-05-09", b"x\n")
+    store.append_line("ali/ce", "2026-05-09", b"x\n")
+    store.append_line("ali\nce", "2026-05-09", b"x\n")
+    store.append_line('ali"ce', "2026-05-09", b"x\n")
+    # Empty
+    store.append_line("", "2026-05-09", b"x\n")
+    # Too long (>128)
+    store.append_line("a" * 129, "2026-05-09", b"x\n")
+    # No file written for any of these.
+    assert list(store.list_dir("/.activity/")) == []
+
+
+def test_valid_agent_id_chars_accepted():
+    store = MemoryBackend(cap_bytes=1024)
+    for agent_id in (
+        "alice",
+        "alice-bob",
+        "alice_bob",
+        "alice.bob",
+        "alice:bob",
+        "did:key:z6MkA",
+        "agent-123",
+    ):
+        store.append_line(agent_id, "2026-05-09", b"x\n")
+        assert store.read_path(f"/.activity/2026-05-09/{agent_id}.jsonl") == b"x\n"

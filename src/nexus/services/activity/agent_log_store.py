@@ -21,6 +21,15 @@ from nexus.services.activity.metrics import AGENT_LOG_BYTES, AGENT_LOG_LINES_DRO
 _MOUNT_PREFIX = "/.activity/"
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# agent_id segment must match what _parse_file_path accepts: no slashes,
+# non-empty. Additionally, restrict to a conservative character class that
+# keeps Prometheus labels safe and bounds cardinality risk.
+_AGENT_ID_RE = re.compile(r"^[A-Za-z0-9_.\-:]{1,128}$")
+
+
+def _agent_id_valid(agent_id: str) -> bool:
+    return bool(_AGENT_ID_RE.match(agent_id))
+
 
 @dataclass(frozen=True, slots=True)
 class _Key:
@@ -49,6 +58,10 @@ class MemoryBackend:
             return self._locks.setdefault(key, threading.Lock())
 
     def append_line(self, agent_id: str, date: str, line: bytes) -> None:
+        if not _agent_id_valid(agent_id):
+            # Drop silently — bad agent_id should never have reached the sink,
+            # but guard the metric label space and ring buffer regardless.
+            return
         key = _Key(agent_id, date)
         with self._lock_for(key):
             buf = self._buffers.setdefault(key, deque())

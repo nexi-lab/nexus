@@ -74,6 +74,8 @@ async def test_recursion_guard_drops_op_under_activity_prefix():
     )
     await sink.write_batch([evt])
     assert store.read_path("/.activity/2026-05-09/alice.jsonl") == b""
+    assert sink.recursion_skipped == 1
+    assert sink.no_agent_dropped == 0
 
 
 @pytest.mark.asyncio
@@ -83,6 +85,8 @@ async def test_no_agent_drops_event():
     evt = _evt(kind=EventKind.OP, agent=None, meta={"op": "read", "path": "/x"})
     await sink.write_batch([evt])
     assert list(store.list_dir("/.activity/")) == []
+    assert sink.no_agent_dropped == 1
+    assert sink.recursion_skipped == 0
 
 
 @pytest.mark.asyncio
@@ -111,3 +115,37 @@ async def test_close_is_noop():
     store = MemoryBackend(cap_bytes=1024)
     sink = JsonlActivitySink(store=store)
     await sink.close()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_malformed_meta_does_not_drop_remaining_batch():
+    store = MemoryBackend(cap_bytes=1024)
+    sink = JsonlActivitySink(store=store)
+    bad = _evt(kind=EventKind.OP, meta={"op": "read", "path": "/x", "bytes": "not-a-number"})
+    good = _evt(kind=EventKind.OP, meta={"op": "read", "path": "/y", "bytes": 42})
+    await sink.write_batch([bad, good])
+    raw = store.read_path("/.activity/2026-05-09/alice.jsonl")
+    # The malformed event is silently dropped; the good event still lands.
+    lines = [json.loads(line) for line in raw.strip().split(b"\n") if line]
+    assert len(lines) == 1
+    assert lines[0]["path"] == "/y"
+
+
+@pytest.mark.asyncio
+async def test_multi_event_batch_with_mixed_drops():
+    store = MemoryBackend(cap_bytes=1024)
+    sink = JsonlActivitySink(store=store)
+    e1 = _evt(kind=EventKind.OP, meta={"op": "read", "path": "/a", "bytes": 1})
+    e2 = _evt(
+        kind=EventKind.OP, agent=None, meta={"op": "read", "path": "/b", "bytes": 2}
+    )  # drop: no agent
+    e3 = _evt(
+        kind=EventKind.OP, meta={"op": "read", "path": "/.activity/x", "bytes": 3}
+    )  # drop: recursion
+    e4 = _evt(kind=EventKind.OP, meta={"op": "write", "path": "/c", "bytes": 4})
+    await sink.write_batch([e1, e2, e3, e4])
+    raw = store.read_path("/.activity/2026-05-09/alice.jsonl")
+    lines = [json.loads(line) for line in raw.strip().split(b"\n") if line]
+    assert [line["path"] for line in lines] == ["/a", "/c"]
+    assert sink.no_agent_dropped == 1
+    assert sink.recursion_skipped == 1

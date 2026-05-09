@@ -45,12 +45,12 @@ class JsonlActivitySink:
             if isinstance(path, str) and path.startswith(_MOUNT_PREFIX):
                 self.recursion_skipped += 1
                 continue
-            line = self._build_line(e, meta)
-            date = _utc_date(e.ts)
             try:
+                line = self._build_line(e, meta)
+                date = _utc_date(e.ts)
                 self._store.append_line(agent, date, line)
-            except Exception:  # never break the worker
-                logger.warning("agent_log append failed", exc_info=True)
+            except Exception:  # never break the worker on a single bad event
+                logger.warning("agent_log per-event failure", exc_info=True)
 
     async def close(self) -> None:
         return None

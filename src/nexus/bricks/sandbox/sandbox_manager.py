@@ -337,6 +337,18 @@ class SandboxManager:
             expires_at=now + timedelta(minutes=ttl),
         )
 
+        # Emit EXEC activity event for agent self-observability (issue #4081).
+        # Lazy import avoids module-load cycles; execution_time is seconds → ms.
+        from nexus.contracts.protocols.activity import EventKind, Result, emit
+
+        emit(
+            kind=EventKind.EXEC,
+            result=Result.OK if result.exit_code == 0 else Result.BLOCKED,
+            actor_agent=agent_id,
+            latency_ms=int(result.execution_time * 1000),
+            meta={"cmd": code, "exit_code": result.exit_code},
+        )
+
         logger.debug("Executed %s code in sandbox %s", language, sandbox_id)
         return result
 

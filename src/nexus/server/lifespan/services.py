@@ -654,12 +654,6 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     if tdc is not None and nx is not None:
         try:
             tdc.set_nx(nx)
-            # Inject server base URL so enriched worker prompts can reference the API
-            if hasattr(tdc, "set_server_info"):
-                _port = os.environ.get("NEXUS_PORT", "2026")
-                _host = os.environ.get("NEXUS_HOST", "127.0.0.1")
-                _api_key = getattr(app.state, "api_key", "") or ""
-                tdc.set_server_info(f"http://{_host}:{_port}", _api_key)
             await tdc.start()
             app.state.task_dispatch_consumer = tdc
             logger.info("[PIPE] TaskDispatchPipeConsumer started")

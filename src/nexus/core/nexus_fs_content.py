@@ -179,8 +179,8 @@ class ContentMixin:
                 data = data[offset : offset + count] if count is not None else data[offset:]
 
             # POST-INTERCEPT: hooks dispatched via Rust dispatch_post_hooks
+            zone_id, agent_id, _ = self._get_context_identity(context)
             if result.post_hook_needed:
-                zone_id, agent_id, _ = self._get_context_identity(context)
                 from nexus.contracts.vfs_hooks import ReadHookContext
 
                 _read_ctx = ReadHookContext(
@@ -195,9 +195,8 @@ class ContentMixin:
                 data = _read_ctx.content or data
 
             _latency_ms = int((time.perf_counter() - start) * 1000)
-            _, _agent_id, _ = self._get_context_identity(context)
             emit_op_completed(
-                agent_id=_agent_id,
+                agent_id=agent_id,
                 op="read",
                 path=path,
                 bytes_count=len(data),
@@ -686,14 +685,15 @@ class ContentMixin:
             )
 
         _write_latency_ms = int((time.perf_counter() - _start) * 1000)
-        _, _write_agent_id, _ = self._get_context_identity(context)
-        emit_op_completed(
-            agent_id=_write_agent_id,
-            op="write",
-            path=path,
-            bytes_count=len(buf),
-            latency_ms=_write_latency_ms,
-        )
+        if result.hit:
+            _, _write_agent_id, _ = self._get_context_identity(context)
+            emit_op_completed(
+                agent_id=_write_agent_id,
+                op="write",
+                path=path,
+                bytes_count=len(buf),
+                latency_ms=_write_latency_ms,
+            )
         return {"path": path, "bytes_written": len(buf)}
 
     # @rpc_expose removed — kernel syscall, served by the thin dispatcher.

@@ -27,6 +27,7 @@ from nexus.contracts.exceptions import (
 )
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 from nexus.contracts.types import OperationContext
+from nexus.core.nexus_fs_content import emit_op_completed
 from nexus.kernel_helpers import metastore_list_iter
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -829,8 +830,6 @@ class MetadataMixin:
             finally:
                 if _unlink_result.entry_type == DT_MOUNT:
                     self._forget_mounted_backend_instance(path)
-            from nexus.core.nexus_fs_content import emit_op_completed
-
             emit_op_completed(
                 agent_id=agent_id,
                 op="delete",
@@ -1749,8 +1748,6 @@ class MetadataMixin:
         _, _list_agent_id, _ = self._get_context_identity(context)
 
         def _emit_list() -> None:
-            from nexus.core.nexus_fs_content import emit_op_completed
-
             emit_op_completed(
                 agent_id=_list_agent_id,
                 op="list",

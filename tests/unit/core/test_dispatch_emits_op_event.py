@@ -63,3 +63,45 @@ def test_emit_op_completed_with_no_agent_still_emits():
 
     assert len(captured) == 1
     assert captured[0]["actor_agent"] is None
+
+
+def test_emit_op_completed_op_list():
+    captured = []
+    from nexus.contracts.protocols.activity import NoopEmitter, set_emitter
+
+    class Capture:
+        def emit(self, **kw):
+            captured.append(kw)
+
+    set_emitter(Capture())
+    try:
+        from nexus.core.nexus_fs_content import emit_op_completed
+
+        emit_op_completed(agent_id="alice", op="list", path="/local/", bytes_count=0, latency_ms=2)
+    finally:
+        set_emitter(NoopEmitter())
+
+    assert len(captured) == 1
+    assert captured[0]["meta"] == {"op": "list", "path": "/local/", "bytes": 0}
+
+
+def test_emit_op_completed_op_delete():
+    captured = []
+    from nexus.contracts.protocols.activity import NoopEmitter, set_emitter
+
+    class Capture:
+        def emit(self, **kw):
+            captured.append(kw)
+
+    set_emitter(Capture())
+    try:
+        from nexus.core.nexus_fs_content import emit_op_completed
+
+        emit_op_completed(
+            agent_id="alice", op="delete", path="/local/x.txt", bytes_count=0, latency_ms=3
+        )
+    finally:
+        set_emitter(NoopEmitter())
+
+    assert len(captured) == 1
+    assert captured[0]["meta"] == {"op": "delete", "path": "/local/x.txt", "bytes": 0}

@@ -1,0 +1,49 @@
+import asyncio
+
+import pytest
+
+from nexus.cache.file_store import FileKey, MemoryFileCache
+
+
+@pytest.mark.asyncio
+async def test_memory_file_cache_rejects_mismatched_fingerprint() -> None:
+    cache = MemoryFileCache(now_fn=lambda: 100.0)
+    key = FileKey("path_s3", "zone1", "/bucket/foo.txt")
+
+    await cache.put(key, b"old-bytes", fingerprint="etag:old")
+    assert await cache.get(key, expected_fingerprint="etag:new") is None
+
+
+@pytest.mark.asyncio
+async def test_memory_file_cache_uses_ttl_fallback_without_fingerprint() -> None:
+    now = [100.0]
+    cache = MemoryFileCache(now_fn=lambda: now[0])
+    key = FileKey("github_connector", "zone1", "/issues/1_test.yaml")
+
+    await cache.put(key, b"cached", fingerprint=None, ttl_seconds=5)
+    assert await cache.get(key, expected_fingerprint=None) == b"cached"
+
+    now[0] += 6
+    assert await cache.get(key, expected_fingerprint=None) is None
+
+
+@pytest.mark.asyncio
+async def test_memory_file_cache_singleflight_allows_one_fill() -> None:
+    cache = MemoryFileCache(now_fn=lambda: 100.0)
+    key = FileKey("path_s3", "zone1", "/bucket/foo.txt")
+    fill_calls = 0
+
+    async def worker() -> bytes | None:
+        nonlocal fill_calls
+        lock = await cache.lock(key)
+        async with lock:
+            hit = await cache.get(key, expected_fingerprint="etag:1")
+            if hit is None:
+                fill_calls += 1
+                await asyncio.sleep(0.01)
+                await cache.put(key, b"payload", fingerprint="etag:1")
+        return await cache.get(key, expected_fingerprint="etag:1")
+
+    results = await asyncio.gather(*(worker() for _ in range(25)))
+    assert results == [b"payload"] * 25
+    assert fill_calls == 1

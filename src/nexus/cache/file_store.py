@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class FileKey:
+    backend_id: str
+    scope_id: str
+    path: str
+    namespace: str = "raw"
+
+
+@dataclass
+class _FileEntry:
+    content: bytes
+    fingerprint: str | None
+    expires_at: float | None
+
+
+class MemoryFileCache:
+    def __init__(self, now_fn: Callable[[], float] | None = None) -> None:
+        self._now_fn = now_fn or time.monotonic
+        self._entries: dict[FileKey, _FileEntry] = {}
+        self._locks: dict[FileKey, asyncio.Lock] = {}
+        self._lock_guard = asyncio.Lock()
+
+    async def get(self, key: FileKey, expected_fingerprint: str | None) -> bytes | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        if entry.expires_at is not None and entry.expires_at <= self._now_fn():
+            self._entries.pop(key, None)
+            return None
+        if expected_fingerprint is not None:
+            return entry.content if entry.fingerprint == expected_fingerprint else None
+        return entry.content
+
+    async def put(
+        self,
+        key: FileKey,
+        content: bytes,
+        fingerprint: str | None,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        expires_at = None if ttl_seconds is None else self._now_fn() + max(ttl_seconds, 0)
+        self._entries[key] = _FileEntry(
+            content=content,
+            fingerprint=fingerprint,
+            expires_at=expires_at,
+        )
+
+    async def invalidate(self, key: FileKey) -> None:
+        self._entries.pop(key, None)
+
+    async def lock(self, key: FileKey) -> asyncio.Lock:
+        async with self._lock_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._locks[key] = lock
+            return lock

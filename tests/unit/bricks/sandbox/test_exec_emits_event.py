@@ -139,3 +139,75 @@ async def test_run_code_latency_ms_from_execution_time() -> None:
     exec_events = [c for c in captured if c.get("kind") == EventKind.EXEC]
     assert len(exec_events) == 1
     assert exec_events[0]["latency_ms"] == 500
+
+
+@pytest.mark.asyncio
+async def test_emit_fires_on_escalation_path() -> None:
+    """Verify EXEC event emitted after escalation to next tier (issue #4081).
+
+    When EscalationNeeded is raised, the manager retries on the next tier.
+    The EXEC event should still be emitted with the result from the escalated tier.
+    """
+    from nexus.bricks.sandbox.provider_registry import ProviderRegistry
+    from nexus.bricks.sandbox.sandbox_manager import SandboxManager
+    from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult, EscalationNeeded
+    from nexus.bricks.sandbox.sandbox_router import SandboxRouter
+
+    captured: list[dict] = []
+
+    class _Capture:
+        def emit(self, **kw):
+            captured.append(kw)
+
+    set_emitter(_Capture())
+
+    # Set up: first provider (monty) raises EscalationNeeded
+    # second provider (docker) returns success
+    repo = MagicMock()
+    repo.get_metadata.return_value = {
+        "provider": "monty",
+        "ttl_minutes": 10,
+        "agent_id": "escalation-agent",
+    }
+    repo.update_metadata.return_value = None
+
+    monty_provider = AsyncMock()
+    monty_provider.run_code.side_effect = EscalationNeeded(
+        reason="resource_limit", suggested_tier="docker"
+    )
+
+    docker_provider = AsyncMock()
+    docker_provider.create.return_value = "temp-sb-id"
+    docker_provider.run_code.return_value = CodeExecutionResult(
+        stdout="escalated output",
+        stderr="",
+        exit_code=0,
+        execution_time=0.123,
+    )
+    docker_provider.destroy.return_value = None
+
+    registry = ProviderRegistry()
+    registry.register("monty", monty_provider)
+    registry.register("docker", docker_provider)
+
+    manager = SandboxManager.__new__(SandboxManager)
+    manager._repository = repo
+    manager._registry = registry
+    manager._router = SandboxRouter(
+        available_providers={"monty": monty_provider, "docker": docker_provider}
+    )
+    manager._validation_runner = None
+
+    # Run code, which will escalate
+    await manager.run_code("sb-esc", "bash", "some code")
+
+    # Verify EXEC event was emitted with escalated result
+    exec_events = [c for c in captured if c.get("kind") == EventKind.EXEC]
+    assert len(exec_events) == 1
+    e = exec_events[0]
+    assert e["actor_agent"] == "escalation-agent"
+    assert e["result"] == Result.OK  # docker_provider returned exit_code=0
+    assert e["meta"]["exit_code"] == 0
+    assert e["meta"]["cmd"] == "some code"
+    # 0.123s → 123ms
+    assert e["latency_ms"] == 123

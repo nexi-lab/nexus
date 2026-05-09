@@ -27,7 +27,7 @@ class TestGetattr:
 
         result = fuse_ops.getattr("/file.txt")
         assert result == cached
-        mock_cache.get_attr.assert_called_with("/file.txt")
+        mock_cache.get_attr.assert_called_with("/file.txt", scope_id="default")
 
     def test_root_returns_dir_attrs(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
         mock_nexus_fs.is_directory.return_value = True
@@ -108,6 +108,7 @@ class TestReaddir:
 def test_parent_only_listing_invalidation_keeps_grandparent() -> None:
     cache = FUSECacheManager(
         attr_cache_size=8,
+        listing_cache_size=8,
         attr_cache_ttl=60,
         content_cache_size=8,
         parsed_cache_size=8,
@@ -119,6 +120,68 @@ def test_parent_only_listing_invalidation_keeps_grandparent() -> None:
 
     assert cache.get_listing("/a") == [".", "..", "b"]
     assert cache.get_listing("/a/b") is None
+
+
+def test_listing_cache_isolated_by_scope_id() -> None:
+    cache = FUSECacheManager()
+
+    cache.cache_listing("/secure", [".", "..", "private.txt"], scope_id="agent:one")
+
+    assert cache.get_listing("/secure", scope_id="agent:two") is None
+    assert cache.get_listing("/secure", scope_id="agent:one") == [".", "..", "private.txt"]
+
+
+def test_readdir_cache_hit_isolated_by_operation_context(
+    fuse_ops: Any,
+    mock_nexus_fs: MagicMock,
+) -> None:
+    first_context = MagicMock()
+    first_context.get_subject.return_value = ("agent", "one")
+    second_context = MagicMock()
+    second_context.get_subject.return_value = ("agent", "two")
+
+    fuse_ops._ctx.context = first_context
+    fuse_ops.cache.cache_listing("/secure", [".", "..", "private.txt"], scope_id="agent:one")
+
+    fuse_ops._ctx.context = second_context
+    mock_nexus_fs.sys_readdir.return_value = [
+        {"path": "/secure/public.txt", "is_directory": False, "size": 1}
+    ]
+
+    entries = fuse_ops.readdir("/secure")
+
+    assert entries == [".", "..", "public.txt"]
+    mock_nexus_fs.sys_readdir.assert_called_once()
+
+
+def test_metadata_index_cache_is_bounded_by_configured_capacity() -> None:
+    cache = FUSECacheManager(
+        attr_cache_size=1,
+        listing_cache_size=1,
+        attr_cache_ttl=60,
+        content_cache_size=8,
+        parsed_cache_size=8,
+    )
+
+    cache.cache_attr("/a.txt", {"st_size": 1})
+    cache.cache_listing("/one", [".", "..", "a.txt"])
+    cache.cache_listing("/two", [".", "..", "b.txt"])
+
+    assert cache.get_attr("/a.txt") is None
+    assert cache.get_listing("/one") == [".", "..", "a.txt"]
+    assert cache.get_listing("/two") == [".", "..", "b.txt"]
+
+
+def test_metadata_cache_metrics_report_logical_index_sizes() -> None:
+    cache = FUSECacheManager(enable_metrics=True)
+
+    cache.cache_attr("/a.txt", {"st_size": 1})
+    cache.cache_listing("/one", [".", "..", "a.txt"])
+
+    metrics = cache.get_metrics()
+
+    assert metrics["cache_sizes"]["attr"] == 1
+    assert metrics["cache_sizes"]["listing"] == 1
 
 
 class TestResolveFileSize:

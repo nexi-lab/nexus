@@ -131,6 +131,7 @@ class NexusFUSEOperations(Operations):
         bare_cache = FUSECacheManager(
             attr_cache_size=cache_config.get("attr_cache_size", 1024),
             attr_cache_ttl=cache_config.get("attr_cache_ttl", 60),
+            listing_cache_size=cache_config.get("dir_cache_size", 1024),
             listing_cache_ttl=dir_cache_ttl,
             content_cache_size=cache_config.get("content_cache_size", 10000),
             parsed_cache_size=cache_config.get("parsed_cache_size", 50),

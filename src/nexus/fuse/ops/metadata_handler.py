@@ -14,6 +14,7 @@ from nexus.fuse.ops._shared import (
     cache_file_attrs_from_list,
     check_namespace_visible,
     get_metadata,
+    index_cache_scope_id,
     parse_virtual_path_for_fuse,
     resolve_owner_group_to_uid_gid,
     resolve_uid_gid,
@@ -43,11 +44,12 @@ class MetadataHandler:
         """
         ctx = self._ctx
         coordinator = ctx.cache
+        scope_id = index_cache_scope_id(ctx)
         start_time = time.time()
 
         # Step 1: Hot path — validity cache + L1 attr cache (~100ns)
         if coordinator._check_validity(path):
-            cached = coordinator.get_attr(path)
+            cached = coordinator.get_attr(path, scope_id=scope_id)
             if cached is not None:
                 return cached
 
@@ -57,7 +59,7 @@ class MetadataHandler:
             lease = coordinator._validate_lease(path)
             if lease is not None:
                 coordinator._set_validity(path, lease.expires_at)
-                cached = coordinator.get_attr(path)
+                cached = coordinator.get_attr(path, scope_id=scope_id)
                 if cached is not None:
                     return cached
                 has_lease = True
@@ -66,7 +68,7 @@ class MetadataHandler:
                 has_lease = lease is not None
         else:
             # No lease manager — serve from cache if available (backward compat)
-            cached = coordinator.get_attr(path)
+            cached = coordinator.get_attr(path, scope_id=scope_id)
             if cached is not None:
                 return cached
             has_lease = True  # always cache when no lease manager
@@ -76,7 +78,7 @@ class MetadataHandler:
 
         # Only cache if we hold a lease (Decision 11A)
         if has_lease:
-            coordinator.cache_attr(path, attrs)
+            coordinator.cache_attr(path, attrs, scope_id=scope_id)
 
         elapsed = time.time() - start_time
         if elapsed > 0.01:
@@ -225,9 +227,10 @@ class MetadataHandler:
         """Read directory contents."""
         ctx = self._ctx
         start_time = time.time()
+        scope_id = index_cache_scope_id(ctx)
 
         # Check readdir cache first
-        cached_entries = ctx.cache.get_listing(path)
+        cached_entries = ctx.cache.get_listing(path, scope_id=scope_id)
         if cached_entries is not None:
             logger.info(
                 f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
@@ -268,7 +271,7 @@ class MetadataHandler:
                 f"[FUSE-PERF] readdir DONE via RUST: path={path}, "
                 f"{len(entries)} entries, {elapsed:.3f}s"
             )
-            ctx.cache.cache_listing(path, entries)
+            ctx.cache.cache_listing(path, entries, scope_id=scope_id)
             return entries
 
         # Python path: list from filesystem
@@ -348,6 +351,6 @@ class MetadataHandler:
             f"{total_elapsed:.3f}s total"
         )
 
-        ctx.cache.cache_listing(path, entries)
+        ctx.cache.cache_listing(path, entries, scope_id=scope_id)
 
         return entries

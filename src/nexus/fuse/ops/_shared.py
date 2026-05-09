@@ -105,9 +105,14 @@ class FUSECacheCoordinator(Protocol):
 
     def _set_validity(self, path: str, expires_at: float) -> None: ...
 
-    def get_attr(self, path: str) -> dict[str, Any] | None: ...
+    def get_attr(self, path: str, scope_id: str = "default") -> dict[str, Any] | None: ...
 
-    def cache_attr(self, path: str, attrs: dict[str, Any]) -> None: ...
+    def cache_attr(
+        self,
+        path: str,
+        attrs: dict[str, Any],
+        scope_id: str = "default",
+    ) -> None: ...
 
     def get_content(self, path: str) -> bytes | None: ...
 
@@ -119,11 +124,16 @@ class FUSECacheCoordinator(Protocol):
 
     def cache_parsed(self, path: str, view_type: str, content: bytes) -> None: ...
 
-    def get_listing(self, path: str) -> list[str] | None: ...
+    def get_listing(self, path: str, scope_id: str = "default") -> list[str] | None: ...
 
-    def cache_listing(self, path: str, entries: list[str]) -> None: ...
+    def cache_listing(
+        self,
+        path: str,
+        entries: list[str],
+        scope_id: str = "default",
+    ) -> None: ...
 
-    def invalidate_parent_listing(self, path: str) -> None: ...
+    def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None: ...
 
     def invalidate_and_revoke(self, paths: list[str]) -> None: ...
 
@@ -273,6 +283,14 @@ def dir_cache_key(ctx: FUSESharedContext, path: str) -> str | tuple[str, str, st
     return path
 
 
+def index_cache_scope_id(ctx: FUSESharedContext) -> str:
+    """Build the logical index-cache scope for a FUSE request context."""
+    if ctx.context is None:
+        return "default"
+    subj_type, subj_id = ctx.context.get_subject()
+    return f"{subj_type}:{subj_id}"
+
+
 def invalidate_dir_cache(ctx: FUSESharedContext, path: str) -> None:
     """Invalidate readdir cache for the parent directory of a mutated path.
 
@@ -280,7 +298,7 @@ def invalidate_dir_cache(ctx: FUSESharedContext, path: str) -> None:
     but FUSECacheManager.invalidate_path() only clears attr/content/parsed,
     so listing invalidation is handled separately.
     """
-    ctx.cache.invalidate_parent_listing(path)
+    ctx.cache.invalidate_parent_listing(path, scope_id=index_cache_scope_id(ctx))
 
 
 async def check_namespace_visible(ctx: FUSESharedContext, path: str) -> None:

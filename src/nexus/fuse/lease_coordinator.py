@@ -378,13 +378,18 @@ class FUSELeaseCoordinator:
     # Delegated cache methods (backward compatibility)
     # ------------------------------------------------------------------
 
-    def get_attr(self, path: str) -> dict[str, Any] | None:
+    def get_attr(self, path: str, scope_id: str = "default") -> dict[str, Any] | None:
         """Get cached file attributes (direct, no lease check)."""
-        return self._cache.get_attr(path)
+        return self._cache.get_attr(path, scope_id=scope_id)
 
-    def cache_attr(self, path: str, attrs: dict[str, Any]) -> None:
+    def cache_attr(
+        self,
+        path: str,
+        attrs: dict[str, Any],
+        scope_id: str = "default",
+    ) -> None:
         """Cache file attributes."""
-        self._cache.cache_attr(path, attrs)
+        self._cache.cache_attr(path, attrs, scope_id=scope_id)
 
     def get_content(self, path: str) -> bytes | None:
         """Get cached file content (direct, no lease check)."""
@@ -406,21 +411,26 @@ class FUSELeaseCoordinator:
         """Cache parsed content."""
         self._cache.cache_parsed(path, view_type, content)
 
-    def get_listing(self, path: str) -> list[str] | None:
+    def get_listing(self, path: str, scope_id: str = "default") -> list[str] | None:
         """Get cached directory listing entries."""
-        return self._cache.get_listing(path)
+        return self._cache.get_listing(path, scope_id=scope_id)
 
-    def cache_listing(self, path: str, entries: list[str]) -> None:
+    def cache_listing(
+        self,
+        path: str,
+        entries: list[str],
+        scope_id: str = "default",
+    ) -> None:
         """Cache directory listing entries."""
-        self._cache.cache_listing(path, entries)
+        self._cache.cache_listing(path, entries, scope_id=scope_id)
 
-    def invalidate_parent_listing(self, path: str) -> None:
+    def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None:
         """Invalidate the immediate parent directory listing for a path."""
-        self._cache.invalidate_parent_listing(path)
+        self._cache.invalidate_parent_listing(path, scope_id=scope_id)
 
-    def invalidate_path(self, path: str) -> None:
+    def invalidate_path(self, path: str, scope_id: str = "default") -> None:
         """Invalidate all caches for a path (local only, no lease revocation)."""
-        self._cache.invalidate_path(path)
+        self._cache.invalidate_path(path, scope_id=scope_id)
         self._clear_validity(path)
 
     def invalidate_all(self) -> None:

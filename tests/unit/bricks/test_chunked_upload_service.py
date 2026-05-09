@@ -7,6 +7,7 @@ import pytest
 
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.bricks.upload.chunked_upload_service import ChunkedUploadConfig, ChunkedUploadService
+from nexus.bricks.upload.upload_session import UploadStatus
 from nexus.contracts.types import OperationContext
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
@@ -76,6 +77,18 @@ class _MultipartMemoryBackend(_MemoryBackend, MultipartUpload):
 
     def abort_multipart(self, backend_path: str, upload_id: str) -> None:
         pass
+
+
+class _FlakyFinalWriteBackend(_MemoryBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.write_calls = 0
+
+    def write_content(self, data: bytes) -> _WriteResult:
+        self.write_calls += 1
+        if self.write_calls == 2:
+            raise RuntimeError("final write failed")
+        return super().write_content(data)
 
 
 class _NexusFS:
@@ -173,3 +186,24 @@ async def test_attached_filesystem_disables_backend_multipart_path() -> None:
     assert backend.init_calls == 0
     assert backend.uploaded_parts == []
     assert not backend.completed
+
+
+@pytest.mark.asyncio
+async def test_final_chunk_failure_keeps_upload_retryable() -> None:
+    record_store = InMemoryRecordStore()
+    backend = _FlakyFinalWriteBackend()
+    metadata_store = _MetadataStore()
+    service = _service(record_store, backend, metadata_store)
+
+    upload = await service.create_upload("/uploads/retryable.txt", upload_length=4)
+
+    with pytest.raises(RuntimeError, match="final write failed"):
+        await service.receive_chunk(upload.upload_id, 0, b"data")
+
+    persisted = await service.get_upload_status(upload.upload_id)
+    assert persisted.upload_offset == 0
+    assert persisted.status == UploadStatus.CREATED
+
+    completed = await service.receive_chunk(upload.upload_id, 0, b"data")
+    assert completed.status == UploadStatus.COMPLETED
+    assert backend.read_content(completed.content_id or "") == b"data"

@@ -171,9 +171,11 @@ export class FetchClient {
     body: unknown,
     options?: RequestOptions,
   ): Promise<Response> {
+    const normalizedMethod = method.toUpperCase();
     const url = `${this.baseUrl}${path}`;
     const headers = this.buildHeaders(method, options);
     const effectiveTimeout = options?.timeout ?? this.timeout;
+    const retryableRequest = this.isRetryableRequest(normalizedMethod, options);
 
     // Transform request body keys to snake_case
     const transformedBody =
@@ -203,18 +205,25 @@ export class FetchClient {
 
         const error = await this.buildError(response);
 
-        if (RETRYABLE_STATUS_CODES.has(response.status) && attempt < this.maxRetries) {
+        if (
+          retryableRequest &&
+          RETRYABLE_STATUS_CODES.has(response.status) &&
+          attempt < this.maxRetries
+        ) {
           lastError = error;
           continue;
         }
 
         throw error;
       } catch (error) {
-        if (error instanceof NexusApiError && !RETRYABLE_STATUS_CODES.has(error.status)) {
+        if (
+          error instanceof NexusApiError &&
+          (!retryableRequest || !RETRYABLE_STATUS_CODES.has(error.status))
+        ) {
           throw error;
         }
 
-        if (attempt < this.maxRetries) {
+        if (retryableRequest && attempt < this.maxRetries) {
           lastError = error instanceof Error ? error : new Error(String(error));
           continue;
         }
@@ -355,6 +364,23 @@ export class FetchClient {
     const exponentialDelay = INITIAL_RETRY_DELAY * Math.pow(2, attempt - 1);
     const cappedDelay = Math.min(exponentialDelay, MAX_RETRY_DELAY);
     return Math.random() * cappedDelay;
+  }
+
+  private isRetryableRequest(
+    method: string,
+    options?: RequestOptions,
+  ): boolean {
+    switch (method) {
+      case "GET":
+      case "HEAD":
+      case "OPTIONS":
+      case "TRACE":
+      case "PUT":
+      case "DELETE":
+        return true;
+      default:
+        return Boolean(options?.idempotencyKey);
+    }
   }
 
   // ===========================================================================

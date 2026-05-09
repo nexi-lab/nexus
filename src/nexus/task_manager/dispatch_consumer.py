@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -87,8 +88,6 @@ class TaskDispatchPipeConsumer:
         self._llm_fn: LLMCallable = llm_fn or _no_llm  # used by copilot review
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
-        self._server_base_url: str = "http://127.0.0.1:2026"
-        self._api_key: str = ""
 
     # ------------------------------------------------------------------
     # Deferred injection
@@ -107,11 +106,6 @@ class TaskDispatchPipeConsumer:
 
     def set_agent_registry(self, agent_registry: Any) -> None:
         self._agent_registry = agent_registry
-
-    def set_server_info(self, base_url: str, api_key: str) -> None:
-        """Inject server base URL and API key for enriched worker prompts."""
-        self._server_base_url = base_url
-        self._api_key = api_key
 
     # ------------------------------------------------------------------
     # TaskSignalHandler (producer side)
@@ -266,8 +260,7 @@ class TaskDispatchPipeConsumer:
             logger.warning("[TASK-DISPATCH] unknown signal type: %s", signal_type)
 
     def _build_worker_prompt(self, task_id: str, instruction: str) -> str:
-        """Build an enriched prompt that gives the worker agent API context."""
-        base = self._server_base_url
+        """Build an enriched prompt that keeps task reporting in-process."""
         return f"""\
 You are a worker agent assigned to task {task_id}.
 
@@ -275,32 +268,42 @@ You are a worker agent assigned to task {task_id}.
 {instruction}
 
 ## When Done
-After completing your work, use curl to report results:
-
-1. Add a comment with your work output:
-   curl -X POST {base}/api/v2/comments \\
-     -H "Content-Type: application/json" \\
-     -d '{{"task_id":"{task_id}","author":"worker","content":"YOUR_RESULT"}}'
-
-2. Update the task status to "in_review":
-   curl -X PATCH {base}/api/v2/tasks/{task_id} \\
-     -H "Content-Type: application/json" \\
-     -d '{{"status":"in_review"}}'
-
-## API Reference
-Base URL: {base}
-
-| Method | Endpoint                              | Body                                          |
-|--------|---------------------------------------|-----------------------------------------------|
-| GET    | /api/v2/tasks/{task_id}               | —                                             |
-| PATCH  | /api/v2/tasks/{task_id}               | {{status, output_refs}}                         |
-| POST   | /api/v2/comments                      | {{task_id, author, content, artifact_refs?}}    |
-| GET    | /api/v2/comments?task_id={task_id}    | —                                             |
-| POST   | /api/v2/tasks/{task_id}/audit         | {{action, actor, detail}}                       |
-| GET    | /api/v2/tasks/{task_id}/history       | —                                             |
-
-Status flow: created → running → in_review → completed
+Return your work output directly in your final response.
+Do not call external tools or APIs to report task status.
+The task manager will record your response and move the task into review.
 """
+
+    @staticmethod
+    def _result_text(result: Any) -> str:
+        """Extract a human-facing response from an ACP result."""
+        response = str(getattr(result, "response", "") or "").strip()
+        if response:
+            return response
+        stdout = str(getattr(result, "raw_stdout", "") or "").strip()
+        if stdout:
+            return stdout
+        return "(agent returned no output)"
+
+    @staticmethod
+    def _parse_review_response(text: str) -> tuple[str, str]:
+        """Parse copilot review output into a decision and comment body."""
+        stripped = text.strip()
+        decision_match = re.search(r"^\s*DECISION:\s*(approve|reject)\s*$", stripped, re.I | re.M)
+        decision = decision_match.group(1).lower() if decision_match else "approve"
+
+        review_match = re.search(r"^\s*REVIEW:\s*(.*)$", stripped, re.I | re.M | re.S)
+        if review_match:
+            review = review_match.group(1).strip()
+        else:
+            review = re.sub(
+                r"^\s*DECISION:\s*(approve|reject)\s*$", "", stripped, flags=re.I | re.M
+            )
+            review = review.strip()
+
+        if not review:
+            review = "(copilot returned no review text)"
+
+        return decision, review
 
     async def _start_worker(self, task_id: str) -> None:
         """Spawn worker agent via AcpService — environment-driven completion."""
@@ -339,13 +342,14 @@ Status flow: created → running → in_review → completed
 
             agent_label = f"{result.agent_id}:{result.pid}"
             await svc.update_task(task_id, worker_pid=result.pid, agent_name=result.agent_id)
+            await svc.create_comment(task_id, "worker", self._result_text(result))
 
-            # Ensure status advances — agent may not have called the PATCH curl
+            # Advance review in-process after recording the worker output.
             current = await svc.get_task(task_id)
             if current.get("status") not in ("in_review", "completed", "failed"):
                 await svc.update_task(task_id, status="in_review")
                 await svc.create_audit_entry(
-                    task_id, "status_changed", actor="system", detail="worker done → in_review"
+                    task_id, "status_changed", actor="system", detail="worker output recorded"
                 )
             final_status = (await svc.get_task(task_id)).get("status")
             logger.info(
@@ -392,7 +396,6 @@ Status flow: created → running → in_review → completed
 
             from nexus.contracts.constants import ROOT_ZONE_ID
 
-            base = self._server_base_url
             review_prompt = f"""\
 You are a copilot reviewer for task {task_id}.
 
@@ -404,23 +407,14 @@ You are a copilot reviewer for task {task_id}.
 
 ## Your Job
 Review the worker's output above. Check if it adequately addresses the task instruction.
-Give brief feedback (2-3 sentences). Then decide: approve or reject.
+Return a concise review in this exact format:
+
+DECISION: approve or reject
+REVIEW: 2-3 sentences of feedback
 
 ## When Done
-1. Add your review comment:
-   curl -X POST {base}/api/v2/comments \\
-     -H "Content-Type: application/json" \\
-     -d '{{"task_id":"{task_id}","author":"copilot","content":"YOUR_REVIEW"}}'
-
-2. If approved, mark completed:
-   curl -X PATCH {base}/api/v2/tasks/{task_id} \\
-     -H "Content-Type: application/json" \\
-     -d '{{"status":"completed"}}'
-
-   If rejected, mark failed:
-   curl -X PATCH {base}/api/v2/tasks/{task_id} \\
-     -H "Content-Type: application/json" \\
-     -d '{{"status":"failed"}}'
+Do not call external tools or APIs. The task manager will record your review
+and apply the final task status from your DECISION line.
 """
             result = await self._acp_service.call_agent(
                 agent_id="gemini",
@@ -431,15 +425,21 @@ Give brief feedback (2-3 sentences). Then decide: approve or reject.
             )
 
             copilot_label = f"{result.agent_id}:{result.pid}"
+            decision, review = self._parse_review_response(self._result_text(result))
+            await svc.create_comment(task_id, "copilot", review)
 
-            # Ensure status advances — agent may not have called the PATCH curl
+            # Advance completion in-process from the copilot decision.
             current = await svc.get_task(task_id)
             if current.get("status") not in ("completed", "failed"):
-                await svc.update_task(task_id, status="completed")
+                final_status = "failed" if decision == "reject" else "completed"
+                await svc.update_task(task_id, status=final_status)
                 await svc.create_audit_entry(
-                    task_id, "status_changed", actor="copilot", detail="review done → completed"
+                    task_id,
+                    "status_changed",
+                    actor="copilot",
+                    detail=f"review recorded → {final_status}",
                 )
-            final_status = (await svc.get_task(task_id)).get("status")
+            final_status = str((await svc.get_task(task_id)).get("status"))
             logger.info(
                 "[TASK-DISPATCH] copilot done for task %s (agent=%s, status=%s)",
                 task_id,

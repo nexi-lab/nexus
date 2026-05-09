@@ -321,11 +321,14 @@ class ChunkedUploadService:
                 content_id=session.content_id,
             )
 
-            await self._update_session(updated)
-
-            # If upload is complete, assemble and write
+            # Persist partial progress only after we know the upload still needs
+            # more chunks. For the final chunk, defer persistence until the
+            # assembled write succeeds so a transient finalize failure stays
+            # retryable at the previous offset.
             if updated.is_complete:
                 updated = await self._assemble_and_write(updated, parts, context=context)
+            else:
+                await self._update_session(updated)
 
             return updated
 

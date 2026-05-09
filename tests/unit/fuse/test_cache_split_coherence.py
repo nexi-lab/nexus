@@ -48,6 +48,32 @@ def test_content_cache_rejects_mismatched_fingerprint() -> None:
     assert cache.get_content("/report.xlsx", expected_fingerprint="etag:1") == b"raw-v1"
 
 
+def test_parent_only_invalidation_does_not_clear_grandparent_listing() -> None:
+    cache = FUSECacheManager(
+        attr_cache_size=8,
+        attr_cache_ttl=60,
+        content_cache_size=8,
+        parsed_cache_size=8,
+    )
+    cache.cache_listing("/a", [".", "..", "b"])
+    cache.cache_listing("/a/b", [".", "..", "c.txt"])
+
+    cache.invalidate_parent_listing("/a/b/c.txt")
+
+    assert cache.get_listing("/a") == [".", "..", "b"]
+    assert cache.get_listing("/a/b") is None
+
+
+@pytest.mark.asyncio
+async def test_ttl_fallback_path_is_used_without_fingerprint() -> None:
+    cache = MemoryFileCache(now_fn=lambda: 100.0)
+    key = FileKey("github_connector", "zone1", "/issues/1_test.yaml")
+
+    await cache.put(key, b"cached", fingerprint=None, ttl_seconds=5)
+
+    assert await cache.get(key, expected_fingerprint=None) == b"cached"
+
+
 def test_invalidate_file_clears_raw_and_parsed_views_for_source_path() -> None:
     cache = FUSECacheManager(
         attr_cache_size=8,

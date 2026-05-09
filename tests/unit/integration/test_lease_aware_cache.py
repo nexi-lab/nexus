@@ -133,6 +133,25 @@ class TestFUSECacheLeaseRevocation:
         fuse_cache.on_lease_revoked(PATH)
         assert fuse_cache.get_parsed(PATH, "txt") is None
 
+    def test_lease_revocation_clears_logical_file_and_listing_entries(self) -> None:
+        """Lease revocation clears logical metadata and file caches together."""
+        cache = FUSECacheManager(
+            attr_cache_size=8,
+            attr_cache_ttl=60,
+            content_cache_size=8,
+            parsed_cache_size=8,
+        )
+        cache.cache_attr(PATH, {"st_size": 11})
+        cache.cache_listing("/mnt/gcs", [".", "..", "file.txt"])
+        cache.cache_content(PATH, b"hello world", fingerprint="etag:1")
+
+        cache.on_lease_revoked(PATH)
+        cache.invalidate_parent_listing(PATH)
+
+        assert cache.get_attr(PATH) is None
+        assert cache.get_listing("/mnt/gcs") is None
+        assert cache.get_content(PATH, expected_fingerprint="etag:1") is None
+
 
 # ---------------------------------------------------------------------------
 # Full lease lifecycle with FileContentCache

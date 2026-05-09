@@ -1,4 +1,5 @@
 import asyncio
+import gc
 
 import pytest
 
@@ -28,6 +29,17 @@ async def test_memory_file_cache_uses_ttl_fallback_without_fingerprint() -> None
 
 
 @pytest.mark.asyncio
+async def test_memory_file_cache_rejects_unvalidated_hit_without_ttl() -> None:
+    cache = MemoryFileCache(now_fn=lambda: 100.0)
+    key = FileKey("path_s3", "zone1", "/bucket/foo.txt")
+
+    await cache.put(key, b"cached", fingerprint="etag:1", ttl_seconds=None)
+
+    assert await cache.get(key, expected_fingerprint=None) is None
+    assert await cache.get(key, expected_fingerprint="etag:1") == b"cached"
+
+
+@pytest.mark.asyncio
 async def test_memory_file_cache_singleflight_allows_one_fill() -> None:
     cache = MemoryFileCache(now_fn=lambda: 100.0)
     key = FileKey("path_s3", "zone1", "/bucket/foo.txt")
@@ -47,3 +59,18 @@ async def test_memory_file_cache_singleflight_allows_one_fill() -> None:
     results = await asyncio.gather(*(worker() for _ in range(25)))
     assert results == [b"payload"] * 25
     assert fill_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_file_cache_prunes_unused_singleflight_locks() -> None:
+    cache = MemoryFileCache(now_fn=lambda: 100.0)
+
+    for index in range(25):
+        lock = await cache.lock(FileKey("path_s3", "zone1", f"/bucket/{index}.txt"))
+        async with lock:
+            pass
+
+    del lock
+    gc.collect()
+
+    assert len(cache._locks) == 0

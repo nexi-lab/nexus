@@ -4,6 +4,8 @@ import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import RLock
+from weakref import WeakValueDictionary
 
 
 @dataclass(frozen=True)
@@ -25,19 +27,23 @@ class MemoryFileCache:
     def __init__(self, now_fn: Callable[[], float] | None = None) -> None:
         self._now_fn = now_fn or time.monotonic
         self._entries: dict[FileKey, _FileEntry] = {}
-        self._locks: dict[FileKey, asyncio.Lock] = {}
-        self._lock_guard = asyncio.Lock()
+        self._entry_lock = RLock()
+        self._locks: WeakValueDictionary[FileKey, asyncio.Lock] = WeakValueDictionary()
+        self._lock_guard = RLock()
 
     async def get(self, key: FileKey, expected_fingerprint: str | None) -> bytes | None:
-        entry = self._entries.get(key)
-        if entry is None:
-            return None
-        if entry.expires_at is not None and entry.expires_at <= self._now_fn():
-            self._entries.pop(key, None)
-            return None
-        if expected_fingerprint is not None:
-            return entry.content if entry.fingerprint == expected_fingerprint else None
-        return entry.content
+        with self._entry_lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            if entry.expires_at is not None and entry.expires_at <= self._now_fn():
+                self._entries.pop(key, None)
+                return None
+            if expected_fingerprint is not None:
+                return entry.content if entry.fingerprint == expected_fingerprint else None
+            if entry.expires_at is None:
+                return None
+            return entry.content
 
     async def put(
         self,
@@ -47,17 +53,21 @@ class MemoryFileCache:
         ttl_seconds: int | None = None,
     ) -> None:
         expires_at = None if ttl_seconds is None else self._now_fn() + max(ttl_seconds, 0)
-        self._entries[key] = _FileEntry(
-            content=content,
-            fingerprint=fingerprint,
-            expires_at=expires_at,
-        )
+        with self._entry_lock:
+            self._entries[key] = _FileEntry(
+                content=content,
+                fingerprint=fingerprint,
+                expires_at=expires_at,
+            )
 
     async def invalidate(self, key: FileKey) -> None:
-        self._entries.pop(key, None)
+        with self._entry_lock:
+            self._entries.pop(key, None)
+        with self._lock_guard:
+            self._locks.pop(key, None)
 
     async def lock(self, key: FileKey) -> asyncio.Lock:
-        async with self._lock_guard:
+        with self._lock_guard:
             lock = self._locks.get(key)
             if lock is None:
                 lock = asyncio.Lock()

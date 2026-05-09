@@ -89,6 +89,15 @@ def _resolve_image_ref_from_config(config: dict[str, Any]) -> str:
     return ""
 
 
+def _normalize_ports(ports: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize legacy port keys from older nexus.yaml files."""
+    normalized = dict(ports or {})
+    legacy_approvals = normalized.pop("approvals_grpc", None)
+    if "approvals" not in normalized and legacy_approvals is not None:
+        normalized["approvals"] = legacy_approvals
+    return normalized
+
+
 def _derive_project_env(
     config: dict[str, Any],
     resolved_ports: dict[str, int] | None = None,
@@ -106,7 +115,7 @@ def _derive_project_env(
     project_hash = hashlib.md5(data_dir.encode()).hexdigest()[:8]
     project_name = f"nexus-{project_hash}"
 
-    ports = resolved_ports or config.get("ports", {})
+    ports = _normalize_ports(resolved_ports or config.get("ports", {}))
     env: dict[str, str] = {
         "COMPOSE_PROJECT_NAME": project_name,
         "NEXUS_PORT": str(ports.get("http", 2026)),
@@ -811,10 +820,10 @@ def up(
 
     # Port resolution: reuse previous state.json ports if OUR containers
     # still own them, otherwise resolve from config defaults.
-    ports = {**DEFAULT_PORTS, **config.get("ports", {})}
+    ports = {**DEFAULT_PORTS, **_normalize_ports(config.get("ports", {}))}
     active_services = config.get("services", [])
 
-    prev_ports = prev_state.get("ports", {})
+    prev_ports = _normalize_ports(prev_state.get("ports", {}))
     prev_project = prev_state.get("project_name", "")
     reuse_ports = False
 

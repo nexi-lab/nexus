@@ -30,6 +30,7 @@ use raft::eraftpb::ConfState;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -87,6 +88,8 @@ enum ZoneOp {
     Removing,
 }
 
+const AUTO_JOIN_REMOVAL_SUPPRESSION: Duration = Duration::from_secs(60);
+
 /// A single zone entry in the registry.
 struct ZoneEntry {
     /// ZoneConsensus handle (Clone + Send + Sync).
@@ -134,6 +137,9 @@ pub struct ZoneRaftRegistry {
     /// removal against a re-create. Not a global mutex, so different
     /// zone_ids proceed in parallel.
     creating: DashMap<String, ZoneOp>,
+    /// Recently removed zone IDs. Transport-side auto-join consults this
+    /// guard so stale Raft messages cannot resurrect a deleted dynamic zone.
+    recently_removed: DashMap<String, Instant>,
 }
 
 impl ZoneRaftRegistry {
@@ -150,6 +156,7 @@ impl ZoneRaftRegistry {
             tls: Arc::new(RwLock::new(None)),
             self_address: Arc::new(RwLock::new(String::new())),
             creating: DashMap::new(),
+            recently_removed: DashMap::new(),
         }
     }
 
@@ -162,7 +169,26 @@ impl ZoneRaftRegistry {
             tls: Arc::new(RwLock::new(tls)),
             self_address: Arc::new(RwLock::new(String::new())),
             creating: DashMap::new(),
+            recently_removed: DashMap::new(),
         }
+    }
+
+    pub(crate) fn is_auto_join_suppressed(&self, zone_id: &str) -> bool {
+        let Some(removed_at) = self.recently_removed.get(zone_id) else {
+            return false;
+        };
+        let expired = removed_at.elapsed() >= AUTO_JOIN_REMOVAL_SUPPRESSION;
+        drop(removed_at);
+        if expired {
+            self.recently_removed.remove(zone_id);
+            false
+        } else {
+            true
+        }
+    }
+
+    fn clear_auto_join_suppression(&self, zone_id: &str) {
+        self.recently_removed.remove(zone_id);
     }
 
     /// Set this node's advertise address — see [`Self::self_address`].
@@ -211,6 +237,7 @@ impl ZoneRaftRegistry {
         peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
+        self.clear_auto_join_suppression(zone_id);
         // Filter self out of the voter ID list. Callers (federation bootstrap,
         // zone_manager) commonly pass the full cluster roster from NEXUS_PEERS
         // which includes this node's own address; raft-rs expects
@@ -248,6 +275,7 @@ impl ZoneRaftRegistry {
         _learner: bool,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
+        self.clear_auto_join_suppression(zone_id);
         // Per raft contract: joining nodes start uninitialized (empty ConfState).
         // The leader will send a snapshot with the correct voter set after
         // the ConfChange(AddNode/AddLearnerNode) is committed.
@@ -279,6 +307,7 @@ impl ZoneRaftRegistry {
         peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
+        self.clear_auto_join_suppression(zone_id);
         let config = RaftConfig {
             id: self.node_id,
             peers: vec![],
@@ -777,6 +806,8 @@ impl ZoneRaftRegistry {
             transport_handle,
             persistence,
         } = entry;
+        self.recently_removed
+            .insert(zone_id.to_string(), Instant::now());
 
         // Commit point: the tombstone is what makes teardown crash-safe.
         // If this write fails, the caller sees the error and the zone is
@@ -797,6 +828,7 @@ impl ZoneRaftRegistry {
                     persistence,
                 },
             );
+            self.recently_removed.remove(zone_id);
             return Err(TransportError::Connection(format!(
                 "Failed to write tombstone for zone '{}': {}",
                 zone_id, e
@@ -1009,6 +1041,36 @@ mod tests {
         );
         assert!(reg.get_node("temp-zone").is_none());
         assert!(reg.list_zones().is_empty());
+
+        reg.shutdown_all();
+        await_shutdown_cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn test_remove_zone_suppresses_transport_auto_join_until_explicit_recreate() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().to_path_buf();
+        let reg = ZoneRaftRegistry::new(base, 1);
+        reg.create_zone("temp-zone", vec![], &tokio::runtime::Handle::current())
+            .unwrap();
+
+        reg.remove_zone("temp-zone").await.unwrap();
+        assert!(
+            reg.is_auto_join_suppressed("temp-zone"),
+            "stale raft messages must not resurrect a just-removed zone",
+        );
+
+        reg.join_zone(
+            "temp-zone",
+            vec![],
+            false,
+            &tokio::runtime::Handle::current(),
+        )
+        .unwrap();
+        assert!(
+            !reg.is_auto_join_suppressed("temp-zone"),
+            "explicit recreate/join must clear the transport suppression marker",
+        );
 
         reg.shutdown_all();
         await_shutdown_cleanup().await;

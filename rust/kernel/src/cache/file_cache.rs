@@ -134,7 +134,7 @@ mod tests {
         let fills = Arc::new(AtomicUsize::new(0));
 
         thread::scope(|scope| {
-            for _ in 0..20 {
+            for _ in 0..100 {
                 let cache = Arc::clone(&cache);
                 let key = key.clone();
                 let fills = Arc::clone(&fills);

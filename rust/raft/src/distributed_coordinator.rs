@@ -58,6 +58,7 @@ const JOIN_ZONE_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Per-attempt timeout for the JoinZone RPC during bootstrap.
 const JOIN_ZONE_RPC_TIMEOUT_SECS: u64 = 5;
+const FOUNDER_REJOIN_PROBE_ATTEMPTS: u32 = 3;
 
 /// Triple keyed by target zone: `(parent_zone_id, mount_path, global_path)`.
 type CrossZoneMountTuple = (String, String, String);
@@ -230,12 +231,12 @@ impl Default for RaftDistributedCoordinator {
 ///
 /// Now operator must declare intent up front:
 ///
-///   * `Static` — env-driven cluster formation. Data dir MUST be
-///     empty.  Empty `--peers` = single-node founder by default
-///     (every cluster starts as a 1-voter); non-empty `--peers` =
-///     joiner.  `NEXUS_BOOTSTRAP_NEW` / `--bootstrap-new` is an
-///     explicit-intent alias for the empty-peers default — kept for
-///     UX, not required.
+///   * `Static` — env-driven cluster formation. Empty data dir means
+///     bootstrap/join from env: empty `--peers` = single-node founder
+///     by default (every cluster starts as a 1-voter); non-empty
+///     `--peers` = joiner. Existing `root` state is accepted as a
+///     container/process restart because orchestration normally
+///     restarts with the same env and persisted volume.
 ///   * `Dynamic` — daemon comes up rootless; operator drives zone
 ///     formation via runtime API (`nexusd-cluster share` / `join`,
 ///     or Python `nexusd federation_create_zone`). Env vars and
@@ -296,11 +297,12 @@ impl BootstrapMode {
 ///     `validate_peers_excludes_self`).
 ///
 /// Rules:
-///   * `Static`: data dir MUST be empty (would-be restart).  Both
-///     `bootstrap_new_set` and `peers_non_empty` are OPTIONAL —
-///     empty/empty is the single-node founder default
+///   * `Static`: data dir may be empty (fresh bootstrap/join) or
+///     already hold root state (container/process restart with the
+///     same env).  Both `bootstrap_new_set` and `peers_non_empty` are
+///     OPTIONAL — empty/empty is the single-node founder default
 ///     (`bootstrap_or_join_zone` creates a 1-voter zone alone), and
-///     non-empty peers triggers the joiner retry loop.
+///     non-empty peers triggers the joiner retry loop on empty state.
 ///   * `Dynamic`: data dir MUST be empty (no persisted state);
 ///     `bootstrap_new_set` and `peers_non_empty` MUST both be false
 ///     (runtime API drives, not env).
@@ -315,19 +317,18 @@ pub fn validate_bootstrap_mode(
 ) -> Result<(), String> {
     match mode {
         BootstrapMode::Static => {
-            if data_dir_has_root {
-                return Err(
-                    "bootstrap mode = static, but data dir already holds a 'root' zone — \
-                     this is a restart scenario.  Either pass mode = restart, or wipe the \
-                     data dir to bootstrap fresh."
-                        .to_string(),
-                );
-            }
-            // Empty `bootstrap_new_set` AND empty `peers_non_empty`
-            // is the single-node founder default — every cluster
-            // starts as a 1-voter group.  Non-empty peers triggers
-            // the joiner retry loop.  Both can coexist (explicit
-            // founder declaration with hostname-only peers list).
+            // Existing `root` state under static mode is a normal
+            // container restart: the process receives the same env as
+            // the first boot, while persisted ConfState remains the
+            // source of truth. `bootstrap_or_join_zone` checks loaded
+            // state first and resumes instead of re-creating.
+            let _ = data_dir_has_root;
+            // Empty `bootstrap_new_set` AND empty `peers_non_empty` is
+            // the single-node founder default — every cluster starts
+            // as a 1-voter group.  Non-empty peers triggers the
+            // joiner retry loop on empty state.  Both can coexist
+            // (explicit founder declaration with hostname-only peers
+            // list).
             Ok(())
         }
         BootstrapMode::Dynamic => {
@@ -502,6 +503,175 @@ pub fn validate_peers_excludes_self(
     Ok(())
 }
 
+fn joiner_local_zone_peer_seeds(peer_addrs: &[NodeAddress]) -> Vec<String> {
+    let mut seeds: Vec<String> = peer_addrs
+        .iter()
+        .map(NodeAddress::to_raft_peer_str)
+        .collect();
+    seeds.sort();
+    seeds
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmptyStorageBootstrapPlan {
+    FoundImmediately,
+    ProbePeersThenFound,
+    JoinPeers,
+}
+
+fn empty_storage_bootstrap_plan(
+    bootstrap_new: bool,
+    peer_addrs: &[NodeAddress],
+) -> EmptyStorageBootstrapPlan {
+    if peer_addrs.is_empty() {
+        EmptyStorageBootstrapPlan::FoundImmediately
+    } else if bootstrap_new {
+        EmptyStorageBootstrapPlan::ProbePeersThenFound
+    } else {
+        EmptyStorageBootstrapPlan::JoinPeers
+    }
+}
+
+fn create_founder_zone(
+    zm: &ZoneManager,
+    zone_id: &str,
+    node_id: u64,
+    self_address: &str,
+    bootstrap_new: bool,
+    peers_empty: bool,
+) -> Result<(), String> {
+    tracing::info!(
+        node_id,
+        zone = %zone_id,
+        self_address = %self_address,
+        bootstrap_new,
+        peers_empty,
+        "founder path — creating 1-voter zone. Other nodes JoinZone here.",
+    );
+    let self_peer = format!("{node_id}@{self_address}");
+    zm.create_zone(zone_id, vec![self_peer])
+        .map_err(|e| format!("create_zone({zone_id}): {e}"))
+        .map(|_| ())
+}
+
+fn block_on_zone_manager<F>(zm: &ZoneManager, fut: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    let handle = zm.runtime_handle();
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| handle.block_on(fut))
+    } else {
+        handle.block_on(fut)
+    }
+}
+
+fn remove_local_probe_zone(zm: &ZoneManager, zone_id: &str) {
+    if zm.get_zone(zone_id).is_none() {
+        return;
+    }
+    if let Err(e) = block_on_zone_manager(zm, zm.registry().remove_zone(zone_id)) {
+        tracing::warn!(
+            zone = %zone_id,
+            error = %e,
+            "founder rejoin probe cleanup failed before local create",
+        );
+    }
+}
+
+fn attempt_join_zone_round(
+    zm: &ZoneManager,
+    zone_id: &str,
+    node_id: u64,
+    self_address: &str,
+    peer_addrs: &[NodeAddress],
+    join_runtime: &tokio::runtime::Runtime,
+    rpc_timeout_secs: u64,
+) -> Result<(), String> {
+    let mut last_err = String::new();
+    for peer in peer_addrs {
+        let mut endpoint = peer.endpoint.clone();
+        let mut redirected_once = false;
+        loop {
+            // Order matters: register locally with skip_bootstrap
+            // FIRST so this node's gRPC server can serve append-
+            // entries from the leader once AddNode commits.
+            if zm.get_zone(zone_id).is_none() {
+                let zone_peers = joiner_local_zone_peer_seeds(peer_addrs);
+                tracing::info!(
+                    zone = %zone_id,
+                    seed_count = zone_peers.len(),
+                    seed_peers = ?zone_peers,
+                    "local join_zone seed peers",
+                );
+                if let Err(e) = zm.join_zone(zone_id, zone_peers, /* learner */ false) {
+                    last_err = format!("local join_zone setup failed: {e}");
+                    tracing::warn!(
+                        endpoint = %endpoint,
+                        zone = %zone_id,
+                        error = %e,
+                        "local join_zone setup failed; will retry next peer",
+                    );
+                    break;
+                }
+            }
+            let attempt = join_runtime.block_on(crate::transport::call_join_zone_rpc(
+                &endpoint,
+                zone_id,
+                node_id,
+                self_address,
+                /* as_learner */ false,
+                rpc_timeout_secs,
+            ));
+            match attempt {
+                Ok(result) if result.success => {
+                    tracing::info!(
+                        endpoint = %endpoint,
+                        zone = %zone_id,
+                        node_id,
+                        "joined zone via leader",
+                    );
+                    return Ok(());
+                }
+                Ok(result) => {
+                    if let Some(addr) = result.leader_address.as_ref() {
+                        if !redirected_once && !addr.is_empty() && addr != &endpoint {
+                            tracing::info!(
+                                from = %endpoint,
+                                to = %addr,
+                                zone = %zone_id,
+                                "JoinZone redirect to leader",
+                            );
+                            endpoint = addr.clone();
+                            redirected_once = true;
+                            continue;
+                        }
+                    }
+                    last_err = format!("{}: {:?}", endpoint, result.error);
+                    tracing::debug!(
+                        endpoint = %endpoint,
+                        zone = %zone_id,
+                        error = ?result.error,
+                        "JoinZone non-success; trying next peer",
+                    );
+                    break;
+                }
+                Err(e) => {
+                    last_err = format!("{}: {e}", endpoint);
+                    tracing::debug!(
+                        endpoint = %endpoint,
+                        zone = %zone_id,
+                        error = %e,
+                        "JoinZone RPC error; trying next peer",
+                    );
+                    break;
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
 /// Bring a zone online — dispatch table for the three bootstrap
 /// branches under the opaque-ID contract.  Generalised over `zone_id`
 /// so the same SSOT machinery serves:
@@ -575,18 +745,16 @@ pub fn bootstrap_or_join_zone(
     //     come up) but is the one originating the cluster.
     //   * `peer_addrs.is_empty()` → no peers configured = alone.
     //     Single-node default — create own root.
-    if bootstrap_new || peer_addrs.is_empty() {
-        tracing::info!(
+    let plan = empty_storage_bootstrap_plan(bootstrap_new, peer_addrs);
+    if matches!(plan, EmptyStorageBootstrapPlan::FoundImmediately) {
+        create_founder_zone(
+            zm,
+            zone_id,
             node_id,
-            zone = %zone_id,
-            self_address = %self_address,
+            self_address,
             bootstrap_new,
-            peers_empty = peer_addrs.is_empty(),
-            "founder path — creating 1-voter zone. Other nodes JoinZone here.",
-        );
-        let self_peer = format!("{node_id}@{self_address}");
-        zm.create_zone(zone_id, vec![self_peer])
-            .map_err(|e| format!("create_zone({zone_id}): {e}"))?;
+            peer_addrs.is_empty(),
+        )?;
         return Ok(());
     }
 
@@ -613,91 +781,59 @@ pub fn bootstrap_or_join_zone(
         .build()
         .map_err(|e| format!("bootstrap join runtime: {e}"))?;
 
+    if matches!(plan, EmptyStorageBootstrapPlan::ProbePeersThenFound) {
+        tracing::info!(
+            node_id,
+            zone = %zone_id,
+            peer_count = peer_addrs.len(),
+            attempts = FOUNDER_REJOIN_PROBE_ATTEMPTS,
+            "founder path — probing peers for an existing live cluster before creating local root",
+        );
+        let mut last_err = String::new();
+        for _ in 0..FOUNDER_REJOIN_PROBE_ATTEMPTS {
+            match attempt_join_zone_round(
+                zm,
+                zone_id,
+                node_id,
+                self_address,
+                peer_addrs,
+                &join_runtime,
+                JOIN_ZONE_RPC_TIMEOUT_SECS,
+            ) {
+                Ok(()) => return Ok(()),
+                Err(e) => last_err = e,
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        tracing::info!(
+            node_id,
+            zone = %zone_id,
+            last_error = %last_err,
+            "founder probe found no existing cluster; creating local 1-voter zone",
+        );
+        remove_local_probe_zone(zm, zone_id);
+        create_founder_zone(
+            zm,
+            zone_id,
+            node_id,
+            self_address,
+            bootstrap_new,
+            peer_addrs.is_empty(),
+        )?;
+        return Ok(());
+    }
+
     let mut attempts: u32 = 0;
     loop {
-        for peer in peer_addrs {
-            // No self-skip here.  Contract: `peer_addrs` lists OTHER
-            // nodes only.  Operator-input that includes self is
-            // rejected at parse time by the boot path that owns the
-            // address book (see `validate_peers_excludes_self` in
-            // `init_from_env` and `nexusd-cluster::open_zone_manager`)
-            // so by the time we reach the JoinZone retry loop,
-            // every entry is a remote peer worth contacting.
-            let mut endpoint = peer.endpoint.clone();
-            let mut redirected_once = false;
-            loop {
-                // Order matters: register locally with skip_bootstrap
-                // FIRST so this node's gRPC server can serve append-
-                // entries from the leader once AddNode commits.
-                // Otherwise the leader's post-AddNode propose
-                // (i_links_count) hangs waiting for our quorum ack and
-                // times out the JoinZone RPC.  Local register is
-                // idempotent — calling it on every retry costs only a
-                // hashmap lookup.
-                if zm.get_zone(zone_id).is_none() {
-                    let zone_peers = vec![peer.to_raft_peer_str()];
-                    if let Err(e) = zm.join_zone(zone_id, zone_peers, /* learner */ false) {
-                        tracing::warn!(
-                            endpoint = %endpoint,
-                            zone = %zone_id,
-                            error = %e,
-                            "local join_zone setup failed; will retry next peer",
-                        );
-                        break;
-                    }
-                }
-                let attempt = join_runtime.block_on(crate::transport::call_join_zone_rpc(
-                    &endpoint,
-                    zone_id,
-                    node_id,
-                    self_address,
-                    /* as_learner */ false,
-                    JOIN_ZONE_RPC_TIMEOUT_SECS,
-                ));
-                match attempt {
-                    Ok(result) if result.success => {
-                        tracing::info!(
-                            endpoint = %endpoint,
-                            zone = %zone_id,
-                            node_id,
-                            "joined zone via leader",
-                        );
-                        return Ok(());
-                    }
-                    Ok(result) => {
-                        if let Some(addr) = result.leader_address.as_ref() {
-                            if !redirected_once && !addr.is_empty() && addr != &endpoint {
-                                tracing::info!(
-                                    from = %endpoint,
-                                    to = %addr,
-                                    zone = %zone_id,
-                                    "JoinZone redirect to leader",
-                                );
-                                endpoint = addr.clone();
-                                redirected_once = true;
-                                continue;
-                            }
-                        }
-                        tracing::debug!(
-                            endpoint = %endpoint,
-                            zone = %zone_id,
-                            error = ?result.error,
-                            "JoinZone non-success; trying next peer",
-                        );
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            endpoint = %endpoint,
-                            zone = %zone_id,
-                            error = %e,
-                            "JoinZone RPC error; trying next peer",
-                        );
-                        break;
-                    }
-                }
-            }
-        }
+        let _ = attempt_join_zone_round(
+            zm,
+            zone_id,
+            node_id,
+            self_address,
+            peer_addrs,
+            &join_runtime,
+            JOIN_ZONE_RPC_TIMEOUT_SECS,
+        );
         attempts = attempts.saturating_add(1);
         if let Some(max) = max_attempts {
             if attempts >= max {
@@ -1222,8 +1358,16 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
             // the leader's snapshot can install the authoritative
             // ConfState the moment AddNode commits.  Idempotent.
             if zm.get_zone(zone_id).is_none() {
-                if let Some(first) = candidates.first() {
-                    let _ = zm.join_zone(zone_id, vec![first.to_raft_peer_str()], false);
+                let peer_seed_addrs: Vec<NodeAddress> = peer_addrs.values().cloned().collect();
+                let local_peer_seeds = joiner_local_zone_peer_seeds(&peer_seed_addrs);
+                if !local_peer_seeds.is_empty() {
+                    tracing::info!(
+                        zone = %zone_id,
+                        seed_count = local_peer_seeds.len(),
+                        seed_peers = ?local_peer_seeds,
+                        "local federation zone seed peers",
+                    );
+                    let _ = zm.join_zone(zone_id, local_peer_seeds, false);
                 }
             }
 
@@ -1240,9 +1384,9 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
                     5,
                 );
                 let attempt = if tokio::runtime::Handle::try_current().is_ok() {
-                    tokio::task::block_in_place(|| runtime.block_on(fut))
+                    tokio::task::block_in_place(|| runtime.block_on(fut).map_err(|e| e.to_string()))
                 } else {
-                    runtime.block_on(fut)
+                    runtime.block_on(fut).map_err(|e| e.to_string())
                 };
                 match attempt {
                     Ok(r) if r.success => {
@@ -1873,6 +2017,50 @@ mod tests {
         validate_peers_excludes_self(&[], "100.64.0.26:2126").expect("empty list ok");
     }
 
+    #[test]
+    fn bootstrap_joiner_local_seed_includes_all_configured_peers() {
+        let peers = vec![
+            parse_peer("nexus-1:2126"),
+            parse_peer("witness:2126"),
+            parse_peer("nexus-3:2126"),
+        ];
+
+        let seeds = joiner_local_zone_peer_seeds(&peers);
+
+        let mut expected = vec![
+            parse_peer("nexus-1:2126").to_raft_peer_str(),
+            parse_peer("nexus-3:2126").to_raft_peer_str(),
+            parse_peer("witness:2126").to_raft_peer_str(),
+        ];
+        expected.sort();
+
+        assert_eq!(
+            seeds, expected,
+            "joiner local root registration must seed the full address book, not just the dialed peer",
+        );
+    }
+
+    #[test]
+    fn founder_with_peers_probes_existing_cluster_before_creating() {
+        let peers = vec![parse_peer("nexus-2:2126"), parse_peer("witness:2126")];
+
+        assert_eq!(
+            empty_storage_bootstrap_plan(true, &peers),
+            EmptyStorageBootstrapPlan::ProbePeersThenFound,
+            "a wiped static founder with live peers must try to rejoin before founding a split-brain root",
+        );
+        assert_eq!(
+            empty_storage_bootstrap_plan(true, &[]),
+            EmptyStorageBootstrapPlan::FoundImmediately,
+            "single-node founder still creates immediately",
+        );
+        assert_eq!(
+            empty_storage_bootstrap_plan(false, &peers),
+            EmptyStorageBootstrapPlan::JoinPeers,
+            "joiners keep the indefinite JoinZone retry behavior",
+        );
+    }
+
     // ── BootstrapMode parsing + validation ─────────────────────────────
 
     #[test]
@@ -1923,10 +2111,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_static_rejects_existing_state() {
-        let err = validate_bootstrap_mode(BootstrapMode::Static, true, true, false)
-            .expect_err("existing state under static is restart-in-disguise");
-        assert!(err.contains("restart"));
+    fn validate_static_allows_existing_state_for_container_restart() {
+        validate_bootstrap_mode(BootstrapMode::Static, true, true, true)
+            .expect("static bootstrap with persisted state resumes after container restart");
     }
 
     #[test]

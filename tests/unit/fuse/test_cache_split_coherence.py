@@ -35,7 +35,7 @@ async def test_logical_file_cache_singleflight_keeps_one_origin_fill() -> None:
                 await cache.put(key, b"payload", fingerprint="etag:1")
         return await cache.get(key, expected_fingerprint="etag:1")
 
-    assert await asyncio.gather(*(read_once() for _ in range(20))) == [b"payload"] * 20
+    assert await asyncio.gather(*(read_once() for _ in range(100))) == [b"payload"] * 100
     assert calls == 1
 
 

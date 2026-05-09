@@ -31,6 +31,17 @@ use prost::Message;
 
 use kernel::meta_store::{FileMetadata as KernelFileMetadata, MetaStore, MetaStoreError};
 
+fn bridge_block_on<F>(handle: &tokio::runtime::Handle, fut: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| handle.block_on(fut))
+    } else {
+        handle.block_on(fut)
+    }
+}
+
 /// ``kernel::MetaStore`` impl backed by a single ``ZoneConsensus``.
 ///
 /// The ``mount_point`` field is the VFS-global prefix this zone is
@@ -246,9 +257,7 @@ impl MetaStore for ZoneMetaStore {
         let fut = self
             .node
             .with_state_machine(move |sm: &FullStateMachine| sm.get_metadata(&key));
-        let bytes_opt = self
-            .runtime
-            .block_on(fut)
+        let bytes_opt = bridge_block_on(&self.runtime, fut)
             .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.get({path}): {e}")))?;
         match bytes_opt {
             Some(bytes) => {
@@ -277,9 +286,7 @@ impl MetaStore for ZoneMetaStore {
             key: zone_key.clone(),
             value,
         };
-        let result = self
-            .runtime
-            .block_on(self.node.propose(cmd))
+        let result = bridge_block_on(&self.runtime, self.node.propose(cmd))
             .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.put({path}): {e}")))?;
         match result {
             crate::prelude::CommandResult::Success => {}
@@ -300,10 +307,12 @@ impl MetaStore for ZoneMetaStore {
         let _ = self.node.wait_until(
             || {
                 let poll_key = key.clone();
-                let observed =
-                    runtime.block_on(node.with_state_machine(move |sm: &FullStateMachine| {
+                let observed = bridge_block_on(
+                    &runtime,
+                    node.with_state_machine(move |sm: &FullStateMachine| {
                         sm.get_metadata(&poll_key)
-                    }));
+                    }),
+                );
                 matches!(&observed, Ok(Some(bytes)) if *bytes == value_snapshot)
             },
             500,
@@ -322,9 +331,7 @@ impl MetaStore for ZoneMetaStore {
         self.cache.remove(path);
         let zone_key = self.to_zone_key(path);
         let cmd = Command::DeleteMetadata { key: zone_key };
-        let result = self
-            .runtime
-            .block_on(self.node.propose(cmd))
+        let result = bridge_block_on(&self.runtime, self.node.propose(cmd))
             .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.delete({path}): {e}")))?;
         Ok(matches!(result, crate::prelude::CommandResult::Success))
     }
@@ -335,9 +342,7 @@ impl MetaStore for ZoneMetaStore {
         let fut = self
             .node
             .with_state_machine(move |sm: &FullStateMachine| sm.list_metadata(&key));
-        let entries = self
-            .runtime
-            .block_on(fut)
+        let entries = bridge_block_on(&self.runtime, fut)
             .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.list({prefix}): {e}")))?;
         let mut out: Vec<KernelFileMetadata> = Vec::with_capacity(entries.len());
         for entry in entries {
@@ -367,7 +372,7 @@ impl MetaStore for ZoneMetaStore {
             key: key.to_string(),
             data: data.to_vec(),
         };
-        let result = self.runtime.block_on(self.node.propose(cmd)).map_err(|e| {
+        let result = bridge_block_on(&self.runtime, self.node.propose(cmd)).map_err(|e| {
             MetaStoreError::IOError(format!("ZoneMetaStore.append_stream_entry({key}): {e}"))
         })?;
         match result {
@@ -384,7 +389,7 @@ impl MetaStore for ZoneMetaStore {
         let fut = self
             .node
             .with_state_machine(move |sm: &FullStateMachine| sm.get_stream_entry(&key_owned));
-        self.runtime.block_on(fut).map_err(|e| {
+        bridge_block_on(&self.runtime, fut).map_err(|e| {
             MetaStoreError::IOError(format!("ZoneMetaStore.get_stream_entry({key}): {e}"))
         })
     }
@@ -393,6 +398,8 @@ impl MetaStore for ZoneMetaStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::raft::ZoneRaftRegistry;
+    use tempfile::TempDir;
 
     /// Proto encode↔decode preserves every field the kernel struct
     /// tracks. ``target_zone_id`` deliberately not asserted here —
@@ -487,5 +494,45 @@ mod tests {
             translate_roundtrip("/family/work", "/family/work"),
             "/family/work"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sync_methods_are_safe_inside_tokio_runtime() {
+        let tmp = TempDir::new().unwrap();
+        let registry = ZoneRaftRegistry::new(tmp.path().to_path_buf(), 1);
+        let runtime = tokio::runtime::Handle::current();
+        let node = registry
+            .create_zone("corp", vec![], &runtime)
+            .expect("create test zone");
+        node.campaign().await.expect("campaign test zone");
+        let store = ZoneMetaStore::new(node, runtime, "/corp".to_string());
+        let path = "/corp/doc.txt";
+        let meta = KernelFileMetadata {
+            path: path.to_string(),
+            size: 5,
+            content_id: Some("hello-hash".to_string()),
+            gen: 1,
+            version: 1,
+            entry_type: 0,
+            zone_id: Some("corp".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: Some("nexus-1:2126".to_string()),
+            target_zone_id: None,
+            link_target: None,
+        };
+
+        store.put(path, meta.clone()).expect("put from runtime");
+        let got = store
+            .get(path)
+            .expect("get from runtime")
+            .expect("metadata");
+        assert_eq!(got.path, path);
+        assert_eq!(got.content_id, meta.content_id);
+        let listed = store.list("/corp").expect("list from runtime");
+        assert_eq!(listed.len(), 1);
+
+        registry.shutdown_all();
     }
 }

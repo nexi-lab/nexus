@@ -934,7 +934,7 @@ impl ZoneManager {
                 if peer_id == self_id || peer.hostname.to_ascii_lowercase().starts_with("witness") {
                     continue;
                 }
-                call_delete_zone(&peer.endpoint, zone_id, force, 2)
+                call_delete_zone(&peer.endpoint, zone_id, force, 10)
                     .await
                     .map_err(|e| {
                         RaftError::Raft(format!(

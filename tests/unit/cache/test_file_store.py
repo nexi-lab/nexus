@@ -56,9 +56,29 @@ async def test_memory_file_cache_singleflight_allows_one_fill() -> None:
                 await cache.put(key, b"payload", fingerprint="etag:1")
         return await cache.get(key, expected_fingerprint="etag:1")
 
-    results = await asyncio.gather(*(worker() for _ in range(25)))
-    assert results == [b"payload"] * 25
+    results = await asyncio.gather(*(worker() for _ in range(100)))
+    assert results == [b"payload"] * 100
     assert fill_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_file_cache_recent_reread_workload_hits_above_ninety_percent() -> None:
+    cache = MemoryFileCache(now_fn=lambda: 100.0)
+    hot_keys = [FileKey("path_s3", "zone1", f"/bucket/hot-{index}.txt") for index in range(10)]
+    hits = 0
+    misses = 0
+
+    for index in range(250):
+        key = hot_keys[index % len(hot_keys)]
+        fingerprint = f"etag:{key.path}"
+        cached = await cache.get(key, expected_fingerprint=fingerprint)
+        if cached is None:
+            misses += 1
+            await cache.put(key, b"payload", fingerprint=fingerprint)
+        else:
+            hits += 1
+
+    assert hits / (hits + misses) >= 0.90
 
 
 @pytest.mark.asyncio

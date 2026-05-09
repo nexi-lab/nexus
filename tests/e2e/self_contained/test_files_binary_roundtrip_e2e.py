@@ -69,7 +69,6 @@ def real_fs(tmp_path: Path) -> NexusFS:
         is_admin=True,
     )
     kernel.sys_setattr("/files", entry_type=DT_MOUNT, backend=backend)
-    metastore.sys_setattr("/files", DT_MOUNT)
 
     return kernel
 

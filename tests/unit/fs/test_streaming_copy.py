@@ -46,7 +46,6 @@ def slim_fs(tmp_path: Path):
 
     # Mount via the driver coordinator (F2 MountTable migration).
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-    metastore.sys_setattr("/local", DT_MOUNT)
 
     return kernel
 

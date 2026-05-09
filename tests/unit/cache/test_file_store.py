@@ -74,3 +74,16 @@ async def test_memory_file_cache_prunes_unused_singleflight_locks() -> None:
     gc.collect()
 
     assert len(cache._locks) == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_file_cache_keeps_active_singleflight_lock_on_invalidate() -> None:
+    cache = MemoryFileCache(now_fn=lambda: 100.0)
+    key = FileKey("path_s3", "zone1", "/bucket/foo.txt")
+    active_lock = await cache.lock(key)
+
+    async with active_lock:
+        await cache.invalidate(key)
+        next_lock = await cache.lock(key)
+
+    assert next_lock is active_lock

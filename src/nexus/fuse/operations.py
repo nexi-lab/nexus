@@ -127,9 +127,11 @@ class NexusFUSEOperations(Operations):
                 use_rust = False
 
         # Initialize cache with lease coordinator (Issue #3397)
+        dir_cache_ttl = cache_config.get("dir_cache_ttl", 5)
         bare_cache = FUSECacheManager(
             attr_cache_size=cache_config.get("attr_cache_size", 1024),
             attr_cache_ttl=cache_config.get("attr_cache_ttl", 60),
+            listing_cache_ttl=dir_cache_ttl,
             content_cache_size=cache_config.get("content_cache_size", 10000),
             parsed_cache_size=cache_config.get("parsed_cache_size", 50),
             enable_metrics=cache_config.get("enable_metrics", False),
@@ -176,9 +178,6 @@ class NexusFUSEOperations(Operations):
             enable_events=enable_events,
             event_loop=event_loop,
         )
-
-        # Initialize readdir cache
-        dir_cache_ttl = cache_config.get("dir_cache_ttl", 5)
 
         # Build shared context
         self._ctx = FUSESharedContext(

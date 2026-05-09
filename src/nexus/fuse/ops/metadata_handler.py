@@ -13,7 +13,6 @@ from nexus.fuse.ops._shared import (
     build_dir_attrs,
     cache_file_attrs_from_list,
     check_namespace_visible,
-    dir_cache_key,
     get_metadata,
     parse_virtual_path_for_fuse,
     resolve_owner_group_to_uid_gid,
@@ -228,14 +227,12 @@ class MetadataHandler:
         start_time = time.time()
 
         # Check readdir cache first
-        cache_key = dir_cache_key(ctx, path)
-        with ctx.dir_cache_lock:
-            cached_entries = ctx.dir_cache.get(cache_key)
+        cached_entries = ctx.cache.get_listing(path)
         if cached_entries is not None:
             logger.info(
                 f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
             )
-            return cast("list[str]", cached_entries)
+            return cached_entries
 
         logger.info(f"[FUSE-PERF] readdir START: path={path}")
 
@@ -271,8 +268,7 @@ class MetadataHandler:
                 f"[FUSE-PERF] readdir DONE via RUST: path={path}, "
                 f"{len(entries)} entries, {elapsed:.3f}s"
             )
-            with ctx.dir_cache_lock:
-                ctx.dir_cache[cache_key] = entries
+            ctx.cache.cache_listing(path, entries)
             return entries
 
         # Python path: list from filesystem
@@ -352,7 +348,6 @@ class MetadataHandler:
             f"{total_elapsed:.3f}s total"
         )
 
-        with ctx.dir_cache_lock:
-            ctx.dir_cache[cache_key] = entries
+        ctx.cache.cache_listing(path, entries)
 
         return entries

@@ -108,6 +108,11 @@ class TestCoordinatorWithoutLeaseManager:
         assert coord.get_parsed("/c", "md") == b"# hello"
         assert coord.get_parsed_size("/c", "md") == 7
 
+        coord.cache_listing("/dir", [".", "..", "child.txt"])
+        assert coord.get_listing("/dir") == [".", "..", "child.txt"]
+        coord.invalidate_parent_listing("/dir/child.txt")
+        assert coord.get_listing("/dir") is None
+
         coord.invalidate_path("/a")
         assert coord.get_attr("/a") is None
 

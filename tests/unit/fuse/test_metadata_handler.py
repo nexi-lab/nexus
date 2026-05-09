@@ -92,14 +92,33 @@ class TestReaddir:
         assert ".DS_Store" not in entries
         assert "real.txt" in entries
 
-    def test_cache_hit_skips_listing(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        """When dir cache has entries, list() should not be called."""
-        # Prime the dir cache
-        fuse_ops._dir_cache[fuse_ops._dir_cache_key("/cached")] = [".", "..", "a.txt"]
+    def test_readdir_cache_hit_uses_logical_listing_cache(
+        self,
+        fuse_ops: Any,
+        mock_nexus_fs: MagicMock,
+    ) -> None:
+        fuse_ops.cache.cache_listing("/cached", [".", "..", "a.txt"])
 
         entries = fuse_ops.readdir("/cached")
+
         assert entries == [".", "..", "a.txt"]
         mock_nexus_fs.sys_readdir.assert_not_called()
+
+
+def test_parent_only_listing_invalidation_keeps_grandparent() -> None:
+    cache = FUSECacheManager(
+        attr_cache_size=8,
+        attr_cache_ttl=60,
+        content_cache_size=8,
+        parsed_cache_size=8,
+    )
+    cache.cache_listing("/a", [".", "..", "b"])
+    cache.cache_listing("/a/b", [".", "..", "c.txt"])
+
+    cache.invalidate_parent_listing("/a/b/c.txt")
+
+    assert cache.get_listing("/a") == [".", "..", "b"]
+    assert cache.get_listing("/a/b") is None
 
 
 class TestResolveFileSize:

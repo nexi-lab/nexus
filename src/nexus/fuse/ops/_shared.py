@@ -18,7 +18,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
 from cachetools import TTLCache as _TTLCache
 from fuse import FuseOSError
@@ -30,7 +30,6 @@ from nexus.contracts.exceptions import (
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
 from nexus.lib.virtual_views import parse_virtual_path
 
 if TYPE_CHECKING:
@@ -92,6 +91,43 @@ class MetadataObj:
         )
 
 
+class FUSECacheCoordinator(Protocol):
+    """Cache coordinator surface used by FUSE operation handlers."""
+
+    @property
+    def lease_manager(self) -> Any | None: ...
+
+    def _check_validity(self, path: str) -> bool: ...
+
+    def _validate_lease(self, path: str) -> Any | None: ...
+
+    def _acquire_read_lease(self, path: str) -> Any | None: ...
+
+    def _set_validity(self, path: str, expires_at: float) -> None: ...
+
+    def get_attr(self, path: str) -> dict[str, Any] | None: ...
+
+    def cache_attr(self, path: str, attrs: dict[str, Any]) -> None: ...
+
+    def get_content(self, path: str) -> bytes | None: ...
+
+    def cache_content(self, path: str, content: bytes) -> None: ...
+
+    def get_parsed(self, path: str, view_type: str) -> bytes | None: ...
+
+    def get_parsed_size(self, path: str, view_type: str) -> int | None: ...
+
+    def cache_parsed(self, path: str, view_type: str, content: bytes) -> None: ...
+
+    def get_listing(self, path: str) -> list[str] | None: ...
+
+    def cache_listing(self, path: str, entries: list[str]) -> None: ...
+
+    def invalidate_parent_listing(self, path: str) -> None: ...
+
+    def invalidate_and_revoke(self, paths: list[str]) -> None: ...
+
+
 # ============================================================
 # Shared context
 # ============================================================
@@ -110,7 +146,7 @@ class FUSESharedContext:
     mode: "MountMode"
     context: "OperationContext | None"
     namespace_manager: "NamespaceManager | None"
-    cache: FUSELeaseCoordinator
+    cache: FUSECacheCoordinator
     local_disk_cache: Any | None  # LocalDiskCache | None
     readahead: Any | None  # ReadaheadManager | None
     rust_client: Any | None
@@ -241,16 +277,10 @@ def invalidate_dir_cache(ctx: FUSESharedContext, path: str) -> None:
     """Invalidate readdir cache for the parent directory of a mutated path.
 
     Mutations (create/unlink/mkdir/rmdir/rename) change directory contents
-    but FUSECacheManager.invalidate_path() only clears attr/content/parsed.
-    This clears the separate dir_cache (TTLCache on FUSESharedContext).
+    but FUSECacheManager.invalidate_path() only clears attr/content/parsed,
+    so listing invalidation is handled separately.
     """
-    parent = path.rsplit("/", 1)[0] or "/"
-    with ctx.dir_cache_lock:
-        # Invalidate both the plain key and any context-keyed variants
-        ctx.dir_cache.pop(parent, None)
-        key = dir_cache_key(ctx, parent)
-        if key != parent:
-            ctx.dir_cache.pop(key, None)
+    ctx.cache.invalidate_parent_listing(path)
 
 
 async def check_namespace_visible(ctx: FUSESharedContext, path: str) -> None:

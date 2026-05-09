@@ -406,6 +406,18 @@ class FUSELeaseCoordinator:
         """Cache parsed content."""
         self._cache.cache_parsed(path, view_type, content)
 
+    def get_listing(self, path: str) -> list[str] | None:
+        """Get cached directory listing entries."""
+        return self._cache.get_listing(path)
+
+    def cache_listing(self, path: str, entries: list[str]) -> None:
+        """Cache directory listing entries."""
+        self._cache.cache_listing(path, entries)
+
+    def invalidate_parent_listing(self, path: str) -> None:
+        """Invalidate the immediate parent directory listing for a path."""
+        self._cache.invalidate_parent_listing(path)
+
     def invalidate_path(self, path: str) -> None:
         """Invalidate all caches for a path (local only, no lease revocation)."""
         self._cache.invalidate_path(path)

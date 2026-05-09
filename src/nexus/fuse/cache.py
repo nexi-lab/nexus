@@ -10,7 +10,18 @@ from typing import Any
 
 from cachetools import LRUCache, TTLCache
 
+from nexus.cache.file_store import MemoryFileCache
+from nexus.cache.index_store import IndexKey, MemoryIndexCache
+
 logger = logging.getLogger(__name__)
+
+
+def _stat_key(path: str) -> IndexKey:
+    return IndexKey("fuse", "default", path, "stat")
+
+
+def _listing_key(path: str) -> IndexKey:
+    return IndexKey("fuse", "default", path, "listing")
 
 
 class FUSECacheManager:
@@ -43,6 +54,7 @@ class FUSECacheManager:
         self,
         attr_cache_size: int = 1024,
         attr_cache_ttl: int = 60,
+        listing_cache_ttl: int | None = None,
         content_cache_size: int = 10000,
         parsed_cache_size: int = 50,
         enable_metrics: bool = False,
@@ -52,10 +64,16 @@ class FUSECacheManager:
         Args:
             attr_cache_size: Maximum number of attribute entries (default: 1024)
             attr_cache_ttl: TTL for attribute cache in seconds (default: 60)
+            listing_cache_ttl: TTL for directory listings in seconds (defaults to attr TTL)
             content_cache_size: Maximum number of content entries (default: 10000)
             parsed_cache_size: Maximum number of parsed content entries (default: 50)
             enable_metrics: If True, track cache hit/miss metrics
         """
+        self._attr_ttl = attr_cache_ttl
+        self._listing_ttl = attr_cache_ttl if listing_cache_ttl is None else listing_cache_ttl
+        self._index_cache = MemoryIndexCache()
+        self._file_cache = MemoryFileCache()
+
         # Attribute cache: TTL-based for freshness
         self._attr_cache: TTLCache[str, dict[str, Any]] = TTLCache(
             maxsize=attr_cache_size, ttl=attr_cache_ttl
@@ -68,6 +86,7 @@ class FUSECacheManager:
         self._parsed_cache: LRUCache[str, bytes] = LRUCache(maxsize=parsed_cache_size)
 
         # Thread safety
+        self._index_lock = threading.RLock()
         self._attr_lock = threading.RLock()
         self._content_lock = threading.RLock()
         self._parsed_lock = threading.RLock()
@@ -98,17 +117,17 @@ class FUSECacheManager:
         Returns:
             Cached attributes dict or None if not cached
         """
-        with self._attr_lock:
-            result = self._attr_cache.get(path)
+        with self._index_lock:
+            result = self._index_cache.get(_stat_key(path))
 
-            if self._enable_metrics:
-                with self._metrics_lock:
-                    if result is not None:
-                        self._metrics["attr_hits"] += 1
-                    else:
-                        self._metrics["attr_misses"] += 1
+        if self._enable_metrics:
+            with self._metrics_lock:
+                if result is not None:
+                    self._metrics["attr_hits"] += 1
+                else:
+                    self._metrics["attr_misses"] += 1
 
-            return result
+        return result
 
     def cache_attr(self, path: str, attrs: dict[str, Any]) -> None:
         """Cache file attributes.
@@ -117,8 +136,46 @@ class FUSECacheManager:
             path: File path
             attrs: Attributes dictionary to cache
         """
-        with self._attr_lock:
-            self._attr_cache[path] = attrs
+        with self._index_lock:
+            self._index_cache.put(_stat_key(path), attrs, ttl_seconds=self._attr_ttl)
+
+    # ============================================================
+    # Directory Listing Cache
+    # ============================================================
+
+    def get_listing(self, path: str) -> list[str] | None:
+        """Get cached directory entries.
+
+        Args:
+            path: Directory path
+
+        Returns:
+            Cached entry names or None if not cached
+        """
+        with self._index_lock:
+            result = self._index_cache.get(_listing_key(path))
+        if result is None:
+            return None
+        return list(result)
+
+    def cache_listing(self, path: str, entries: list[str]) -> None:
+        """Cache directory entries.
+
+        Args:
+            path: Directory path
+            entries: Directory entry names to cache
+        """
+        with self._index_lock:
+            self._index_cache.put(
+                _listing_key(path),
+                list(entries),
+                ttl_seconds=self._listing_ttl,
+            )
+
+    def invalidate_parent_listing(self, path: str) -> None:
+        """Invalidate only the immediate parent directory listing for a path."""
+        with self._index_lock:
+            self._index_cache.invalidate_parent_listing("fuse", "default", path)
 
     # ============================================================
     # Content Cache
@@ -228,6 +285,9 @@ class FUSECacheManager:
         Args:
             path: File path to invalidate
         """
+        with self._index_lock:
+            self._index_cache.invalidate_path(_stat_key(path))
+
         with self._attr_lock:
             self._attr_cache.pop(path, None)
 
@@ -249,6 +309,10 @@ class FUSECacheManager:
 
         This is useful for testing or when you need to clear all cached data.
         """
+        with self._index_lock:
+            self._index_cache = MemoryIndexCache()
+            self._file_cache = MemoryFileCache()
+
         with self._attr_lock:
             self._attr_cache.clear()
 

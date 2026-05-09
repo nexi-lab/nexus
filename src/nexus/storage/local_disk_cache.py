@@ -36,6 +36,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, unquote
 
 # RUST_FALLBACK: BloomFilter
 if TYPE_CHECKING:
@@ -172,7 +173,12 @@ class LocalDiskCache:
     def _init_bloom_filter(self) -> None:
         """Initialize Bloom filter for fast cache miss detection."""
         # RUST_FALLBACK: BloomFilter
-        from nexus_runtime import BloomFilter
+        from nexus._rust_compat import BloomFilter
+
+        if BloomFilter is None:
+            self._bloom = None
+            logger.debug("BloomFilter unavailable; local disk cache will use metadata lookups")
+            return
 
         self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
         logger.debug(
@@ -206,14 +212,17 @@ class LocalDiskCache:
         Uses hash-based sharding: {key[:2]}/{key[2:4]}/{key}.bin
         This prevents too many files in a single directory.
         """
-        # Use last 64 chars for path (content_hash part) to maintain sharding
-        hash_part = cache_key[-64:] if len(cache_key) > 64 else cache_key
-        return self.content_dir / hash_part[:2] / hash_part[2:4] / f"{cache_key}.bin"
+        safe_key = quote(cache_key, safe=":")
+        # Use the escaped key for sharding so opaque logical keys never create
+        # accidental path components.
+        hash_part = safe_key[-64:] if len(safe_key) > 64 else safe_key
+        return self.content_dir / hash_part[:2] / hash_part[2:4] / f"{safe_key}.bin"
 
     def _get_block_path(self, cache_key: str, block_idx: int) -> Path:
         """Get file path for a specific block of large content."""
-        hash_part = cache_key[-64:] if len(cache_key) > 64 else cache_key
-        return self.blocks_dir / hash_part[:2] / hash_part[2:4] / f"{cache_key}.{block_idx:04d}.bin"
+        safe_key = quote(cache_key, safe=":")
+        hash_part = safe_key[-64:] if len(safe_key) > 64 else safe_key
+        return self.blocks_dir / hash_part[:2] / hash_part[2:4] / f"{safe_key}.{block_idx:04d}.bin"
 
     def get(self, content_hash: str, zone_id: str | None = None) -> bytes | None:
         """Get content from cache by hash.
@@ -688,15 +697,9 @@ class LocalDiskCache:
 
         for cache_file in self.content_dir.rglob("*.bin"):
             try:
-                content_hash = cache_file.stem
+                content_hash = unquote(cache_file.stem)
                 # Accept plain SHA-256 hashes (64 chars) and zone-prefixed
-                # keys (zone_id:hash, variable length > 64 with ':' separator).
-                if len(content_hash) == 64:
-                    pass  # plain hash
-                elif ":" in content_hash and len(content_hash.rsplit(":", 1)[-1]) == 64:
-                    pass  # zone_id:hash
-                else:
-                    continue
+                # keys, plus opaque logical keys produced by the split cache.
 
                 size = cache_file.stat().st_size
                 mtime = cache_file.stat().st_mtime

@@ -56,6 +56,7 @@ class MutationHandler:
         invalidation_paths = [original_path]
         if path != original_path:
             invalidation_paths.append(path)
+        ctx.cache.invalidate_file(original_path)
         ctx.cache.invalidate_and_revoke(invalidation_paths)
         invalidate_dir_cache(ctx, original_path)
 
@@ -93,6 +94,7 @@ class MutationHandler:
         invalidation_paths = [original_path]
         if path != original_path:
             invalidation_paths.append(path)
+        ctx.cache.invalidate_file(original_path)
         ctx.cache.invalidate_and_revoke(invalidation_paths)
         invalidate_dir_cache(ctx, original_path)
 
@@ -174,22 +176,16 @@ class MutationHandler:
         else:
             await self._rename_file(old_path, new_path)
 
-        # Invalidate caches for both paths + parents + descendants (Issue #3397)
+        # Invalidate file entries for both paths plus immediate parent listings.
         invalidation_paths = [old_path, new_path]
-        old_parent = old_path.rsplit("/", 1)[0] or "/"
-        new_parent = new_path.rsplit("/", 1)[0] or "/"
-        invalidation_paths.append(old_parent)
-        if old_parent != new_parent:
-            invalidation_paths.append(new_parent)
-            new_grandparent = new_parent.rsplit("/", 1)[0] or "/"
-            if new_grandparent != new_parent:
-                invalidation_paths.append(new_grandparent)
         if old != old_path:
             invalidation_paths.append(old)
         if new != new_path:
             invalidation_paths.append(new)
         # Revoke leases on all descendant files moved during directory rename
         invalidation_paths.extend(descendant_paths)
+        ctx.cache.invalidate_file(old_path)
+        ctx.cache.invalidate_file(new_path)
         ctx.cache.invalidate_and_revoke(invalidation_paths)
         invalidate_dir_cache(ctx, old_path)
         invalidate_dir_cache(ctx, new_path)

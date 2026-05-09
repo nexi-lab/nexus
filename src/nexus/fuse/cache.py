@@ -9,8 +9,7 @@ import threading
 from pathlib import PurePosixPath
 from typing import Any
 
-from cachetools import LRUCache
-
+from nexus.cache.file_store import FileKey, MemoryFileCache
 from nexus.cache.index_store import IndexKey, MemoryIndexCache
 
 logger = logging.getLogger(__name__)
@@ -26,6 +25,14 @@ def _listing_key(path: str, scope_id: str = "default") -> IndexKey:
 
 def _parent_path(path: str) -> str:
     return str(PurePosixPath(path).parent) or "/"
+
+
+def _file_key(path: str, namespace: str = "raw") -> FileKey:
+    return FileKey("fuse", "default", path, namespace)
+
+
+def _parsed_key(path: str, view_type: str) -> FileKey:
+    return _file_key(path, f"parsed:{view_type}")
 
 
 class FUSECacheManager:
@@ -81,16 +88,13 @@ class FUSECacheManager:
         self._max_index_entries = max(1, attr_cache_size + listing_cache_size)
         self._index_order: dict[IndexKey, None] = {}
 
-        # Content cache: LRU-based for frequently accessed files
-        self._content_cache: LRUCache[str, bytes] = LRUCache(maxsize=content_cache_size)
-
-        # Parsed content cache: LRU-based for expensive parsing operations
-        self._parsed_cache: LRUCache[str, bytes] = LRUCache(maxsize=parsed_cache_size)
+        self._file_cache = MemoryFileCache()
+        self._max_file_entries = max(1, content_cache_size + parsed_cache_size)
+        self._file_order: dict[FileKey, None] = {}
 
         # Thread safety
         self._index_lock = threading.RLock()
-        self._content_lock = threading.RLock()
-        self._parsed_lock = threading.RLock()
+        self._file_lock = threading.RLock()
 
         # Metrics
         self._enable_metrics = enable_metrics
@@ -219,7 +223,23 @@ class FUSECacheManager:
     # Content Cache
     # ============================================================
 
-    def get_content(self, path: str) -> bytes | None:
+    def _remember_file_key(self, key: FileKey) -> None:
+        self._file_order.pop(key, None)
+        self._file_order[key] = None
+        while len(self._file_order) > self._max_file_entries:
+            evicted_key = next(iter(self._file_order))
+            self._file_order.pop(evicted_key, None)
+            self._file_cache.invalidate_sync(evicted_key)
+
+    def _forget_file_key(self, key: FileKey) -> None:
+        self._file_order.pop(key, None)
+
+    def _file_size(self, namespace_prefix: str | None = None) -> int:
+        if namespace_prefix is None:
+            return len(self._file_order)
+        return sum(1 for key in self._file_order if key.namespace.startswith(namespace_prefix))
+
+    def get_content(self, path: str, expected_fingerprint: str | None = None) -> bytes | None:
         """Get cached file content.
 
         Args:
@@ -228,27 +248,43 @@ class FUSECacheManager:
         Returns:
             Cached content or None if not cached
         """
-        with self._content_lock:
-            result = self._content_cache.get(path)
+        key = _file_key(path)
+        with self._file_lock:
+            result = self._file_cache.get_sync(key, expected_fingerprint)
+            if result is not None:
+                self._remember_file_key(key)
+            else:
+                self._forget_file_key(key)
 
-            if self._enable_metrics:
-                with self._metrics_lock:
-                    if result is not None:
-                        self._metrics["content_hits"] += 1
-                    else:
-                        self._metrics["content_misses"] += 1
+        if self._enable_metrics:
+            with self._metrics_lock:
+                if result is not None:
+                    self._metrics["content_hits"] += 1
+                else:
+                    self._metrics["content_misses"] += 1
 
-            return result
+        return result
 
-    def cache_content(self, path: str, content: bytes) -> None:
+    def cache_content(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        fingerprint: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> None:
         """Cache file content.
 
         Args:
             path: File path
             content: File content to cache
         """
-        with self._content_lock:
-            self._content_cache[path] = content
+        key = _file_key(path)
+        if fingerprint is None and ttl_seconds is None:
+            ttl_seconds = self._attr_ttl
+        with self._file_lock:
+            self._file_cache.put_sync(key, content, fingerprint, ttl_seconds)
+            self._remember_file_key(key)
 
     # ============================================================
     # Parsed Content Cache
@@ -264,19 +300,22 @@ class FUSECacheManager:
         Returns:
             Cached parsed content or None if not cached
         """
-        cache_key = f"{path}:{view_type}"
+        key = _parsed_key(path, view_type)
+        with self._file_lock:
+            result = self._file_cache.get_sync(key, expected_fingerprint=None)
+            if result is not None:
+                self._remember_file_key(key)
+            else:
+                self._forget_file_key(key)
 
-        with self._parsed_lock:
-            result = self._parsed_cache.get(cache_key)
+        if self._enable_metrics:
+            with self._metrics_lock:
+                if result is not None:
+                    self._metrics["parsed_hits"] += 1
+                else:
+                    self._metrics["parsed_misses"] += 1
 
-            if self._enable_metrics:
-                with self._metrics_lock:
-                    if result is not None:
-                        self._metrics["parsed_hits"] += 1
-                    else:
-                        self._metrics["parsed_misses"] += 1
-
-            return result
+        return result
 
     def get_parsed_size(self, path: str, view_type: str) -> int | None:
         """Get the size of cached parsed content without returning the bytes.
@@ -291,9 +330,9 @@ class FUSECacheManager:
         Returns:
             Size in bytes of cached parsed content, or None if not cached
         """
-        cache_key = f"{path}:{view_type}"
-        with self._parsed_lock:
-            result = self._parsed_cache.get(cache_key)
+        key = _parsed_key(path, view_type)
+        with self._file_lock:
+            result = self._file_cache.get_sync(key, expected_fingerprint=None)
             if result is not None:
                 return len(result)
             return None
@@ -306,10 +345,15 @@ class FUSECacheManager:
             view_type: View type (e.g., "txt", "md")
             content: Parsed content to cache
         """
-        cache_key = f"{path}:{view_type}"
-
-        with self._parsed_lock:
-            self._parsed_cache[cache_key] = content
+        key = _parsed_key(path, view_type)
+        with self._file_lock:
+            self._file_cache.put_sync(
+                key,
+                content,
+                fingerprint=None,
+                ttl_seconds=self._attr_ttl,
+            )
+            self._remember_file_key(key)
 
     # ============================================================
     # Cache Invalidation
@@ -328,18 +372,7 @@ class FUSECacheManager:
             self._index_cache.invalidate_path(key)
             self._forget_index_key(key)
 
-        with self._content_lock:
-            self._content_cache.pop(path, None)
-
-        with self._parsed_lock:
-            # Invalidate all parsed views for this path
-            keys_to_remove = [key for key in self._parsed_cache if key.startswith(f"{path}:")]
-            for key in keys_to_remove:
-                self._parsed_cache.pop(key, None)
-
-        if self._enable_metrics:
-            with self._metrics_lock:
-                self._metrics["invalidations"] += 1
+        self.invalidate_file(path)
 
     def invalidate_path_all_scopes(self, path: str) -> None:
         """Invalidate stat entries for a path across all logical scopes."""
@@ -353,13 +386,21 @@ class FUSECacheManager:
                 self._index_cache.invalidate_path(key)
                 self._forget_index_key(key)
 
-        with self._content_lock:
-            self._content_cache.pop(path, None)
+        self.invalidate_file(path)
 
-        with self._parsed_lock:
-            keys_to_remove = [key for key in self._parsed_cache if key.startswith(f"{path}:")]
-            for key in keys_to_remove:
-                self._parsed_cache.pop(key, None)
+    def invalidate_file(self, path: str, namespace: str | None = None) -> None:
+        """Invalidate raw content or all file-content views for a path."""
+        with self._file_lock:
+            if namespace is not None:
+                key = _file_key(path, namespace)
+                self._file_cache.invalidate_sync(key)
+                self._forget_file_key(key)
+                return
+
+            keys = [key for key in self._file_order if key.path == path]
+            self._file_cache.invalidate_path_sync(path)
+            for key in keys:
+                self._forget_file_key(key)
 
         if self._enable_metrics:
             with self._metrics_lock:
@@ -374,11 +415,9 @@ class FUSECacheManager:
             self._index_cache = MemoryIndexCache()
             self._index_order.clear()
 
-        with self._content_lock:
-            self._content_cache.clear()
-
-        with self._parsed_lock:
-            self._parsed_cache.clear()
+        with self._file_lock:
+            self._file_cache = MemoryFileCache()
+            self._file_order.clear()
 
         logger.info("All FUSE caches invalidated")
 
@@ -420,8 +459,8 @@ class FUSECacheManager:
                 "cache_sizes": {
                     "attr": self._index_size("stat"),
                     "listing": self._index_size("listing"),
-                    "content": len(self._content_cache),
-                    "parsed": len(self._parsed_cache),
+                    "content": self._file_size("raw"),
+                    "parsed": self._file_size("parsed:"),
                 },
             }
 

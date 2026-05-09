@@ -11,6 +11,7 @@ from nexus.fuse.ops._shared import (
     FUSESharedContext,
     check_namespace_visible,
     get_file_content,
+    invalidate_dir_cache,
     parse_virtual_path_for_fuse,
     try_rust,
 )
@@ -174,6 +175,8 @@ class IOHandler:
         invalidation_paths = [original_path]
         if path != original_path:
             invalidation_paths.append(path)
+        ctx.cache.invalidate_file(original_path)
+        invalidate_dir_cache(ctx, original_path)
         ctx.cache.invalidate_and_revoke(invalidation_paths)
 
         if ctx.readahead:

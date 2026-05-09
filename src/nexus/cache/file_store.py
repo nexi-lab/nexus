@@ -31,7 +31,7 @@ class MemoryFileCache:
         self._locks: WeakValueDictionary[FileKey, asyncio.Lock] = WeakValueDictionary()
         self._lock_guard = RLock()
 
-    async def get(self, key: FileKey, expected_fingerprint: str | None) -> bytes | None:
+    def get_sync(self, key: FileKey, expected_fingerprint: str | None) -> bytes | None:
         with self._entry_lock:
             entry = self._entries.get(key)
             if entry is None:
@@ -45,7 +45,10 @@ class MemoryFileCache:
                 return None
             return entry.content
 
-    async def put(
+    async def get(self, key: FileKey, expected_fingerprint: str | None) -> bytes | None:
+        return self.get_sync(key, expected_fingerprint)
+
+    def put_sync(
         self,
         key: FileKey,
         content: bytes,
@@ -60,9 +63,31 @@ class MemoryFileCache:
                 expires_at=expires_at,
             )
 
-    async def invalidate(self, key: FileKey) -> None:
+    async def put(
+        self,
+        key: FileKey,
+        content: bytes,
+        fingerprint: str | None,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        self.put_sync(key, content, fingerprint, ttl_seconds)
+
+    def invalidate_sync(self, key: FileKey) -> None:
         with self._entry_lock:
             self._entries.pop(key, None)
+
+    async def invalidate(self, key: FileKey) -> None:
+        self.invalidate_sync(key)
+
+    def invalidate_path_sync(self, path: str, namespace: str | None = None) -> None:
+        with self._entry_lock:
+            keys = [
+                key
+                for key in self._entries
+                if key.path == path and (namespace is None or key.namespace == namespace)
+            ]
+            for key in keys:
+                self._entries.pop(key, None)
 
     async def lock(self, key: FileKey) -> asyncio.Lock:
         with self._lock_guard:

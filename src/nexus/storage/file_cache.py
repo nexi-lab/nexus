@@ -33,6 +33,7 @@ import json as _json
 import logging
 import shutil
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -416,11 +417,36 @@ class FileContentCache:
         from nexus._rust_compat import read_file
 
         try:
-            data: bytes | None = read_file(str(cache_path))
-            return data
+            if read_file is not None:
+                data: bytes | None = read_file(str(cache_path))
+                return data
+            if not cache_path.exists():
+                return None
+            return cache_path.read_bytes()
         except Exception as e:
             logger.warning(f"Failed to read cache file {cache_path}: {e}")
             return None
+
+    def read_if_fresh(
+        self,
+        zone_id: str,
+        virtual_path: str,
+        expected_fingerprint: str | None,
+    ) -> bytes | None:
+        """Read cached bytes only when metadata proves the entry is fresh."""
+        meta = self.read_meta(zone_id, virtual_path)
+        if meta is None:
+            return None
+
+        if expected_fingerprint is not None:
+            if meta.get("fingerprint") != expected_fingerprint:
+                return None
+        else:
+            expires_at = meta.get("expires_at")
+            if expires_at is not None and expires_at < time.time():
+                return None
+
+        return self.read(zone_id, virtual_path)
 
     def read_text(self, zone_id: str, virtual_path: str) -> str | None:
         """Read parsed text content from cache.
@@ -493,7 +519,14 @@ class FileContentCache:
 
         from nexus._rust_compat import read_files_bulk
 
-        cache_contents = read_files_bulk(cache_paths)
+        if read_files_bulk is not None:
+            cache_contents = read_files_bulk(cache_paths)
+        else:
+            cache_contents = {}
+            for cache_path in cache_paths:
+                path = Path(cache_path)
+                if path.exists():
+                    cache_contents[cache_path] = path.read_bytes()
 
         # Map back to virtual paths
         result: dict[str, bytes] = {}

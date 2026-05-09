@@ -2,7 +2,7 @@
 
 import errno
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from fuse import FuseOSError
@@ -37,6 +37,18 @@ class TestCreate:
         # Issue #3397: mutations now call invalidate_and_revoke
         mock_cache.invalidate_and_revoke.assert_called()
 
+    def test_create_invalidates_file_and_parent_listing(
+        self, fuse_ops: Any, mock_cache: MagicMock
+    ) -> None:
+        fuse_ops.cache = mock_cache
+
+        fuse_ops.create("/dir/new.txt", 0o644)
+
+        mock_cache.invalidate_file.assert_called_once_with("/dir/new.txt")
+        mock_cache.invalidate_parent_listing.assert_called_once_with(
+            "/dir/new.txt", scope_id="default"
+        )
+
 
 class TestUnlink:
     """unlink: file deletion with cache invalidation."""
@@ -52,6 +64,18 @@ class TestUnlink:
         fuse_ops.unlink("/file.txt")
         # Issue #3397: mutations now call invalidate_and_revoke
         mock_cache.invalidate_and_revoke.assert_called()
+
+    def test_unlink_invalidates_file_and_parent_listing(
+        self, fuse_ops: Any, mock_cache: MagicMock
+    ) -> None:
+        fuse_ops.cache = mock_cache
+
+        fuse_ops.unlink("/dir/file.txt")
+
+        mock_cache.invalidate_file.assert_called_once_with("/dir/file.txt")
+        mock_cache.invalidate_parent_listing.assert_called_once_with(
+            "/dir/file.txt", scope_id="default"
+        )
 
     def test_unlink_rejects_virtual_view(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
         # Patch _parse_virtual_path to simulate a virtual view
@@ -126,3 +150,21 @@ class TestRename:
         with pytest.raises(FuseOSError) as exc_info:
             fuse_ops.rename("/.raw/old", "/new")
         assert exc_info.value.errno == errno.EROFS
+
+    def test_rename_invalidates_files_and_immediate_parent_listings(
+        self, fuse_ops: Any, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        mock_nexus_fs.access.return_value = False
+        mock_nexus_fs.is_directory.return_value = False
+        fuse_ops.cache = mock_cache
+
+        fuse_ops.rename("/old/file.txt", "/new/file.txt")
+
+        assert mock_cache.invalidate_file.call_args_list == [
+            call("/old/file.txt"),
+            call("/new/file.txt"),
+        ]
+        assert mock_cache.invalidate_parent_listing.call_args_list == [
+            call("/old/file.txt", scope_id="default"),
+            call("/new/file.txt", scope_id="default"),
+        ]

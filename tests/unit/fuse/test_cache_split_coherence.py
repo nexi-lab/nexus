@@ -1,11 +1,21 @@
 """Cross-cache coherence tests for the FUSE logical cache split."""
 
 import asyncio
+from enum import Enum
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.cache.file_store import FileKey, MemoryFileCache
 from nexus.fuse.cache import FUSECacheManager
+from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
+from nexus.fuse.ops._shared import FUSESharedContext, get_file_content
+from nexus.storage.local_disk_cache import LocalDiskCache
+
+
+class _Mode(Enum):
+    BINARY = "binary"
 
 
 @pytest.mark.asyncio
@@ -52,3 +62,48 @@ def test_invalidate_file_clears_raw_and_parsed_views_for_source_path() -> None:
 
     assert cache.get_content("/report.xlsx", expected_fingerprint="etag:1") is None
     assert cache.get_parsed("/report.xlsx", "md") is None
+
+
+@pytest.mark.asyncio
+async def test_fingerprintless_l2_ttl_fallback_expires_between_buckets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [0.0]
+    monkeypatch.setattr("nexus.fuse.ops._shared.time.time", lambda: now[0])
+    local_disk_cache = LocalDiskCache(cache_dir=tmp_path / "ldc", max_size_gb=0.01)
+    versions = [b"v1"]
+    nexus_fs = MagicMock()
+    nexus_fs.zone_id = "zone1"
+    nexus_fs.sys_stat.return_value = {"path": "/file.txt", "size": 2}
+    nexus_fs.sys_read.side_effect = lambda path, context=None: versions[-1]
+    cache = FUSELeaseCoordinator(
+        FUSECacheManager(attr_cache_ttl=1),
+        lease_manager=None,
+    )
+    ctx = FUSESharedContext(
+        nexus_fs=nexus_fs,
+        mode=_Mode.BINARY,
+        context=None,
+        namespace_manager=None,
+        cache=cache,
+        local_disk_cache=local_disk_cache,
+        readahead=None,
+        rust_client=None,
+        use_rust=False,
+        events=MagicMock(),
+        cache_config={"attr_cache_ttl": 1},
+    )
+    try:
+        first = await get_file_content(ctx, "/file.txt", None)
+        versions[-1] = b"v2"
+        now[0] = 2.1
+        cache.invalidate_file("/file.txt")
+        second = await get_file_content(ctx, "/file.txt", None)
+    finally:
+        cache.close()
+        local_disk_cache.close()
+
+    assert first == b"v1"
+    assert second == b"v2"
+    assert nexus_fs.sys_read.call_count == 2

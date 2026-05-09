@@ -379,7 +379,14 @@ def logical_l2_key(
 ) -> str:
     """Build the opaque local-disk key for logical FUSE file content."""
     zone_id = get_zone_id(ctx) or "root"
-    suffix = fingerprint or "ttl-fallback"
+    if fingerprint is None:
+        ttl_seconds = int(
+            ctx.cache_config.get("content_cache_ttl", ctx.cache_config.get("attr_cache_ttl", 60))
+        )
+        ttl_seconds = max(1, ttl_seconds)
+        suffix = f"ttl:{int(time.time() // ttl_seconds)}"
+    else:
+        suffix = fingerprint
     return f"fuse:{zone_id}:{path}:{suffix}:{namespace}"
 
 

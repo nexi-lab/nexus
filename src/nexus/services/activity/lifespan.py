@@ -37,6 +37,11 @@ def get_agent_log_store() -> MemoryBackend | None:
     return None
 
 
+def get_agent_log_retention_days() -> int | None:
+    val = _STATE.get("agent_log_retention_days")
+    return val if isinstance(val, int) else None
+
+
 async def setup_activity() -> None:
     """Start activity worker + retention task. Safe to call once per process."""
     cfg = ActivityConfig.from_env()

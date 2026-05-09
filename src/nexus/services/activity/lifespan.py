@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from nexus.services.activity.agent_log_store import MemoryBackend
 from nexus.services.activity.config import ActivityConfig
 from nexus.services.activity.emitter import (
     NoopEmitter,
@@ -20,6 +21,7 @@ from nexus.services.activity.emitter import (
 from nexus.services.activity.events import ActivityEvent
 from nexus.services.activity.retention import RetentionTask
 from nexus.services.activity.sinks import NoopSink, SQLiteSink
+from nexus.services.activity.sinks.jsonl import JsonlActivitySink
 from nexus.services.activity.sinks.protocol import SinkProtocol
 from nexus.services.activity.worker import ActivityWorker
 
@@ -28,11 +30,19 @@ logger = logging.getLogger(__name__)
 _STATE: dict[str, object] = {"worker": None, "retention": None, "queue": None}
 
 
+def get_agent_log_store() -> MemoryBackend | None:
+    val = _STATE.get("agent_log_store")
+    if isinstance(val, MemoryBackend):
+        return val
+    return None
+
+
 async def setup_activity() -> None:
     """Start activity worker + retention task. Safe to call once per process."""
     cfg = ActivityConfig.from_env()
     if not cfg.enabled:
         set_emitter(NoopEmitter())
+        _STATE["agent_log_store"] = None
         logger.info("activity subsystem disabled by NEXUS_ACTIVITY_ENABLED=0")
         return
 
@@ -59,6 +69,23 @@ async def setup_activity() -> None:
         except Exception:
             pass
         sinks.append(NoopSink())
+
+    if cfg.agent_log_enabled:
+        agent_log_store = MemoryBackend(cap_bytes=cfg.agent_log_cap_bytes)
+        sinks.append(
+            JsonlActivitySink(store=agent_log_store, cmd_max_bytes=cfg.agent_log_cmd_max_bytes)
+        )
+        _STATE["agent_log_store"] = agent_log_store
+        logger.info(
+            "activity agent_log enabled (cap=%d bytes/agent/day, retention=%d days)",
+            cfg.agent_log_cap_bytes,
+            cfg.agent_log_retention_days,
+        )
+    else:
+        _STATE["agent_log_store"] = None
+
+    # Stash retention_days too — Task 10 will read it from state.
+    _STATE["agent_log_retention_days"] = cfg.agent_log_retention_days
 
     worker = ActivityWorker(
         queue=queue,
@@ -98,6 +125,7 @@ async def shutdown_activity() -> None:
     worker = _STATE.pop("worker", None)
     retention = _STATE.pop("retention", None)
     _STATE.pop("queue", None)
+    _STATE["agent_log_store"] = None
     if isinstance(prev_emitter, QueueEmitter):
         try:
             await prev_emitter.quiesce_pending(timeout=2.0)

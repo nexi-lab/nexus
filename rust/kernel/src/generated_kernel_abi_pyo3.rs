@@ -1236,6 +1236,7 @@ impl PyKernel {
             content_id: result.content_id,
             post_hook_needed: result.post_hook_needed,
             version: result.version,
+            gen: result.gen,
             size: result.size,
             is_new: result.is_new,
             old_content_id: result.old_content_id,

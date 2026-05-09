@@ -2085,6 +2085,7 @@ impl Kernel {
                 crate::meta_store::DT_REG,
                 size.unwrap_or(0),
                 content_id.map(|s| s.to_string()),
+                0, // gen — setattr create, gen will be set on first write
                 version.unwrap_or(1),
                 mime_type.map(|s| s.to_string()),
                 Some(created_at_ms.unwrap_or(now_ms)),
@@ -3004,6 +3005,7 @@ mod tests {
     fn sys_write_increments_content_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/gen.txt", DT_REG as i32).unwrap();
 
         let first = k.sys_write("/gen.txt", &ctx, b"one", 0).unwrap();
         let second = k.sys_write("/gen.txt", &ctx, b"two", 0).unwrap();
@@ -3018,6 +3020,7 @@ mod tests {
     fn sys_setattr_metadata_update_preserves_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/mime.txt", DT_REG as i32).unwrap();
         k.sys_write("/mime.txt", &ctx, b"body", 0).unwrap();
 
         k.sys_setattr(
@@ -3038,6 +3041,10 @@ mod tests {
             None,
             None,
             None,
+            None, // created_at_ms
+            None, // link_target
+            None, // source
+            None, // remote_metastore
         )
         .unwrap();
 
@@ -3049,6 +3056,7 @@ mod tests {
     fn copy_uses_destination_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
 
         let copied = k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
@@ -3068,6 +3076,7 @@ mod tests {
     fn copy_rejects_non_regular_destination() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
         k.sys_mkdir("/dst", &ctx, true, true).unwrap();
 
@@ -3090,7 +3099,9 @@ mod tests {
     fn copy_overwrite_preserves_destination_created_at() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
+        setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
         k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
@@ -3108,7 +3119,9 @@ mod tests {
     fn copy_snapshot_failure_releases_vfs_locks() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
+        setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
         k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
@@ -3134,6 +3147,8 @@ mod tests {
     fn batch_write_increments_each_path_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/a.txt", DT_REG as i32).unwrap();
+        setattr(&k, "/b.txt", DT_REG as i32).unwrap();
 
         let first = k
             ._write_batch(
@@ -3159,6 +3174,7 @@ mod tests {
     fn sys_cat_pretty_prints_json_without_changing_sys_read() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("system", "root", true, None, true);
+        setattr(&k, "/doc.json", DT_REG as i32).unwrap();
         let write = k
             .sys_write("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
             .unwrap();
@@ -3175,6 +3191,7 @@ mod tests {
     fn sys_cat_returns_raw_bytes_for_unknown_filetype() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("system", "root", true, None, true);
+        setattr(&k, "/plain.bin", DT_REG as i32).unwrap();
         let write = k.sys_write("/plain.bin", &ctx, b"abc", 0).unwrap();
         assert!(write.hit);
 

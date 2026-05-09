@@ -2470,6 +2470,7 @@ impl Kernel {
                     content_id: None,
                     post_hook_needed: false,
                     version: 0,
+                    gen: 0,
                     size: 0,
                     is_new: false,
                     old_content_id: None,

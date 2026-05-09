@@ -237,6 +237,7 @@ impl KernelConvenience for Kernel {
                 crate::meta_store::DT_REG,
                 0,
                 None,
+                0, // gen — first write, will be incremented by sys_write
                 1,
                 None,
                 Some(now_ms),

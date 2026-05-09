@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Protocol
 
+__all__ = ["AgentLogBrick"]
+
 
 class _AddMount(Protocol):
     async def __call__(self, *, path: str, backend: Any) -> None: ...

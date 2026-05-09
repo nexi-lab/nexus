@@ -70,3 +70,19 @@ async def test_brick_skips_mount_when_store_is_none():
     )
     await brick.startup(agent_ids=["alice"])
     assert fake_mount_calls == []
+
+
+@pytest.mark.asyncio
+async def test_brick_grants_still_issued_when_store_is_none():
+    """Grants are independent of mount registration. If the activity service
+    is disabled (store=None), grants are still set up so they're ready when
+    the service is enabled."""
+    grants = []
+
+    def fake_grant(*, subject, relation, object):  # noqa: A002
+        grants.append((subject, relation, object))
+
+    brick = AgentLogBrick(add_mount=_noop_mount, add_rebac_grant=fake_grant, store=None)
+    await brick.startup(agent_ids=["alice", "bob"])
+    assert ("agent:alice", "can-read", "path:/.activity/*/alice.jsonl") in grants
+    assert ("agent:bob", "can-read", "path:/.activity/*/bob.jsonl") in grants

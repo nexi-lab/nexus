@@ -16,40 +16,12 @@ from nexus.bricks.portability.redaction import (
 )
 from nexus.extensions.types import ArgType, ConnectionArg
 
-# ---------------------------------------------------------------------------
-# Fake CONNECTION_ARGS for "path_s3" — mirrors the real backend's declaration
-# so these tests remain unit tests independent of connector registration.
-# ---------------------------------------------------------------------------
-_PATH_S3_ARGS = {
-    "bucket_name": ConnectionArg(type=ArgType.STRING, description="S3 bucket name", secret=False),
-    "region_name": ConnectionArg(type=ArgType.STRING, description="AWS region", secret=False),
-    "credentials_path": ConnectionArg(
-        type=ArgType.PATH, description="Credentials path", secret=True
-    ),
-    "prefix": ConnectionArg(type=ArgType.STRING, description="Key prefix", secret=False),
-    "access_key_id": ConnectionArg(
-        type=ArgType.SECRET, description="AWS access key ID", secret=True
-    ),
-    "secret_access_key": ConnectionArg(
-        type=ArgType.PASSWORD, description="AWS secret key", secret=True
-    ),
-    "session_token": ConnectionArg(
-        type=ArgType.SECRET, description="AWS session token", secret=True
-    ),
-}
 
+def _ensure_registry() -> None:
+    """Trigger connector registration so path_s3 is present in the live registry."""
+    from nexus.backends import _register_optional_backends
 
-@pytest.fixture()
-def path_s3_args(monkeypatch):
-    """Patch _get_connection_args to return the real path_s3 CONNECTION_ARGS shape.
-
-    Uses monkeypatch (not unittest.mock.patch) to avoid pytest-mock interference
-    with fixture-level patching. This makes tests independent of ConnectorRegistry
-    registration state, which differs between the worktree src and site-packages.
-    """
-    import nexus.bricks.portability.redaction as _redaction_mod
-
-    monkeypatch.setattr(_redaction_mod, "_get_connection_args", lambda _: _PATH_S3_ARGS)
+    _register_optional_backends()
 
 
 # ---------------------------------------------------------------------------
@@ -68,11 +40,13 @@ def test_secret_shape_regex_ignores_benign_names():
 
 
 # ---------------------------------------------------------------------------
-# declared_secret_fields
+# declared_secret_fields — live registry
 # ---------------------------------------------------------------------------
 
 
-def test_declared_secret_fields_for_path_s3(path_s3_args):  # noqa: ARG001
+def test_declared_secret_fields_for_path_s3():
+    pytest.importorskip("boto3")
+    _ensure_registry()
     fields = declared_secret_fields("path_s3")
     assert "access_key_id" in fields
     assert "secret_access_key" in fields
@@ -81,21 +55,25 @@ def test_declared_secret_fields_for_path_s3(path_s3_args):  # noqa: ARG001
 
 
 # ---------------------------------------------------------------------------
-# audit_backend
+# audit_backend — live registry
 # ---------------------------------------------------------------------------
 
 
-def test_audit_backend_passes_for_path_s3(path_s3_args):  # noqa: ARG001
+def test_audit_backend_passes_for_path_s3():
     """All secret-shaped names in path_s3 are already marked secret=True."""
+    pytest.importorskip("boto3")
+    _ensure_registry()
     assert audit_backend("path_s3") == []
 
 
 # ---------------------------------------------------------------------------
-# redact_config
+# redact_config — live registry
 # ---------------------------------------------------------------------------
 
 
-def test_redact_config_replaces_only_declared_secrets(path_s3_args):  # noqa: ARG001
+def test_redact_config_replaces_only_declared_secrets():
+    pytest.importorskip("boto3")
+    _ensure_registry()
     config = {
         "bucket_name": "acme",
         "access_key_id": "AKIA1234",
@@ -112,14 +90,18 @@ def test_redact_config_replaces_only_declared_secrets(path_s3_args):  # noqa: AR
     assert all(isinstance(p, PlaceholderRef) for p in placeholders)
 
 
-def test_redact_config_skips_none_values(path_s3_args):  # noqa: ARG001
+def test_redact_config_skips_none_values():
+    pytest.importorskip("boto3")
+    _ensure_registry()
     config = {"bucket_name": "acme", "access_key_id": None}
     redacted, placeholders = redact_config("path_s3", config, mount_id="m-1")
     assert redacted["access_key_id"] is None
     assert placeholders == []
 
 
-def test_redact_config_idempotent_on_already_redacted(path_s3_args):  # noqa: ARG001
+def test_redact_config_idempotent_on_already_redacted():
+    pytest.importorskip("boto3")
+    _ensure_registry()
     config = {"bucket_name": "acme", "access_key_id": "${MOUNT_m-1_ACCESS_KEY_ID}"}
     redacted, _ = redact_config("path_s3", config, mount_id="m-1")
     assert redacted["access_key_id"] == "${MOUNT_m-1_ACCESS_KEY_ID}"
@@ -142,7 +124,9 @@ def test_redact_config_audit_failure_raises():
         assert "my_token" in exc.value.fields
 
 
-def test_placeholder_field_dotted_path_is_predictable(path_s3_args):  # noqa: ARG001
+def test_placeholder_field_dotted_path_is_predictable():
+    pytest.importorskip("boto3")
+    _ensure_registry()
     config = {"access_key_id": "AKIA"}
     _, placeholders = redact_config("path_s3", config, mount_id="m-1")
     assert placeholders[0].field == "mounts.m-1.access_key_id"

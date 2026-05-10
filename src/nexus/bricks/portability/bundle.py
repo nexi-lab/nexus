@@ -359,27 +359,44 @@ class BundleReader:
         mounts_path = BUNDLE_PATHS["mounts"]
         try:
             member = self._tar.getmember(mounts_path)
-            file_obj = self._tar.extractfile(member)
-            if file_obj is None:
-                return []
-
-            records: list[MountRecord] = []
-            for line in file_obj:
-                line_str = line.decode("utf-8").strip()
-                if line_str:
-                    records.append(MountRecord.from_dict(_json.loads(line_str)))
-
-            if len(records) != manifest.mount_count:
-                raise ValueError(
-                    f"Mount record count mismatch: manifest declares "
-                    f"{manifest.mount_count}, mounts.jsonl carries "
-                    f"{len(records)}. Bundle may have been tampered with."
-                )
-            return records
-
         except KeyError:
+            # tar lookup miss → genuinely no mounts.jsonl (manifest
+            # claimed mount_count > 0; the missing-file check in
+            # validate() should have already flagged this).
             logger.debug("Bundle missing %s", mounts_path)
             return []
+
+        file_obj = self._tar.extractfile(member)
+        if file_obj is None:
+            return []
+
+        # Round-5 reviewer finding: a malformed mounts.jsonl line could
+        # raise KeyError from MountRecord.from_dict, which the previous
+        # broad ``except KeyError`` swallowed as "no mounts" — silently
+        # skipping mount restore on a tampered bundle. Now any parse
+        # error is fatal, surfacing the integrity problem to the
+        # operator instead of falling through to a partial import.
+        records: list[MountRecord] = []
+        for lineno, line in enumerate(file_obj, start=1):
+            line_str = line.decode("utf-8").strip()
+            if not line_str:
+                continue
+            try:
+                records.append(MountRecord.from_dict(_json.loads(line_str)))
+            except (_json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Malformed mount record at {mounts_path}:{lineno}: "
+                    f"{type(exc).__name__}: {exc}. Bundle may have been "
+                    "tampered with."
+                ) from exc
+
+        if len(records) != manifest.mount_count:
+            raise ValueError(
+                f"Mount record count mismatch: manifest declares "
+                f"{manifest.mount_count}, mounts.jsonl carries "
+                f"{len(records)}. Bundle may have been tampered with."
+            )
+        return records
 
     def read_content_blob(self, content_id: str) -> bytes | None:
         """Read a content blob from the bundle.

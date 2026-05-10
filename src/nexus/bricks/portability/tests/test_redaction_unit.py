@@ -275,3 +275,48 @@ def test_redact_config_registered_no_args_refuses_secret_shaped_keys():
             )
         assert "api_key" in exc.value.fields
         assert "registered but declares no" in exc.value.backend_type
+
+
+def test_redact_config_registered_no_args_refuses_value_level_secret():
+    """Round 5: registered backend with no CONNECTION_ARGS must not
+    pass through values that look like credentials (e.g., command line
+    containing AKIA..., URL with userinfo, KEY=VALUE assignment).
+    Round-4 passed these through after only key-name scanning."""
+    with (
+        patch(
+            "nexus.bricks.portability.redaction._get_connection_args",
+            return_value={},
+        ),
+        patch(
+            "nexus.bricks.portability.redaction._backend_is_registered",
+            return_value=True,
+        ),
+    ):
+        with pytest.raises(SensitiveFieldNotDeclaredError) as exc:
+            redact_config(
+                "custom_cli_backend",
+                {"command": "aws s3 ls --secret-key=AKIAIOSFODNN7EXAMPLE"},
+                mount_id="m-1",
+            )
+        assert "command" in str(exc.value.fields)
+
+
+def test_redact_config_registered_no_args_refuses_url_userinfo():
+    """A DSN URL with embedded user:password must be refused."""
+    with (
+        patch(
+            "nexus.bricks.portability.redaction._get_connection_args",
+            return_value={},
+        ),
+        patch(
+            "nexus.bricks.portability.redaction._backend_is_registered",
+            return_value=True,
+        ),
+    ):
+        with pytest.raises(SensitiveFieldNotDeclaredError) as exc:
+            redact_config(
+                "custom_db_backend",
+                {"dsn": "postgresql://user:passwordlive@host/db"},
+                mount_id="m-1",
+            )
+        assert "dsn" in str(exc.value.fields)

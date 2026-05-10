@@ -117,3 +117,32 @@ def test_mounts_jsonl_in_bundle_checksums(tmp_path):
         # Only care about the checksum assertion failing; other infra errors are OK
         if isinstance(exc, AssertionError):
             raise
+
+
+def test_include_mounts_with_zero_mounts_produces_valid_bundle(tmp_path):
+    """Round 5: include_mounts=True with an empty MountManager must NOT
+    write an empty mounts.jsonl with no checksum (BundleReader.validate
+    would then reject the bundle the exporter just produced)."""
+    fs = MagicMock()
+    kernel = MagicMock()
+    kernel.metastore_list.return_value = []
+    fs._kernel = kernel
+
+    mgr = MagicMock()
+    mgr.list_mounts.return_value = []  # empty zone
+
+    out = tmp_path / "empty.nexus"
+    service = ZoneExportService(fs, mount_manager=mgr)
+    manifest = service.export_zone(
+        "z1",
+        ZoneExportOptions(output_path=out, include_mounts=True, sign=False),
+    )
+    assert manifest.mount_count == 0
+    assert "mounts.jsonl" not in manifest.checksums.files
+
+    # Roundtrip: validate the bundle we just wrote — must pass.
+    from nexus.bricks.portability.bundle import BundleReader
+
+    with BundleReader(out) as reader:
+        ok, errors = reader.validate()
+    assert ok, f"empty-mount bundle failed self-validation: {errors}"

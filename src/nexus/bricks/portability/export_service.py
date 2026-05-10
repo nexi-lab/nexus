@@ -254,19 +254,29 @@ class ZoneExportService:
                     redact_and_write,
                 )
 
-                mounts_path = temp_path / "mounts.jsonl"
                 # Guard at export_zone entry ensures _mount_manager is non-None here.
                 assert self._mount_manager is not None
                 raw_mounts = collect_mounts(self._mount_manager, zone_id=zone_id)
-                mount_phs = redact_and_write(raw_mounts, out_path=mounts_path)
-                manifest.placeholders = list(manifest.placeholders) + list(mount_phs)
-                manifest.mount_count = len(raw_mounts)
                 if raw_mounts:
+                    mounts_path = temp_path / "mounts.jsonl"
+                    mount_phs = redact_and_write(raw_mounts, out_path=mounts_path)
+                    manifest.placeholders = list(manifest.placeholders) + list(mount_phs)
+                    manifest.mount_count = len(raw_mounts)
                     mounts_bytes = mounts_path.read_bytes()
                     checksums.add_file(BUNDLE_PATHS["mounts"], mounts_bytes)
-                logger.info(
-                    "Mount export: %d mounts, %d placeholders", len(raw_mounts), len(mount_phs)
-                )
+                    logger.info(
+                        "Mount export: %d mounts, %d placeholders",
+                        len(raw_mounts),
+                        len(mount_phs),
+                    )
+                else:
+                    # Round-5 reviewer finding: writing an empty
+                    # mounts.jsonl with mount_count=0 produced a bundle
+                    # that BundleReader.validate then rejected as
+                    # "unmanifested mounts.jsonl" — exporters must NOT
+                    # emit the file when there's nothing to record.
+                    manifest.mount_count = 0
+                    logger.info("Mount export: zone has no mounts; skipping mounts.jsonl")
 
             # Add checksum for files.jsonl
             if files_path.exists():

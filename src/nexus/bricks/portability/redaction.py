@@ -174,16 +174,26 @@ def redact_config(
                 f"connector so the redaction contract resolves)",
                 fields=sorted(config.keys()),
             )
-        # Registered backend with no CONNECTION_ARGS: scan only — can't
-        # use declared_secret_fields because there are none. Any
-        # secret-shaped key in the persisted config is a leak.
+        # Registered backend with no CONNECTION_ARGS contract. Round-4
+        # passed this through after a key-only scan, but round-5 reviewer
+        # flagged that values can carry secrets in innocuous keys (e.g.,
+        # ``command='aws ... --secret-key=AKIA...'`` or a DSN URL with
+        # userinfo). Without a connector-declared schema we have no way
+        # to know which value substrings to strip, so pattern-scan keys
+        # AND values, and refuse export if anything looks like a
+        # credential. The connector author's escape hatch is to declare
+        # CONNECTION_ARGS or add ``audit_safe`` markers.
         config_leaks = _scan_config_for_undeclared_secrets({}, config)
-        if config_leaks:
+        value_leaks = _scan_config_values_for_secret_patterns(config)
+        all_leaks = sorted(set(config_leaks) | set(value_leaks))
+        if all_leaks:
             raise SensitiveFieldNotDeclaredError(
                 backend_type=f"{backend_type} (registered but declares no "
-                f"CONNECTION_ARGS; secret-shaped keys in persisted "
-                f"backend_config cannot be safely redacted)",
-                fields=config_leaks,
+                f"CONNECTION_ARGS; cannot safely export — values look "
+                f"credential-shaped or keys match the secret heuristic. "
+                f"Declare CONNECTION_ARGS with secret/audit_safe flags or "
+                f"omit this mount with --no-include-mounts)",
+                fields=all_leaks,
             )
         # No declared secrets, no scanned leaks → pass through unchanged.
         return dict(config), []
@@ -224,6 +234,57 @@ def redact_config(
         placeholders.append(PlaceholderRef(name=ph_name, field=f"mounts.{mount_id}.{field_name}"))
 
     return out, placeholders
+
+
+# Patterns of credential-shaped VALUES that should not appear in an
+# exported mount config when no CONNECTION_ARGS contract exists to
+# tell us how to redact properly. Conservative: if a value looks like
+# any of these shapes, refuse the export and ask the operator to
+# declare a contract or skip mounts.
+_VALUE_SECRET_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"AKIA[0-9A-Z]{12,}"),  # AWS access key IDs
+    re.compile(r"ASIA[0-9A-Z]{12,}"),  # AWS temp access key
+    re.compile(r"sk-[A-Za-z0-9]{20,}"),  # OpenAI / anthropic prefixed keys
+    re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"),  # anthropic
+    re.compile(r"ghp_[A-Za-z0-9]{36,}"),  # GitHub PAT
+    re.compile(r"gho_[A-Za-z0-9]{36,}"),  # GitHub OAuth token
+    re.compile(r"glpat-[A-Za-z0-9_-]{20,}"),  # GitLab PAT
+    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),  # Slack tokens
+    re.compile(r"AIza[0-9A-Za-z_-]{35,}"),  # Google API key
+    re.compile(r"-----BEGIN [A-Z ]+PRIVATE KEY-----"),  # PEM private keys
+    re.compile(r"(?i)bearer\s+[A-Za-z0-9._-]{20,}"),  # bearer tokens
+    re.compile(
+        r"(?i)(?:password|secret|token|api[_-]?key|access[_-]?key)\s*=\s*[^\s]{8,}"
+    ),  # KEY=VALUE assignments inside command strings
+    re.compile(r"://[^/\s:@]+:[^/\s@]+@"),  # URL userinfo (user:pass@host)
+]
+
+
+def _scan_config_values_for_secret_patterns(config: dict[str, Any]) -> list[str]:
+    """Return dotted paths of values in `config` whose stringified form
+    matches a known credential-shaped pattern. Walks nested dicts/lists.
+
+    Used only on the no-CONNECTION_ARGS-contract path where we can't
+    rely on declared structure to know which fields are secret.
+    """
+    leaks: list[str] = []
+
+    def _walk(value: Any, path: str) -> None:
+        if isinstance(value, str):
+            for rx in _VALUE_SECRET_PATTERNS:
+                if rx.search(value):
+                    leaks.append(path or "<root>")
+                    return
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                here = f"{path}.{k}" if path else (k if isinstance(k, str) else f"[{k}]")
+                _walk(v, here)
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                _walk(item, f"{path}[{i}]")
+
+    _walk(config, "")
+    return sorted(set(leaks))
 
 
 def _scan_config_for_undeclared_secrets(

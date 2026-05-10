@@ -218,6 +218,25 @@ def redact_config(
             fields=config_leaks,
         )
 
+    # Round-6 reviewer finding: audit_safe-marked or non-secret declared
+    # fields can still hold credential-shaped VALUES (e.g.,
+    # ``token_manager_db = "postgresql://user:pass@host/db"`` — a
+    # filesystem-style audit_safe field that happens to carry a real
+    # DB URL with userinfo). Run the value-pattern scan over the
+    # non-secret declared fields too, refusing if any look credential-
+    # bearing. The connector author's recourse is to mark the field
+    # secret=True (will be redacted) or sanitize the value before save.
+    secrets = declared_secret_fields(backend_type)
+    non_secret_subset = {k: v for k, v in config.items() if k not in secrets}
+    value_leaks = _scan_config_values_for_secret_patterns(non_secret_subset)
+    if value_leaks:
+        raise SensitiveFieldNotDeclaredError(
+            backend_type=f"{backend_type} (non-secret declared field carries a "
+            f"credential-shaped value — mark the field secret=True or "
+            f"sanitize the value before persisting the mount)",
+            fields=value_leaks,
+        )
+
     secrets = declared_secret_fields(backend_type)
     out = dict(config)
     placeholders: list[PlaceholderRef] = []
@@ -257,6 +276,12 @@ _VALUE_SECRET_PATTERNS: list[re.Pattern[str]] = [
         r"(?i)(?:password|secret|token|api[_-]?key|access[_-]?key)\s*=\s*[^\s]{8,}"
     ),  # KEY=VALUE assignments inside command strings
     re.compile(r"://[^/\s:@]+:[^/\s@]+@"),  # URL userinfo (user:pass@host)
+    # Round-6 additions — token-only userinfo and JWTs that the
+    # round-5 patterns missed.
+    re.compile(r"://[A-Za-z0-9._\-+/=]{16,}@"),  # URL token-only (https://TOKEN@host)
+    re.compile(
+        r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
+    ),  # JWT (header.payload.signature, base64url, eyJ prefix)
 ]
 
 

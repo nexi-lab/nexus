@@ -100,9 +100,10 @@ def verify_archive(file: Path, *, strict: bool = False) -> None:
 
         # --- format_version check ---
         format_version: str = manifest.get("format_version", "1.0.0")
-        if strict and not format_version.startswith("2."):
+        if strict and not (format_version.startswith("2.") or format_version.startswith("3.")):
             raise ArchiveError(
-                f"--strict requires a v2 bundle; this bundle is format_version={format_version}"
+                f"--strict requires a v2 or v3 bundle; this bundle is "
+                f"format_version={format_version}"
             )
 
         # --- min_nexus_version check ---
@@ -111,8 +112,11 @@ def verify_archive(file: Path, *, strict: bool = False) -> None:
         if _parse_semver(min_required) > _parse_semver(current):
             raise ArchiveVersionIncompatible(required=min_required, current=current)
 
-        # --- signature check (v2 only) ---
-        if format_version.startswith("2."):
+        # --- signature check (v2 and v3) ---
+        # v3 (Issue #4083) reuses the v2 signature shape; the only
+        # change is mount records are also covered via the
+        # checksums.files entries that the merkle root binds.
+        if format_version.startswith("2.") or format_version.startswith("3."):
             if "signatures.json" in names:
                 sig_member = tar.extractfile("signatures.json")
                 assert sig_member is not None

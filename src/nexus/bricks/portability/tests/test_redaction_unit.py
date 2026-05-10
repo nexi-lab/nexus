@@ -320,3 +320,76 @@ def test_redact_config_registered_no_args_refuses_url_userinfo():
                 mount_id="m-1",
             )
         assert "dsn" in str(exc.value.fields)
+
+
+def test_redact_config_audit_safe_field_with_credential_value_refused():
+    """Round 6: audit_safe escapes the heuristic for the field NAME but
+    must not whitelist credential-bearing VALUES. token_manager_db is
+    audit_safe (it's a DB path), but a value like
+    'postgresql://user:pass@host/db' carries live credentials in URL
+    userinfo and must be refused."""
+    from unittest.mock import patch
+
+    from nexus.extensions.types import ArgType, ConnectionArg
+
+    fake_args = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="DB path or URL (audit_safe)",
+            audit_safe=True,
+        ),
+    }
+    with patch("nexus.bricks.portability.redaction._get_connection_args", return_value=fake_args):
+        with pytest.raises(SensitiveFieldNotDeclaredError) as exc:
+            redact_config(
+                "fake_oauth",
+                {"token_manager_db": "postgresql://alice:livepw@host/db"},
+                mount_id="m-1",
+            )
+        assert "token_manager_db" in str(exc.value.fields)
+
+
+def test_redact_config_no_args_refuses_token_only_url():
+    """Round 6: 'https://TOKEN@host' (no colon, token-only userinfo)
+    must be caught by the value scanner."""
+    from unittest.mock import patch
+
+    with (
+        patch(
+            "nexus.bricks.portability.redaction._get_connection_args",
+            return_value={},
+        ),
+        patch(
+            "nexus.bricks.portability.redaction._backend_is_registered",
+            return_value=True,
+        ),
+        pytest.raises(SensitiveFieldNotDeclaredError),
+    ):
+        redact_config(
+            "custom_backend",
+            {"endpoint": "https://ghp_abcdefghijklmnopqrstuvwxyz0123456789@api.github.com"},
+            mount_id="m-1",
+        )
+
+
+def test_redact_config_no_args_refuses_jwt():
+    """Round 6: a bare JWT (eyJ...) must be caught."""
+    from unittest.mock import patch
+
+    jwt = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiIxMjM0NSIsIm5hbWUiOiJBbGljZSJ9."
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    )
+    with (
+        patch(
+            "nexus.bricks.portability.redaction._get_connection_args",
+            return_value={},
+        ),
+        patch(
+            "nexus.bricks.portability.redaction._backend_is_registered",
+            return_value=True,
+        ),
+        pytest.raises(SensitiveFieldNotDeclaredError),
+    ):
+        redact_config("custom_backend", {"creds_blob": jwt}, mount_id="m-1")

@@ -48,10 +48,17 @@ class BootIndexer:
         workspace: Path,
         search_daemon: Any,
         health_state: dict[str, Any],
+        *,
+        rust_client: Any | None = None,
+        hydrate_threshold: int | None = None,
+        hydrate_budget: int | None = None,
     ) -> None:
         self._workspace = workspace
         self._search_daemon = search_daemon
         self._health_state = health_state
+        self._rust_client = rust_client
+        self._hydrate_threshold = hydrate_threshold
+        self._hydrate_budget = hydrate_budget
 
     # ------------------------------------------------------------------
     # Public API
@@ -88,6 +95,24 @@ class BootIndexer:
         finally:
             self._health_state["status"] = "ready"
             logger.info("[BootIndexer] indexing complete, health_state → ready")
+
+        if self._rust_client is not None:
+            self._hydrate_cache()
+
+    def _hydrate_cache(self) -> None:
+        """Trigger eager L1 cache hydration via the Rust daemon (Issue #4055)."""
+        kwargs: dict[str, Any] = {}
+        if self._hydrate_threshold is not None:
+            kwargs["threshold_bytes"] = self._hydrate_threshold
+        if self._hydrate_budget is not None:
+            kwargs["budget_bytes"] = self._hydrate_budget
+        try:
+            stats = self._rust_client.cache_warm(str(self._workspace), **kwargs)
+            logger.info("[BootIndexer] cache hydration: %s", stats)
+            self._health_state["hydration"] = stats
+        except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+            logger.warning("[BootIndexer] cache hydration failed: %s", exc)
+            self._health_state["hydration"] = {"error": str(exc)}
 
     def _walk_and_index(self) -> None:
         """Walk the workspace directory and call ``index_file`` for each file."""

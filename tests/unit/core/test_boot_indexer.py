@@ -210,3 +210,109 @@ class TestBootIndexerNonBlocking:
         deadline = time.monotonic() + 5.0
         while health_state["status"] != "ready" and time.monotonic() < deadline:
             time.sleep(0.01)
+
+
+class TestBootIndexerHydration:
+    """BootIndexer triggers cache hydration after the search walk completes."""
+
+    def test_cache_warm_called_with_workspace_root(self, tmp_path: Path) -> None:
+        (tmp_path / "f.txt").write_text("data")
+        search_daemon = MagicMock()
+        rust_client = MagicMock()
+        rust_client.cache_warm.return_value = {
+            "admitted_count": 1,
+            "admitted_bytes": 4,
+            "skipped_warm": 0,
+            "skipped_size": 0,
+            "skipped_budget": 0,
+            "failed": 0,
+            "duration_ms": 5,
+        }
+        health_state: dict[str, str] = {"status": "indexing"}
+
+        indexer = BootIndexer(
+            workspace=tmp_path,
+            search_daemon=search_daemon,
+            health_state=health_state,
+            rust_client=rust_client,
+        )
+        indexer.start_async()
+
+        deadline = time.monotonic() + 5.0
+        while "hydration" not in health_state and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        rust_client.cache_warm.assert_called_once()
+        call_args = rust_client.cache_warm.call_args
+        assert call_args.args[0] == str(tmp_path)
+        assert health_state["status"] == "ready"
+        assert health_state["hydration"]["admitted_count"] == 1
+
+    def test_cache_warm_error_is_swallowed(self, tmp_path: Path) -> None:
+        (tmp_path / "f.txt").write_text("data")
+        search_daemon = MagicMock()
+        rust_client = MagicMock()
+        rust_client.cache_warm.side_effect = BrokenPipeError("daemon dead")
+        health_state: dict[str, str] = {"status": "indexing"}
+
+        indexer = BootIndexer(
+            workspace=tmp_path,
+            search_daemon=search_daemon,
+            health_state=health_state,
+            rust_client=rust_client,
+        )
+        indexer.start_async()
+
+        deadline = time.monotonic() + 5.0
+        while "hydration" not in health_state and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert health_state["status"] == "ready"
+        assert "error" in health_state["hydration"]
+
+    def test_cache_warm_skipped_when_rust_client_none(self, tmp_path: Path) -> None:
+        (tmp_path / "f.txt").write_text("data")
+        search_daemon = MagicMock()
+        health_state: dict[str, str] = {"status": "indexing"}
+
+        indexer = BootIndexer(
+            workspace=tmp_path,
+            search_daemon=search_daemon,
+            health_state=health_state,
+            rust_client=None,
+        )
+        indexer.start_async()
+
+        deadline = time.monotonic() + 5.0
+        while health_state["status"] != "ready" and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert health_state["status"] == "ready"
+        assert "hydration" not in health_state
+
+    def test_cache_warm_passes_overrides(self, tmp_path: Path) -> None:
+        (tmp_path / "f.txt").write_text("data")
+        search_daemon = MagicMock()
+        rust_client = MagicMock()
+        rust_client.cache_warm.return_value = {}
+        health_state: dict[str, str] = {"status": "indexing"}
+
+        indexer = BootIndexer(
+            workspace=tmp_path,
+            search_daemon=search_daemon,
+            health_state=health_state,
+            rust_client=rust_client,
+            hydrate_threshold=4096,
+            hydrate_budget=1024,
+        )
+        indexer.start_async()
+
+        deadline = time.monotonic() + 5.0
+        while "hydration" not in health_state and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        rust_client.cache_warm.assert_called_once_with(
+            str(tmp_path),
+            threshold_bytes=4096,
+            budget_bytes=1024,
+        )

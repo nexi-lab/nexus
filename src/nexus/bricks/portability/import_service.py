@@ -31,6 +31,7 @@ from nexus.bricks.portability.models import (
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
+    from nexus.bricks.portability.mount_import import _MountWriter
     from nexus.contracts.portability_types import PortabilityFSProtocol
     from nexus.contracts.types import OperationContext
 
@@ -186,6 +187,7 @@ class ZoneImportService:
         nexus_fs: "PortabilityFSProtocol",
         *,
         file_metadata_class: type[Any] | None = None,
+        mount_manager: "_MountWriter | None" = None,
     ):
         """Initialize the import service.
 
@@ -193,9 +195,14 @@ class ZoneImportService:
             nexus_fs: NexusFS-compatible instance with metadata store and backend access
             file_metadata_class: FileMetadata class for metadata-only imports (DI).
                                  If None, metadata-only imports are skipped.
+            mount_manager: Optional MountManager for restoring mount configs (Issue #4083).
+                           Required when importing bundles that contain mounts.jsonl and
+                           restore_mounts=True (the default). Pass None to preserve
+                           back-compat with callers that don't need mount restore.
         """
         self.nexus_fs = nexus_fs
         self._file_metadata_class = file_metadata_class
+        self._mount_manager = mount_manager
 
     def import_zone(
         self,
@@ -285,6 +292,26 @@ class ZoneImportService:
 
                         raise ArchivePlaceholderNotInjected(sorted(remaining))
 
+                # Guard 4: mount credential validation (Issue #4083) — BEFORE any side effect.
+                # Read mount records from the bundle (returns [] for v2 bundles that have
+                # no mounts.jsonl). If the bundle contains mounts and restore_mounts is
+                # enabled, validate that every redacted credential field has an override
+                # supplied. Raises MissingCredentialsError immediately so the operator
+                # sees the full list of gaps before any file/permission writes happen.
+                _mount_records = []
+                if options.restore_mounts:
+                    from nexus.bricks.portability.mount_import import validate_overrides
+
+                    _mount_records = reader.read_mount_records()
+                    if _mount_records:
+                        validate_overrides(_mount_records, options.mount_overrides)
+                        if self._mount_manager is None:
+                            raise ValueError(
+                                "Bundle contains mounts.jsonl but no MountManager supplied. "
+                                "Pass ZoneImportService(mount_manager=...) or set "
+                                "restore_mounts=False."
+                            )
+
                 # Check zone remapping
                 if options.target_zone_id:
                     result.zone_remapped = True
@@ -312,7 +339,28 @@ class ZoneImportService:
                         progress_callback=progress_callback,
                     )
 
+                # Phase 3: Restore mounts (Issue #4083)
+                if _mount_records and options.restore_mounts:
+                    from nexus.bricks.portability.mount_import import import_mounts
+
+                    mount_errors = import_mounts(
+                        mounts=_mount_records,
+                        overrides=options.mount_overrides or {},
+                        mount_manager=self._mount_manager,
+                        target_zone_id=options.target_zone_id,
+                        conflict_mode=options.conflict_mode,
+                    )
+                    result.errors.extend(mount_errors)
+
         except Exception as e:
+            from nexus.bricks.portability.models import MissingCredentialsError
+
+            # Validation errors that callers must handle explicitly — re-raise
+            # so the caller sees the structured exception rather than a result
+            # with an opaque error string. MissingCredentialsError is raised
+            # before any side effect, so no partial state is left behind.
+            if isinstance(e, MissingCredentialsError):
+                raise
             logger.exception("Import failed: %s", e)
             result.add_error(
                 path=str(options.bundle_path),

@@ -22,6 +22,7 @@ from nexus.bricks.portability.models import (
     MANIFEST_FILENAME,
     ExportManifest,
     FileRecord,
+    MountRecord,
     PermissionRecord,
 )
 
@@ -199,6 +200,35 @@ class BundleReader:
 
         except KeyError:
             logger.debug("Bundle missing %s", BUNDLE_PATHS["permissions"])
+
+    def read_mount_records(self) -> list[MountRecord]:
+        """Read mount records from mounts.jsonl.
+
+        Returns:
+            List of MountRecord objects, or empty list if mounts.jsonl is absent.
+        """
+        if self._tar is None:
+            raise RuntimeError("Bundle not open. Call open() first.")
+
+        import json as _json
+
+        mounts_path = BUNDLE_PATHS["mounts"]
+        try:
+            member = self._tar.getmember(mounts_path)
+            file_obj = self._tar.extractfile(member)
+            if file_obj is None:
+                return []
+
+            records: list[MountRecord] = []
+            for line in file_obj:
+                line_str = line.decode("utf-8").strip()
+                if line_str:
+                    records.append(MountRecord.from_dict(_json.loads(line_str)))
+            return records
+
+        except KeyError:
+            logger.debug("Bundle missing %s", mounts_path)
+            return []
 
     def read_content_blob(self, content_id: str) -> bytes | None:
         """Read a content blob from the bundle.

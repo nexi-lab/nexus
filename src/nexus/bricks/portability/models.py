@@ -607,7 +607,7 @@ class ExportManifest:
         """
         return {
             # Schema reference for validation
-            "$schema": "https://nexus.io/schemas/manifest-v3.json",
+            "$schema": MANIFEST_SCHEMA_URL,
             # Format versioning
             "format_version": self.format_version,
             "nexus_version": self.nexus_version,

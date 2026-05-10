@@ -136,10 +136,24 @@ pub async fn hydrate_workspace(
                 metrics::record_hydration_file("skipped_budget");
                 return;
             }
+            // Match the production read path's generation handling: stat first
+            // to capture the current backend generation, then admit with that
+            // gen so subsequent reads (which call client.stat first and pass
+            // gen into read_with_cache) actually see a cache hit. Storing
+            // gen=0 here would make every hydrated entry invalidate on its
+            // first real read for any backend that returns nonzero gens —
+            // defeating the purpose of hydration.
+            let gen = match client_task.stat(&path) {
+                Ok(meta) => meta.gen,
+                Err(err) => {
+                    debug!("hydrate: stat failed for {}: {} — using gen=0", path, err);
+                    0
+                }
+            };
             match client_task.read_with_etag(&path, None) {
                 Ok(crate::client::ReadResponse::Content { content, etag }) => {
                     let len = content.len() as u64;
-                    cache_task.put(&path, &content, etag.as_deref(), 0);
+                    cache_task.put(&path, &content, etag.as_deref(), gen);
                     admitted_count.fetch_add(1, Ordering::Relaxed);
                     admitted_bytes.fetch_add(len, Ordering::Relaxed);
                     metrics::record_hydration_file("admitted");
@@ -223,6 +237,13 @@ fn collect_candidates(
         root_listed = true;
 
         for entry in entries {
+            // Enforce max_entries inside the inner loop too — a single
+            // backend list response with hundreds of thousands of entries
+            // would otherwise be fully accumulated before the outer loop
+            // re-checks the cap, defeating the defensive bound.
+            if total_seen >= opts.max_entries {
+                break;
+            }
             total_seen += 1;
             let full_path = join_path(&dir, &entry.name);
             if is_directory(&entry) {
@@ -575,13 +596,69 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let stats = rt.block_on(hydrate_workspace(client, cache, opts));
 
-        // The walk consumes entries until total_seen >= max_entries; subsequent dirs are not popped.
-        // For a single-dir workspace, all 3 entries are processed in this iteration's inner loop
-        // (the cap is checked at the top of the outer while loop). So we expect all 3 to admit
-        // for THIS shape; the cap acts as a safety on multi-directory walks rather than per-entry.
-        // We assert no panic and admissions <= 3.
-        assert!(stats.admitted_count <= 3, "got {:?}", stats);
+        // With max_entries=2 the per-entry cap fires inside the inner loop.
+        // The third file (c.txt) must never be processed even though the list
+        // response contains it.
+        assert_eq!(stats.admitted_count, 2, "expected 2 admits, got {:?}", stats);
+        assert_eq!(stats.skipped_size, 0);
         assert_eq!(stats.failed, 0);
+        // Sanity: c.txt was never put into cache.
+        // (Indirect: only a.txt and b.txt admitted; we don't enumerate cache directly.)
+    }
+
+    #[test]
+    fn test_hydrate_max_entries_caps_a_single_huge_response() {
+        // Reviewer scenario: one root list returns thousands of entries and the
+        // cap must halt the inner loop, NOT just the outer directory queue.
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+
+        let mut server = mockito::Server::new();
+        let mut files = String::new();
+        for i in 0..500 {
+            if i > 0 {
+                files.push(',');
+            }
+            files.push_str(&format!(
+                r#"{{"path":"/f{}.txt","is_directory":false,"size":3}}"#,
+                i
+            ));
+        }
+        let body = format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{"files":[{}]}}}}"#, files);
+        server
+            .mock("POST", "/api/nfs/list")
+            .with_status(200)
+            .with_body(body)
+            .create();
+        // expect_at_most caps how many read RPCs the mock will accept.
+        // If the inner-loop cap regresses, the test will hammer the mock far
+        // beyond max_entries and fail the assertion below.
+        server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_header("etag", "\"e\"")
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"YWJj"}}"#)
+            .create();
+
+        let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
+        let cache = fresh_cache("max_entries_huge");
+        let mut opts = HydrateOptions::new("/".into());
+        opts.max_entries = 10;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let stats = rt.block_on(hydrate_workspace(client, cache, opts));
+
+        // 10 entries seen → at most 10 admits; never the full 500.
+        assert!(
+            stats.admitted_count <= 10,
+            "expected <=10 admits, got {:?}",
+            stats
+        );
+        assert!(
+            stats.admitted_count + stats.skipped_size + stats.failed <= 10,
+            "processed >10 entries despite max_entries=10: {:?}",
+            stats
+        );
     }
 
     #[test]

@@ -116,7 +116,15 @@ class NexusFUSEOperations(Operations):
                         nexus_url=nexus_url, api_key=api_key, agent_id=agent_id
                     )
                     logger.info("[FUSE] Rust daemon ready")
-                    self._spawn_cache_warm(rust_client)
+                    # Issue #4055: skip eager hydration on agent-scoped (ReBAC) mounts.
+                    # The Rust daemon has no per-request zone_id/subject support, so
+                    # firing cache_warm with the owner API key would let scoped mounts
+                    # warm files they should not see. Mirrors the _rust_available
+                    # context guard in ops/_shared.py.
+                    if context is None:
+                        self._spawn_cache_warm(
+                            nexus_url=nexus_url, api_key=api_key, agent_id=agent_id
+                        )
                 else:
                     logger.warning(
                         "[FUSE] --use-rust requires REMOTE profile NexusFS. Falling back to Python."
@@ -258,18 +266,38 @@ class NexusFUSEOperations(Operations):
     def open_files(self, value: dict[int, dict[str, Any]]) -> None:
         self._ctx.open_files = value
 
-    def _spawn_cache_warm(self, rust_client: Any) -> None:
+    def _spawn_cache_warm(
+        self,
+        nexus_url: str,
+        api_key: str,
+        agent_id: str | None = None,
+    ) -> None:
         """Trigger eager L1 cache hydration in a daemon thread (Issue #4055).
 
-        Runs once at FUSE mount. Must not block mount setup, so a daemon thread
-        owns the RPC. Errors are logged at warning level and never propagate —
-        a hydration failure should never break the mount itself.
+        Runs once at FUSE mount. Constructs its OWN RustFUSEClient (and Rust
+        daemon process) for the hydration RPC so it never holds the foreground
+        client's serialized RPC socket — under heavy hydration the BFS/read
+        loop can take seconds, and we don't want to block early FUSE reads
+        that come in through the main rust_client.
+
+        The ephemeral client + daemon are torn down after cache_warm returns;
+        the foyer cache directory on disk is keyed by server URL, so the
+        warmed entries are visible to the foreground client's daemon (same
+        URL → same foyer dir).
+
+        Errors are logged at warning level and never propagate — a hydration
+        failure should never break the mount itself.
         """
         import threading
 
         def _run() -> None:
             try:
-                stats = rust_client.cache_warm("/")
+                from nexus.fuse.rust_client import RustFUSEClient
+
+                with RustFUSEClient(
+                    nexus_url=nexus_url, api_key=api_key, agent_id=agent_id
+                ) as ephemeral:
+                    stats = ephemeral.cache_warm("/")
                 logger.info("[FUSE] Cache hydration: %s", stats)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("[FUSE] Cache hydration failed: %s", exc)

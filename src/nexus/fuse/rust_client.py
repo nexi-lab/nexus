@@ -439,11 +439,18 @@ class RustFUSEClient:
         threshold_bytes: int | None = None,
         budget_bytes: int | None = None,
         concurrency: int | None = None,
+        wait: bool = True,
     ) -> dict[str, Any]:
         """Trigger eager cache hydration via the Rust daemon (Issue #4055).
 
-        Returns a `HydrateStats` dict with keys: admitted_count, admitted_bytes,
-        skipped_warm, skipped_size, skipped_budget, failed, duration_ms.
+        Args:
+            wait: When True (default), block until hydration completes and
+                return the full `HydrateStats` dict (admitted_count, admitted_bytes,
+                skipped_warm, skipped_size, skipped_budget, failed, duration_ms).
+                When False, the daemon spawns hydration on a detached tokio
+                task and the RPC returns immediately with `{"started": true}`
+                — used by the FUSE-mount production trigger so the foreground
+                RPC socket isn't held for the whole hydration window.
         """
         params: dict[str, Any] = {"workspace_root": workspace_root}
         if threshold_bytes is not None:
@@ -452,6 +459,8 @@ class RustFUSEClient:
             params["budget_bytes"] = budget_bytes
         if concurrency is not None:
             params["concurrency"] = concurrency
+        if not wait:
+            params["wait"] = False
         return self._send_request("cache_warm", params)
 
     def close(self) -> None:

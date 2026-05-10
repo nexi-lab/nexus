@@ -450,7 +450,20 @@ async fn handle_cache_warm(
         budget_bytes: Option<usize>,
         #[serde(default)]
         concurrency: Option<usize>,
+        /// When `true` (the default), the RPC blocks until hydration finishes
+        /// and returns full HydrateStats — useful for tests and synchronous
+        /// callers. When `false`, the RPC kicks off hydration on a detached
+        /// tokio task and returns immediately with `{started: true}`. The
+        /// production FUSE-mount trigger uses `wait=false` so the foreground
+        /// client's serialized RPC socket isn't held for the whole BFS+
+        /// fetch+admit cycle.
+        #[serde(default = "default_wait")]
+        wait: bool,
     }
+    fn default_wait() -> bool {
+        true
+    }
+
     let p: P = serde_json::from_value(params)
         .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
 
@@ -469,10 +482,22 @@ async fn handle_cache_warm(
         opts.concurrency = c;
     }
 
-    let stats = crate::hydrate::hydrate_workspace(client, cache, opts).await;
-    serde_json::to_value(&stats).map_err(|e| {
-        NexusClientError::InvalidResponse(format!("failed to serialize hydrate stats: {}", e))
-    })
+    if p.wait {
+        let stats = crate::hydrate::hydrate_workspace(client, cache, opts).await;
+        serde_json::to_value(&stats).map_err(|e| {
+            NexusClientError::InvalidResponse(format!("failed to serialize hydrate stats: {}", e))
+        })
+    } else {
+        // Fire-and-forget: spawn on the daemon's tokio runtime and return
+        // immediately. The detached task uses the SAME FileCache instance as
+        // the foreground client (no cross-process foyer corruption risk),
+        // and the foreground RPC socket is freed for FUSE traffic.
+        tokio::spawn(async move {
+            let stats = crate::hydrate::hydrate_workspace(client, cache, opts).await;
+            log::info!("cache_warm (async) finished: {:?}", stats);
+        });
+        Ok(json!({ "started": true }))
+    }
 }
 
 #[cfg(test)]

@@ -125,10 +125,11 @@ pub async fn hydrate_workspace(
         let cache_task = cache.clone();
         let admitted_count = admitted_count.clone();
         let admitted_bytes = admitted_bytes.clone();
+        let skipped_size_task = skipped_size.clone();
         let skipped_budget = skipped_budget.clone();
         let failed = failed.clone();
         let budget = opts.budget_bytes as u64;
-
+        let threshold = opts.threshold_bytes;
         join_set.spawn_blocking(move || {
             let _permit = permit;
             if admitted_bytes.load(Ordering::Relaxed) >= budget {
@@ -136,22 +137,46 @@ pub async fn hydrate_workspace(
                 metrics::record_hydration_file("skipped_budget");
                 return;
             }
-            // Match the production read path's generation handling: stat first
-            // to capture the current backend generation, then admit with that
-            // gen so subsequent reads (which call client.stat first and pass
-            // gen into read_with_cache) actually see a cache hit. Storing
-            // gen=0 here would make every hydrated entry invalidate on its
-            // first real read for any backend that returns nonzero gens —
-            // defeating the purpose of hydration.
-            let gen = match client_task.stat(&path) {
-                Ok(meta) => meta.gen,
+            // Stat is mandatory: we need (a) the real backend gen so admitted
+            // entries don't invalidate on first read, and (b) the authoritative
+            // size since FileEntry.size from list can be stale or default to 0.
+            // On stat failure we fail closed — we do NOT fall back to gen=0,
+            // which would risk surfacing entries cached by other principals
+            // when the daemon's read path probes the cache without a fresh
+            // gen check.
+            let meta = match client_task.stat(&path) {
+                Ok(m) => m,
                 Err(err) => {
-                    debug!("hydrate: stat failed for {}: {} — using gen=0", path, err);
-                    0
+                    debug!("hydrate: stat failed for {} — skipping: {}", path, err);
+                    failed.fetch_add(1, Ordering::Relaxed);
+                    metrics::record_hydration_file("failed");
+                    return;
                 }
             };
+            // Authoritative size check from stat. The earlier list-based
+            // filter is best-effort; this is the gate.
+            if (meta.size as usize) > threshold {
+                skipped_size_task.fetch_add(1, Ordering::Relaxed);
+                metrics::record_hydration_file("skipped_size");
+                return;
+            }
+            let gen = meta.gen;
             match client_task.read_with_etag(&path, None) {
                 Ok(crate::client::ReadResponse::Content { content, etag }) => {
+                    // Final defensive check: even when stat said the file was
+                    // small, the actual read could return more bytes if the
+                    // backend changed between stat and read. Refuse to admit.
+                    if content.len() > threshold {
+                        debug!(
+                            "hydrate: read returned {} bytes for {} (> threshold {}), refusing admit",
+                            content.len(),
+                            path,
+                            threshold
+                        );
+                        failed.fetch_add(1, Ordering::Relaxed);
+                        metrics::record_hydration_file("failed");
+                        return;
+                    }
                     let len = content.len() as u64;
                     cache_task.put(&path, &content, etag.as_deref(), gen);
                     admitted_count.fetch_add(1, Ordering::Relaxed);
@@ -299,6 +324,19 @@ mod tests {
         )
     }
 
+    /// Mock a generic small-file stat response on the given mockito server.
+    /// Hydration now requires a successful stat before admitting (#4055 R2),
+    /// so every test that lists files must also mock /api/nfs/stat.
+    fn mock_small_stat(server: &mut mockito::ServerGuard) -> mockito::Mock {
+        server
+            .mock("POST", "/api/nfs/stat")
+            .with_status(200)
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"size":10,"gen":0,"etag":null,"modified_at":null,"is_directory":false}}"#,
+            )
+            .create()
+    }
+
     #[test]
     fn test_hydrate_admits_small_files() {
         let _guard = crate::metrics::test_guard();
@@ -318,6 +356,7 @@ mod tests {
             .with_status(200)
             .with_body(body)
             .create();
+        let _stat_mock = mock_small_stat(&mut server);
         let _read_mock = server
             .mock("POST", "/api/nfs/read")
             .with_status(200)
@@ -353,6 +392,7 @@ mod tests {
             .with_status(200)
             .with_body(list_body)
             .create();
+        let _stat_mock = mock_small_stat(&mut server);
         // The read mock should be hit exactly once — for the cold path.
         let read_mock = server
             .mock("POST", "/api/nfs/read")
@@ -399,6 +439,14 @@ mod tests {
             .mock("POST", "/api/nfs/list")
             .with_status(200)
             .with_body(body)
+            .create();
+        // Stat mock returns size=10240 to match the 10 KiB content size for the budget test.
+        let _stat_mock = server
+            .mock("POST", "/api/nfs/stat")
+            .with_status(200)
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"size":10240,"gen":0,"etag":null,"modified_at":null,"is_directory":false}}"#,
+            )
             .create();
         let payload = base64::engine::general_purpose::STANDARD.encode(vec![b'x'; 10 * 1024]);
         let read_body = format!(
@@ -452,6 +500,7 @@ mod tests {
                 {"path":"/ok2.txt","is_directory":false,"size":3}
             ]}}"#)
             .create();
+        let _stat_mock = mock_small_stat(&mut server);
 
         // Order matters: register the more-specific match first so mockito tries it before the catch-all.
         let _bad_mock = server
@@ -540,6 +589,7 @@ mod tests {
             .with_body(recursive_body)
             .expect_at_least(1)
             .create();
+        let _stat_mock = mock_small_stat(&mut server);
         server
             .mock("POST", "/api/nfs/read")
             .with_status(200)
@@ -581,6 +631,7 @@ mod tests {
             ]}}"#,
             )
             .create();
+        let _stat_mock = mock_small_stat(&mut server);
         server
             .mock("POST", "/api/nfs/read")
             .with_status(200)
@@ -630,6 +681,7 @@ mod tests {
             .with_status(200)
             .with_body(body)
             .create();
+        let _stat_mock = mock_small_stat(&mut server);
         // expect_at_most caps how many read RPCs the mock will accept.
         // If the inner-loop cap regresses, the test will hammer the mock far
         // beyond max_entries and fail the assertion below.
@@ -702,6 +754,7 @@ mod tests {
             .with_status(500)
             .with_body("backend error")
             .create();
+        let _stat_mock = mock_small_stat(&mut server);
         // Read mock for the ok file
         server
             .mock("POST", "/api/nfs/read")

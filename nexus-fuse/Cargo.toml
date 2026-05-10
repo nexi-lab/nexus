@@ -58,7 +58,10 @@ chrono = "0.4"
 libc = "0.2"
 
 # Async runtime for Unix socket IPC daemon
-tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal"] }
+# `sync` is required for tokio::sync::Semaphore used by the hydration
+# bounded-parallel fetcher (#4055 R9). `time` is required for tokio
+# scheduling primitives used by foyer's hybrid cache.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal", "sync", "time"] }
 
 [dev-dependencies]
 # Mocking HTTP requests for tests

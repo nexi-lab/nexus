@@ -232,8 +232,9 @@ fn main() -> anyhow::Result<()> {
             info!("Server URL: {}", url);
             info!("Mount point: {}", mount_point.display());
 
-            // Create Nexus client
-            let client = client::NexusClient::new(&url, &api_key, agent_id)?;
+            // Create Nexus client. Clone agent_id because open_file_cache
+            // also reads it below for the cache namespace (#4055 R9).
+            let client = client::NexusClient::new(&url, &api_key, agent_id.clone())?;
 
             // Verify connection
             info!("Connecting to Nexus server...");

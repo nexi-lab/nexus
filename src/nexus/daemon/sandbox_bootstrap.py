@@ -55,6 +55,11 @@ class SandboxBootstrapper:
                          be ``{"status": "indexing"}`` before ``run()`` is called.
                          ``BootIndexer`` will transition it to ``"ready"`` once
                          the initial workspace walk completes.
+        rust_client:     Optional ``RustFUSEClient`` instance.  When provided it
+                         is forwarded to ``BootIndexer`` so hydration can route
+                         cache-warming reads through the Rust kernel.  ``None``
+                         in production today (client-side construction happens
+                         inside ``NexusFUSEOperations``); see TODO(#4055).
     """
 
     def __init__(
@@ -66,6 +71,7 @@ class SandboxBootstrapper:
         search_registry: Any,
         search_daemon: Any,
         health_state: dict[str, Any],
+        rust_client: Any | None = None,
     ) -> None:
         self._workspace = workspace
         self._hub_url = hub_url
@@ -74,6 +80,7 @@ class SandboxBootstrapper:
         self._search_registry = search_registry
         self._search_daemon = search_daemon
         self._health_state = health_state
+        self._rust_client = rust_client
 
     # ------------------------------------------------------------------
     # Public API
@@ -159,6 +166,7 @@ class SandboxBootstrapper:
             workspace=self._workspace,
             search_daemon=self._search_daemon,
             health_state=self._health_state,
+            rust_client=self._rust_client,
         )
         indexer.start_async()
         logger.info("[SandboxBootstrapper] BootIndexer started (background)")

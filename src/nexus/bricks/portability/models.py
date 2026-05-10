@@ -47,12 +47,12 @@ from typing import Any, Self
 # Constants
 # =============================================================================
 
-BUNDLE_FORMAT_VERSION = "2.0.0"
+BUNDLE_FORMAT_VERSION = "3.0.0"
 BUNDLE_EXTENSION = ".nexus"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_COMPRESSION_LEVEL = 6
 DEFAULT_HASH_ALGORITHM = "sha256"
-MANIFEST_SCHEMA_URL = "https://nexus.io/schemas/manifest-v1.json"
+MANIFEST_SCHEMA_URL = "https://nexus.io/schemas/manifest-v3.json"
 MANIFEST_SCHEMA_PATH = Path(__file__).parent / "schemas" / "manifest-v1.json"
 
 
@@ -596,6 +596,9 @@ class ExportManifest:
     placeholders: list[PlaceholderRef] = field(default_factory=list)
     min_nexus_version: str = "0.0.0"
 
+    # v3 additions (Issue #4083)
+    mount_count: int = 0
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization.
 
@@ -604,7 +607,7 @@ class ExportManifest:
         """
         return {
             # Schema reference for validation
-            "$schema": "https://nexus.io/schemas/manifest-v1.json",
+            "$schema": "https://nexus.io/schemas/manifest-v3.json",
             # Format versioning
             "format_version": self.format_version,
             "nexus_version": self.nexus_version,
@@ -620,6 +623,7 @@ class ExportManifest:
                 "content_blob_count": self.content_blob_count,
                 "permission_count": self.permission_count,
                 "embedding_count": self.embedding_count,
+                "mount_count": self.mount_count,  # v3
             },
             # Options used
             "options": {
@@ -748,6 +752,8 @@ class ExportManifest:
             signer_pubkey_b64=data.get("signer_pubkey_b64"),
             placeholders=[PlaceholderRef.from_dict(p) for p in data.get("placeholders", [])],
             min_nexus_version=data.get("min_nexus_version", "0.0.0"),
+            # v3 fields (default-safe for v1/v2 bundles)
+            mount_count=stats.get("mount_count", 0),
         )
 
     @classmethod

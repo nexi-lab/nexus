@@ -1,0 +1,58 @@
+"""Tests for v3 bundle manifest additions."""
+
+from nexus.bricks.portability.models import (
+    BUNDLE_FORMAT_VERSION,
+    MANIFEST_SCHEMA_URL,
+    ExportManifest,
+)
+
+
+def test_format_version_is_v3():
+    assert BUNDLE_FORMAT_VERSION == "3.0.0"
+
+
+def test_manifest_schema_url_is_v3():
+    assert MANIFEST_SCHEMA_URL == "https://nexus.io/schemas/manifest-v3.json"
+
+
+def test_manifest_includes_mount_count():
+    m = ExportManifest(source_zone_id="z1")
+    m.mount_count = 5
+    d = m.to_dict()
+    assert d["statistics"]["mount_count"] == 5
+
+
+def test_manifest_default_mount_count_is_zero():
+    m = ExportManifest(source_zone_id="z1")
+    assert m.mount_count == 0
+    assert m.to_dict()["statistics"]["mount_count"] == 0
+
+
+def test_manifest_round_trip_preserves_mount_count():
+    m = ExportManifest(source_zone_id="z1")
+    m.mount_count = 7
+    d = m.to_dict()
+    m2 = ExportManifest.from_dict(d)
+    assert m2.mount_count == 7
+
+
+def test_v1_bundle_loads_with_default_mount_count():
+    """A v1/v2 manifest dict (no mount_count) must still load."""
+    legacy_dict = {
+        "format_version": "2.0.0",
+        "bundle_id": "550e8400-e29b-41d4-a716-446655440000",
+        "source_zone_id": "z1",
+        "export_timestamp": "2026-01-01T00:00:00+00:00",
+        "statistics": {
+            "file_count": 0,
+            "total_size_bytes": 0,
+            "content_blob_count": 0,
+            "permission_count": 0,
+            "embedding_count": 0,
+        },
+        "options": {"include_content": True, "include_permissions": True},
+        "checksums": {"algorithm": "sha256", "files": {}},
+    }
+    m = ExportManifest.from_dict(legacy_dict)
+    assert m.mount_count == 0
+    assert m.format_version == "2.0.0"

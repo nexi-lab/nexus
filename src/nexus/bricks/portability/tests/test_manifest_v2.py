@@ -11,7 +11,9 @@ from nexus.bricks.portability.models import (
 
 
 def test_format_version_is_v2():
-    assert BUNDLE_FORMAT_VERSION == "2.0.0"
+    # Constant was bumped to 3.0.0 in Issue #4083; v2 round-trip tests below
+    # remain valid because format_version is a per-manifest field, not this constant.
+    assert BUNDLE_FORMAT_VERSION == "3.0.0"
 
 
 def test_manifest_round_trip_with_v2_fields():

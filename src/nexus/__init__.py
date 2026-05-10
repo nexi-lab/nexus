@@ -437,6 +437,12 @@ def connect(
             remote_timeout=float(timeout),
         )
 
+        # Issue #4055: expose HTTP URL + API key so NexusFUSEOperations(use_rust=True)
+        # can spawn the Rust nexus-fuse daemon (it talks to /api/nfs/* HTTP endpoints,
+        # not gRPC). Without these attrs the operations layer falls back to Python.
+        nfs._base_url = server_url  # noqa: SLF001
+        nfs._api_key = api_key  # noqa: SLF001
+
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards
         # method calls to the server via gRPC.

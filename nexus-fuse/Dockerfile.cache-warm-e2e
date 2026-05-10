@@ -1,0 +1,63 @@
+# Linux Docker e2e for issue #4055 cache_warm + FUSE mount.
+#
+# Built from repo root (so it can copy both nexus-fuse/ and src/, rust/, scripts/).
+#
+#   docker build -f nexus-fuse/Dockerfile.cache-warm-e2e -t nexus-4055-e2e .
+#   docker run --rm --device /dev/fuse --cap-add SYS_ADMIN \
+#     --add-host=host.docker.internal:host-gateway \
+#     -e NEXUS_URL=http://host.docker.internal:42450 \
+#     -e NEXUS_API_KEY=... \
+#     nexus-4055-e2e
+
+FROM python:3.14-slim
+
+ENV PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fuse3 libfuse3-dev libfuse-dev fuse \
+    gcc build-essential ca-certificates curl git protobuf-compiler pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}" \
+    CARGO_TARGET_DIR=/app/target \
+    CARGO_BUILD_JOBS=2 \
+    PROTOC=/usr/bin/protoc
+
+WORKDIR /app
+COPY . /app
+
+# Build nexus_runtime wheel for Python 3.14 + install editable nexus.
+RUN pip install maturin && \
+    if [ "$(uname -m)" = "aarch64" ]; then \
+        export SIMSIMD_TARGET_SVE=0 SIMSIMD_TARGET_SVE2=0 \
+               SIMSIMD_TARGET_SVE_BF16=0 SIMSIMD_TARGET_SVE_F16=0 \
+               SIMSIMD_TARGET_SVE_I8=0; \
+    fi && \
+    maturin build --release --out /tmp/nexus-dist -m rust/nexus-cdylib/Cargo.toml && \
+    pip install /tmp/nexus-dist/nexus_runtime-*.whl && \
+    pip install -e .
+
+# Build the standalone nexus-fuse Rust daemon (separate workspace).
+RUN cd nexus-fuse && cargo build --release --bin nexus-fuse && \
+    cp target/release/nexus-fuse /usr/local/bin/nexus-fuse && \
+    chmod +x /usr/local/bin/nexus-fuse
+
+ENV PATH="/usr/local/bin:${PATH}"
+
+RUN pip install fusepy
+
+CMD ["bash", "-c", "set -e; \
+  echo '== nexus-fuse cargo test --lib hydrate =='; \
+  (cd nexus-fuse && cargo test --release --lib hydrate); \
+  echo; \
+  echo '== test_cache_warm.py =='; \
+  python nexus-fuse/test_cache_warm.py; \
+  echo; \
+  echo '== test_spawn_cache_warm_live.py =='; \
+  python nexus-fuse/test_spawn_cache_warm_live.py; \
+  echo; \
+  echo '== test_fuse_mount_cache_warm.py (real FUSE mount) =='; \
+  python nexus-fuse/test_fuse_mount_cache_warm.py; "]

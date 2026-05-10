@@ -365,9 +365,9 @@ mod tests {
         crate::metrics::reset_for_tests();
 
         // Create the mockito server and NexusClient outside any async context.
-        // reqwest::blocking::Client internally creates a tokio runtime; doing this
-        // inside an async executor panics with "Cannot drop a runtime in a context
-        // where blocking is not allowed."
+        // NexusClient owns a dedicated multi-thread tokio runtime for HTTP
+        // (#4056); constructing it on a tokio worker thread would block the
+        // worker while the runtime spins up.
         let mut server = mockito::Server::new();
         let body = r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
             {"path":"/a.txt","is_directory":false,"size":10},

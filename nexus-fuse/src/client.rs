@@ -1,14 +1,35 @@
 //! Nexus HTTP client for communicating with the Nexus server.
 //! Uses JSON-RPC style API.
+//!
+//! Async hyper/reqwest under the hood (#4056). Public methods stay sync
+//! so FUSE callbacks and existing callers don't change, but internally
+//! every request goes through one shared connection pool with HTTP
+//! keep-alive enabled. The client owns a small multi-thread tokio
+//! runtime that drives the futures; this lets concurrent reads from
+//! distinct FUSE worker threads share one TCP/TLS connection pool
+//! instead of each spinning a fresh `reqwest::blocking` runtime.
 
 #![allow(dead_code)]
 
 use crate::error::NexusClientError;
 use log::debug;
-use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, IF_NONE_MATCH};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::future::Future;
+use std::sync::OnceLock;
+use std::time::Duration;
+use tokio::runtime::Runtime;
+
+/// Default connection-pool tunables. Tuned for FUSE fan-out: enough
+/// idle slots that bursty parallel `read`/`stat` calls all hit a warm
+/// connection instead of dialing a fresh one.
+const POOL_MAX_IDLE_PER_HOST: usize = 64;
+const POOL_IDLE_TIMEOUT_SECS: u64 = 60;
+const TCP_KEEPALIVE_SECS: u64 = 30;
+const REQUEST_TIMEOUT_SECS: u64 = 30;
+const CONNECT_TIMEOUT_SECS: u64 = 5;
 
 /// User information returned by whoami endpoint.
 #[derive(Debug, Deserialize)]
@@ -81,7 +102,34 @@ pub enum ReadResponse {
     NotModified,
 }
 
+/// Process-wide tokio runtime that drives every NexusClient HTTP
+/// future. Stored in a `OnceLock` so it lives for the entire process
+/// and never drops in an async context (which would panic). One
+/// runtime serves every client/clone — the underlying reqwest::Client
+/// already shares its connection pool across clones, so a shared
+/// runtime adds no contention beyond the pool itself.
+static HTTP_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+/// Build (once) and return a reference to the process-wide HTTP runtime.
+/// Two worker threads is enough — per-call parallelism comes from many
+/// FUSE worker threads each blocking on their own future, not from this
+/// runtime fanning out internally. The runtime is `enable_all()` so
+/// reqwest's hyper driver gets both the I/O and timer reactors.
+fn http_runtime() -> &'static Runtime {
+    HTTP_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .thread_name("nexus-fuse-http")
+            .build()
+            .expect("failed to build nexus-fuse HTTP runtime")
+    })
+}
+
 /// Nexus HTTP client.
+///
+/// `Clone` is cheap: `reqwest::Client` shares its connection pool via
+/// an internal `Arc`.
 #[derive(Clone)]
 pub struct NexusClient {
     client: Client,
@@ -98,10 +146,17 @@ impl NexusClient {
         agent_id: Option<String>,
     ) -> Result<Self, NexusClientError> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .pool_max_idle_per_host(POOL_MAX_IDLE_PER_HOST)
+            .pool_idle_timeout(Some(Duration::from_secs(POOL_IDLE_TIMEOUT_SECS)))
+            .tcp_keepalive(Some(Duration::from_secs(TCP_KEEPALIVE_SECS)))
             .no_proxy() // Disable proxy to avoid HTTP_PROXY interference
             .build()?;
+
+        // Eagerly initialize the process-wide HTTP runtime so the
+        // first request doesn't pay the build cost.
+        let _ = http_runtime();
 
         Ok(Self {
             client,
@@ -109,6 +164,18 @@ impl NexusClient {
             api_key: api_key.to_string(),
             agent_id,
         })
+    }
+
+    /// Run a future to completion on the shared process-wide HTTP runtime.
+    ///
+    /// Safe to call from any thread that is NOT a worker of the HTTP
+    /// runtime — that includes fuser callback threads, regular `#[test]`
+    /// threads, tokio blocking-pool threads, and worker threads of a
+    /// different runtime (e.g., the daemon's IPC runtime). Daemon code
+    /// that is already async should call the `*_async` methods directly
+    /// instead of going through here.
+    fn block_on<F: Future>(&self, fut: F) -> F::Output {
+        http_runtime().block_on(fut)
     }
 
     /// Map HTTP status code to NexusClientError.
@@ -144,15 +211,14 @@ impl NexusClient {
         headers
     }
 
-    /// Call a JSON-RPC method.
-    fn rpc_call<T: for<'de> Deserialize<'de>>(
+    /// Async core: call a JSON-RPC method.
+    async fn rpc_call_async<T: for<'de> Deserialize<'de>>(
         &self,
         method: &str,
         params: Value,
     ) -> Result<T, NexusClientError> {
         let url = format!("{}/api/nfs/{}", self.base_url, method);
 
-        // Build proper JSON-RPC request
         let rpc_request = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -166,15 +232,16 @@ impl NexusClient {
             .post(&url)
             .headers(self.headers())
             .json(&rpc_request)
-            .send()?;
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(Self::status_to_error(status, text));
         }
 
-        let rpc_resp: JsonRpcResponse<T> = resp.json()?;
+        let rpc_resp: JsonRpcResponse<T> = resp.json().await?;
 
         if let Some(err) = rpc_resp.error {
             // Classify by structured error code (rpc_types.py RPCErrorCode),
@@ -193,24 +260,34 @@ impl NexusClient {
             .ok_or_else(|| NexusClientError::InvalidResponse("no result in response".to_string()))
     }
 
-    /// Get current user info.
-    pub fn whoami(&self) -> Result<UserInfo, NexusClientError> {
+    /// Async core: whoami.
+    pub async fn whoami_async(&self) -> Result<UserInfo, NexusClientError> {
         let url = format!("{}/api/auth/whoami", self.base_url);
         debug!("GET {}", url);
 
-        let resp = self.client.get(&url).headers(self.headers()).send()?;
+        let resp = self
+            .client
+            .get(&url)
+            .headers(self.headers())
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(Self::status_to_error(status, text));
         }
 
-        Ok(resp.json()?)
+        Ok(resp.json().await?)
     }
 
-    /// List directory contents.
-    pub fn list(&self, path: &str) -> Result<Vec<FileEntry>, NexusClientError> {
+    /// Get current user info.
+    pub fn whoami(&self) -> Result<UserInfo, NexusClientError> {
+        self.block_on(self.whoami_async())
+    }
+
+    /// Async core: list.
+    pub async fn list_async(&self, path: &str) -> Result<Vec<FileEntry>, NexusClientError> {
         // Use details=true, recursive=false to get entry types from server
         #[derive(Deserialize)]
         struct DetailedEntry {
@@ -254,14 +331,16 @@ impl NexusClient {
             files: Vec<DetailedEntry>,
         }
 
-        let result: ListResult = self.rpc_call(
-            "list",
-            json!({
-                "path": path,
-                "recursive": false,
-                "details": true
-            }),
-        )?;
+        let result: ListResult = self
+            .rpc_call_async(
+                "list",
+                json!({
+                    "path": path,
+                    "recursive": false,
+                    "details": true
+                }),
+            )
+            .await?;
 
         // Convert to FileEntry objects - extract immediate children only
         let parent_prefix = if path == "/" { "/" } else { path };
@@ -314,9 +393,19 @@ impl NexusClient {
         Ok(entries)
     }
 
+    /// List directory contents.
+    pub fn list(&self, path: &str) -> Result<Vec<FileEntry>, NexusClientError> {
+        self.block_on(self.list_async(path))
+    }
+
+    /// Async core: stat.
+    pub async fn stat_async(&self, path: &str) -> Result<FileMetadata, NexusClientError> {
+        self.rpc_call_async("stat", json!({"path": path})).await
+    }
+
     /// Get file/directory metadata.
     pub fn stat(&self, path: &str) -> Result<FileMetadata, NexusClientError> {
-        self.rpc_call("stat", json!({"path": path}))
+        self.block_on(self.stat_async(path))
     }
 
     /// Read file contents.
@@ -329,9 +418,8 @@ impl NexusClient {
         }
     }
 
-    /// Read file contents with ETag support for conditional requests.
-    /// If `if_none_match` is provided and content hasn't changed, returns NotModified.
-    pub fn read_with_etag(
+    /// Async core: read with optional If-None-Match.
+    pub async fn read_with_etag_async(
         &self,
         path: &str,
         if_none_match: Option<&str>,
@@ -362,7 +450,8 @@ impl NexusClient {
             .post(&url)
             .headers(headers)
             .json(&rpc_request)
-            .send()?;
+            .send()
+            .await?;
 
         // Handle 304 Not Modified
         if resp.status().as_u16() == 304 {
@@ -372,7 +461,7 @@ impl NexusClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(Self::status_to_error(status, text));
         }
 
@@ -397,7 +486,7 @@ impl NexusClient {
             error: Option<JsonRpcError>,
         }
 
-        let rpc_resp: JsonRpcReadResponse = resp.json()?;
+        let rpc_resp: JsonRpcReadResponse = resp.json().await?;
 
         if let Some(err) = rpc_resp.error {
             if err.code == -32000 {
@@ -419,58 +508,112 @@ impl NexusClient {
         Ok(ReadResponse::Content { content, etag })
     }
 
-    /// Write file contents.
-    pub fn write(&self, path: &str, content: &[u8]) -> Result<(), NexusClientError> {
+    /// Read file contents with ETag support for conditional requests.
+    /// If `if_none_match` is provided and content hasn't changed, returns NotModified.
+    pub fn read_with_etag(
+        &self,
+        path: &str,
+        if_none_match: Option<&str>,
+    ) -> Result<ReadResponse, NexusClientError> {
+        self.block_on(self.read_with_etag_async(path, if_none_match))
+    }
+
+    /// Async core: write.
+    pub async fn write_async(
+        &self,
+        path: &str,
+        content: &[u8],
+    ) -> Result<(), NexusClientError> {
         use base64::{engine::general_purpose::STANDARD, Engine};
 
         // API expects {"__type__": "bytes", "data": "base64..."} format
-        let _: Value = self.rpc_call(
-            "write",
-            json!({
-                "path": path,
-                "content": {
-                    "__type__": "bytes",
-                    "data": STANDARD.encode(content)
-                }
-            }),
-        )?;
+        let _: Value = self
+            .rpc_call_async(
+                "write",
+                json!({
+                    "path": path,
+                    "content": {
+                        "__type__": "bytes",
+                        "data": STANDARD.encode(content)
+                    }
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Write file contents.
+    pub fn write(&self, path: &str, content: &[u8]) -> Result<(), NexusClientError> {
+        self.block_on(self.write_async(path, content))
+    }
+
+    /// Async core: mkdir.
+    pub async fn mkdir_async(&self, path: &str) -> Result<(), NexusClientError> {
+        let _: Value = self
+            .rpc_call_async("mkdir", json!({"path": path}))
+            .await?;
         Ok(())
     }
 
     /// Create directory.
     pub fn mkdir(&self, path: &str) -> Result<(), NexusClientError> {
-        let _: Value = self.rpc_call("mkdir", json!({"path": path}))?;
+        self.block_on(self.mkdir_async(path))
+    }
+
+    /// Async core: delete.
+    pub async fn delete_async(&self, path: &str) -> Result<(), NexusClientError> {
+        let _: Value = self
+            .rpc_call_async("delete", json!({"path": path}))
+            .await?;
         Ok(())
     }
 
     /// Delete file or directory.
     pub fn delete(&self, path: &str) -> Result<(), NexusClientError> {
-        let _: Value = self.rpc_call("delete", json!({"path": path}))?;
+        self.block_on(self.delete_async(path))
+    }
+
+    /// Async core: rename.
+    pub async fn rename_async(
+        &self,
+        old_path: &str,
+        new_path: &str,
+    ) -> Result<(), NexusClientError> {
+        let _: Value = self
+            .rpc_call_async(
+                "rename",
+                json!({
+                    "old_path": old_path,
+                    "new_path": new_path
+                }),
+            )
+            .await?;
         Ok(())
     }
 
     /// Rename/move file or directory.
     pub fn rename(&self, old_path: &str, new_path: &str) -> Result<(), NexusClientError> {
-        let _: Value = self.rpc_call(
-            "rename",
-            json!({
-                "old_path": old_path,
-                "new_path": new_path
-            }),
-        )?;
-        Ok(())
+        self.block_on(self.rename_async(old_path, new_path))
     }
 
-    /// Check if path exists.
-    pub fn exists(&self, path: &str) -> bool {
+    /// Async core: exists.
+    pub async fn exists_async(&self, path: &str) -> bool {
         #[derive(Deserialize)]
         struct ExistsResult {
             exists: bool,
         }
 
-        match self.rpc_call::<ExistsResult>("exists", json!({"path": path})) {
+        match self
+            .rpc_call_async::<ExistsResult>("exists", json!({"path": path}))
+            .await
+        {
             Ok(result) => result.exists,
             Err(_) => false,
         }
+    }
+
+    /// Check if path exists.
+    pub fn exists(&self, path: &str) -> bool {
+        self.block_on(self.exists_async(path))
     }
 }

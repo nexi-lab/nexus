@@ -307,7 +307,7 @@ fn handle_read(
     // otherwise be served back to a caller whose stat just failed with
     // 403/404/etc. — leaking content past current authorization. With
     // no cache the gen value is irrelevant, so we keep the simpler path.
-    let gen = if let Some(_) = file_cache {
+    let gen = if file_cache.is_some() {
         match client.stat(&p.path) {
             Ok(meta) => meta.gen,
             Err(err) => {

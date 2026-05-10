@@ -49,8 +49,7 @@ RUN cd nexus-fuse && \
     chmod +x /usr/local/bin/nexus-fuse
 
 ENV PATH="/usr/local/bin:${PATH}" \
-    NEXUS_FUSE_BINARY=/usr/local/bin/nexus-fuse \
-    NEXUS_FUSE_RUST_CACHE_ENABLED=1
+    NEXUS_FUSE_BINARY=/usr/local/bin/nexus-fuse
 
 RUN pip install fusepy
 

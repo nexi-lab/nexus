@@ -69,18 +69,10 @@ pub async fn hydrate_workspace(
 
     // collect_candidates calls reqwest::blocking — must run off the async executor.
     let client_bfs = client.clone();
-    let cache_bfs = cache.clone();
     let opts_bfs = opts.clone();
-    let skipped_warm_bfs = skipped_warm.clone();
     let skipped_size_bfs = skipped_size.clone();
     let candidates = match tokio::task::spawn_blocking(move || {
-        collect_candidates(
-            &client_bfs,
-            &cache_bfs,
-            &opts_bfs,
-            &skipped_warm_bfs,
-            &skipped_size_bfs,
-        )
+        collect_candidates(&client_bfs, &opts_bfs, &skipped_size_bfs)
     })
     .await
     {
@@ -126,6 +118,7 @@ pub async fn hydrate_workspace(
         let admitted_count = admitted_count.clone();
         let admitted_bytes = admitted_bytes.clone();
         let skipped_size_task = skipped_size.clone();
+        let skipped_warm_task = skipped_warm.clone();
         let skipped_budget = skipped_budget.clone();
         let failed = failed.clone();
         let budget = opts.budget_bytes as u64;
@@ -161,6 +154,18 @@ pub async fn hydrate_workspace(
                 return;
             }
             let gen = meta.gen;
+            // Generation-aware warm check (#4055 R5). The list-time
+            // is_warm pre-filter (in collect_candidates) is age-only and
+            // can either misclassify gen-stale entries as warm or miss
+            // foyer disk records after a daemon restart wiped in-memory
+            // metadata. Probing the cache here with the authoritative gen
+            // (and going through foyer when metadata is missing) gives an
+            // accurate skip decision and a correct skipped_warm count.
+            if let crate::cache::CacheLookup::Hit(_) = cache_task.get(&path, gen) {
+                skipped_warm_task.fetch_add(1, Ordering::Relaxed);
+                metrics::record_hydration_file("skipped_warm");
+                return;
+            }
             match client_task.read_with_etag(&path, None) {
                 Ok(crate::client::ReadResponse::Content { content, etag }) => {
                     // Final defensive check: even when stat said the file was
@@ -235,11 +240,16 @@ fn finalize_stats(
 
 fn collect_candidates(
     client: &NexusClient,
-    cache: &FileCache,
     opts: &HydrateOptions,
-    skipped_warm: &Arc<AtomicU64>,
     skipped_size: &Arc<AtomicU64>,
 ) -> Result<Vec<String>, crate::error::NexusClientError> {
+    // skipped_warm is no longer counted here; the per-task gen-aware probe
+    // (cache.get(path, gen) inside the spawned task) is the authoritative
+    // warm check. The list-time in-memory is_warm pre-filter that lived
+    // here before #4055 R5 could miss valid foyer-disk records after a
+    // daemon restart, and could classify gen-stale entries as warm. The
+    // tradeoff is an extra stat per candidate; the savings of pre-skipping
+    // are worth giving up for correctness.
     let mut candidates: Vec<String> = Vec::new();
     let mut queue: Vec<(String, u32)> = vec![(opts.workspace_root.clone(), 0)];
     let mut total_seen: usize = 0;
@@ -278,11 +288,6 @@ fn collect_candidates(
             if (entry.size as usize) > opts.threshold_bytes {
                 skipped_size.fetch_add(1, Ordering::Relaxed);
                 metrics::record_hydration_file("skipped_size");
-                continue;
-            }
-            if cache.is_warm(&full_path) {
-                skipped_warm.fetch_add(1, Ordering::Relaxed);
-                metrics::record_hydration_file("skipped_warm");
                 continue;
             }
             candidates.push(full_path);

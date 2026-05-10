@@ -437,22 +437,19 @@ def connect(
             remote_timeout=float(timeout),
         )
 
-        # Issue #4055: optionally expose HTTP URL + API key so
-        # NexusFUSEOperations(use_rust=True) can spawn the Rust nexus-fuse
-        # daemon (it talks to /api/nfs/* HTTP endpoints, not gRPC).
+        # Issue #4055: expose HTTP URL + API key so NexusFUSEOperations(use_rust=True)
+        # can spawn the Rust nexus-fuse daemon (it talks to /api/nfs/* HTTP
+        # endpoints, not gRPC).
         #
-        # OPT-IN ONLY: the Rust foyer cache directory is namespaced solely by
-        # server URL today, so multiple credentials/tenants on the same OS
-        # account against the same Nexus URL would share cache bytes. Until
-        # the cache directory is keyed by authenticated principal as well,
-        # we keep this off by default. Production opt-in:
-        #   NEXUS_FUSE_RUST_CACHE_ENABLED=1
-        # The flag is read here, not in operations.py, so the security
-        # decision lives at the connection boundary where the credentials
-        # are actually known.
-        if os.getenv("NEXUS_FUSE_RUST_CACHE_ENABLED") == "1":
-            nfs._base_url = server_url  # noqa: SLF001
-            nfs._api_key = api_key  # noqa: SLF001
+        # The original cross-tenant cache-sharing concern that motivated an
+        # opt-in env gate was addressed in cache.rs by namespacing the foyer
+        # directory with `principal_hash(server_url, api_key)` — different
+        # API keys never share a cache directory, so exposing the credentials
+        # here is safe for unscoped remote mounts. Scoped/agent mounts are
+        # blocked from constructing the Rust daemon entirely in
+        # NexusFUSEOperations (see operations.py: `context is not None`).
+        nfs._base_url = server_url  # noqa: SLF001
+        nfs._api_key = api_key  # noqa: SLF001
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards

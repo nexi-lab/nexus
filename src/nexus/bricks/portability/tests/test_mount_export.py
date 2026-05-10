@@ -71,6 +71,10 @@ def test_redact_and_write_redacts_secrets_and_returns_placeholders(tmp_path, s3_
 
 
 def test_redact_and_write_sorts_lines_by_mount_id(tmp_path):
+    from nexus.bricks.portability.tests.test_redaction_unit import _ensure_registry
+
+    _ensure_registry()
+
     mounts: list[dict[str, object]] = [
         {
             "mount_id": "m-z",

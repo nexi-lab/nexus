@@ -10,14 +10,24 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol
 
 from nexus.bricks.portability.models import MountRecord, PlaceholderRef
 from nexus.bricks.portability.redaction import redact_config
 
 
+class _MountListing(Protocol):
+    """Narrow contract for the MountManager surface mount_export needs.
+
+    Defined locally so the brick boundary check (which forbids cross-brick
+    type imports) is satisfied while preserving static typing on call sites.
+    """
+
+    def list_mounts(self, *, zone_id: str | None) -> list[dict[str, Any]]: ...
+
+
 def collect_mounts(
-    mount_manager: Any,
+    mount_manager: _MountListing,
     *,
     zone_id: str | None,
 ) -> list[dict[str, Any]]:
@@ -28,7 +38,7 @@ def collect_mounts(
     owner_user_id, zone_id, description.  Passed in by the caller (DI) so the
     portability brick has no compile-time coupling to nexus.bricks.mount.
     """
-    return cast(list[dict[str, Any]], mount_manager.list_mounts(zone_id=zone_id))
+    return mount_manager.list_mounts(zone_id=zone_id)
 
 
 def redact_and_write(

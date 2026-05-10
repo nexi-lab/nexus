@@ -1698,23 +1698,47 @@ class MetadataMixin:
 
     # --- Search (sys_readdir/glob/grep) ---
 
-    def _entry_to_detail_dict(self, entry: FileMetadata, recursive: bool) -> dict[str, Any]:
+    @staticmethod
+    def _is_direct_child_path(path: str, prefix: str) -> bool:
+        """Return True when ``path`` is an immediate child of ``prefix``."""
+        rel = path[len(prefix) :].lstrip("/") if path.startswith(prefix) else path
+        return "/" not in rel
+
+    @staticmethod
+    def _paths_with_descendants(entries: builtins.list[FileMetadata]) -> set[str]:
+        """Return listed paths that also have listed descendants."""
+        paths = sorted({entry.path.rstrip("/") for entry in entries if entry.path})
+        return {
+            parent
+            for parent, next_path in zip(paths, paths[1:], strict=False)
+            if next_path.startswith(f"{parent}/")
+        }
+
+    def _entry_to_detail_dict(
+        self,
+        entry: FileMetadata,
+        recursive: bool,
+        *,
+        implicit_dirs: set[str] | None = None,
+    ) -> dict[str, Any]:
         """Convert a FileMetadata entry to a detail dict for sys_readdir.
 
         Promotes entry_type=0 (DT_REG) to 1 (DT_DIR) for implicit directories
         in non-recursive listings, matching ls -l semantics.
         """
+        entry_type = entry.entry_type
+        if not recursive and entry.entry_type == 0:
+            if implicit_dirs is None:
+                is_implicit_dir = self._kernel.metastore_is_implicit_directory(entry.path)
+            else:
+                is_implicit_dir = entry.path.rstrip("/") in implicit_dirs
+            if is_implicit_dir:
+                entry_type = DT_DIR
         return {
             "path": entry.path,
             "size": entry.size,
             "content_id": entry.content_id,
-            "entry_type": 1
-            if (
-                not recursive
-                and entry.entry_type == 0
-                and self._kernel.metastore_is_implicit_directory(entry.path)
-            )
-            else entry.entry_type,
+            "entry_type": entry_type,
             "zone_id": entry.zone_id,
             "owner_id": entry.owner_id,
             "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,
@@ -1929,7 +1953,20 @@ class MetadataMixin:
             if not self._is_internal_path(e.path) and _zone_allowed(e)
         )
         if details:
-            _result = [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
+            if not recursive:
+                all_entries = [
+                    e
+                    for e in metastore_list_iter(self._kernel, prefix=prefix, recursive=True)
+                    if not self._is_internal_path(e.path) and _zone_allowed(e)
+                ]
+                implicit_dirs = self._paths_with_descendants(all_entries)
+                _result = [
+                    self._entry_to_detail_dict(e, recursive, implicit_dirs=implicit_dirs)
+                    for e in all_entries
+                    if self._is_direct_child_path(e.path, prefix)
+                ]
+            else:
+                _result = [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
             _emit_list()
             return _result
         _result = [e.path for e in entries_iter]

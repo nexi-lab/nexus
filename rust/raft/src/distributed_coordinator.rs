@@ -672,6 +672,30 @@ fn attempt_join_zone_round(
     Err(last_err)
 }
 
+fn record_join_attempt(
+    attempt: Result<(), String>,
+    attempts: &mut u32,
+    max_attempts: Option<u32>,
+    zone_id: &str,
+) -> Result<bool, String> {
+    match attempt {
+        Ok(()) => Ok(true),
+        Err(last_err) => {
+            *attempts = attempts.saturating_add(1);
+            if let Some(max) = max_attempts {
+                if *attempts >= max {
+                    let attempt_count = *attempts;
+                    return Err(format!(
+                        "JoinZone({zone_id}): no peer accepted after {attempt_count} attempts; \
+                         leader unreachable or quorum lost on remote zone. Last error: {last_err}",
+                    ));
+                }
+            }
+            Ok(false)
+        }
+    }
+}
+
 /// Bring a zone online — dispatch table for the three bootstrap
 /// branches under the opaque-ID contract.  Generalised over `zone_id`
 /// so the same SSOT machinery serves:
@@ -825,23 +849,22 @@ pub fn bootstrap_or_join_zone(
 
     let mut attempts: u32 = 0;
     loop {
-        let _ = attempt_join_zone_round(
-            zm,
+        let joined = record_join_attempt(
+            attempt_join_zone_round(
+                zm,
+                zone_id,
+                node_id,
+                self_address,
+                peer_addrs,
+                &join_runtime,
+                JOIN_ZONE_RPC_TIMEOUT_SECS,
+            ),
+            &mut attempts,
+            max_attempts,
             zone_id,
-            node_id,
-            self_address,
-            peer_addrs,
-            &join_runtime,
-            JOIN_ZONE_RPC_TIMEOUT_SECS,
-        );
-        attempts = attempts.saturating_add(1);
-        if let Some(max) = max_attempts {
-            if attempts >= max {
-                return Err(format!(
-                    "JoinZone({zone_id}): no peer accepted after {attempts} attempts; \
-                     leader unreachable or quorum lost on remote zone",
-                ));
-            }
+        )?;
+        if joined {
+            return Ok(());
         }
         std::thread::sleep(JOIN_ZONE_RETRY_INTERVAL);
     }
@@ -2059,6 +2082,45 @@ mod tests {
             EmptyStorageBootstrapPlan::JoinPeers,
             "joiners keep the indefinite JoinZone retry behavior",
         );
+    }
+
+    #[test]
+    fn join_retry_loop_stops_after_successful_join() {
+        let mut attempts = 3;
+
+        let joined = record_join_attempt(Ok(()), &mut attempts, None, "root").unwrap();
+
+        assert!(joined, "successful JoinZone must break the retry loop");
+        assert_eq!(
+            attempts, 3,
+            "successful JoinZone must not count as a failed retry",
+        );
+    }
+
+    #[test]
+    fn join_retry_loop_counts_failures_and_honors_max_attempts() {
+        let mut attempts = 0;
+
+        let joined = record_join_attempt(
+            Err("leader unavailable".to_string()),
+            &mut attempts,
+            Some(2),
+            "root",
+        )
+        .unwrap();
+        assert!(!joined);
+        assert_eq!(attempts, 1);
+
+        let err = record_join_attempt(
+            Err("leader still unavailable".to_string()),
+            &mut attempts,
+            Some(2),
+            "root",
+        )
+        .expect_err("second failed attempt should hit max_attempts");
+
+        assert!(err.contains("after 2 attempts"));
+        assert!(err.contains("leader still unavailable"));
     }
 
     // ── BootstrapMode parsing + validation ─────────────────────────────

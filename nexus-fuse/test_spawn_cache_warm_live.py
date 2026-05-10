@@ -67,12 +67,12 @@ def main() -> int:
         setattr(client, "cache_warm", _wrap)  # noqa: B010
 
         # Construct an Ops instance via __new__ so we don't need to satisfy
-        # the rest of __init__'s dependency graph. _spawn_cache_warm only
+        # the rest of __init__'s dependency graph. _kickoff_cache_warm only
         # references its `rust_client` argument and the module-level logger.
         ops = NexusFUSEOperations.__new__(NexusFUSEOperations)
-        ops._spawn_cache_warm(client)
+        ops._kickoff_cache_warm(client)
 
-        # The spawn call must return immediately (non-blocking).
+        # The kickoff call must return immediately (non-blocking).
         # Give the daemon thread up to 10s to actually fire cache_warm.
         if not done.wait(timeout=10.0):
             print("❌ cache_warm was never invoked by the spawned thread")
@@ -83,16 +83,23 @@ def main() -> int:
     print(f"✓ thread invoked cache_warm with {called_with!r}")
     print(f"✓ daemon returned: {stats}")
 
+    # Production trigger uses wait=False, so the daemon returns
+    # `{"started": true}` immediately and the BFS+fetch+admit pipeline
+    # runs as a detached tokio task. Final stats surface via Rust daemon
+    # logs (drained by RustFUSEClient stderr thread) and metrics — they
+    # are NOT in the RPC reply. Verify the kickoff shape.
     if not isinstance(stats, dict):
         print(f"❌ unexpected stats shape: {stats!r}")
         return 1
-    if stats.get("admitted_count", 0) < 2:
-        print(f"❌ expected ≥2 admits, got {stats}")
+    if not stats.get("started"):
+        print(f"❌ expected wait=False kickoff response, got {stats!r}")
         return 1
-    if stats.get("skipped_size", 0) < 1:
-        print(f"❌ expected ≥1 size-skip (the 200 KiB file), got {stats}")
+    # Verify the call_args carry wait=False so the production path is
+    # exercised, not the synchronous test path.
+    args, kwargs = called_with
+    if kwargs.get("wait") is not False:
+        print(f"❌ expected wait=False kwarg, got {called_with!r}")
         return 1
-
     print("\n✅ live spawn-cache-warm test passed")
     return 0
 

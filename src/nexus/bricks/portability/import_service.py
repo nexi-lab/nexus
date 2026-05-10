@@ -340,18 +340,25 @@ class ZoneImportService:
                         progress_callback=progress_callback,
                     )
 
-                # Phase 3: Restore mounts (Issue #4083)
+                # Phase 3: Restore mounts (Issue #4083) — dry_run must NOT
+                # mutate the persisted mount store; reporting only.
                 if _mount_records and options.restore_mounts:
-                    from nexus.bricks.portability.mount_import import import_mounts
+                    if options.dry_run:
+                        logger.info(
+                            "DRY RUN: would restore %d mount(s); skipping save_mount/update_mount",
+                            len(_mount_records),
+                        )
+                    else:
+                        from nexus.bricks.portability.mount_import import import_mounts
 
-                    mount_errors = import_mounts(
-                        mounts=_mount_records,
-                        overrides=options.mount_overrides or {},
-                        mount_manager=self._mount_manager,
-                        target_zone_id=options.target_zone_id,
-                        conflict_mode=options.conflict_mode,
-                    )
-                    result.errors.extend(mount_errors)
+                        mount_errors = import_mounts(
+                            mounts=_mount_records,
+                            overrides=options.mount_overrides or {},
+                            mount_manager=self._mount_manager,
+                            target_zone_id=options.target_zone_id,
+                            conflict_mode=options.conflict_mode,
+                        )
+                        result.errors.extend(mount_errors)
 
         except (MissingCredentialsError, ValueError):
             raise

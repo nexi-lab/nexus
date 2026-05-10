@@ -111,3 +111,37 @@ def test_v3_schema_rejects_placeholder_with_extra_field():
     ]
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(bad, schema)
+
+
+def test_bundle_validate_rejects_v3_manifest_with_unknown_root_key(tmp_path):
+    """BundleReader.validate must reject a v3 manifest with unknown root keys.
+
+    Issue #4083 review: ExportManifest.from_dict drops unknown fields
+    silently, so without explicit JSON-Schema validation a malformed v3
+    manifest passes BundleReader.validate. This test forges a bad
+    manifest, packs it into a tar, and asserts validate() reports the
+    schema error.
+    """
+    pytest.importorskip("jsonschema")
+    import tarfile
+
+    from nexus.bricks.portability.bundle import BundleReader
+
+    bundle_dir = tmp_path / "src"
+    bundle_dir.mkdir()
+    manifest_dict = ExportManifest(source_zone_id="z1").to_dict()
+    manifest_dict["totally_unknown_field"] = "this should fail validation"
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest_dict))
+
+    out = tmp_path / "bad.nexus"
+    with tarfile.open(out, "w:gz") as tar:
+        for p in bundle_dir.rglob("*"):
+            tar.add(p, arcname=p.relative_to(bundle_dir))
+
+    with BundleReader(out) as reader:
+        ok, errors = reader.validate()
+
+    assert not ok
+    assert any(
+        "schema validation failed" in e.lower() or "totally_unknown_field" in e for e in errors
+    ), errors

@@ -85,6 +85,12 @@ class MountResponse(BaseModel):
     mounted: bool
     mount_point: str
     error: str | None = None
+    # Issue #4083: surface persistence-step status separately from kernel
+    # mount activation. The kernel can be `mounted=True` while the
+    # MountManager save step failed — bundle export would then quietly
+    # miss this connector. Operators (and the CLI) need to see the gap.
+    persisted: bool | None = None
+    persist_warning: str | None = None
 
 
 class WriteRequest(BaseModel):
@@ -688,9 +694,16 @@ async def mount_connector(
         # can find it. `add_mount` only registers in the kernel runtime
         # mount table; without this, mounts created via the HTTP API
         # surface as `mount_count=0` in exports — silently invisible.
-        # Best-effort: a save_mount failure shouldn't roll back an
-        # already-active mount, but it does deserve a warning.
+        #
+        # We don't roll back the kernel mount on persist failure: the
+        # caller still gets a working live mount, just not a portable
+        # one. But the response carries `persisted` / `persist_warning`
+        # so the caller (and audit log) sees the gap explicitly rather
+        # than discovering it later via an empty bundle.
+        persisted: bool | None = None
+        persist_warning: str | None = None
         if getattr(mount_svc, "mount_manager", None) is not None:
+            persisted = False
             try:
                 await mount_svc.save_mount(
                     mount_point=req.mount_point,
@@ -698,24 +711,45 @@ async def mount_connector(
                     backend_config=req.config,
                     context=mount_context,
                 )
-            except ValueError:
-                # ValueError = already saved; idempotent retry on the
-                # same mount_point. Activation succeeded so we still
-                # return mounted=True — the persisted record is fine.
-                pass
+                persisted = True
+            except ValueError as dup_exc:
+                # ValueError can mean "mount_point already exists" (the
+                # idempotent-retry case we want to swallow) OR a real
+                # validation failure. Distinguish by message — if it
+                # doesn't look like an existence collision, surface as a
+                # warning so operators don't lose the signal.
+                msg = str(dup_exc).lower()
+                if "exist" in msg or "duplicate" in msg or "already" in msg:
+                    persisted = True  # already in store; treat as success
+                else:
+                    persist_warning = (
+                        f"Mount activated, but persistence rejected the "
+                        f"config: {dup_exc}. Bundle export will not include "
+                        f"this mount until the persistent record is fixed."
+                    )
+                    logger.warning(
+                        "Mount %s activated but save_mount rejected: %s",
+                        req.mount_point,
+                        dup_exc,
+                    )
             except Exception as persist_exc:
-                # Other failures (e.g., metastore write error). Log but
-                # don't fail the response — the kernel mount is live.
-                # Operators relying on portability will see this in logs.
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "Mount activated but config persistence failed for %s: %s",
+                persist_warning = (
+                    f"Mount activated, but persistence failed: {persist_exc}. "
+                    f"Bundle export will not include this mount until the "
+                    f"persistent record is fixed."
+                )
+                logger.warning(
+                    "Mount %s activated but persistence failed: %s",
                     req.mount_point,
                     persist_exc,
                 )
 
-        return MountResponse(mounted=True, mount_point=str(result))
+        return MountResponse(
+            mounted=True,
+            mount_point=str(result),
+            persisted=persisted,
+            persist_warning=persist_warning,
+        )
     except Exception as e:
         return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))
 

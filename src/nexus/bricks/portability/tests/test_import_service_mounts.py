@@ -162,3 +162,25 @@ def test_import_with_mounts_but_no_mount_manager_raises_loud(tmp_path):
     )
     with pytest.raises(ValueError, match="MountManager"):
         _maybe_run(service.import_zone(options))
+
+
+def test_import_with_dry_run_does_not_call_save_mount(tmp_path):
+    """Dry-run import must not mutate MountManager (Issue #4083 review).
+
+    Without this guard, dry-run silently writes mount configs into the
+    persistent store while the CLI prints 'no changes will be made'.
+    """
+    bundle = _build_bundle_with_mount(tmp_path)
+    fs = MagicMock()
+    mgr = MagicMock()
+    mgr.get_mount.return_value = None
+    service = ZoneImportService(fs, mount_manager=mgr)
+
+    options = ZoneImportOptions(
+        bundle_path=bundle,
+        dry_run=True,
+        mount_overrides={"m-1": {"access_key_id": "AKIA", "secret_access_key": "wJalr"}},
+    )
+    _maybe_run(service.import_zone(options))
+    assert mgr.save_mount.call_count == 0, "dry-run must not persist mounts"
+    assert mgr.update_mount.call_count == 0, "dry-run must not update mounts"

@@ -185,3 +185,66 @@ def test_import_mounts_orders_by_path_depth():
     )
     saved_paths = [c.kwargs["mount_point"] for c in mgr.save_mount.call_args_list]
     assert saved_paths.index("/personal") < saved_paths.index("/personal/alice/sub")
+
+
+def test_import_mounts_overwrite_refuses_backend_type_mismatch(redacted_record):
+    """OVERWRITE must refuse to silently swap backend_type on the same path.
+
+    Without this guard, an attacker (or a misconfiguration) could overwrite
+    a path_local mount with an S3 backend_config, leaving the mount_table
+    inconsistent on next restore.
+    """
+    mgr = MagicMock()
+    mgr.get_mount.return_value = {
+        "mount_point": "/personal/alice",
+        "backend_type": "path_local",  # different from redacted_record's path_s3
+        "owner_user_id": "alice",
+    }
+    errors = import_mounts(
+        mounts=[redacted_record],
+        overrides={"m-1": {"access_key_id": "AKIA", "secret_access_key": "wJ"}},
+        mount_manager=mgr,
+        target_zone_id=None,
+        conflict_mode=ConflictMode.OVERWRITE,
+    )
+    assert mgr.update_mount.call_count == 0, "must not silently rewrite backend_type"
+    assert mgr.save_mount.call_count == 0
+    assert any("backend_type mismatch" in e.message for e in errors), [e.message for e in errors]
+
+
+def test_import_mounts_overwrite_refuses_owner_mismatch(redacted_record):
+    """OVERWRITE must refuse to silently rebind ownership."""
+    mgr = MagicMock()
+    mgr.get_mount.return_value = {
+        "mount_point": "/personal/alice",
+        "backend_type": "path_s3",
+        "owner_user_id": "bob",  # different owner
+    }
+    errors = import_mounts(
+        mounts=[redacted_record],
+        overrides={"m-1": {"access_key_id": "AKIA", "secret_access_key": "wJ"}},
+        mount_manager=mgr,
+        target_zone_id=None,
+        conflict_mode=ConflictMode.OVERWRITE,
+    )
+    assert mgr.update_mount.call_count == 0
+    assert any("owner mismatch" in e.message for e in errors), [e.message for e in errors]
+
+
+def test_import_mounts_overwrite_allows_matching_identity(redacted_record):
+    """OVERWRITE with identical backend_type + owner is the legitimate use case."""
+    mgr = MagicMock()
+    mgr.get_mount.return_value = {
+        "mount_point": "/personal/alice",
+        "backend_type": "path_s3",
+        "owner_user_id": "alice",
+    }
+    errors = import_mounts(
+        mounts=[redacted_record],
+        overrides={"m-1": {"access_key_id": "AKIA", "secret_access_key": "wJ"}},
+        mount_manager=mgr,
+        target_zone_id=None,
+        conflict_mode=ConflictMode.OVERWRITE,
+    )
+    assert errors == []
+    assert mgr.update_mount.call_count == 1

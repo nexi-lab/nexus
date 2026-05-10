@@ -239,6 +239,12 @@ class FederationRPCService(FederationRPCMixin):
             mount_overrides=mount_overrides,
         )
         result = service.import_zone(options)
+        # Surface errors and warnings over the wire so the CLI can
+        # exit non-zero (Issue #4083 reviewer finding: mount restore
+        # failures otherwise look like 'Import Complete'). Each
+        # ImportError is a small dataclass; serialize the relevant
+        # fields, not the object itself, to keep the RPC payload
+        # JSON-friendly.
         return {
             "target_zone": target_zone,
             "files_created": result.files_created,
@@ -246,6 +252,15 @@ class FederationRPCService(FederationRPCMixin):
             "files_skipped": result.files_skipped,
             "files_failed": result.files_failed,
             "permissions_imported": result.permissions_imported,
+            "errors": [
+                {
+                    "path": e.path,
+                    "error_type": e.error_type,
+                    "message": e.message,
+                }
+                for e in (result.errors or [])
+            ],
+            "warnings": list(result.warnings or []),
         }
 
     @staticmethod

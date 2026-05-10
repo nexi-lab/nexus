@@ -155,6 +155,46 @@ def import_mounts(
                 )
                 continue
             if conflict_mode == ConflictMode.OVERWRITE:
+                # update_mount only writes backend_config + description.
+                # Refuse the overwrite if the existing mount's identity
+                # (backend_type, owner) doesn't match — silently writing
+                # an S3 backend_config onto a path_local mount, or
+                # rebinding ownership to a different user, would corrupt
+                # the live mount table on next restore. Reviewer flagged
+                # this as a real risk; conflict resolution must not
+                # silently change immutable fields.
+                existing_backend_type = existing.get("backend_type")
+                existing_owner = existing.get("owner_user_id")
+                if existing_backend_type and existing_backend_type != record.backend_type:
+                    errors.append(
+                        ImportError(
+                            path=record.mount_point,
+                            error_type="conflict",
+                            message=(
+                                f"mount {record.mount_point!r} backend_type mismatch: "
+                                f"existing={existing_backend_type!r} bundle={record.backend_type!r}; "
+                                "OVERWRITE refused — remove the mount first or use a different target_zone"
+                            ),
+                        )
+                    )
+                    continue
+                if (
+                    record.owner_user_id is not None
+                    and existing_owner is not None
+                    and existing_owner != record.owner_user_id
+                ):
+                    errors.append(
+                        ImportError(
+                            path=record.mount_point,
+                            error_type="conflict",
+                            message=(
+                                f"mount {record.mount_point!r} owner mismatch: "
+                                f"existing={existing_owner!r} bundle={record.owner_user_id!r}; "
+                                "OVERWRITE refused — remove the mount first to change ownership"
+                            ),
+                        )
+                    )
+                    continue
                 mount_manager.update_mount(
                     mount_point=record.mount_point,
                     backend_config=backend_config,

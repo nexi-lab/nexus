@@ -820,6 +820,20 @@ def import_zone(
         # collision). Per-flag format is MOUNT_ID:FIELD=VALUE so a single
         # override targets one field; the file form is a structured JSON
         # for multi-field overrides without one flag per field.
+        #
+        # SECURITY: --mount-override puts secret values in argv, which
+        # leaks them via shell history, ps aux, audit logs, and CLI
+        # telemetry before they reach the server. Warn loudly and
+        # recommend --mount-overrides-file (which can carry strict file
+        # permissions) for any real credential. The flag remains
+        # supported for tests, scripts, and short-lived rotation keys.
+        if mount_override:
+            console.print(
+                "[nexus.warning]Warning:[/nexus.warning] --mount-override puts "
+                "credentials in argv (visible in shell history, ps aux, audit "
+                "logs). For production secrets, prefer --mount-overrides-file "
+                "with restrictive file permissions (chmod 600)."
+            )
         mount_overrides: dict[str, dict[str, str]] = {}
         for override in mount_override:
             try:
@@ -901,6 +915,23 @@ def import_zone(
             table.add_row("Files failed", f"{data.get('files_failed', 0):,}")
             table.add_row("Permissions imported", f"{data.get('permissions_imported', 0):,}")
             console.print(table)
+
+            # Surface mount-restore errors over the wire. Without this,
+            # the CLI prints "Import Complete" even when mount restore
+            # silently failed for half the bundle (Issue #4083 review).
+            errors = data.get("errors") or []
+            warnings = data.get("warnings") or []
+            for w in warnings[:5]:
+                console.print(f"[nexus.warning]warning:[/nexus.warning] {w}")
+            non_info_errors = [e for e in errors if e.get("error_type") != "info"]
+            if non_info_errors:
+                console.print()
+                console.print("[nexus.error]Errors:[/nexus.error]")
+                for e in non_info_errors[:10]:
+                    console.print(f"  - {e.get('path', '?')}: {e.get('message', '')}")
+                if len(non_info_errors) > 10:
+                    console.print(f"  ... and {len(non_info_errors) - 10} more")
+                sys.exit(1)
             return
 
         # Local-only path kept for offline snapshot restore.

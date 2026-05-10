@@ -97,8 +97,8 @@ class BundleReader:
             if file_obj is None:
                 raise ValueError("Could not read manifest file")
 
-            manifest_data = json.loads(file_obj.read().decode("utf-8"))
-            self._manifest = ExportManifest.from_dict(manifest_data)
+            self._raw_manifest_dict = json.loads(file_obj.read().decode("utf-8"))
+            self._manifest = ExportManifest.from_dict(self._raw_manifest_dict)
             return self._manifest
 
         except KeyError:
@@ -129,6 +129,27 @@ class BundleReader:
         except Exception as e:
             errors.append(f"Invalid manifest: {e}")
             return False, errors
+
+        # Strict JSON-Schema validation against the v3 schema (Issue #4083
+        # reviewer finding: from_dict drops unknown fields, so without
+        # this step a malformed v3 manifest with extra root keys is
+        # silently accepted). Skip if jsonschema isn't installed — the
+        # rest of validate() still runs.
+        try:
+            import jsonschema
+
+            from nexus.bricks.portability.models import MANIFEST_SCHEMA_PATH
+
+            raw = getattr(self, "_raw_manifest_dict", None)
+            if raw is not None and MANIFEST_SCHEMA_PATH.exists():
+                schema = json.loads(MANIFEST_SCHEMA_PATH.read_text())
+                try:
+                    jsonschema.validate(raw, schema)
+                except jsonschema.ValidationError as ve:
+                    errors.append(f"Manifest schema validation failed: {ve.message}")
+        except ImportError:
+            # jsonschema is an optional dep; skip strict validation.
+            pass
 
         # Check required files exist
         members = {m.name for m in self._tar.getmembers()}

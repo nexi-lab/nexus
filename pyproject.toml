@@ -1004,6 +1004,11 @@ ignore_imports = [
     "nexus.bricks.archive.orchestrator -> nexus.bricks.portability.models",
     "nexus.bricks.archive.tests.unit.test_verify -> nexus.bricks.portability.signer",
     "nexus.bricks.archive.verify -> nexus.bricks.portability.signer",
+    # archive.verify -> portability.bundle (Issue #4083): v3 bundles
+    # need BundleReader.validate() inside the same tarfile handle as
+    # the signature check (TOCTOU-safe). Cross-brick exception lives
+    # alongside the existing portability.signer entry above.
+    "nexus.bricks.archive.verify -> nexus.bricks.portability.bundle",
     "nexus.bricks.mcp.connection_manager -> nexus.bricks.approvals.policy_gate",
     "nexus.bricks.mcp.mcp_service -> nexus.bricks.approvals.policy_gate",
     "nexus.bricks.mcp.mount -> nexus.bricks.approvals.models",

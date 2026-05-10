@@ -53,7 +53,7 @@ MANIFEST_FILENAME = "manifest.json"
 DEFAULT_COMPRESSION_LEVEL = 6
 DEFAULT_HASH_ALGORITHM = "sha256"
 MANIFEST_SCHEMA_URL = "https://nexus.io/schemas/manifest-v3.json"
-MANIFEST_SCHEMA_PATH = Path(__file__).parent / "schemas" / "manifest-v1.json"
+MANIFEST_SCHEMA_PATH = Path(__file__).parent / "schemas" / "manifest-v3.json"
 
 
 class ConflictMode(StrEnum):

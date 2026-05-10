@@ -1,10 +1,19 @@
 """Tests for v3 bundle manifest additions."""
 
+import json
+from pathlib import Path
+
+import pytest
+
 from nexus.bricks.portability.models import (
     BUNDLE_FORMAT_VERSION,
     MANIFEST_SCHEMA_URL,
     ExportManifest,
 )
+
+jsonschema = pytest.importorskip("jsonschema")
+
+SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "manifest-v3.json"
 
 
 def test_format_version_is_v3():
@@ -56,3 +65,24 @@ def test_v1_bundle_loads_with_default_mount_count():
     m = ExportManifest.from_dict(legacy_dict)
     assert m.mount_count == 0
     assert m.format_version == "2.0.0"
+
+
+def test_v3_schema_file_exists_and_is_valid_json():
+    text = SCHEMA_PATH.read_text()
+    data = json.loads(text)
+    assert data["$id"].endswith("manifest-v3.json")
+
+
+def test_v3_manifest_validates_against_schema():
+    schema = json.loads(SCHEMA_PATH.read_text())
+    m = ExportManifest(source_zone_id="z1")
+    m.mount_count = 3
+    jsonschema.validate(m.to_dict(), schema)
+
+
+def test_v3_schema_rejects_unknown_root_field():
+    schema = json.loads(SCHEMA_PATH.read_text())
+    bad = ExportManifest(source_zone_id="z1").to_dict()
+    bad["totally_unknown_field"] = "bogus"
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(bad, schema)

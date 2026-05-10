@@ -1542,21 +1542,31 @@ class ContentMixin:
                     )
                 )
             else:
-                # Fallback: Rust batch missed — use sys_write for single file
-                wr = self.sys_write(path, content, context=context)
+                # Fallback: Rust batch missed (new file — doesn't exist in
+                # metastore yet). Use Tier 2 self.write() which composes
+                # create-on-write + sys_write, so new files are created via
+                # route-scoped metastore put. The raw sys_write alone returns
+                # a miss (hit=false) without creating the file (POSIX write(2)
+                # contract: file must already exist).
+                #
+                # self.write() dispatches its own post-hooks for this single
+                # file — the batch post-hook below will also fire, but that
+                # is harmless (write_batch hooks expect per-item metadata
+                # that is already in metadata_list regardless).
+                wr = self.write(path, content, context=context)
                 results.append(
                     {
                         "content_id": wr.get("content_id", ""),
                         "version": wr.get("version", 1),
                         "gen": wr.get("gen", 0),
                         "modified_at": now,
-                        "size": len(content),
+                        "size": wr.get("size", len(content)),
                     }
                 )
                 metadata_list.append(
                     FileMetadata(
                         path=path,
-                        size=len(content),
+                        size=wr.get("size", len(content)),
                         content_id=wr.get("content_id", ""),
                         version=wr.get("version", 1),
                         gen=wr.get("gen", 0),

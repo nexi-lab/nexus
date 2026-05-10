@@ -428,11 +428,6 @@ def main(
             _health_state: dict[str, Any] = (
                 _health_state_raw if _health_state_raw is not None else {"status": "indexing"}
             )
-            # TODO(#4055): wire up rust_client when sandbox-mode FUSE is co-located in this process.
-            # Today rust_client is constructed client-side inside NexusFUSEOperations, not here, so
-            # this resolves to None in production and BootIndexer skips hydration. The plumbing is
-            # in place so a follow-up can supply a real client without touching the bootstrap signature.
-            _rust_client = getattr(nx, "_rust_client", None) or getattr(nx, "rust_client", None)
             bootstrapper = SandboxBootstrapper(
                 workspace=_workspace_path,
                 hub_url=hub_url,
@@ -441,7 +436,6 @@ def main(
                 search_registry=_search_registry,
                 search_daemon=_search_daemon,
                 health_state=_health_state,
-                rust_client=_rust_client,
             )
             bootstrapper.run()
             logger.info(

@@ -320,7 +320,12 @@ mod tests {
         )
         .unwrap();
         Arc::new(
-            FileCache::new_with_config(&format!("http://test-{}.invalid", label), config).unwrap(),
+            FileCache::new_with_config(
+                &format!("http://test-{}.invalid", label),
+                "test-principal",
+                config,
+            )
+            .unwrap(),
         )
     }
 

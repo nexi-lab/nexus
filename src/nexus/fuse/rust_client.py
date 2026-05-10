@@ -169,6 +169,30 @@ class RustFUSEClient:
             "Rust daemon started", socket_path=self.socket_path, pid=self.daemon_process.pid
         )
 
+        # Issue #4055 R3: drain daemon stderr into Python logs so async
+        # cache_warm results, panics, and other log lines surface to
+        # operators. Without this the stderr pipe can block when its OS
+        # buffer fills, AND any daemon-side observability is invisible
+        # to callers (especially with fire-and-forget hydration where the
+        # RPC returns before the work finishes).
+        if self.daemon_process.stderr is not None:
+            import threading as _threading
+
+            def _drain_stderr() -> None:
+                assert self.daemon_process is not None
+                stream = self.daemon_process.stderr
+                if stream is None:
+                    return
+                for raw in iter(stream.readline, ""):
+                    line = raw.rstrip()
+                    if line:
+                        logger.info("[nexus-fuse-daemon] %s", line)
+                stream.close()
+
+            _threading.Thread(
+                target=_drain_stderr, name="nexus-fuse-daemon-stderr", daemon=True
+            ).start()
+
         # Wait a bit for socket to be ready
         for _ in range(50):  # 5 seconds max
             if self.socket_path.exists():

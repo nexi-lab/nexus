@@ -1281,7 +1281,9 @@ mod tests {
             MAX_FILE_SIZE,
         )
         .unwrap();
-        Arc::new(FileCache::new_with_config(&format!("http://{label}.test"), config).unwrap())
+        Arc::new(
+            FileCache::new_with_config(&format!("http://{label}.test"), "test", config).unwrap(),
+        )
     }
 
     #[test]

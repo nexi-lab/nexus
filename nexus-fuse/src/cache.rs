@@ -95,8 +95,13 @@ pub struct CachePaths {
 }
 
 impl CachePaths {
-    pub fn for_server(root_dir: &Path, server_url: &str) -> Self {
-        let hash = server_hash(server_url);
+    /// Build cache paths namespaced by the (server_url, principal) tuple so
+    /// different API keys / tenants on the same Nexus URL never share a
+    /// foyer directory. The `principal` argument is the API key (or any
+    /// stable per-principal identifier) — the value is hashed, never written
+    /// to disk in cleartext, so it doesn't leak credentials. (#4055 R3)
+    pub fn for_server(root_dir: &Path, server_url: &str, principal: &str) -> Self {
+        let hash = principal_hash(server_url, principal);
         Self {
             foyer_dir: root_dir.join(format!("nexus_{hash:016x}.foyer")),
             sqlite_file: root_dir.join(format!("nexus_{hash:016x}.db")),
@@ -105,9 +110,12 @@ impl CachePaths {
     }
 }
 
-fn server_hash(server_url: &str) -> u64 {
+fn principal_hash(server_url: &str, principal: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     server_url.hash(&mut hasher);
+    // Domain-separator so concatenation of (url, principal) is unambiguous.
+    "|".hash(&mut hasher);
+    principal.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -250,16 +258,24 @@ where
 }
 
 impl FileCache {
-    pub fn new(server_url: &str) -> Result<Self> {
-        Self::new_with_config(server_url, CacheConfig::default())
+    pub fn new(server_url: &str, principal: &str) -> Result<Self> {
+        Self::new_with_config(server_url, principal, CacheConfig::default())
     }
 
-    pub fn new_with_config(server_url: &str, config: CacheConfig) -> Result<Self> {
+    /// `principal` is hashed (with `server_url`) into the foyer directory so
+    /// different API keys / tenants on the same Nexus URL never share a
+    /// cache. Pass the API key (or any stable per-principal identifier) —
+    /// the value is only hashed locally, never written in cleartext. (#4055 R3)
+    pub fn new_with_config(
+        server_url: &str,
+        principal: &str,
+        config: CacheConfig,
+    ) -> Result<Self> {
         std::fs::create_dir_all(&config.root_dir).with_context(|| {
             format!("failed to create cache root {}", config.root_dir.display())
         })?;
 
-        let paths = CachePaths::for_server(&config.root_dir, server_url);
+        let paths = CachePaths::for_server(&config.root_dir, server_url, principal);
         migrate_sqlite_file(&paths.sqlite_file);
         if paths.legacy_sqlite_file != paths.sqlite_file {
             migrate_sqlite_file(&paths.legacy_sqlite_file);
@@ -655,9 +671,21 @@ mod tests {
     #[test]
     fn test_cache_paths_are_stable_and_distinct() {
         let root = std::env::temp_dir().join("nexus-fuse-path-test");
-        let a = CachePaths::for_server(&root, "http://a:8080");
-        let b = CachePaths::for_server(&root, "http://a/8080");
+        let a = CachePaths::for_server(&root, "http://a:8080", "principal-x");
+        let b = CachePaths::for_server(&root, "http://a/8080", "principal-x");
 
+        assert_ne!(a.foyer_dir, b.foyer_dir);
+        assert_ne!(a.sqlite_file, b.sqlite_file);
+    }
+
+    #[test]
+    fn test_cache_paths_split_by_principal() {
+        // Same URL, different principals → different cache directories.
+        // Locks the #4055 R3 fix that prevents cross-tenant cache sharing.
+        let root = std::env::temp_dir().join("nexus-fuse-principal-test");
+        let url = "http://nx.test";
+        let a = CachePaths::for_server(&root, url, "alice");
+        let b = CachePaths::for_server(&root, url, "bob");
         assert_ne!(a.foyer_dir, b.foyer_dir);
         assert_ne!(a.sqlite_file, b.sqlite_file);
         assert!(a
@@ -684,12 +712,13 @@ mod tests {
             MAX_FILE_SIZE,
         )
         .unwrap();
-        let paths = CachePaths::for_server(dir.path(), "http://migration.test");
+        let paths = CachePaths::for_server(dir.path(), "http://migration.test", "test");
         std::fs::write(&paths.sqlite_file, b"old sqlite cache").unwrap();
         std::fs::write(paths.sqlite_file.with_extension("db-wal"), b"old wal").unwrap();
         std::fs::write(paths.sqlite_file.with_extension("db-shm"), b"old shm").unwrap();
 
-        let _cache = FileCache::new_with_config("http://migration.test", config).unwrap();
+        let _cache =
+            FileCache::new_with_config("http://migration.test", "test", config).unwrap();
 
         assert!(!paths.sqlite_file.exists());
         assert!(!paths.sqlite_file.with_extension("db-wal").exists());
@@ -708,12 +737,13 @@ mod tests {
             MAX_FILE_SIZE,
         )
         .unwrap();
-        let legacy_file = CachePaths::for_server(dir.path(), server_url).legacy_sqlite_file;
+        let legacy_file =
+            CachePaths::for_server(dir.path(), server_url, "test").legacy_sqlite_file;
         std::fs::write(&legacy_file, b"old sqlite cache").unwrap();
         std::fs::write(legacy_file.with_extension("db-wal"), b"old wal").unwrap();
         std::fs::write(legacy_file.with_extension("db-shm"), b"old shm").unwrap();
 
-        let _cache = FileCache::new_with_config(server_url, config).unwrap();
+        let _cache = FileCache::new_with_config(server_url, "test", config).unwrap();
 
         assert!(!legacy_file.exists());
         assert!(!legacy_file.with_extension("db-wal").exists());
@@ -729,7 +759,7 @@ mod tests {
             MAX_FILE_SIZE,
         )
         .unwrap();
-        FileCache::new_with_config(&format!("http://{label}.test"), config).unwrap()
+        FileCache::new_with_config(&format!("http://{label}.test"), "test", config).unwrap()
     }
 
     fn metric_value(rendered: &str, metric: &str) -> Option<u64> {
@@ -1157,12 +1187,17 @@ mod tests {
         .unwrap();
 
         {
-            let cache =
-                FileCache::new_with_config("http://flush-on-drop.test", config.clone()).unwrap();
+            let cache = FileCache::new_with_config(
+                "http://flush-on-drop.test",
+                "test",
+                config.clone(),
+            )
+            .unwrap();
             cache.put("/persisted.txt", b"persisted", Some("persisted-etag"), 0);
         }
 
-        let cache = FileCache::new_with_config("http://flush-on-drop.test", config).unwrap();
+        let cache =
+            FileCache::new_with_config("http://flush-on-drop.test", "test", config).unwrap();
         match cache.get("/persisted.txt", 0) {
             CacheLookup::Hit(entry) => {
                 assert_eq!(entry.content, b"persisted");

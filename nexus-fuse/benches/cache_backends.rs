@@ -65,7 +65,7 @@ fn foyer_cache(label: &str, memory_bytes: usize) -> FileCache {
     let dir = kept_tempdir_path();
     let config = CacheConfig::new(dir, memory_bytes, 256 * 1024 * 1024, MAX_FILE_SIZE)
         .expect("foyer cache config is valid");
-    FileCache::new_with_config(&format!("http://bench-{label}.test"), config)
+    FileCache::new_with_config(&format!("http://bench-{label}.test"), "bench", config)
         .expect("foyer cache opens")
 }
 
@@ -251,7 +251,7 @@ fn bench_hydration_cold_read(c: &mut Criterion) {
                 )
                 .unwrap();
                 let cache = Arc::new(
-                    nexus_fuse::cache::FileCache::new_with_config(&url, config).unwrap(),
+                    nexus_fuse::cache::FileCache::new_with_config(&url, "bench", config).unwrap(),
                 );
                 let client = NexusClient::new(&url, "k", None).unwrap();
                 let start = std::time::Instant::now();
@@ -282,7 +282,7 @@ fn bench_hydration_cold_read(c: &mut Criterion) {
                 )
                 .unwrap();
                 let cache = Arc::new(
-                    nexus_fuse::cache::FileCache::new_with_config(&url, config).unwrap(),
+                    nexus_fuse::cache::FileCache::new_with_config(&url, "bench", config).unwrap(),
                 );
                 let client = Arc::new(NexusClient::new(&url, "k", None).unwrap());
                 rt.block_on(hydrate_workspace(

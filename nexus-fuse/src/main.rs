@@ -162,8 +162,14 @@ fn build_cache_config(
     )
 }
 
-fn open_file_cache(url: &str, config: cache::CacheConfig) -> Option<Arc<cache::FileCache>> {
-    match cache::FileCache::new_with_config(url, config) {
+fn open_file_cache(
+    url: &str,
+    api_key: &str,
+    config: cache::CacheConfig,
+) -> Option<Arc<cache::FileCache>> {
+    // Hash the api_key into the foyer directory namespace so different
+    // principals on the same Nexus URL never share cache bytes (#4055 R3).
+    match cache::FileCache::new_with_config(url, api_key, config) {
         Ok(cache) => {
             let stats = cache.stats();
             info!(
@@ -234,7 +240,7 @@ fn main() -> anyhow::Result<()> {
             }
 
             let cache_config = build_cache_config(cache_memory_mb, cache_disk_gb, cache_dir)?;
-            let file_cache = open_file_cache(&url, cache_config);
+            let file_cache = open_file_cache(&url, &api_key, cache_config);
 
             // Create filesystem
             let filesystem = fs::NexusFs::new(client, file_cache);
@@ -290,7 +296,7 @@ fn main() -> anyhow::Result<()> {
             });
 
             let cache_config = build_cache_config(cache_memory_mb, cache_disk_gb, cache_dir)?;
-            let file_cache = open_file_cache(&url, cache_config);
+            let file_cache = open_file_cache(&url, &api_key, cache_config);
 
             let config = daemon::DaemonConfig {
                 socket_path,

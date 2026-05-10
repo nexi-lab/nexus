@@ -116,6 +116,7 @@ class NexusFUSEOperations(Operations):
                         nexus_url=nexus_url, api_key=api_key, agent_id=agent_id
                     )
                     logger.info("[FUSE] Rust daemon ready")
+                    self._spawn_cache_warm(rust_client)
                 else:
                     logger.warning(
                         "[FUSE] --use-rust requires REMOTE profile NexusFS. Falling back to Python."
@@ -256,6 +257,24 @@ class NexusFUSEOperations(Operations):
     @open_files.setter
     def open_files(self, value: dict[int, dict[str, Any]]) -> None:
         self._ctx.open_files = value
+
+    def _spawn_cache_warm(self, rust_client: Any) -> None:
+        """Trigger eager L1 cache hydration in a daemon thread (Issue #4055).
+
+        Runs once at FUSE mount. Must not block mount setup, so a daemon thread
+        owns the RPC. Errors are logged at warning level and never propagate —
+        a hydration failure should never break the mount itself.
+        """
+        import threading
+
+        def _run() -> None:
+            try:
+                stats = rust_client.cache_warm("/")
+                logger.info("[FUSE] Cache hydration: %s", stats)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[FUSE] Cache hydration failed: %s", exc)
+
+        threading.Thread(target=_run, name="FUSEHydrate", daemon=True).start()
 
     @property
     def _files_lock(self) -> Any:

@@ -131,3 +131,21 @@ def test_placeholder_field_dotted_path_is_predictable():
     config = {"access_key_id": "AKIA"}
     _, placeholders = redact_config("path_s3", config, mount_id="m-1")
     assert placeholders[0].field == "mounts.m-1.access_key_id"
+
+
+def test_audit_safe_field_passes_audit():
+    """ConnectionArg(audit_safe=True) on a secret-shaped name silences the audit."""
+    from unittest.mock import patch
+
+    from nexus.extensions.types import ArgType, ConnectionArg
+
+    fake_args = {
+        "secret_path": ConnectionArg(
+            type=ArgType.PATH,
+            description="path to a secrets dir, not a secret value",
+            audit_safe=True,
+        ),
+    }
+
+    with patch("nexus.bricks.portability.redaction._get_connection_args", return_value=fake_args):
+        assert audit_backend("fake") == []

@@ -63,12 +63,19 @@ def audit_backend(backend_type: str) -> list[str]:
     Empty list = backend passes audit. Non-empty = export must abort.
     Returns [] for backends whose connector class hasn't loaded (no audit possible
     until the optional extra is installed; the audit test skips those entries).
+
+    Escape hatch: set ``audit_safe=True`` on a ``ConnectionArg`` to suppress the
+    heuristic for a provably non-sensitive field whose name happens to match the
+    secret-shape regex (e.g. ``token_manager_db`` is a filesystem path, not a
+    credential). Document the reason in the field's description.
     """
     args = _get_connection_args(backend_type)
     return [
         name
         for name, arg in args.items()
-        if SECRET_SHAPED.search(name) and not getattr(arg, "secret", False)
+        if SECRET_SHAPED.search(name)
+        and not getattr(arg, "secret", False)
+        and not getattr(arg, "audit_safe", False)
     ]
 
 

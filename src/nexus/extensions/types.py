@@ -35,6 +35,12 @@ class ConnectionArg:
     required: bool = True
     default: Any = None
     secret: bool = False
+    audit_safe: bool = False
+    """Mark `True` when a non-secret field's name matches the secret-shape heuristic
+    (key/secret/token/password/cred) but the value is provably non-sensitive.
+    The portability redaction audit (Issue #4083) uses this to allow declared
+    false positives without weakening the heuristic. Use sparingly and document
+    the reason in the ConnectionArg description."""
     env_var: str | None = None
     config_key: str | None = None
 
@@ -45,6 +51,7 @@ class ConnectionArg:
             "required": self.required,
             "default": self.default,
             "secret": self.secret,
+            "audit_safe": self.audit_safe,
             "env_var": self.env_var,
         }
         if self.config_key is not None:

@@ -31,6 +31,15 @@ pub const DEFAULT_DISK_CACHE_BYTES: usize = 10 * 1024 * 1024 * 1024;
 /// Maximum file size to cache (10 MiB) - larger files bypass cache.
 pub const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
 
+/// Maximum file size to eagerly hydrate during workspace attach (128 KiB).
+pub const HYDRATE_SMALL_FILE_BYTES: usize = 128 * 1024;
+
+/// Total bytes admitted per hydration call (default 64 MiB).
+pub const HYDRATE_TOTAL_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+
+/// Default concurrent backend fetches during hydration.
+pub const HYDRATE_CONCURRENCY: usize = 8;
+
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
     pub root_dir: PathBuf,
@@ -513,6 +522,22 @@ impl FileCache {
         record.cached_at_secs = Self::now();
         self.cache.insert(path.to_string(), record.clone());
         self.update_metadata(path, &record);
+    }
+
+    /// Returns true if `path` has a cached entry whose age is within MAX_CACHE_AGE_SECS.
+    ///
+    /// This is the hydration warmth probe — used to skip files that already have
+    /// fresh cache entries. Reads only the in-memory metadata; does not touch foyer.
+    pub fn is_warm(&self, path: &str) -> bool {
+        let metadata = match self.metadata.lock() {
+            Ok(m) => m,
+            Err(_) => return false,
+        };
+        let Some(meta) = metadata.get(path) else {
+            return false;
+        };
+        let now = Self::now();
+        now.saturating_sub(meta.cached_at_secs) <= MAX_CACHE_AGE_SECS
     }
 
     pub fn invalidate(&self, path: &str) {
@@ -1145,5 +1170,41 @@ mod tests {
             }
             _ => panic!("Expected cache hit after drop and reopen"),
         }
+    }
+
+    #[test]
+    fn test_hydrate_constants_have_expected_values() {
+        assert_eq!(HYDRATE_SMALL_FILE_BYTES, 128 * 1024);
+        assert_eq!(HYDRATE_TOTAL_BUDGET_BYTES, 64 * 1024 * 1024);
+        assert_eq!(HYDRATE_CONCURRENCY, 8);
+    }
+
+    #[test]
+    fn test_is_warm_returns_false_for_unknown_path() {
+        let cache = test_cache("is_warm_unknown");
+        assert!(!cache.is_warm("/nope.txt"));
+    }
+
+    #[test]
+    fn test_is_warm_returns_true_after_put() {
+        let cache = test_cache("is_warm_after_put");
+        cache.put("/a.txt", b"hello", Some("etag-1"));
+        assert!(cache.is_warm("/a.txt"));
+    }
+
+    #[test]
+    fn test_is_warm_returns_false_for_aged_entry() {
+        let cache = test_cache("is_warm_aged");
+        cache.put("/old.txt", b"x", Some("etag-old"));
+        {
+            let mut metadata = cache.metadata.lock().unwrap();
+            let meta = metadata.get_mut("/old.txt").expect("entry should exist");
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            meta.cached_at_secs = now.saturating_sub(MAX_CACHE_AGE_SECS + 1);
+        }
+        assert!(!cache.is_warm("/old.txt"));
     }
 }

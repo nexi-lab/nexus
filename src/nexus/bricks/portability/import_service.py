@@ -322,26 +322,15 @@ class ZoneImportService:
                         options.target_zone_id,
                     )
 
-                # Phase 1: Import file metadata and content
-                self._import_files(
-                    reader=reader,
-                    options=options,
-                    result=result,
-                    manifest_file_count=manifest.file_count,
-                    progress_callback=progress_callback,
-                )
-
-                # Phase 2: Import permissions (if enabled)
-                if options.import_permissions and manifest.include_permissions:
-                    self._import_permissions(
-                        reader=reader,
-                        options=options,
-                        result=result,
-                        progress_callback=progress_callback,
-                    )
-
-                # Phase 3: Restore mounts (Issue #4083) — dry_run must NOT
-                # mutate the persisted mount store; reporting only.
+                # Phase 1: Restore mounts FIRST (Issue #4083, round-10
+                # reviewer finding). Mount restore must run before file
+                # import — a bundle can carry files at paths that lie
+                # under a restored mount (e.g., /personal/alice/foo.txt
+                # where /personal/alice is a mount). If file import runs
+                # first, those writes go to the wrong (default/raft)
+                # backend, then the restored mount shadows them and
+                # reads point at an external backend that never received
+                # the content. dry_run still skips persistence.
                 if _mount_records and options.restore_mounts:
                     if options.dry_run:
                         logger.info(
@@ -359,6 +348,25 @@ class ZoneImportService:
                             conflict_mode=options.conflict_mode,
                         )
                         result.errors.extend(mount_errors)
+
+                # Phase 2: Import file metadata and content (now routed
+                # through restored mounts where applicable).
+                self._import_files(
+                    reader=reader,
+                    options=options,
+                    result=result,
+                    manifest_file_count=manifest.file_count,
+                    progress_callback=progress_callback,
+                )
+
+                # Phase 3: Import permissions (if enabled).
+                if options.import_permissions and manifest.include_permissions:
+                    self._import_permissions(
+                        reader=reader,
+                        options=options,
+                        result=result,
+                        progress_callback=progress_callback,
+                    )
 
         except (MissingCredentialsError, ValueError):
             raise

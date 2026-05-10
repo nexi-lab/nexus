@@ -204,3 +204,49 @@ def test_import_with_dry_run_does_not_call_save_mount(tmp_path):
     _maybe_run(service.import_zone(options))
     assert mgr.save_mount.call_count == 0, "dry-run must not persist mounts"
     assert mgr.update_mount.call_count == 0, "dry-run must not update mounts"
+
+
+def test_import_restores_mounts_before_file_import(tmp_path, monkeypatch):
+    """Round-10 reviewer finding: file import must happen AFTER mount
+    restore so files at paths under restored mounts (e.g.,
+    /personal/alice/foo.txt where /personal/alice is a mount) route to
+    the restored backend, not the default. We assert ordering by
+    instrumenting both the mount manager and the file-import method:
+    save_mount must be called before _import_files runs.
+    """
+    bundle = _build_bundle_with_mount(tmp_path)
+    fs = MagicMock()
+    mgr = MagicMock()
+    mgr.get_mount.return_value = None
+
+    # Track call order across the two side-effects.
+    call_order: list[str] = []
+
+    def _save_mount_spy(*_args: object, **_kwargs: object) -> str:
+        call_order.append("save_mount")
+        return "m-1"
+
+    mgr.save_mount.side_effect = _save_mount_spy
+
+    service = ZoneImportService(fs, mount_manager=mgr)
+
+    # Patch _import_files on the class via monkeypatch so observability
+    # doesn't require touching the typed instance attribute. The patched
+    # method is a no-op (None return) — we only care that it was called
+    # and in what order relative to save_mount.
+    def _spy(_self: object, *_args: object, **_kwargs: object) -> None:
+        call_order.append("import_files")
+
+    monkeypatch.setattr(ZoneImportService, "_import_files", _spy)
+
+    options = ZoneImportOptions(
+        bundle_path=bundle,
+        mount_overrides={"m-1": {"access_key_id": "AKIA", "secret_access_key": "wJalr"}},
+    )
+    _maybe_run(service.import_zone(options))
+
+    assert "save_mount" in call_order, "save_mount was not called"
+    assert "import_files" in call_order, "_import_files was not called"
+    assert call_order.index("save_mount") < call_order.index("import_files"), (
+        f"Expected save_mount before import_files, got: {call_order}"
+    )

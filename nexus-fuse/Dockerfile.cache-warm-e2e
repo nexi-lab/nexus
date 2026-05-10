@@ -41,18 +41,23 @@ RUN pip install maturin && \
     pip install -e .
 
 # Build the standalone nexus-fuse Rust daemon (separate workspace).
-RUN cd nexus-fuse && cargo build --release --bin nexus-fuse && \
-    cp target/release/nexus-fuse /usr/local/bin/nexus-fuse && \
+# CARGO_TARGET_DIR=/app/target is exported above, so the artifact lands there
+# rather than in nexus-fuse/target/. Override locally for this build.
+RUN cd nexus-fuse && \
+    CARGO_TARGET_DIR=/app/nexus-fuse-target cargo build --release --bin nexus-fuse && \
+    cp /app/nexus-fuse-target/release/nexus-fuse /usr/local/bin/nexus-fuse && \
     chmod +x /usr/local/bin/nexus-fuse
 
-ENV PATH="/usr/local/bin:${PATH}"
+ENV PATH="/usr/local/bin:${PATH}" \
+    NEXUS_FUSE_BINARY=/usr/local/bin/nexus-fuse
 
 RUN pip install fusepy
 
+# Pre-run cargo tests during build so each `docker run` is fast.
+RUN cd nexus-fuse && \
+    CARGO_TARGET_DIR=/app/nexus-fuse-target cargo test --release --lib hydrate
+
 CMD ["bash", "-c", "set -e; \
-  echo '== nexus-fuse cargo test --lib hydrate =='; \
-  (cd nexus-fuse && cargo test --release --lib hydrate); \
-  echo; \
   echo '== test_cache_warm.py =='; \
   python nexus-fuse/test_cache_warm.py; \
   echo; \

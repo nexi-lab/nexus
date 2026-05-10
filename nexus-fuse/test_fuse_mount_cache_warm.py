@@ -22,6 +22,12 @@ import sys
 import time
 from pathlib import Path
 
+# Preload nexus_runtime before any other native module so it claims its TLS
+# slots first. Without this, on aarch64 Linux the import can fail with
+# "cannot allocate memory in static TLS block" when fusepy / criterion / etc.
+# load first and exhaust the static TLS pool.
+import nexus_runtime  # noqa: F401  (must be first)
+
 
 def _wait_until(predicate, timeout: float, interval: float = 0.1) -> bool:
     deadline = time.monotonic() + timeout

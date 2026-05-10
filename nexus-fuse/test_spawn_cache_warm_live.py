@@ -33,7 +33,10 @@ def main() -> int:
 
     nexus_url = os.environ.get("NEXUS_URL", "http://localhost:2026")
     api_key = os.environ.get("NEXUS_API_KEY", "sk-test-key-123")
-    rust_binary = str(Path(__file__).parent / "target/debug/nexus-fuse")
+    rust_binary = os.environ.get(
+        "NEXUS_FUSE_BINARY",
+        str(Path(__file__).parent / "target/debug/nexus-fuse"),
+    )
     print(f"nexus_url={nexus_url}")
 
     # Capture the daemon-thread output.

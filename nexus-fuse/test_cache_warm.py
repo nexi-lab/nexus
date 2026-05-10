@@ -20,7 +20,10 @@ from nexus.fuse.rust_client import RustFUSEClient
 
 def main() -> int:
     print("🧪 Testing cache_warm round-trip\n")
-    rust_binary = str(Path(__file__).parent / "target/debug/nexus-fuse")
+    rust_binary = os.environ.get(
+        "NEXUS_FUSE_BINARY",
+        str(Path(__file__).parent / "target/debug/nexus-fuse"),
+    )
     nexus_url = os.environ.get("NEXUS_URL", "http://localhost:2026")
     api_key = os.environ.get("NEXUS_API_KEY", "sk-test-key-123")
     print(f"nexus_url={nexus_url}")

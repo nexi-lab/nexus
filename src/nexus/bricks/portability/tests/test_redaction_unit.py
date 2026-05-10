@@ -126,6 +126,31 @@ def test_redact_config_audit_failure_raises():
         assert "my_token" in exc.value.fields
 
 
+def test_redact_config_unknown_backend_raises():
+    """Refusing to ship a mount whose CONNECTION_ARGS contract is unknown.
+
+    Without this guard, a slim install (where e.g. boto3 isn't installed and
+    path_s3 isn't loaded) would silently produce a bundle with cleartext S3
+    credentials because the registry returns no secret-fields set. The export
+    must abort instead.
+    """
+    with patch(
+        "nexus.bricks.portability.redaction._get_connection_args",
+        return_value={},
+    ):
+        with pytest.raises(SensitiveFieldNotDeclaredError) as exc:
+            redact_config(
+                "path_s3",
+                {"access_key_id": "AKIA-LIVE", "bucket_name": "acme"},
+                mount_id="m-1",
+            )
+        # Sorted for deterministic output; offending fields are surfaced so
+        # the operator knows what was about to leak.
+        assert exc.value.fields == ["access_key_id", "bucket_name"]
+        assert "path_s3" in exc.value.backend_type
+        assert "install the matching extra" in exc.value.backend_type
+
+
 def test_placeholder_field_dotted_path_is_predictable():
     pytest.importorskip("boto3")
     _ensure_registry()

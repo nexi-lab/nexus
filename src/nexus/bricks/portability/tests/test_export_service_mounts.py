@@ -55,8 +55,14 @@ def test_include_mounts_true_with_mount_manager_calls_collect_and_write(tmp_path
         {
             "mount_id": "m1",
             "mount_point": "/data",
-            "backend_type": "local",
-            "backend_config": {},
+            # path_local is in CONNECTOR_MANIFEST as an always-available
+            # built-in (no extras), so its CONNECTION_ARGS resolves cleanly
+            # in the redaction contract. Using a fake string like "local"
+            # would now (correctly) trigger SensitiveFieldNotDeclaredError
+            # because we refuse to ship a mount whose contract we can't
+            # introspect (Issue #4083 follow-up).
+            "backend_type": "path_local",
+            "backend_config": {"root_path": "/var/data"},
             "owner_user_id": "u1",
             "zone_id": "z3",
             "description": "test mount",

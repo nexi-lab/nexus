@@ -48,10 +48,23 @@ def _get_connection_args(backend_type: str) -> dict[str, Any]:
     Note: similar to ConnectorRegistry.get_connection_args, but kept local so
     tests can patch this single function to inject fake CONNECTION_ARGS without
     monkey-patching the global registry.
+
+    Forces ``_register_optional_backends()`` once at first call. Without this
+    the registry only contains backends imported by other code paths so far
+    (often just ``cas_local`` and ``path_local`` in a fresh server process),
+    and ``ConnectorRegistry.get_info("path_s3")`` would raise ``KeyError`` —
+    which would surface to the operator as ``Unknown connector 'path_s3'``
+    instead of either a clean redaction or an honest "extra not installed"
+    skip. The registration is idempotent; subsequent calls are a no-op.
     """
+    from nexus.backends import _register_optional_backends
     from nexus.backends.base.registry import ConnectorRegistry
 
-    info = ConnectorRegistry.get_info(backend_type)
+    _register_optional_backends()
+    try:
+        info = ConnectorRegistry.get_info(backend_type)
+    except KeyError:
+        return {}
     cls = info.connector_class
     args = getattr(cls, "CONNECTION_ARGS", {}) or {} if cls is not None else {}
     if args:
@@ -59,10 +72,13 @@ def _get_connection_args(backend_type: str) -> dict[str, Any]:
 
     # Fallback: extension-store manifest (Slack uses this path).
     try:
+        from nexus.extensions.manifest import ConnectorManifest
         from nexus.extensions.store import get_store
 
         manifest = get_store().get(backend_type, "connector")
-        if manifest is not None:
+        # The store can return non-connector kinds; only ConnectorManifest
+        # carries `connection_args` — narrow before access.
+        if isinstance(manifest, ConnectorManifest):
             return dict(manifest.connection_args or {})
     except Exception:
         # Extension store may not be initialised in all test contexts.
@@ -118,8 +134,28 @@ def redact_config(
         skipped (no placeholder generated for a field that's None).
 
     Raises:
-        SensitiveFieldNotDeclaredError: if audit_backend(backend_type) is non-empty.
+        SensitiveFieldNotDeclaredError: if audit_backend(backend_type) is non-empty
+            (a real leak — backend has a secret-shaped field not marked secret/
+            audit_safe), OR if the backend's CONNECTION_ARGS cannot be resolved
+            (registry doesn't know it, or its connector class failed to import
+            for missing optional extras). The latter is treated as a leak risk:
+            we cannot confidently strip a contract we can't introspect, so the
+            export is refused rather than silently shipping cleartext credentials.
     """
+    args = _get_connection_args(backend_type)
+    if not args:
+        # Backend not in registry, or connector class failed to import (e.g.,
+        # boto3 not installed on a slim server). We can't introspect the
+        # CONNECTION_ARGS contract, so we don't know which fields are secret —
+        # refuse the export rather than ship cleartext credentials. Operators
+        # see the offending fields in the error so they can install the
+        # missing extra (e.g., `pip install nexus-fs[s3]`) and retry.
+        raise SensitiveFieldNotDeclaredError(
+            backend_type=f"{backend_type} (CONNECTION_ARGS not loadable; "
+            f"install the matching extra so the redaction contract resolves)",
+            fields=sorted(config.keys()),
+        )
+
     leaks = audit_backend(backend_type)
     if leaks:
         raise SensitiveFieldNotDeclaredError(backend_type=backend_type, fields=leaks)

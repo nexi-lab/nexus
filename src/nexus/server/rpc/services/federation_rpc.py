@@ -98,6 +98,7 @@ class FederationRPCService(FederationRPCMixin):
         strip_credentials: bool = False,
         after_time: str | None = None,
         before_time: str | None = None,
+        include_mounts: bool = False,
     ) -> dict[str, Any]:
         """Export a raft-backed zone to a .nexus bundle on the server's
         filesystem.
@@ -115,6 +116,10 @@ class FederationRPCService(FederationRPCMixin):
         ``nexus archive create`` (#3793). Signing key is loaded from the
         server's ``~/.nexus/archive_signing_key`` (auto-generated on
         first use, TOFU trust model).
+
+        ``include_mounts`` (Issue #4083) opt-in serializes mount configs
+        into ``mounts.jsonl``; secret fields (per ConnectionArg.secret)
+        are replaced with ``${MOUNT_<id>_<FIELD>}`` placeholders.
         """
         from datetime import datetime
         from pathlib import Path
@@ -124,7 +129,8 @@ class FederationRPCService(FederationRPCMixin):
         nx = self._nexus_fs
         if nx is None:
             raise RuntimeError("federation_export_zone: no NexusFS attached")
-        service = ZoneExportService(nx)
+        mount_manager = self._build_mount_manager(nx) if include_mounts else None
+        service = ZoneExportService(nx, mount_manager=mount_manager)
         options = ZoneExportOptions(
             output_path=Path(output_path),
             include_content=include_content,
@@ -136,6 +142,7 @@ class FederationRPCService(FederationRPCMixin):
             strip_credentials=strip_credentials,
             after_time=datetime.fromisoformat(after_time) if after_time else None,
             before_time=datetime.fromisoformat(before_time) if before_time else None,
+            include_mounts=include_mounts,
         )
         manifest = service.export_zone(zone_id, options)
         return {
@@ -144,6 +151,7 @@ class FederationRPCService(FederationRPCMixin):
             "file_count": manifest.file_count,
             "total_size_bytes": manifest.total_size_bytes,
             "bundle_id": manifest.bundle_id,
+            "mount_count": manifest.mount_count,
         }
 
     @rpc_expose(admin_only=True)
@@ -159,6 +167,8 @@ class FederationRPCService(FederationRPCMixin):
         rebuild_embeddings: bool = False,
         injections: dict[str, str] | None = None,
         require_no_placeholders: bool = True,
+        restore_mounts: bool = True,
+        mount_overrides: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Import a zone bundle from the server's filesystem.
 
@@ -169,6 +179,11 @@ class FederationRPCService(FederationRPCMixin):
         The ``force``/``rebuild_embeddings``/``injections``/
         ``require_no_placeholders`` parameters drive the v2 archive
         restore features used by ``nexus archive restore`` (#3793).
+
+        ``restore_mounts``/``mount_overrides`` (Issue #4083): when the
+        bundle contains ``mounts.jsonl``, every redacted field requires
+        a value in ``mount_overrides[mount_id][field_name]`` or the
+        import raises ``MissingCredentialsError`` before any side effect.
         """
         from pathlib import Path
 
@@ -207,7 +222,8 @@ class FederationRPCService(FederationRPCMixin):
             except Exception as e:
                 if "already" not in str(e).lower() and "exists" not in str(e).lower():
                     raise
-        service = ZoneImportService(nx)
+        mount_manager = self._build_mount_manager(nx) if restore_mounts else None
+        service = ZoneImportService(nx, mount_manager=mount_manager)
         options = ZoneImportOptions(
             bundle_path=Path(bundle_path),
             target_zone_id=target_zone,
@@ -219,6 +235,8 @@ class FederationRPCService(FederationRPCMixin):
             rebuild_embeddings=rebuild_embeddings,
             injections=injections or {},
             require_no_placeholders=require_no_placeholders,
+            restore_mounts=restore_mounts,
+            mount_overrides=mount_overrides,
         )
         result = service.import_zone(options)
         return {
@@ -229,6 +247,22 @@ class FederationRPCService(FederationRPCMixin):
             "files_failed": result.files_failed,
             "permissions_imported": result.permissions_imported,
         }
+
+    @staticmethod
+    def _build_mount_manager(nx: Any) -> Any:
+        """Construct a MountManager from a NexusFS handle.
+
+        Mirrors the wiring in factory/_wired.py — MetastoreMountStore
+        writes through public VFS syscalls, so a live NexusFS is the only
+        dependency. Built lazily because the federation RPC service does
+        not normally hold a MountManager handle (it doesn't take one in
+        __init__), and we only need it when the caller opted into mount
+        export / import.
+        """
+        from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
+        from nexus.bricks.mount.mount_manager import MountManager
+
+        return MountManager(MetastoreMountStore(nx))
 
     # ── Zone lifecycle ─────────────────────────────────────────────
 

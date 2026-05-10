@@ -93,8 +93,12 @@ def _build_fs(entries: list[_FakeMeta]) -> NexusFS:
     fs._kernel = kernel
     # NexusFS reads ``self._zone_id`` for zone-scoped listing; default to root.
     from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.types import OperationContext
 
     fs._zone_id = ROOT_ZONE_ID
+    # Issue #4081: sys_readdir resolves caller agent_id for OP-event emission
+    # via _get_context_identity → _resolve_cred → self._init_cred.
+    fs._init_cred = OperationContext(user_id="test", groups=[], zone_id=ROOT_ZONE_ID)
     return fs
 
 
@@ -171,6 +175,10 @@ class _FakeCtx:
     def __init__(self, zone_id: str | None, is_admin: bool = False) -> None:
         self.zone_id = zone_id
         self.is_admin = is_admin
+        # Issue #4081: sys_readdir resolves agent_id for OP-event emission;
+        # the filter tests don't care about subject identity, but the field
+        # must exist.
+        self.agent_id = None
 
 
 class TestSysReaddirZoneFilter:

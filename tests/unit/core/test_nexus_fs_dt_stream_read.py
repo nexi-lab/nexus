@@ -36,6 +36,17 @@ class _StubFS:
     def _build_rust_ctx(self, context, is_admin):
         return SimpleNamespace(zone_id=self._zone_id, is_admin=is_admin)
 
+    def _get_context_identity(self, context):
+        # Issue #4081: sys_read hoists this call out of the post_hook block
+        # so the OP emit can reuse the resolved agent_id. The stub returns
+        # init_cred values; tests don't depend on a real subject identity.
+        ctx = context or self._init_cred
+        return (
+            getattr(ctx, "zone_id", self._zone_id),
+            getattr(ctx, "agent_id", None),
+            getattr(ctx, "is_admin", False),
+        )
+
     @contextlib.contextmanager
     def _vfs_locked(self, path, mode):
         yield

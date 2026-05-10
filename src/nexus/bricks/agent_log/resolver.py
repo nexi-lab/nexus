@@ -67,7 +67,8 @@ class AgentLogResolver:
         caller_agent, is_admin = _caller_identity(context)
         if not is_admin and caller_agent != path_agent:
             return None
-        return store.read_path(path)
+        data: bytes = store.read_path(path)
+        return data
 
     def try_list(
         self, path: str, *, context: Any = None, recursive: bool = False

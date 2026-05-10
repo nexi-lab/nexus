@@ -6,6 +6,11 @@ description = "High-performance FUSE client for Nexus filesystem"
 license = "Apache-2.0"
 repository = "https://github.com/nexi-lab/nexus"
 
+# Stand-alone single-package workspace so cargo doesn't traverse upward into
+# the parent Cargo.toml — required when the crate is checked out inside a
+# git worktree that lives under the parent repo (e.g., .claude/worktrees/*).
+[workspace]
+
 [dependencies]
 # FUSE filesystem
 fuser = "0.17"

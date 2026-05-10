@@ -1188,14 +1188,14 @@ mod tests {
     #[test]
     fn test_is_warm_returns_true_after_put() {
         let cache = test_cache("is_warm_after_put");
-        cache.put("/a.txt", b"hello", Some("etag-1"));
+        cache.put("/a.txt", b"hello", Some("etag-1"), 0);
         assert!(cache.is_warm("/a.txt"));
     }
 
     #[test]
     fn test_is_warm_returns_false_for_aged_entry() {
         let cache = test_cache("is_warm_aged");
-        cache.put("/old.txt", b"x", Some("etag-old"));
+        cache.put("/old.txt", b"x", Some("etag-old"), 0);
         {
             let mut metadata = cache.metadata.lock().unwrap();
             let meta = metadata.get_mut("/old.txt").expect("entry should exist");

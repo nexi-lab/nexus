@@ -1219,6 +1219,7 @@ class MountRecord:
     description: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSONL serialization."""
         return {
             "mount_id": self.mount_id,
             "mount_point": self.mount_point,
@@ -1230,7 +1231,8 @@ class MountRecord:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MountRecord":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        """Create from dictionary."""
         return cls(
             mount_id=data["mount_id"],
             mount_point=data["mount_point"],

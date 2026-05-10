@@ -43,6 +43,11 @@ dependencies = [
     # Configuration
     "pydantic[email]>=2.13.4",
     "pyyaml>=6.0.3",
+    # Schema validation — required by archive verify (Issue #4083)
+    # to validate v3 portability bundles against manifest-v3.json
+    # before trusting mounts.jsonl checksums. Direct dep so slim
+    # wheels still verify correctly.
+    "jsonschema>=4.20.0",
     # HTTP client (for remote mode)
     "httpx[http2]>=0.28.1",
     "requests>=2.33.1",

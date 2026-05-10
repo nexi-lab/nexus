@@ -44,14 +44,36 @@ class BundleReader:
                 print(record.virtual_path)
     """
 
-    def __init__(self, bundle_path: Path | str):
+    def __init__(
+        self,
+        bundle_path: Path | str | None = None,
+        *,
+        tar: tarfile.TarFile | None = None,
+    ):
         """Initialize bundle reader.
 
         Args:
-            bundle_path: Path to .nexus bundle file
+            bundle_path: Path to .nexus bundle file. Mutually exclusive
+                with `tar`.
+            tar: Already-open tarfile.TarFile. Use this when the caller
+                already has the bundle open (e.g., archive.verify_archive
+                wants to perform integrity checks on the same handle as
+                the signature check, avoiding a TOCTOU window between
+                two open() calls on the same path — round-8 finding).
+                When provided, `close()` is a no-op (caller owns the
+                handle).
         """
-        self.bundle_path = Path(bundle_path)
-        self._tar: tarfile.TarFile | None = None
+        if (bundle_path is None) == (tar is None):
+            raise ValueError("Pass exactly one of bundle_path or tar")
+        if tar is not None:
+            self.bundle_path = Path(getattr(tar, "name", "") or "<unnamed-tar>")
+            self._tar: tarfile.TarFile | None = tar
+            self._owns_tar = False
+        else:
+            assert bundle_path is not None
+            self.bundle_path = Path(bundle_path)
+            self._tar = None
+            self._owns_tar = True
         self._manifest: ExportManifest | None = None
         self._raw_manifest_dict: dict[str, Any] | None = None
 
@@ -89,14 +111,18 @@ class BundleReader:
 
     def open(self) -> None:
         """Open the bundle file for reading."""
+        # If the caller passed a tarfile to __init__, keep using it —
+        # don't re-open by path (TOCTOU window).
+        if self._tar is not None:
+            return
         if not self.bundle_path.exists():
             raise FileNotFoundError(f"Bundle not found: {self.bundle_path}")
 
         self._tar = tarfile.open(self.bundle_path, mode="r:gz")  # noqa: SIM115
 
     def close(self) -> None:
-        """Close the bundle file."""
-        if self._tar is not None:
+        """Close the bundle file (only if we own the handle)."""
+        if self._tar is not None and self._owns_tar:
             self._tar.close()
             self._tar = None
 

@@ -84,6 +84,10 @@ def verify_archive(file: Path, *, strict: bool = False) -> None:
         ArchiveSignatureError: Signature verification failed.
     """
     with tarfile.open(file, "r:gz") as tar:
+        # Defense against TOCTOU on `file` (round-8 reviewer finding):
+        # all integrity checks below — manifest read, signature verify,
+        # AND the v3 BundleReader.validate() at the end — operate on
+        # THIS handle. Do not re-open by path.
         names = tar.getnames()
 
         if "manifest.json" not in names:
@@ -136,23 +140,19 @@ def verify_archive(file: Path, *, strict: bool = False) -> None:
                     "v2 bundle is missing signatures.json — pass strict=False to skip"
                 )
 
-    # --- bundle integrity check (v3 only) ---
-    # Round-7 reviewer finding: signature verification proves the
-    # MANIFEST is unaltered, but does NOT recompute checksums of the
-    # tar members. Without this, an attacker can mutate mounts.jsonl
-    # bytes after signing and verify_archive returns OK. v3 added the
-    # mounts.jsonl checksum-envelope binding in BundleReader.validate;
-    # call it here so signed-bundle verification actually catches the
-    # tamper.
-    if format_version.startswith("3."):
-        # Local import to avoid a hot cross-brick import on the verify
-        # hot path for non-v3 bundles.
-        from nexus.bricks.portability.bundle import BundleReader
+        # --- bundle integrity check (v3 only) ---
+        # Round-7: signature proves the manifest is unaltered but does
+        # NOT recompute member checksums. Round-8: must use the SAME
+        # tar handle as the signature check above to avoid a TOCTOU
+        # window between two ``open()`` calls on a mutable path. We
+        # pass the open TarFile directly to BundleReader.
+        if format_version.startswith("3."):
+            from nexus.bricks.portability.bundle import BundleReader
 
-        with BundleReader(file) as _reader:
-            ok, errors = _reader.validate()
-            if not ok:
-                raise ArchiveError("v3 bundle failed integrity check: " + "; ".join(errors))
+            with BundleReader(tar=tar) as _reader:
+                ok, errors = _reader.validate()
+                if not ok:
+                    raise ArchiveError("v3 bundle failed integrity check: " + "; ".join(errors))
 
 
 __all__ = ["_current_nexus_version", "_parse_semver", "verify_archive"]

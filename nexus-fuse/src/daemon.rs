@@ -237,38 +237,41 @@ async fn handle_request(
 ) -> JsonRpcResponse {
     debug!("Handling method: {}", request.method);
 
-    // Clone client for spawn_blocking
-    let client = client.clone();
+    let client_owned = client.clone();
     let method = request.method.clone();
     let params = request.params.clone();
 
-    // Run blocking operations in a separate thread pool
-    let result = tokio::task::spawn_blocking(move || match method.as_str() {
-        "read" => handle_read(&params, &client, file_cache.as_deref()),
-        "write" => handle_write(&params, &client, file_cache.as_deref()),
-        "list" => handle_list(&params, &client),
-        "stat" => handle_stat(&params, &client),
-        "mkdir" => handle_mkdir(&params, &client),
-        "delete" => handle_delete(&params, &client, file_cache.as_deref()),
-        "rename" => handle_rename(&params, &client, file_cache.as_deref()),
-        "exists" => handle_exists(&params, &client),
-        _ => Err(NexusClientError::InvalidResponse(format!(
-            "Method not found: {}",
-            method
-        ))),
-    })
-    .await;
-
-    let result = match result {
-        Ok(r) => r,
-        Err(e) => {
-            error!("Task join error: {}", e);
-            return JsonRpcResponse::error(
-                request.id,
-                -32603,
-                format!("Internal error: {}", e),
-                None,
-            );
+    // Async-first dispatch: cache_warm is async, everything else is sync via spawn_blocking.
+    let result = if method == "cache_warm" {
+        handle_cache_warm(params, Arc::new(client_owned), file_cache).await
+    } else {
+        let cache_for_blocking = file_cache.clone();
+        let join = tokio::task::spawn_blocking(move || match method.as_str() {
+            "read" => handle_read(&params, &client_owned, cache_for_blocking.as_deref()),
+            "write" => handle_write(&params, &client_owned, cache_for_blocking.as_deref()),
+            "list" => handle_list(&params, &client_owned),
+            "stat" => handle_stat(&params, &client_owned),
+            "mkdir" => handle_mkdir(&params, &client_owned),
+            "delete" => handle_delete(&params, &client_owned, cache_for_blocking.as_deref()),
+            "rename" => handle_rename(&params, &client_owned, cache_for_blocking.as_deref()),
+            "exists" => handle_exists(&params, &client_owned),
+            _ => Err(NexusClientError::InvalidResponse(format!(
+                "Method not found: {}",
+                method
+            ))),
+        })
+        .await;
+        match join {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Task join error: {}", e);
+                return JsonRpcResponse::error(
+                    request.id,
+                    -32603,
+                    format!("Internal error: {}", e),
+                    None,
+                );
+            }
         }
     };
 
@@ -431,6 +434,45 @@ fn handle_exists(params: &Value, client: &NexusClient) -> Result<Value, NexusCli
 
     let exists = client.exists(&p.path);
     Ok(json!({ "exists": exists }))
+}
+
+async fn handle_cache_warm(
+    params: Value,
+    client: Arc<NexusClient>,
+    file_cache: Option<Arc<FileCache>>,
+) -> Result<Value, NexusClientError> {
+    #[derive(Deserialize)]
+    struct P {
+        workspace_root: String,
+        #[serde(default)]
+        threshold_bytes: Option<usize>,
+        #[serde(default)]
+        budget_bytes: Option<usize>,
+        #[serde(default)]
+        concurrency: Option<usize>,
+    }
+    let p: P = serde_json::from_value(params)
+        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+
+    let cache = file_cache.ok_or_else(|| {
+        NexusClientError::InvalidResponse("cache_warm requires --cache (FileCache disabled)".into())
+    })?;
+
+    let mut opts = crate::hydrate::HydrateOptions::new(p.workspace_root);
+    if let Some(t) = p.threshold_bytes {
+        opts.threshold_bytes = t;
+    }
+    if let Some(b) = p.budget_bytes {
+        opts.budget_bytes = b;
+    }
+    if let Some(c) = p.concurrency {
+        opts.concurrency = c;
+    }
+
+    let stats = crate::hydrate::hydrate_workspace(client, cache, opts).await;
+    serde_json::to_value(&stats).map_err(|e| {
+        NexusClientError::InvalidResponse(format!("failed to serialize hydrate stats: {}", e))
+    })
 }
 
 #[cfg(test)]

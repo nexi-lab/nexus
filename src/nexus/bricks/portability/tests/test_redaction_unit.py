@@ -10,6 +10,7 @@ from nexus.bricks.portability.models import (
 )
 from nexus.bricks.portability.redaction import (
     SECRET_SHAPED,
+    _get_connection_args,
     audit_backend,
     declared_secret_fields,
     redact_config,
@@ -149,3 +150,15 @@ def test_audit_safe_field_passes_audit():
 
     with patch("nexus.bricks.portability.redaction._get_connection_args", return_value=fake_args):
         assert audit_backend("fake") == []
+
+
+def test_get_connection_args_finds_slack_manifest_args():
+    """_get_connection_args must surface ConnectorManifest.connection_args
+    (Slack-style), not just class-level CONNECTION_ARGS."""
+    pytest.importorskip("slack_sdk")
+    _ensure_registry()
+    args = _get_connection_args("slack_connector")
+    assert "token_manager_db" in args, (
+        "Slack connector_args missed by _get_connection_args — extension-store "
+        "manifest fallback may be broken."
+    )

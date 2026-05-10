@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-10T06:41:44Z",
+  "generated_at": "2026-05-10T07:04:18Z",
   "manifests": [
     {
       "config_schema": null,
@@ -211,10 +211,10 @@
           "type": "string"
         },
         "token_manager_db": {
-          "audit_safe": false,
+          "audit_safe": true,
           "config_key": null,
           "default": null,
-          "description": "Path to TokenManager database or database URL",
+          "description": "Path to TokenManager database or database URL (path, not credential)",
           "env_var": null,
           "required": true,
           "secret": false,

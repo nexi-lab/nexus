@@ -37,5 +37,7 @@ def test_connector_passes_secret_shape_audit(entry):
     assert not leaks, (
         f"{entry.name}: argument names {leaks} match secret-shape regex "
         f"({SECRET_SHAPED.pattern}) but are not marked secret=True. "
-        f"Either rename them or set secret=True in CONNECTION_ARGS."
+        f"Either rename them, set secret=True (real credentials), or set "
+        f"audit_safe=True (justified false positives — document why in the "
+        f"ConnectionArg description) in CONNECTION_ARGS."
     )

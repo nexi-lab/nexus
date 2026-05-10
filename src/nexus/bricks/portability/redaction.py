@@ -25,10 +25,11 @@ from nexus.bricks.portability.models import (
 SECRET_SHAPED = re.compile(r"(?i)(key|secret|token|password|cred)")
 """Heuristic regex for argument names that should be marked secret=True.
 
-Audit fails if a CONNECTION_ARGS key matches this regex but has secret=False.
-The check is deliberately strict — every false positive is a forcing function
-to either rename the field or mark it secret=True. No allowlist exists today;
-add one only if real friction emerges (see spec for `audit_safe` follow-up)."""
+Audit fails if a CONNECTION_ARGS key matches this regex but has neither
+secret=True nor audit_safe=True. The check is deliberately strict — every
+false positive should be either renamed, marked secret=True, or marked
+audit_safe=True with justification in the ConnectionArg description.
+See `audit_backend` for the enforcement logic."""
 
 
 def _get_connection_args(backend_type: str) -> dict[str, Any]:
@@ -38,6 +39,12 @@ def _get_connection_args(backend_type: str) -> dict[str, Any]:
     to import (extra not installed) — those are skipped by callers, not
     treated as audit failures.
 
+    Looks in two places, in order:
+    1. Class attribute `<connector_class>.CONNECTION_ARGS` (legacy style;
+       used by storage backends and most OAuth connectors).
+    2. ConnectorManifest.connection_args from the extension-store manifest
+       (the #3964 path; Slack and future external-plugin connectors live here).
+
     Note: similar to ConnectorRegistry.get_connection_args, but kept local so
     tests can patch this single function to inject fake CONNECTION_ARGS without
     monkey-patching the global registry.
@@ -46,9 +53,22 @@ def _get_connection_args(backend_type: str) -> dict[str, Any]:
 
     info = ConnectorRegistry.get_info(backend_type)
     cls = info.connector_class
-    if cls is None:
-        return {}
-    return getattr(cls, "CONNECTION_ARGS", {}) or {}
+    args = getattr(cls, "CONNECTION_ARGS", {}) or {} if cls is not None else {}
+    if args:
+        return args
+
+    # Fallback: extension-store manifest (Slack uses this path).
+    try:
+        from nexus.extensions.store import get_store
+
+        manifest = get_store().get(backend_type, "connector")
+        if manifest is not None:
+            return dict(manifest.connection_args or {})
+    except Exception:
+        # Extension store may not be initialised in all test contexts.
+        pass
+
+    return {}
 
 
 def declared_secret_fields(backend_type: str) -> frozenset[str]:

@@ -30,8 +30,9 @@ MANIFEST = ConnectorManifest(
     connection_args={
         "token_manager_db": ConnectionArg(
             type=ArgType.PATH,
-            description="Path to TokenManager database or database URL",
+            description="Path to TokenManager database or database URL (path, not credential)",
             required=True,
+            audit_safe=True,
         ),
         "user_email": ConnectionArg(
             type=ArgType.STRING,

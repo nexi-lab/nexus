@@ -1196,4 +1196,70 @@ BUNDLE_PATHS = {
     "api_keys": "permissions/api_keys.jsonl.enc",
     "embeddings": "embeddings/vectors.parquet",
     "content": "content/cas",
+    "mounts": "mounts.jsonl",
 }
+
+
+# =============================================================================
+# Mount portability (Issue #4083)
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class MountRecord:
+    """One line of mounts.jsonl. Mirrors MountManager's persisted shape with
+    secrets replaced by ${MOUNT_<id>_<FIELD>} placeholders on export."""
+
+    mount_id: str
+    mount_point: str
+    backend_type: str
+    backend_config: dict[str, Any]
+    owner_user_id: str | None = None
+    zone_id: str | None = None
+    description: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mount_id": self.mount_id,
+            "mount_point": self.mount_point,
+            "backend_type": self.backend_type,
+            "backend_config": self.backend_config,
+            "owner_user_id": self.owner_user_id,
+            "zone_id": self.zone_id,
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MountRecord":
+        return cls(
+            mount_id=data["mount_id"],
+            mount_point=data["mount_point"],
+            backend_type=data["backend_type"],
+            backend_config=data["backend_config"],
+            owner_user_id=data.get("owner_user_id"),
+            zone_id=data.get("zone_id"),
+            description=data.get("description"),
+        )
+
+
+class SensitiveFieldNotDeclaredError(ValueError):
+    """Export-time. Backend has CONNECTION_ARGS keys whose names match the
+    secret-shape heuristic but aren't marked secret=True."""
+
+    def __init__(self, backend_type: str, fields: list[str]) -> None:
+        self.backend_type = backend_type
+        self.fields = list(fields)
+        super().__init__(
+            f"Backend {backend_type!r} has secret-shaped fields not marked secret=True: "
+            f"{self.fields}. Mark them secret=True in CONNECTION_ARGS or rename them."
+        )
+
+
+class MissingCredentialsError(ValueError):
+    """Import-time. Bundle has redacted mount fields with no override supplied.
+    Reports every gap in one error so operators see the full set at once."""
+
+    def __init__(self, missing: dict[str, list[str]]) -> None:
+        self.missing = {k: list(v) for k, v in missing.items()}
+        lines = [f"  {mid}: {fields}" for mid, fields in sorted(self.missing.items())]
+        super().__init__("Mount imports require credential overrides for:\n" + "\n".join(lines))

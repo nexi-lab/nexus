@@ -300,8 +300,21 @@ fn handle_read(
     let p: P = extract_params(params)?;
 
     let started_at = Instant::now();
-    let gen = if file_cache.is_some() {
-        client.stat(&p.path).map(|m| m.gen).unwrap_or(0)
+    // Issue #4055 R4: when cache is enabled, fail closed on stat errors
+    // rather than substituting gen=0. Any cached entry stored at gen=0
+    // (including entries warmed by cache_warm before the backend bumped
+    // generation, or entries cached when stat returned no gen) would
+    // otherwise be served back to a caller whose stat just failed with
+    // 403/404/etc. — leaking content past current authorization. With
+    // no cache the gen value is irrelevant, so we keep the simpler path.
+    let gen = if let Some(_) = file_cache {
+        match client.stat(&p.path) {
+            Ok(meta) => meta.gen,
+            Err(err) => {
+                crate::metrics::record_read("error", 0, started_at.elapsed());
+                return Err(err);
+            }
+        }
     } else {
         0
     };
@@ -557,6 +570,55 @@ mod tests {
         let metrics = crate::metrics::render();
         assert!(metrics.contains("nexus_read_bytes_total{tier=\"error\"} 0"));
         assert!(metrics.contains("nexus_read_latency_seconds_count{tier=\"error\"} 1"));
+    }
+
+    #[test]
+    fn daemon_read_fails_closed_when_stat_errors_with_cache_enabled() {
+        // #4055 R4: with a cache present, a stat error must propagate; we
+        // must NOT fall through to read_with_cache(gen=0) because that
+        // could surface a cached entry past current authorization.
+        let _guard = test_guard();
+        crate::metrics::reset_for_tests();
+        let mut server = Server::new();
+
+        // Stat returns 403 — caller is no longer authorized to view the file.
+        let _stat_mock = server
+            .mock("POST", "/api/nfs/stat")
+            .with_status(403)
+            .with_body("forbidden")
+            .create();
+
+        // Read mock is configured but should NEVER be hit — fail closed
+        // on stat error means we never get to the read step.
+        let read_mock = server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"YQ=="}}"#)
+            .expect(0)
+            .create();
+
+        // Pre-populate cache with a gen=0 entry so the stat-fallback-to-gen0
+        // bug would otherwise have served cached bytes.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::cache::CacheConfig::new(
+            dir.path().to_path_buf(),
+            4 * 1024 * 1024,
+            32 * 1024 * 1024,
+            crate::cache::MAX_FILE_SIZE,
+        )
+        .unwrap();
+        let cache =
+            crate::cache::FileCache::new_with_config(&server.url(), "test-principal", cfg).unwrap();
+        cache.put("/daemon.txt", b"warmed", Some("etag"), 0);
+
+        let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+        let result = handle_read(&json!({"path": "/daemon.txt"}), &client, Some(&cache));
+
+        assert!(
+            result.is_err(),
+            "stat 403 must surface as an error, not be silently bypassed"
+        );
+        read_mock.assert(); // verifies the read mock was never invoked
     }
 
     #[test]

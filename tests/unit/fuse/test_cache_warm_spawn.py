@@ -56,3 +56,46 @@ class TestKickoffCacheWarm:
             "cache_warm was never called"
         )
         # No crash here — that's the point.
+
+
+class TestScopedMountDoesNotStartRustDaemon:
+    """A scoped/agent mount (context!=None) must not construct RustFUSEClient.
+
+    The Rust daemon's Unix socket has no per-request OperationContext, so a
+    daemon spawned with the owner API key would bypass ReBAC for any same-UID
+    caller. Issue #4055 R4 forces use_rust=False before construction.
+    """
+
+    def test_context_present_skips_rust_client_construction(self) -> None:
+        from unittest.mock import patch
+
+        from nexus.contracts.types import OperationContext
+
+        # Build a minimal nexus_fs that WOULD satisfy the rust_client gate
+        # if construction were reached.
+        nexus_fs = MagicMock()
+        nexus_fs._base_url = "http://nx.test"
+        nexus_fs._api_key = "secret-owner-key"
+        nexus_fs.zone_id = None
+
+        scoped_ctx = OperationContext(
+            user_id="agent-1",
+            groups=[],
+            is_admin=False,
+            agent_id="agent-1",
+            zone_id="zone-x",
+        )
+
+        with patch("nexus.fuse.rust_client.RustFUSEClient") as ctor:
+            try:
+                NexusFUSEOperations(
+                    nexus_fs=nexus_fs,
+                    mode=MagicMock(),
+                    use_rust=True,
+                    context=scoped_ctx,
+                )
+            except Exception:
+                # __init__ may fail later for unrelated dependency reasons —
+                # we only care that RustFUSEClient was never constructed.
+                pass
+            ctor.assert_not_called()

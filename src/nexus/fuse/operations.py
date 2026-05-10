@@ -100,8 +100,24 @@ class NexusFUSEOperations(Operations):
         self._context = context
         cache_config = cache_config or {}
 
-        # Initialize Rust client
+        # Initialize Rust client.
+        #
+        # Issue #4055 R4: scoped/agent mounts must not start the Rust daemon
+        # at all. The daemon's Unix socket is a single channel backed by the
+        # owner API key with no per-request OperationContext; any same-UID
+        # process that can reach the socket would bypass ReBAC. _rust_available
+        # already disables Rust delegation when a context is present, but
+        # that only covers the dispatch path — the daemon itself shouldn't
+        # exist. Force Python fallback before construction.
         rust_client = None
+        if use_rust and context is not None:
+            logger.info(
+                "[FUSE] use_rust requested but mount has scoped context "
+                "(%r); falling back to Python to avoid an owner-credential "
+                "Rust daemon.",
+                context,
+            )
+            use_rust = False
         if use_rust:
             try:
                 from nexus.fuse.rust_client import RustFUSEClient
@@ -116,13 +132,7 @@ class NexusFUSEOperations(Operations):
                         nexus_url=nexus_url, api_key=api_key, agent_id=agent_id
                     )
                     logger.info("[FUSE] Rust daemon ready")
-                    # Issue #4055: skip eager hydration on agent-scoped (ReBAC) mounts.
-                    # The Rust daemon has no per-request zone_id/subject support, so
-                    # firing cache_warm with the owner API key would let scoped mounts
-                    # warm files they should not see. Mirrors the _rust_available
-                    # context guard in ops/_shared.py.
-                    if context is None:
-                        self._kickoff_cache_warm(rust_client)
+                    self._kickoff_cache_warm(rust_client)
                 else:
                     logger.warning(
                         "[FUSE] --use-rust requires REMOTE profile NexusFS. Falling back to Python."

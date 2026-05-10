@@ -50,6 +50,9 @@ class _Kernel:
             old_modified_at_ms=None,
         )
 
+    def write(self, path: str, _ctx: object, content: bytes, _offset: int = 0) -> Any:
+        return self.sys_write(path, _ctx, content, _offset)
+
     def stat_batch(self, paths: list[str], zone_id: str = "root") -> list[Any]:
         return [
             {

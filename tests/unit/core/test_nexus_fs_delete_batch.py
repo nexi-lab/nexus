@@ -48,7 +48,7 @@ def nx(tmp_path):
 
 class TestDeleteBatchRoundTrip:
     def test_write_then_delete_then_exists(self, nx):
-        path = "delete-test-fresh.json"
+        path = "/delete-test-fresh.json"
         nx.write_batch([(path, b"hello")])
         assert nx.exists_batch([path]) == {path: True}
 
@@ -422,8 +422,8 @@ class TestDeleteHookMetadataPropagation:
         assert delete_calls, "post-delete hook was not dispatched"
         ctx = delete_calls[0][1]
         assert ctx.metadata is not None, "DeleteHookContext.metadata must be populated"
-        assert ctx.metadata.path == "/tracked.txt"
-        assert ctx.metadata.size == len(b"original-bytes")
+        assert ctx.metadata["path"] == "/tracked.txt"
+        assert ctx.metadata["size"] == len(b"original-bytes")
 
 
 class TestExternalRouteRemainsFailure:

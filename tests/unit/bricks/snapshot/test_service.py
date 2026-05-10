@@ -82,7 +82,10 @@ class FakeMetadataStore:
         self.data: dict[str, Any] = {}
 
     def sys_stat(self, path: str, zone_id: str | None = None) -> Any:
-        return self.data.get(path)
+        obj = self.data.get(path)
+        if obj is None:
+            return None
+        return {"path": path, "content_id": getattr(obj, "content_id", None)}
 
     def sys_setattr(self, path: str, entry_type: int = 1, **kwargs: Any) -> Any:
         meta = self.data.get(path)

@@ -312,4 +312,41 @@ mod tests {
         assert_eq!(stats.failed, 0);
         assert!(cache.is_warm("/a.txt"));
     }
+
+    #[test]
+    fn test_hydrate_skips_warm_entries() {
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+
+        let mut server = mockito::Server::new();
+        let list_body = r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
+            {"path":"/cached.txt","is_directory":false,"size":10},
+            {"path":"/cold.txt","is_directory":false,"size":10}
+        ]}}"#;
+        let _list_mock = server
+            .mock("POST", "/api/nfs/list")
+            .with_status(200)
+            .with_body(list_body)
+            .create();
+        // The read mock should be hit exactly once — for the cold path.
+        let read_mock = server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_header("etag", "\"abc\"")
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"aGk="}}"#)
+            .expect(1)
+            .create();
+
+        let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
+        let cache = fresh_cache("warm");
+        cache.put("/cached.txt", b"already-here", Some("etag-old"), 0);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let stats = rt.block_on(hydrate_workspace(client, cache.clone(), HydrateOptions::new("/".into())));
+
+        assert_eq!(stats.skipped_warm, 1);
+        assert_eq!(stats.admitted_count, 1);
+        assert_eq!(stats.failed, 0);
+        read_mock.assert(); // verifies exactly 1 read call
+    }
 }

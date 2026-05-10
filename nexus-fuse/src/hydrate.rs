@@ -349,4 +349,66 @@ mod tests {
         assert_eq!(stats.failed, 0);
         read_mock.assert(); // verifies exactly 1 read call
     }
+
+    #[test]
+    fn test_hydrate_respects_budget() {
+        use base64::Engine;
+
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+
+        let mut server = mockito::Server::new();
+        // 10 files of 10 KiB each; budget allows ~3.
+        let mut files = String::new();
+        for i in 0..10 {
+            if i > 0 {
+                files.push(',');
+            }
+            files.push_str(&format!(
+                r#"{{"path":"/f{}.bin","is_directory":false,"size":10240}}"#,
+                i
+            ));
+        }
+        let body = format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{"files":[{}]}}}}"#, files);
+        let _list_mock = server
+            .mock("POST", "/api/nfs/list")
+            .with_status(200)
+            .with_body(body)
+            .create();
+        let payload = base64::engine::general_purpose::STANDARD.encode(vec![b'x'; 10 * 1024]);
+        let read_body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"__type__":"bytes","data":"{}"}}}}"#,
+            payload
+        );
+        let _read_mock = server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_header("etag", "\"x\"")
+            .with_body(read_body)
+            .expect_at_most(10)
+            .create();
+
+        let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
+        let cache = fresh_cache("budget");
+        let mut opts = HydrateOptions::new("/".into());
+        opts.budget_bytes = 30 * 1024;
+        opts.concurrency = 2;
+        opts.threshold_bytes = 16 * 1024;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let stats = rt.block_on(hydrate_workspace(client, cache, opts));
+
+        // With concurrency=2 and budget=30KiB, expect 3-4 admits (race window allows overshoot).
+        assert!(
+            (3..=4).contains(&stats.admitted_count),
+            "expected 3-4 admits, got {}",
+            stats.admitted_count
+        );
+        assert!(
+            stats.skipped_budget >= 6,
+            "expected >= 6 skipped_budget, got {}",
+            stats.skipped_budget
+        );
+        assert_eq!(stats.failed, 0);
+    }
 }

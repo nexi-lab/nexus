@@ -169,6 +169,30 @@ class RustFUSEClient:
             "Rust daemon started", socket_path=self.socket_path, pid=self.daemon_process.pid
         )
 
+        # Issue #4055 R3: drain daemon stderr into Python logs so async
+        # cache_warm results, panics, and other log lines surface to
+        # operators. Without this the stderr pipe can block when its OS
+        # buffer fills, AND any daemon-side observability is invisible
+        # to callers (especially with fire-and-forget hydration where the
+        # RPC returns before the work finishes).
+        if self.daemon_process.stderr is not None:
+            import threading as _threading
+
+            def _drain_stderr() -> None:
+                assert self.daemon_process is not None
+                stream = self.daemon_process.stderr
+                if stream is None:
+                    return
+                for raw in iter(stream.readline, ""):
+                    line = raw.rstrip()
+                    if line:
+                        logger.info("[nexus-fuse-daemon] %s", line)
+                stream.close()
+
+            _threading.Thread(
+                target=_drain_stderr, name="nexus-fuse-daemon-stderr", daemon=True
+            ).start()
+
         # Wait a bit for socket to be ready
         for _ in range(50):  # 5 seconds max
             if self.socket_path.exists():
@@ -431,6 +455,37 @@ class RustFUSEClient:
         result = self._send_request("exists", {"path": path})
         exists_value: bool = result["exists"]
         return exists_value
+
+    def cache_warm(
+        self,
+        workspace_root: str,
+        *,
+        threshold_bytes: int | None = None,
+        budget_bytes: int | None = None,
+        concurrency: int | None = None,
+        wait: bool = True,
+    ) -> dict[str, Any]:
+        """Trigger eager cache hydration via the Rust daemon (Issue #4055).
+
+        Args:
+            wait: When True (default), block until hydration completes and
+                return the full `HydrateStats` dict (admitted_count, admitted_bytes,
+                skipped_warm, skipped_size, skipped_budget, failed, duration_ms).
+                When False, the daemon spawns hydration on a detached tokio
+                task and the RPC returns immediately with `{"started": true}`
+                — used by the FUSE-mount production trigger so the foreground
+                RPC socket isn't held for the whole hydration window.
+        """
+        params: dict[str, Any] = {"workspace_root": workspace_root}
+        if threshold_bytes is not None:
+            params["threshold_bytes"] = threshold_bytes
+        if budget_bytes is not None:
+            params["budget_bytes"] = budget_bytes
+        if concurrency is not None:
+            params["concurrency"] = concurrency
+        if not wait:
+            params["wait"] = False
+        return self._send_request("cache_warm", params)
 
     def close(self) -> None:
         """Close connection and shutdown daemon."""

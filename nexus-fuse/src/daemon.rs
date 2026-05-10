@@ -237,38 +237,41 @@ async fn handle_request(
 ) -> JsonRpcResponse {
     debug!("Handling method: {}", request.method);
 
-    // Clone client for spawn_blocking
-    let client = client.clone();
+    let client_owned = client.clone();
     let method = request.method.clone();
     let params = request.params.clone();
 
-    // Run blocking operations in a separate thread pool
-    let result = tokio::task::spawn_blocking(move || match method.as_str() {
-        "read" => handle_read(&params, &client, file_cache.as_deref()),
-        "write" => handle_write(&params, &client, file_cache.as_deref()),
-        "list" => handle_list(&params, &client),
-        "stat" => handle_stat(&params, &client),
-        "mkdir" => handle_mkdir(&params, &client),
-        "delete" => handle_delete(&params, &client, file_cache.as_deref()),
-        "rename" => handle_rename(&params, &client, file_cache.as_deref()),
-        "exists" => handle_exists(&params, &client),
-        _ => Err(NexusClientError::InvalidResponse(format!(
-            "Method not found: {}",
-            method
-        ))),
-    })
-    .await;
-
-    let result = match result {
-        Ok(r) => r,
-        Err(e) => {
-            error!("Task join error: {}", e);
-            return JsonRpcResponse::error(
-                request.id,
-                -32603,
-                format!("Internal error: {}", e),
-                None,
-            );
+    // Async-first dispatch: cache_warm is async, everything else is sync via spawn_blocking.
+    let result = if method == "cache_warm" {
+        handle_cache_warm(params, Arc::new(client_owned), file_cache).await
+    } else {
+        let cache_for_blocking = file_cache.clone();
+        let join = tokio::task::spawn_blocking(move || match method.as_str() {
+            "read" => handle_read(&params, &client_owned, cache_for_blocking.as_deref()),
+            "write" => handle_write(&params, &client_owned, cache_for_blocking.as_deref()),
+            "list" => handle_list(&params, &client_owned),
+            "stat" => handle_stat(&params, &client_owned),
+            "mkdir" => handle_mkdir(&params, &client_owned),
+            "delete" => handle_delete(&params, &client_owned, cache_for_blocking.as_deref()),
+            "rename" => handle_rename(&params, &client_owned, cache_for_blocking.as_deref()),
+            "exists" => handle_exists(&params, &client_owned),
+            _ => Err(NexusClientError::InvalidResponse(format!(
+                "Method not found: {}",
+                method
+            ))),
+        })
+        .await;
+        match join {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Task join error: {}", e);
+                return JsonRpcResponse::error(
+                    request.id,
+                    -32603,
+                    format!("Internal error: {}", e),
+                    None,
+                );
+            }
         }
     };
 
@@ -297,8 +300,21 @@ fn handle_read(
     let p: P = extract_params(params)?;
 
     let started_at = Instant::now();
-    let gen = if file_cache.is_some() {
-        client.stat(&p.path).map(|m| m.gen).unwrap_or(0)
+    // Issue #4055 R4: when cache is enabled, fail closed on stat errors
+    // rather than substituting gen=0. Any cached entry stored at gen=0
+    // (including entries warmed by cache_warm before the backend bumped
+    // generation, or entries cached when stat returned no gen) would
+    // otherwise be served back to a caller whose stat just failed with
+    // 403/404/etc. — leaking content past current authorization. With
+    // no cache the gen value is irrelevant, so we keep the simpler path.
+    let gen = if let Some(_) = file_cache {
+        match client.stat(&p.path) {
+            Ok(meta) => meta.gen,
+            Err(err) => {
+                crate::metrics::record_read("error", 0, started_at.elapsed());
+                return Err(err);
+            }
+        }
     } else {
         0
     };
@@ -433,6 +449,70 @@ fn handle_exists(params: &Value, client: &NexusClient) -> Result<Value, NexusCli
     Ok(json!({ "exists": exists }))
 }
 
+async fn handle_cache_warm(
+    params: Value,
+    client: Arc<NexusClient>,
+    file_cache: Option<Arc<FileCache>>,
+) -> Result<Value, NexusClientError> {
+    #[derive(Deserialize)]
+    struct P {
+        workspace_root: String,
+        #[serde(default)]
+        threshold_bytes: Option<usize>,
+        #[serde(default)]
+        budget_bytes: Option<usize>,
+        #[serde(default)]
+        concurrency: Option<usize>,
+        /// When `true` (the default), the RPC blocks until hydration finishes
+        /// and returns full HydrateStats — useful for tests and synchronous
+        /// callers. When `false`, the RPC kicks off hydration on a detached
+        /// tokio task and returns immediately with `{started: true}`. The
+        /// production FUSE-mount trigger uses `wait=false` so the foreground
+        /// client's serialized RPC socket isn't held for the whole BFS+
+        /// fetch+admit cycle.
+        #[serde(default = "default_wait")]
+        wait: bool,
+    }
+    fn default_wait() -> bool {
+        true
+    }
+
+    let p: P = serde_json::from_value(params)
+        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+
+    let cache = file_cache.ok_or_else(|| {
+        NexusClientError::InvalidResponse("cache_warm requires --cache (FileCache disabled)".into())
+    })?;
+
+    let mut opts = crate::hydrate::HydrateOptions::new(p.workspace_root);
+    if let Some(t) = p.threshold_bytes {
+        opts.threshold_bytes = t;
+    }
+    if let Some(b) = p.budget_bytes {
+        opts.budget_bytes = b;
+    }
+    if let Some(c) = p.concurrency {
+        opts.concurrency = c;
+    }
+
+    if p.wait {
+        let stats = crate::hydrate::hydrate_workspace(client, cache, opts).await;
+        serde_json::to_value(&stats).map_err(|e| {
+            NexusClientError::InvalidResponse(format!("failed to serialize hydrate stats: {}", e))
+        })
+    } else {
+        // Fire-and-forget: spawn on the daemon's tokio runtime and return
+        // immediately. The detached task uses the SAME FileCache instance as
+        // the foreground client (no cross-process foyer corruption risk),
+        // and the foreground RPC socket is freed for FUSE traffic.
+        tokio::spawn(async move {
+            let stats = crate::hydrate::hydrate_workspace(client, cache, opts).await;
+            log::info!("cache_warm (async) finished: {:?}", stats);
+        });
+        Ok(json!({ "started": true }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +570,55 @@ mod tests {
         let metrics = crate::metrics::render();
         assert!(metrics.contains("nexus_read_bytes_total{tier=\"error\"} 0"));
         assert!(metrics.contains("nexus_read_latency_seconds_count{tier=\"error\"} 1"));
+    }
+
+    #[test]
+    fn daemon_read_fails_closed_when_stat_errors_with_cache_enabled() {
+        // #4055 R4: with a cache present, a stat error must propagate; we
+        // must NOT fall through to read_with_cache(gen=0) because that
+        // could surface a cached entry past current authorization.
+        let _guard = test_guard();
+        crate::metrics::reset_for_tests();
+        let mut server = Server::new();
+
+        // Stat returns 403 — caller is no longer authorized to view the file.
+        let _stat_mock = server
+            .mock("POST", "/api/nfs/stat")
+            .with_status(403)
+            .with_body("forbidden")
+            .create();
+
+        // Read mock is configured but should NEVER be hit — fail closed
+        // on stat error means we never get to the read step.
+        let read_mock = server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"YQ=="}}"#)
+            .expect(0)
+            .create();
+
+        // Pre-populate cache with a gen=0 entry so the stat-fallback-to-gen0
+        // bug would otherwise have served cached bytes.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::cache::CacheConfig::new(
+            dir.path().to_path_buf(),
+            4 * 1024 * 1024,
+            32 * 1024 * 1024,
+            crate::cache::MAX_FILE_SIZE,
+        )
+        .unwrap();
+        let cache =
+            crate::cache::FileCache::new_with_config(&server.url(), "test-principal", cfg).unwrap();
+        cache.put("/daemon.txt", b"warmed", Some("etag"), 0);
+
+        let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+        let result = handle_read(&json!({"path": "/daemon.txt"}), &client, Some(&cache));
+
+        assert!(
+            result.is_err(),
+            "stat 403 must surface as an error, not be silently bypassed"
+        );
+        read_mock.assert(); // verifies the read mock was never invoked
     }
 
     #[test]

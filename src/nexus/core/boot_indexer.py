@@ -8,6 +8,15 @@ After the initial walk, ``FileWatcherIndexer`` takes over for incremental
 updates.  ``BootIndexer`` does NOT start the watcher — that is
 ``SandboxBootstrapper``'s responsibility.
 
+Scope note (Issue #4055): BootIndexer does NOT trigger cache_warm/eager
+L1 hydration. Cache hydration in #4055 is intentionally scoped to the
+FUSE-mount path (``NexusFUSEOperations._kickoff_cache_warm``), where the
+Rust nexus-fuse daemon and its principal-scoped foyer cache are
+constructed. The server-side BootIndexer has no access to that daemon,
+and prior plumbing attempts created dead code (no real ``rust_client``
+in production). Sandbox/server attach therefore relies on lazy reads
+through whatever cache the mounting client establishes.
+
 Design:
     - Single daemon thread (``threading.Thread(daemon=True)``) so it never
       blocks process shutdown.

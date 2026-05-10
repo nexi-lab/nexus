@@ -162,8 +162,24 @@ fn build_cache_config(
     )
 }
 
-fn open_file_cache(url: &str, config: cache::CacheConfig) -> Option<Arc<cache::FileCache>> {
-    match cache::FileCache::new_with_config(url, config) {
+fn open_file_cache(
+    url: &str,
+    api_key: &str,
+    agent_id: Option<&str>,
+    config: cache::CacheConfig,
+) -> Option<Arc<cache::FileCache>> {
+    // Hash both api_key AND agent_id into the foyer directory namespace.
+    // Two daemons run by the same API key but impersonating different
+    // agents send different X-Agent-ID headers and therefore see
+    // different effective ReBAC scopes; they must NOT share a cache
+    // (#4055 R8). Format: "<api_key>|agent=<agent_id>" — domain-separated
+    // so an api_key that literally contains "|agent=" can't be confused
+    // with an agent suffix.
+    let principal = match agent_id {
+        Some(aid) => format!("{api_key}|agent={aid}"),
+        None => api_key.to_string(),
+    };
+    match cache::FileCache::new_with_config(url, &principal, config) {
         Ok(cache) => {
             let stats = cache.stats();
             info!(
@@ -216,8 +232,9 @@ fn main() -> anyhow::Result<()> {
             info!("Server URL: {}", url);
             info!("Mount point: {}", mount_point.display());
 
-            // Create Nexus client
-            let client = client::NexusClient::new(&url, &api_key, agent_id)?;
+            // Create Nexus client. Clone agent_id because open_file_cache
+            // also reads it below for the cache namespace (#4055 R9).
+            let client = client::NexusClient::new(&url, &api_key, agent_id.clone())?;
 
             // Verify connection
             info!("Connecting to Nexus server...");
@@ -234,7 +251,8 @@ fn main() -> anyhow::Result<()> {
             }
 
             let cache_config = build_cache_config(cache_memory_mb, cache_disk_gb, cache_dir)?;
-            let file_cache = open_file_cache(&url, cache_config);
+            let file_cache =
+                open_file_cache(&url, &api_key, agent_id.as_deref(), cache_config);
 
             // Create filesystem
             let filesystem = fs::NexusFs::new(client, file_cache);
@@ -290,7 +308,8 @@ fn main() -> anyhow::Result<()> {
             });
 
             let cache_config = build_cache_config(cache_memory_mb, cache_disk_gb, cache_dir)?;
-            let file_cache = open_file_cache(&url, cache_config);
+            let file_cache =
+                open_file_cache(&url, &api_key, agent_id.as_deref(), cache_config);
 
             let config = daemon::DaemonConfig {
                 socket_path,

@@ -31,6 +31,15 @@ pub const DEFAULT_DISK_CACHE_BYTES: usize = 10 * 1024 * 1024 * 1024;
 /// Maximum file size to cache (10 MiB) - larger files bypass cache.
 pub const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
 
+/// Maximum file size to eagerly hydrate during workspace attach (128 KiB).
+pub const HYDRATE_SMALL_FILE_BYTES: usize = 128 * 1024;
+
+/// Total bytes admitted per hydration call (default 64 MiB).
+pub const HYDRATE_TOTAL_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+
+/// Default concurrent backend fetches during hydration.
+pub const HYDRATE_CONCURRENCY: usize = 8;
+
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
     pub root_dir: PathBuf,
@@ -86,8 +95,13 @@ pub struct CachePaths {
 }
 
 impl CachePaths {
-    pub fn for_server(root_dir: &Path, server_url: &str) -> Self {
-        let hash = server_hash(server_url);
+    /// Build cache paths namespaced by the (server_url, principal) tuple so
+    /// different API keys / tenants on the same Nexus URL never share a
+    /// foyer directory. The `principal` argument is the API key (or any
+    /// stable per-principal identifier) — the value is hashed, never written
+    /// to disk in cleartext, so it doesn't leak credentials. (#4055 R3)
+    pub fn for_server(root_dir: &Path, server_url: &str, principal: &str) -> Self {
+        let hash = principal_hash(server_url, principal);
         Self {
             foyer_dir: root_dir.join(format!("nexus_{hash:016x}.foyer")),
             sqlite_file: root_dir.join(format!("nexus_{hash:016x}.db")),
@@ -96,9 +110,12 @@ impl CachePaths {
     }
 }
 
-fn server_hash(server_url: &str) -> u64 {
+fn principal_hash(server_url: &str, principal: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     server_url.hash(&mut hasher);
+    // Domain-separator so concatenation of (url, principal) is unambiguous.
+    "|".hash(&mut hasher);
+    principal.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -189,6 +206,11 @@ pub struct FileCache {
     runtime: CacheRuntime,
     metadata: Mutex<HashMap<String, CacheMeta>>,
     config: CacheConfig,
+    // Exclusive flock holder on the foyer directory's lock file.
+    // Held for the lifetime of the FileCache so two daemon processes for
+    // the same (server_url, principal) cannot open the same foyer dir
+    // concurrently and corrupt each other's writes (#4055 R6).
+    _dir_lock: std::fs::File,
 }
 
 struct CacheRuntime {
@@ -241,16 +263,24 @@ where
 }
 
 impl FileCache {
-    pub fn new(server_url: &str) -> Result<Self> {
-        Self::new_with_config(server_url, CacheConfig::default())
+    pub fn new(server_url: &str, principal: &str) -> Result<Self> {
+        Self::new_with_config(server_url, principal, CacheConfig::default())
     }
 
-    pub fn new_with_config(server_url: &str, config: CacheConfig) -> Result<Self> {
+    /// `principal` is hashed (with `server_url`) into the foyer directory so
+    /// different API keys / tenants on the same Nexus URL never share a
+    /// cache. Pass the API key (or any stable per-principal identifier) —
+    /// the value is only hashed locally, never written in cleartext. (#4055 R3)
+    pub fn new_with_config(
+        server_url: &str,
+        principal: &str,
+        config: CacheConfig,
+    ) -> Result<Self> {
         std::fs::create_dir_all(&config.root_dir).with_context(|| {
             format!("failed to create cache root {}", config.root_dir.display())
         })?;
 
-        let paths = CachePaths::for_server(&config.root_dir, server_url);
+        let paths = CachePaths::for_server(&config.root_dir, server_url, principal);
         migrate_sqlite_file(&paths.sqlite_file);
         if paths.legacy_sqlite_file != paths.sqlite_file {
             migrate_sqlite_file(&paths.legacy_sqlite_file);
@@ -261,6 +291,36 @@ impl FileCache {
                 paths.foyer_dir.display()
             )
         })?;
+
+        // Issue #4055 R6: take an exclusive non-blocking flock on a lockfile
+        // inside the foyer directory before opening it. Foyer's on-disk
+        // format isn't documented as multi-process safe, and concurrent
+        // daemons for the same (server_url, principal) would otherwise race
+        // on the index files. If another daemon already holds the lock we
+        // refuse to open this cache rather than risk corruption — the caller
+        // (open_file_cache) treats this as "no cache" and runs uncached.
+        let lock_path = paths.foyer_dir.join(".nexus-fuse.lock");
+        let dir_lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .with_context(|| format!("failed to open cache lock {}", lock_path.display()))?;
+        // SAFETY: libc::flock on a valid fd is sound; the fd is owned by
+        // `dir_lock` and remains valid for the call.
+        let lock_rc = unsafe {
+            use std::os::unix::io::AsRawFd as _;
+            libc::flock(dir_lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
+        };
+        if lock_rc != 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(anyhow!(
+                "another nexus-fuse daemon is already using {}: {}",
+                paths.foyer_dir.display(),
+                err
+            ));
+        }
 
         info!(
             "Opening foyer cache at: {} (memory={} MB, disk={} GB)",
@@ -304,6 +364,7 @@ impl FileCache {
             runtime: CacheRuntime::new(runtime),
             metadata: Mutex::new(HashMap::new()),
             config,
+            _dir_lock: dir_lock,
         })
     }
 
@@ -515,6 +576,22 @@ impl FileCache {
         self.update_metadata(path, &record);
     }
 
+    /// Returns true if `path` has a cached entry whose age is within MAX_CACHE_AGE_SECS.
+    ///
+    /// This is the hydration warmth probe — used to skip files that already have
+    /// fresh cache entries. Reads only the in-memory metadata; does not touch foyer.
+    pub fn is_warm(&self, path: &str) -> bool {
+        let metadata = match self.metadata.lock() {
+            Ok(m) => m,
+            Err(_) => return false,
+        };
+        let Some(meta) = metadata.get(path) else {
+            return false;
+        };
+        let now = Self::now();
+        now.saturating_sub(meta.cached_at_secs) <= MAX_CACHE_AGE_SECS
+    }
+
     pub fn invalidate(&self, path: &str) {
         self.cache.remove(path);
         if let Ok(mut metadata) = self.metadata.lock() {
@@ -630,11 +707,73 @@ mod tests {
     #[test]
     fn test_cache_paths_are_stable_and_distinct() {
         let root = std::env::temp_dir().join("nexus-fuse-path-test");
-        let a = CachePaths::for_server(&root, "http://a:8080");
-        let b = CachePaths::for_server(&root, "http://a/8080");
+        let a = CachePaths::for_server(&root, "http://a:8080", "principal-x");
+        let b = CachePaths::for_server(&root, "http://a/8080", "principal-x");
 
         assert_ne!(a.foyer_dir, b.foyer_dir);
         assert_ne!(a.sqlite_file, b.sqlite_file);
+    }
+
+    #[test]
+    fn test_cache_dir_exclusive_lock_refuses_second_open() {
+        // #4055 R6: a second FileCache::new for the same (url, principal)
+        // must fail because the first holds an exclusive flock on the
+        // foyer dir's lockfile. Without this, two daemon processes could
+        // race on foyer's on-disk format.
+        let dir = tempfile::tempdir().unwrap();
+        let config = CacheConfig::new(
+            dir.path().to_path_buf(),
+            4 * 1024 * 1024,
+            32 * 1024 * 1024,
+            MAX_FILE_SIZE,
+        )
+        .unwrap();
+        let url = "http://lock.test";
+        let principal = "alice";
+        let _first =
+            FileCache::new_with_config(url, principal, config.clone()).expect("first opens");
+        let err = FileCache::new_with_config(url, principal, config)
+            .err()
+            .expect("second open must fail while first holds the lock");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("already using"),
+            "expected lock-conflict error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_cache_paths_split_by_principal() {
+        // Same URL, different principals → different cache directories.
+        // Locks the #4055 R3 fix that prevents cross-tenant cache sharing.
+        let root = std::env::temp_dir().join("nexus-fuse-principal-test");
+        let url = "http://nx.test";
+        let a = CachePaths::for_server(&root, url, "alice");
+        let b = CachePaths::for_server(&root, url, "bob");
+        assert_ne!(a.foyer_dir, b.foyer_dir);
+        assert_ne!(a.sqlite_file, b.sqlite_file);
+    }
+
+    #[test]
+    fn test_cache_paths_split_by_agent_within_same_api_key() {
+        // #4055 R8: same api_key, different agent_id (X-Agent-ID header)
+        // must yield different cache directories. Otherwise an admin/owner
+        // key impersonating agent A could reopen a cache populated by
+        // agent B and serve cached bytes across the ReBAC scope boundary.
+        // The format "<api_key>|agent=<agent_id>" is the same convention
+        // open_file_cache uses to derive the principal.
+        let root = std::env::temp_dir().join("nexus-fuse-agent-test");
+        let url = "http://nx.test";
+        let api_key = "sk-shared";
+        let p_alice = format!("{api_key}|agent=alice");
+        let p_bob = format!("{api_key}|agent=bob");
+        let p_none = api_key.to_string();
+        let a = CachePaths::for_server(&root, url, &p_alice);
+        let b = CachePaths::for_server(&root, url, &p_bob);
+        let n = CachePaths::for_server(&root, url, &p_none);
+        assert_ne!(a.foyer_dir, b.foyer_dir, "alice and bob must not share");
+        assert_ne!(a.foyer_dir, n.foyer_dir, "alice and no-agent must not share");
+        assert_ne!(b.foyer_dir, n.foyer_dir, "bob and no-agent must not share");
         assert!(a
             .foyer_dir
             .file_name()
@@ -659,12 +798,13 @@ mod tests {
             MAX_FILE_SIZE,
         )
         .unwrap();
-        let paths = CachePaths::for_server(dir.path(), "http://migration.test");
+        let paths = CachePaths::for_server(dir.path(), "http://migration.test", "test");
         std::fs::write(&paths.sqlite_file, b"old sqlite cache").unwrap();
         std::fs::write(paths.sqlite_file.with_extension("db-wal"), b"old wal").unwrap();
         std::fs::write(paths.sqlite_file.with_extension("db-shm"), b"old shm").unwrap();
 
-        let _cache = FileCache::new_with_config("http://migration.test", config).unwrap();
+        let _cache =
+            FileCache::new_with_config("http://migration.test", "test", config).unwrap();
 
         assert!(!paths.sqlite_file.exists());
         assert!(!paths.sqlite_file.with_extension("db-wal").exists());
@@ -683,12 +823,13 @@ mod tests {
             MAX_FILE_SIZE,
         )
         .unwrap();
-        let legacy_file = CachePaths::for_server(dir.path(), server_url).legacy_sqlite_file;
+        let legacy_file =
+            CachePaths::for_server(dir.path(), server_url, "test").legacy_sqlite_file;
         std::fs::write(&legacy_file, b"old sqlite cache").unwrap();
         std::fs::write(legacy_file.with_extension("db-wal"), b"old wal").unwrap();
         std::fs::write(legacy_file.with_extension("db-shm"), b"old shm").unwrap();
 
-        let _cache = FileCache::new_with_config(server_url, config).unwrap();
+        let _cache = FileCache::new_with_config(server_url, "test", config).unwrap();
 
         assert!(!legacy_file.exists());
         assert!(!legacy_file.with_extension("db-wal").exists());
@@ -704,7 +845,7 @@ mod tests {
             MAX_FILE_SIZE,
         )
         .unwrap();
-        FileCache::new_with_config(&format!("http://{label}.test"), config).unwrap()
+        FileCache::new_with_config(&format!("http://{label}.test"), "test", config).unwrap()
     }
 
     fn metric_value(rendered: &str, metric: &str) -> Option<u64> {
@@ -1132,12 +1273,17 @@ mod tests {
         .unwrap();
 
         {
-            let cache =
-                FileCache::new_with_config("http://flush-on-drop.test", config.clone()).unwrap();
+            let cache = FileCache::new_with_config(
+                "http://flush-on-drop.test",
+                "test",
+                config.clone(),
+            )
+            .unwrap();
             cache.put("/persisted.txt", b"persisted", Some("persisted-etag"), 0);
         }
 
-        let cache = FileCache::new_with_config("http://flush-on-drop.test", config).unwrap();
+        let cache =
+            FileCache::new_with_config("http://flush-on-drop.test", "test", config).unwrap();
         match cache.get("/persisted.txt", 0) {
             CacheLookup::Hit(entry) => {
                 assert_eq!(entry.content, b"persisted");
@@ -1145,5 +1291,41 @@ mod tests {
             }
             _ => panic!("Expected cache hit after drop and reopen"),
         }
+    }
+
+    #[test]
+    fn test_hydrate_constants_have_expected_values() {
+        assert_eq!(HYDRATE_SMALL_FILE_BYTES, 128 * 1024);
+        assert_eq!(HYDRATE_TOTAL_BUDGET_BYTES, 64 * 1024 * 1024);
+        assert_eq!(HYDRATE_CONCURRENCY, 8);
+    }
+
+    #[test]
+    fn test_is_warm_returns_false_for_unknown_path() {
+        let cache = test_cache("is_warm_unknown");
+        assert!(!cache.is_warm("/nope.txt"));
+    }
+
+    #[test]
+    fn test_is_warm_returns_true_after_put() {
+        let cache = test_cache("is_warm_after_put");
+        cache.put("/a.txt", b"hello", Some("etag-1"), 0);
+        assert!(cache.is_warm("/a.txt"));
+    }
+
+    #[test]
+    fn test_is_warm_returns_false_for_aged_entry() {
+        let cache = test_cache("is_warm_aged");
+        cache.put("/old.txt", b"x", Some("etag-old"), 0);
+        {
+            let mut metadata = cache.metadata.lock().unwrap();
+            let meta = metadata.get_mut("/old.txt").expect("entry should exist");
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            meta.cached_at_secs = now.saturating_sub(MAX_CACHE_AGE_SECS + 1);
+        }
+        assert!(!cache.is_warm("/old.txt"));
     }
 }

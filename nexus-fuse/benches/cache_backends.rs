@@ -65,7 +65,7 @@ fn foyer_cache(label: &str, memory_bytes: usize) -> FileCache {
     let dir = kept_tempdir_path();
     let config = CacheConfig::new(dir, memory_bytes, 256 * 1024 * 1024, MAX_FILE_SIZE)
         .expect("foyer cache config is valid");
-    FileCache::new_with_config(&format!("http://bench-{label}.test"), config)
+    FileCache::new_with_config(&format!("http://bench-{label}.test"), "bench", config)
         .expect("foyer cache opens")
 }
 
@@ -190,12 +190,130 @@ fn bench_agent_churn(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_hydration_cold_read(c: &mut Criterion) {
+    use nexus_fuse::cached_read::read_with_cache;
+    use nexus_fuse::client::NexusClient;
+    use nexus_fuse::hydrate::{hydrate_workspace, HydrateOptions};
+    use std::sync::Arc;
+    use tokio::runtime::Runtime;
+
+    // Single mockito server reused across iterations.
+    let mut server = mockito::Server::new();
+
+    // Build a list response with 50 small files using the DetailedEntry format
+    // (path + is_directory fields) that the client's list() method parses.
+    let mut entries = String::new();
+    for i in 0..50_usize {
+        if i > 0 {
+            entries.push(',');
+        }
+        entries.push_str(&format!(
+            r#"{{"path":"/f{}.txt","is_directory":false,"size":256}}"#,
+            i
+        ));
+    }
+    let list_body = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"result":{{"files":[{}]}}}}"#,
+        entries
+    );
+
+    server
+        .mock("POST", "/api/nfs/list")
+        .with_status(200)
+        .with_body(&list_body)
+        .expect_at_least(1)
+        .create();
+    server
+        .mock("POST", "/api/nfs/read")
+        .with_status(200)
+        .with_header("etag", "\"x\"")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"YWJjZA=="}}"#)
+        .expect_at_least(1)
+        .create();
+
+    let url = server.url();
+    let rt = Runtime::new().unwrap();
+
+    let mut group = c.benchmark_group("hydration");
+    group.sample_size(20);
+    group.measurement_time(Duration::from_secs(8));
+
+    group.bench_function("cold_read_p50_no_hydration", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let dir = kept_tempdir_path();
+                let config = nexus_fuse::cache::CacheConfig::new(
+                    dir,
+                    8 * 1024 * 1024,
+                    32 * 1024 * 1024,
+                    nexus_fuse::cache::MAX_FILE_SIZE,
+                )
+                .unwrap();
+                let cache = Arc::new(
+                    nexus_fuse::cache::FileCache::new_with_config(&url, "bench", config).unwrap(),
+                );
+                let client = NexusClient::new(&url, "k", None).unwrap();
+                let start = std::time::Instant::now();
+                for i in 0..50_usize {
+                    let _ = read_with_cache(
+                        &client,
+                        Some(cache.as_ref()),
+                        &format!("/f{}.txt", i),
+                        0,
+                    );
+                }
+                total += start.elapsed();
+            }
+            total
+        })
+    });
+
+    group.bench_function("cold_read_p50_with_hydration", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let dir = kept_tempdir_path();
+                let config = nexus_fuse::cache::CacheConfig::new(
+                    dir,
+                    8 * 1024 * 1024,
+                    32 * 1024 * 1024,
+                    nexus_fuse::cache::MAX_FILE_SIZE,
+                )
+                .unwrap();
+                let cache = Arc::new(
+                    nexus_fuse::cache::FileCache::new_with_config(&url, "bench", config).unwrap(),
+                );
+                let client = Arc::new(NexusClient::new(&url, "k", None).unwrap());
+                rt.block_on(hydrate_workspace(
+                    client.clone(),
+                    cache.clone(),
+                    HydrateOptions::new("/".into()),
+                ));
+                let start = std::time::Instant::now();
+                for i in 0..50_usize {
+                    let _ = read_with_cache(
+                        client.as_ref(),
+                        Some(cache.as_ref()),
+                        &format!("/f{}.txt", i),
+                        0,
+                    );
+                }
+                total += start.elapsed();
+            }
+            total
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(10)
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(1));
-    targets = bench_warm_reads, bench_agent_churn
+    targets = bench_warm_reads, bench_agent_churn, bench_hydration_cold_read
 }
 criterion_main!(benches);

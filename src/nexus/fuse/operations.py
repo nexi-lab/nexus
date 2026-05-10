@@ -100,8 +100,24 @@ class NexusFUSEOperations(Operations):
         self._context = context
         cache_config = cache_config or {}
 
-        # Initialize Rust client
+        # Initialize Rust client.
+        #
+        # Issue #4055 R4: scoped/agent mounts must not start the Rust daemon
+        # at all. The daemon's Unix socket is a single channel backed by the
+        # owner API key with no per-request OperationContext; any same-UID
+        # process that can reach the socket would bypass ReBAC. _rust_available
+        # already disables Rust delegation when a context is present, but
+        # that only covers the dispatch path — the daemon itself shouldn't
+        # exist. Force Python fallback before construction.
         rust_client = None
+        if use_rust and context is not None:
+            logger.info(
+                "[FUSE] use_rust requested but mount has scoped context "
+                "(%r); falling back to Python to avoid an owner-credential "
+                "Rust daemon.",
+                context,
+            )
+            use_rust = False
         if use_rust:
             try:
                 from nexus.fuse.rust_client import RustFUSEClient
@@ -116,6 +132,7 @@ class NexusFUSEOperations(Operations):
                         nexus_url=nexus_url, api_key=api_key, agent_id=agent_id
                     )
                     logger.info("[FUSE] Rust daemon ready")
+                    self._kickoff_cache_warm(rust_client)
                 else:
                     logger.warning(
                         "[FUSE] --use-rust requires REMOTE profile NexusFS. Falling back to Python."
@@ -256,6 +273,36 @@ class NexusFUSEOperations(Operations):
     @open_files.setter
     def open_files(self, value: dict[int, dict[str, Any]]) -> None:
         self._ctx.open_files = value
+
+    def _kickoff_cache_warm(self, rust_client: Any) -> None:
+        """Kick off eager L1 cache hydration on the Rust daemon (Issue #4055).
+
+        Sends `cache_warm` with `wait=False` so the daemon spawns the
+        BFS+fetch+admit pipeline on a detached tokio task and returns
+        immediately. This means:
+          - The foreground RPC socket is held for ~ms, not for the entire
+            hydration window — early FUSE reads aren't blocked behind
+            warmup.
+          - There is exactly ONE Rust daemon and ONE foyer instance for
+            this mount, so no cross-process cache corruption risk that
+            an ephemeral-daemon design would introduce.
+
+        The actual hydration result is observable via the daemon's logs and
+        the `nexus_hydration_*` metrics, not via this RPC's return value.
+
+        Failures are logged and never propagate — a hydration RPC error
+        should never break the mount itself.
+        """
+        import threading
+
+        def _run() -> None:
+            try:
+                rust_client.cache_warm("/", wait=False)
+                logger.info("[FUSE] Cache hydration kicked off (wait=False)")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[FUSE] Cache hydration kickoff failed: %s", exc)
+
+        threading.Thread(target=_run, name="FUSEHydrate", daemon=True).start()
 
     @property
     def _files_lock(self) -> Any:

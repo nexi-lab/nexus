@@ -215,6 +215,11 @@ impl NexusClient {
         #[derive(Deserialize)]
         struct DetailedEntry {
             path: String,
+            // The server sends `entry_type` as a numeric DT_* code (DT_REG=0,
+            // DT_DIR=1, DT_MOUNT=2, ...). Older mocks/tests still use the
+            // boolean `is_directory` field, so we accept both. (#4055 R6)
+            #[serde(default)]
+            entry_type: Option<u8>,
             #[serde(default)]
             is_directory: bool,
             #[serde(default)]
@@ -224,6 +229,24 @@ impl NexusClient {
             modified_at: serde_json::Value,
             #[serde(default)]
             created_at: serde_json::Value,
+        }
+
+        impl DetailedEntry {
+            /// Only DT_DIR=1 and DT_MOUNT=2 are directory-like in the
+            /// server's metadata contract (see src/nexus/contracts/metadata.py).
+            /// DT_PIPE=3, DT_STREAM=4, DT_EXTERNAL_STORAGE=5, DT_LINK=6 are
+            /// not normal directories; classifying them as such would have
+            /// BFS try to list them (failing or returning unexpected shape)
+            /// and would mislabel them in FUSE readdir output. (#4055 R10)
+            /// `is_directory` is the legacy boolean fallback for older
+            /// server responses / tests that don't emit `entry_type`.
+            fn is_dir(&self) -> bool {
+                if let Some(et) = self.entry_type {
+                    et == 1 || et == 2
+                } else {
+                    self.is_directory
+                }
+            }
         }
 
         #[derive(Deserialize)]
@@ -272,7 +295,7 @@ impl NexusClient {
 
                 // If there are more path components, this is a directory
                 let is_nested = relative.contains('/');
-                let entry_type = if is_nested || entry.is_directory {
+                let entry_type = if is_nested || entry.is_dir() {
                     "directory".to_string()
                 } else {
                     "file".to_string()

@@ -8,4 +8,5 @@ pub mod client;
 pub mod daemon;
 pub mod error;
 pub mod fs;
+pub mod hydrate;
 pub mod metrics;

@@ -782,4 +782,57 @@ mod tests {
         // Per design: list errors mid-walk are not counted as `failed` (which is per-file fetch failures).
         assert_eq!(stats.failed, 0, "stats={:?}", stats);
     }
+
+    #[test]
+    fn test_hydrate_recognises_numeric_entry_type_directories() {
+        // Reviewer scenario (#4055 R6): the production server emits
+        // `entry_type` as a numeric DT_* code (DT_REG=0, DT_DIR=1, ...).
+        // BFS must descend into entries marked as DT_DIR even when the
+        // legacy `is_directory` boolean is absent. Without this, the walk
+        // mistakes directories for files, attempts to read them, and
+        // misses every nested file in the workspace.
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+
+        let mut server = mockito::Server::new();
+        // Root list: one DT_DIR entry "sub"
+        server
+            .mock("POST", "/api/nfs/list")
+            .match_body(mockito::Matcher::Regex(r#""path":\s*"/""#.into()))
+            .with_status(200)
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
+                {"path":"/sub","entry_type":1,"size":0}
+            ]}}"#,
+            )
+            .create();
+        // /sub list: one DT_REG file
+        server
+            .mock("POST", "/api/nfs/list")
+            .match_body(mockito::Matcher::Regex(r#""path":\s*"/sub""#.into()))
+            .with_status(200)
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
+                {"path":"/sub/file.txt","entry_type":0,"size":3}
+            ]}}"#,
+            )
+            .create();
+        let _stat_mock = mock_small_stat(&mut server);
+        server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_header("etag", "\"e\"")
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"YWJj"}}"#)
+            .create();
+
+        let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
+        let cache = fresh_cache("entry_type_numeric");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let stats = rt.block_on(hydrate_workspace(client, cache, HydrateOptions::new("/".into())));
+
+        // BFS must descend into /sub and admit /sub/file.txt. Pre-fix this
+        // would have admitted 0 (the directory was treated as a file).
+        assert_eq!(stats.admitted_count, 1, "expected 1 admit, got {:?}", stats);
+        assert_eq!(stats.failed, 0, "stats={:?}", stats);
+    }
 }

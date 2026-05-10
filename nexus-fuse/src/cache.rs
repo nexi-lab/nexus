@@ -206,6 +206,11 @@ pub struct FileCache {
     runtime: CacheRuntime,
     metadata: Mutex<HashMap<String, CacheMeta>>,
     config: CacheConfig,
+    // Exclusive flock holder on the foyer directory's lock file.
+    // Held for the lifetime of the FileCache so two daemon processes for
+    // the same (server_url, principal) cannot open the same foyer dir
+    // concurrently and corrupt each other's writes (#4055 R6).
+    _dir_lock: std::fs::File,
 }
 
 struct CacheRuntime {
@@ -287,6 +292,36 @@ impl FileCache {
             )
         })?;
 
+        // Issue #4055 R6: take an exclusive non-blocking flock on a lockfile
+        // inside the foyer directory before opening it. Foyer's on-disk
+        // format isn't documented as multi-process safe, and concurrent
+        // daemons for the same (server_url, principal) would otherwise race
+        // on the index files. If another daemon already holds the lock we
+        // refuse to open this cache rather than risk corruption — the caller
+        // (open_file_cache) treats this as "no cache" and runs uncached.
+        let lock_path = paths.foyer_dir.join(".nexus-fuse.lock");
+        let dir_lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .with_context(|| format!("failed to open cache lock {}", lock_path.display()))?;
+        // SAFETY: libc::flock on a valid fd is sound; the fd is owned by
+        // `dir_lock` and remains valid for the call.
+        let lock_rc = unsafe {
+            use std::os::unix::io::AsRawFd as _;
+            libc::flock(dir_lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
+        };
+        if lock_rc != 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(anyhow!(
+                "another nexus-fuse daemon is already using {}: {}",
+                paths.foyer_dir.display(),
+                err
+            ));
+        }
+
         info!(
             "Opening foyer cache at: {} (memory={} MB, disk={} GB)",
             paths.foyer_dir.display(),
@@ -329,6 +364,7 @@ impl FileCache {
             runtime: CacheRuntime::new(runtime),
             metadata: Mutex::new(HashMap::new()),
             config,
+            _dir_lock: dir_lock,
         })
     }
 
@@ -676,6 +712,34 @@ mod tests {
 
         assert_ne!(a.foyer_dir, b.foyer_dir);
         assert_ne!(a.sqlite_file, b.sqlite_file);
+    }
+
+    #[test]
+    fn test_cache_dir_exclusive_lock_refuses_second_open() {
+        // #4055 R6: a second FileCache::new for the same (url, principal)
+        // must fail because the first holds an exclusive flock on the
+        // foyer dir's lockfile. Without this, two daemon processes could
+        // race on foyer's on-disk format.
+        let dir = tempfile::tempdir().unwrap();
+        let config = CacheConfig::new(
+            dir.path().to_path_buf(),
+            4 * 1024 * 1024,
+            32 * 1024 * 1024,
+            MAX_FILE_SIZE,
+        )
+        .unwrap();
+        let url = "http://lock.test";
+        let principal = "alice";
+        let _first =
+            FileCache::new_with_config(url, principal, config.clone()).expect("first opens");
+        let err = FileCache::new_with_config(url, principal, config)
+            .err()
+            .expect("second open must fail while first holds the lock");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("already using"),
+            "expected lock-conflict error, got: {msg}"
+        );
     }
 
     #[test]

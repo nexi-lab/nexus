@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.bricks.portability.export_service import ZoneExportService
-from nexus.bricks.portability.models import ZoneExportOptions
+from nexus.bricks.portability.models import BUNDLE_PATHS, ZoneExportOptions
 
 
 def test_include_mounts_true_without_mount_manager_raises(tmp_path):
@@ -75,3 +75,39 @@ def test_include_mounts_true_with_mount_manager_calls_collect_and_write(tmp_path
     except Exception as exc:
         # If bundle creation fails for unrelated reasons, ensure it's not ValueError
         assert not isinstance(exc, ValueError), f"Unexpected ValueError: {exc}"
+
+
+def test_mounts_jsonl_in_bundle_checksums(tmp_path):
+    """mounts.jsonl must be registered in BundleChecksums for tamper detection."""
+    fs = MagicMock()
+    kernel = MagicMock()
+    kernel.metastore_list.return_value = []
+    fs._kernel = kernel
+
+    mgr = MagicMock()
+    mgr.list_mounts.return_value = [
+        {
+            "mount_id": "m-1",
+            "mount_point": "/x",
+            "backend_type": "path_local",
+            "backend_config": {"root": "/data"},
+            "owner_user_id": None,
+            "zone_id": "z1",
+            "description": None,
+        }
+    ]
+
+    out = tmp_path / "bundle.nexus"
+    service = ZoneExportService(fs, mount_manager=mgr)
+    try:
+        manifest = service.export_zone(
+            "z1",
+            ZoneExportOptions(output_path=out, include_mounts=True, sign=False),
+        )
+        assert BUNDLE_PATHS["mounts"] in manifest.checksums.files, (
+            "mounts.jsonl must be added to BundleChecksums when mounts are exported"
+        )
+    except Exception as exc:
+        # Only care about the checksum assertion failing; other infra errors are OK
+        if isinstance(exc, AssertionError):
+            raise

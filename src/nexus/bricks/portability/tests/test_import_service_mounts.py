@@ -149,3 +149,16 @@ def test_import_v2_bundle_no_mounts_jsonl_does_nothing(tmp_path):
     service = ZoneImportService(fs, mount_manager=mgr)
     _maybe_run(service.import_zone(ZoneImportOptions(bundle_path=bundle)))
     assert mgr.save_mount.call_count == 0
+
+
+def test_import_with_mounts_but_no_mount_manager_raises_loud(tmp_path):
+    """Bundle contains mounts.jsonl but no mount_manager → loud ValueError, not buried in result.errors."""
+    bundle = _build_bundle_with_mount(tmp_path)
+    fs = MagicMock()
+    service = ZoneImportService(fs)  # NO mount_manager
+    options = ZoneImportOptions(
+        bundle_path=bundle,
+        mount_overrides={"m-1": {"access_key_id": "AKIA", "secret_access_key": "wJalr"}},
+    )
+    with pytest.raises(ValueError, match="MountManager"):
+        _maybe_run(service.import_zone(options))

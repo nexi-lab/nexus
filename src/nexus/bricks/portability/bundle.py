@@ -136,6 +136,12 @@ class BundleReader:
         if manifest.file_count > 0 and BUNDLE_PATHS["files"] not in members:
             errors.append(f"Missing required file: {BUNDLE_PATHS['files']}")
 
+        if manifest.mount_count > 0 and BUNDLE_PATHS["mounts"] not in members:
+            errors.append(
+                f"Manifest claims mount_count={manifest.mount_count} but "
+                f"{BUNDLE_PATHS['mounts']!r} is missing from the bundle"
+            )
+
         # Verify checksums if provided
         if manifest.checksums.files:
             for path, checksum in manifest.checksums.files.items():

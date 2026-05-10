@@ -261,6 +261,9 @@ class ZoneExportService:
                 mount_phs = redact_and_write(raw_mounts, out_path=mounts_path)
                 manifest.placeholders = list(manifest.placeholders) + list(mount_phs)
                 manifest.mount_count = len(raw_mounts)
+                if raw_mounts:
+                    mounts_bytes = mounts_path.read_bytes()
+                    checksums.add_file(BUNDLE_PATHS["mounts"], mounts_bytes)
                 logger.info(
                     "Mount export: %d mounts, %d placeholders", len(raw_mounts), len(mount_phs)
                 )

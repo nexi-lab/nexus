@@ -503,7 +503,10 @@ class ZoneImportOptions:
         return self.user_id_remap.get(user_id, user_id)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization (excludes sensitive data)."""
+        """Convert to dictionary for JSON serialization.
+
+        Sensitive data is excluded or redacted: decryption_key is omitted; mount_overrides
+        values are replaced with "***" (structure preserved for debugging)."""
         return {
             "bundle_path": str(self.bundle_path),
             "target_zone_id": self.target_zone_id,
@@ -519,7 +522,11 @@ class ZoneImportOptions:
             "batch_size": self.batch_size,
             "max_concurrent_writes": self.max_concurrent_writes,
             "restore_mounts": self.restore_mounts,
-            "mount_overrides": self.mount_overrides,
+            "mount_overrides": (
+                {mid: dict.fromkeys(fields, "***") for mid, fields in self.mount_overrides.items()}
+                if self.mount_overrides
+                else None
+            ),
             # Note: decryption_key intentionally excluded for security
         }
 

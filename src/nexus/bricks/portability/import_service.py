@@ -25,6 +25,7 @@ from nexus.bricks.portability.models import (
     ContentMode,
     FileRecord,
     ImportResult,
+    MissingCredentialsError,
     PermissionRecord,
     ZoneImportOptions,
 )
@@ -352,15 +353,9 @@ class ZoneImportService:
                     )
                     result.errors.extend(mount_errors)
 
+        except (MissingCredentialsError, ValueError):
+            raise
         except Exception as e:
-            from nexus.bricks.portability.models import MissingCredentialsError
-
-            # Validation errors that callers must handle explicitly — re-raise
-            # so the caller sees the structured exception rather than a result
-            # with an opaque error string. MissingCredentialsError is raised
-            # before any side effect, so no partial state is left behind.
-            if isinstance(e, MissingCredentialsError):
-                raise
             logger.exception("Import failed: %s", e)
             result.add_error(
                 path=str(options.bundle_path),

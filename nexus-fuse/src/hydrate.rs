@@ -451,4 +451,48 @@ mod tests {
         assert_eq!(stats.admitted_count, 2);
         assert_eq!(stats.failed, 1);
     }
+
+    #[test]
+    fn test_hydrate_root_list_failure_returns_failed() {
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+
+        let mut server = mockito::Server::new();
+        let _list_mock = server
+            .mock("POST", "/api/nfs/list")
+            .with_status(500)
+            .with_body("backend down")
+            .create();
+
+        let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
+        let cache = fresh_cache("list_err");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let stats = rt.block_on(hydrate_workspace(client, cache, HydrateOptions::new("/".into())));
+
+        assert_eq!(stats.admitted_count, 0);
+        assert_eq!(stats.failed, 1);
+    }
+
+    #[test]
+    fn test_hydrate_empty_workspace_zero_stats() {
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+
+        let mut server = mockito::Server::new();
+        let _list_mock = server
+            .mock("POST", "/api/nfs/list")
+            .with_status(200)
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"files":[]}}"#)
+            .create();
+
+        let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
+        let cache = fresh_cache("empty");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let stats = rt.block_on(hydrate_workspace(client, cache, HydrateOptions::new("/".into())));
+
+        assert_eq!(stats.admitted_count, 0);
+        assert_eq!(stats.skipped_size, 0);
+        assert_eq!(stats.skipped_warm, 0);
+        assert_eq!(stats.failed, 0);
+    }
 }

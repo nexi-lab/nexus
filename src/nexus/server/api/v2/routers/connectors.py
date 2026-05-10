@@ -682,6 +682,39 @@ async def mount_connector(
             context=mount_context,
         )
         _mount_types[req.mount_point] = req.connector_type
+
+        # Also persist the mount config via MountManager so the bundle
+        # exporter (`nexus zone export --include-mounts`, Issue #4083)
+        # can find it. `add_mount` only registers in the kernel runtime
+        # mount table; without this, mounts created via the HTTP API
+        # surface as `mount_count=0` in exports — silently invisible.
+        # Best-effort: a save_mount failure shouldn't roll back an
+        # already-active mount, but it does deserve a warning.
+        if getattr(mount_svc, "mount_manager", None) is not None:
+            try:
+                await mount_svc.save_mount(
+                    mount_point=req.mount_point,
+                    backend_type=req.connector_type,
+                    backend_config=req.config,
+                    context=mount_context,
+                )
+            except ValueError:
+                # ValueError = already saved; idempotent retry on the
+                # same mount_point. Activation succeeded so we still
+                # return mounted=True — the persisted record is fine.
+                pass
+            except Exception as persist_exc:
+                # Other failures (e.g., metastore write error). Log but
+                # don't fail the response — the kernel mount is live.
+                # Operators relying on portability will see this in logs.
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Mount activated but config persistence failed for %s: %s",
+                    req.mount_point,
+                    persist_exc,
+                )
+
         return MountResponse(mounted=True, mount_point=str(result))
     except Exception as e:
         return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))
@@ -725,6 +758,24 @@ async def unmount_connector(
     try:
         await mount_svc.remove_mount(mount_point=req.mount_point)
         _mount_types.pop(req.mount_point, None)
+
+        # Mirror the dual-write from the mount handler: also drop the
+        # persisted MountManager record so the bundle exporter (Issue
+        # #4083) doesn't keep returning a stale entry for an unmounted
+        # path. Best-effort — kernel unmount succeeded, so we report
+        # success regardless.
+        if getattr(mount_svc, "mount_manager", None) is not None:
+            try:
+                await mount_svc.delete_saved_mount(mount_point=req.mount_point)
+            except Exception as persist_exc:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Mount removed from kernel but config persistence cleanup failed for %s: %s",
+                    req.mount_point,
+                    persist_exc,
+                )
+
         return MountResponse(mounted=False, mount_point=req.mount_point)
     except Exception as e:
         return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))

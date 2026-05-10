@@ -55,8 +55,8 @@ class TestListWithZoneAndPermissions:
         store = _make_store()
         try:
             store.sys_setattr("/file1.txt", 0)
-            store.sys_setattr("/file2.txt", 1)
-            store.sys_setattr("/dir/file3.txt", 1)
+            store.sys_setattr("/file2.txt", 0)
+            store.sys_setattr("/dir/file3.txt", 0)
 
             svc = _make_search_service(store)
             results = svc.list(path="/", recursive=True)
@@ -72,8 +72,8 @@ class TestListWithZoneAndPermissions:
         store = _make_store()
         try:
             store.sys_setattr("/file1.txt", 0)
-            store.sys_setattr("/dir/file2.txt", 1)
-            store.sys_setattr("/dir/sub/file3.txt", 1)
+            store.sys_setattr("/dir/file2.txt", 0)
+            store.sys_setattr("/dir/sub/file3.txt", 0)
 
             svc = _make_search_service(store)
             results = svc.list(path="/", recursive=False)
@@ -89,9 +89,9 @@ class TestListWithZoneAndPermissions:
         """List with prefix should only return matching files."""
         store = _make_store()
         try:
-            store.sys_setattr("/a/file1.txt", 1)
-            store.sys_setattr("/a/file2.txt", 1)
-            store.sys_setattr("/b/file3.txt", 1)
+            store.sys_setattr("/a/file1.txt", 0)
+            store.sys_setattr("/a/file2.txt", 0)
+            store.sys_setattr("/b/file3.txt", 0)
 
             svc = _make_search_service(store)
             results = svc.list(path="/a/", recursive=True)
@@ -117,8 +117,8 @@ class TestListWithZoneAndPermissions:
         store_a = _make_store(zone_id="zone_a")
         store_b = _make_store(zone_id="zone_b")
         try:
-            store_a.sys_setattr("/zone_a/file1.txt", 1)
-            store_b.sys_setattr("/zone_b/file2.txt", 1)
+            store_a.sys_setattr("/zone_a/file1.txt", 0)
+            store_b.sys_setattr("/zone_b/file2.txt", 0)
 
             svc_a = _make_search_service(store_a)
             svc_b = _make_search_service(store_b)
@@ -139,7 +139,7 @@ class TestListWithZoneAndPermissions:
         store = _make_store()
         try:
             for i in range(10):
-                store.sys_setattr(f"/p/{chr(97 + i)}.txt", 1)
+                store.sys_setattr(f"/p/{chr(97 + i)}.txt", 0)
 
             svc = _make_search_service(store)
             page1 = svc._list_paginated(
@@ -156,7 +156,7 @@ class TestListWithZoneAndPermissions:
         """List with details=True should return dicts with metadata."""
         store = _make_store()
         try:
-            store.sys_setattr("/doc.txt", 1)
+            store.sys_setattr("/doc.txt", 0)
 
             svc = _make_search_service(store)
             results = svc.list(path="/", recursive=True, details=True)

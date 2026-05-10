@@ -17,28 +17,18 @@ from nexus.bricks.portability.models import (
 
 
 def _build_bundle_with_mount(tmp_path: Path) -> Path:
-    """Create a minimal v3 bundle containing mounts.jsonl."""
+    """Create a minimal v3 bundle containing mounts.jsonl.
+
+    Round-4 strict-validation: mounts.jsonl must be in
+    ``manifest.checksums.files`` for ``BundleReader.read_mount_records``
+    to consume it (defense against tampering outside the signed envelope).
+    Compute the SHA-256 of the canonical bytes we write and register it.
+    """
+    import hashlib
+
     bundle_dir = tmp_path / "src"
     bundle_dir.mkdir()
-    manifest = {
-        "$schema": "https://nexus.io/schemas/manifest-v3.json",
-        "format_version": BUNDLE_FORMAT_VERSION,
-        "bundle_id": "550e8400-e29b-41d4-a716-446655440000",
-        "source_zone_id": "z1",
-        "export_timestamp": "2026-01-01T00:00:00+00:00",
-        "statistics": {
-            "file_count": 0,
-            "total_size_bytes": 0,
-            "content_blob_count": 0,
-            "permission_count": 0,
-            "embedding_count": 0,
-            "mount_count": 1,
-        },
-        "options": {"include_content": True, "include_permissions": True},
-        "checksums": {"algorithm": "sha256", "files": {}},
-    }
-    (bundle_dir / "manifest.json").write_text(json.dumps(manifest))
-    (bundle_dir / "mounts.jsonl").write_text(
+    mounts_payload = (
         json.dumps(
             {
                 "mount_id": "m-1",
@@ -55,7 +45,37 @@ def _build_bundle_with_mount(tmp_path: Path) -> Path:
             }
         )
         + "\n"
-    )
+    ).encode("utf-8")
+    mounts_sha = hashlib.sha256(mounts_payload).hexdigest()
+    manifest = {
+        "$schema": "https://nexus.io/schemas/manifest-v3.json",
+        "format_version": BUNDLE_FORMAT_VERSION,
+        "bundle_id": "550e8400-e29b-41d4-a716-446655440000",
+        "source_zone_id": "z1",
+        "export_timestamp": "2026-01-01T00:00:00+00:00",
+        "statistics": {
+            "file_count": 0,
+            "total_size_bytes": 0,
+            "content_blob_count": 0,
+            "permission_count": 0,
+            "embedding_count": 0,
+            "mount_count": 1,
+        },
+        "options": {"include_content": True, "include_permissions": True},
+        "checksums": {
+            "algorithm": "sha256",
+            "files": {
+                "mounts.jsonl": {
+                    "path": "mounts.jsonl",
+                    "algorithm": "sha256",
+                    "hash": mounts_sha,
+                    "size_bytes": len(mounts_payload),
+                }
+            },
+        },
+    }
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest))
+    (bundle_dir / "mounts.jsonl").write_bytes(mounts_payload)
 
     out = tmp_path / "bundle.nexus"
     with tarfile.open(out, "w:gz") as tar:

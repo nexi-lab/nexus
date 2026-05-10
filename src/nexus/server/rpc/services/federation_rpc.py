@@ -225,15 +225,19 @@ class FederationRPCService(FederationRPCMixin):
         mount_manager = self._build_mount_manager(nx) if restore_mounts else None
 
         # Server-side audit trail for mount credential injection
-        # (Issue #4083 round-2 reviewer finding). Log only mount IDs and
-        # field names — never values — so the operator action is
-        # captured for forensics without writing secrets to disk.
+        # (Issue #4083 rounds 2/4). Log only mount IDs and field names —
+        # never values — so the operator action is captured for
+        # forensics without writing secrets to disk. Round-4 reviewer
+        # noted the previous "nexus.audit.federation" logger was an
+        # orphan with no configured handler. Use this module's logger
+        # at WARNING so the event lands in the normal server log
+        # (always captured). If a future durable audit sink is wired,
+        # this is the obvious callsite to redirect.
         if mount_overrides:
             import logging as _logging
 
-            _audit = _logging.getLogger("nexus.audit.federation")
-            _audit.warning(
-                "federation_import_zone: mount_overrides supplied for %d mount(s): %s",
+            _logging.getLogger(__name__).warning(
+                "AUDIT federation_import_zone: mount_overrides supplied for %d mount(s): %s",
                 len(mount_overrides),
                 {mid: sorted(fields.keys()) for mid, fields in mount_overrides.items()},
             )

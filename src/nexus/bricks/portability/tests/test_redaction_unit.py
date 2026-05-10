@@ -127,28 +127,37 @@ def test_redact_config_audit_failure_raises():
 
 
 def test_redact_config_unknown_backend_raises():
-    """Refusing to ship a mount whose CONNECTION_ARGS contract is unknown.
+    """Refusing to ship a mount whose backend isn't even in the registry.
 
     Without this guard, a slim install (where e.g. boto3 isn't installed and
     path_s3 isn't loaded) would silently produce a bundle with cleartext S3
     credentials because the registry returns no secret-fields set. The export
     must abort instead.
+
+    Round 4: the message now distinguishes 'unknown backend' (this case)
+    from 'registered but no CONNECTION_ARGS' (allowed for CLI/YAML
+    custom connectors, see test_redact_config_registered_no_args_*).
     """
-    with patch(
-        "nexus.bricks.portability.redaction._get_connection_args",
-        return_value={},
+    with (
+        patch(
+            "nexus.bricks.portability.redaction._get_connection_args",
+            return_value={},
+        ),
+        patch(
+            "nexus.bricks.portability.redaction._backend_is_registered",
+            return_value=False,
+        ),
     ):
         with pytest.raises(SensitiveFieldNotDeclaredError) as exc:
             redact_config(
-                "path_s3",
+                "totally_unknown_backend",
                 {"access_key_id": "AKIA-LIVE", "bucket_name": "acme"},
                 mount_id="m-1",
             )
         # Sorted for deterministic output; offending fields are surfaced so
         # the operator knows what was about to leak.
         assert exc.value.fields == ["access_key_id", "bucket_name"]
-        assert "path_s3" in exc.value.backend_type
-        assert "install the matching extra" in exc.value.backend_type
+        assert "unknown backend" in exc.value.backend_type
 
 
 def test_placeholder_field_dotted_path_is_predictable():
@@ -219,3 +228,50 @@ def test_redact_config_rejects_nested_secret_shaped_key():
     with pytest.raises(SensitiveFieldNotDeclaredError) as exc:
         redact_config("path_local", config, mount_id="m-leak")
     assert any("auth_token" in f for f in exc.value.fields), exc.value.fields
+
+
+def test_redact_config_registered_no_args_passes_with_no_secrets():
+    """Round 4: registered backend (e.g., a CLI/YAML custom connector)
+    with no CONNECTION_ARGS but a clean persisted config exports cleanly.
+    The previous blanket-refuse path broke this legitimate workflow."""
+    with (
+        patch(
+            "nexus.bricks.portability.redaction._get_connection_args",
+            return_value={},
+        ),
+        patch(
+            "nexus.bricks.portability.redaction._backend_is_registered",
+            return_value=True,
+        ),
+    ):
+        out, placeholders = redact_config(
+            "custom_cli_backend",
+            {"command": "/usr/local/bin/foo", "timeout": 30},
+            mount_id="m-1",
+        )
+        assert out == {"command": "/usr/local/bin/foo", "timeout": 30}
+        assert placeholders == []
+
+
+def test_redact_config_registered_no_args_refuses_secret_shaped_keys():
+    """Round 4: registered backend with no CONNECTION_ARGS still must
+    refuse if the persisted config carries secret-shaped keys we cannot
+    introspect."""
+    with (
+        patch(
+            "nexus.bricks.portability.redaction._get_connection_args",
+            return_value={},
+        ),
+        patch(
+            "nexus.bricks.portability.redaction._backend_is_registered",
+            return_value=True,
+        ),
+    ):
+        with pytest.raises(SensitiveFieldNotDeclaredError) as exc:
+            redact_config(
+                "custom_cli_backend",
+                {"command": "/usr/local/bin/foo", "api_key": "LIVE"},
+                mount_id="m-1",
+            )
+        assert "api_key" in exc.value.fields
+        assert "registered but declares no" in exc.value.backend_type

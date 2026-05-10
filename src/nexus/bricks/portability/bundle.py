@@ -117,16 +117,22 @@ class BundleReader:
 
         try:
             member = self._tar.getmember(MANIFEST_FILENAME)
-            file_obj = self._tar.extractfile(member)
-            if file_obj is None:
-                raise ValueError("Could not read manifest file")
-
-            self._raw_manifest_dict = json.loads(file_obj.read().decode("utf-8"))
-            self._manifest = ExportManifest.from_dict(self._raw_manifest_dict)
-            return self._manifest
-
         except KeyError:
+            # Only the tar lookup raises KeyError for "missing manifest";
+            # downstream parsing errors must NOT be misreported as
+            # "missing" (round-4 reviewer trace: a KeyError from
+            # ExportManifest.from_dict was being caught by this clause
+            # and surfaced as 'Bundle missing manifest.json'). Scope the
+            # try narrowly to the lookup.
             raise ValueError(f"Bundle missing {MANIFEST_FILENAME}") from None
+
+        file_obj = self._tar.extractfile(member)
+        if file_obj is None:
+            raise ValueError("Could not read manifest file")
+
+        self._raw_manifest_dict = json.loads(file_obj.read().decode("utf-8"))
+        self._manifest = ExportManifest.from_dict(self._raw_manifest_dict)
+        return self._manifest
 
     def validate(self) -> tuple[bool, list[str]]:
         """Validate bundle integrity.
@@ -225,6 +231,34 @@ class BundleReader:
                 f"{BUNDLE_PATHS['mounts']!r} is missing from the bundle"
             )
 
+        # Round-4 reviewer finding: an attacker can append/tamper
+        # mounts.jsonl OUTSIDE the signed manifest envelope (manifest
+        # claims mount_count=0 but the tar carries a mounts.jsonl). The
+        # import path used to read it anyway. Reject any mounts.jsonl
+        # that isn't both: (a) declared by manifest.mount_count > 0,
+        # AND (b) present in manifest.checksums (so signature/integrity
+        # check covers it).
+        mounts_in_tar = BUNDLE_PATHS["mounts"] in members
+        mounts_in_checksums = BUNDLE_PATHS["mounts"] in manifest.checksums.files
+        if mounts_in_tar and manifest.mount_count == 0:
+            errors.append(
+                f"Bundle contains {BUNDLE_PATHS['mounts']!r} but manifest "
+                "claims mount_count=0 — refusing to trust unmanifested mount "
+                "records (potential tampering outside the signed envelope)."
+            )
+        if mounts_in_tar and not mounts_in_checksums:
+            errors.append(
+                f"{BUNDLE_PATHS['mounts']!r} is present but missing from "
+                "manifest.checksums.files — refusing to trust mount records "
+                "outside the signed/verified envelope."
+            )
+        if manifest.mount_count > 0 and not mounts_in_checksums:
+            errors.append(
+                f"Manifest claims mount_count={manifest.mount_count} but "
+                f"{BUNDLE_PATHS['mounts']!r} has no checksum entry — bundle "
+                "integrity cannot be verified for mount records."
+            )
+
         # Verify checksums if provided
         if manifest.checksums.files:
             for path, checksum in manifest.checksums.files.items():
@@ -294,12 +328,33 @@ class BundleReader:
         """Read mount records from mounts.jsonl.
 
         Returns:
-            List of MountRecord objects, or empty list if mounts.jsonl is absent.
+            List of MountRecord objects, or empty list if mounts.jsonl is absent
+            or if the manifest does not declare mount records (round-4 reviewer
+            finding: refuse to consume mount records that fall outside the
+            signed/checksummed manifest envelope).
+
+        Raises:
+            ValueError: if the actual record count disagrees with
+                manifest.mount_count, indicating tampering.
         """
         if self._tar is None:
             raise RuntimeError("Bundle not open. Call open() first.")
 
         import json as _json
+
+        # Defense-in-depth: even if the caller skipped validate(), the
+        # import path must not consume mount records that the manifest
+        # didn't declare. validate() is the primary check; this is the
+        # belt against a caller bypass.
+        manifest = self.get_manifest()
+        if manifest.mount_count == 0:
+            return []
+        if BUNDLE_PATHS["mounts"] not in manifest.checksums.files:
+            raise ValueError(
+                f"Refusing to read {BUNDLE_PATHS['mounts']!r}: not present in "
+                "manifest.checksums.files (signed envelope). Run validate() to "
+                "see the full integrity report."
+            )
 
         mounts_path = BUNDLE_PATHS["mounts"]
         try:
@@ -313,6 +368,13 @@ class BundleReader:
                 line_str = line.decode("utf-8").strip()
                 if line_str:
                     records.append(MountRecord.from_dict(_json.loads(line_str)))
+
+            if len(records) != manifest.mount_count:
+                raise ValueError(
+                    f"Mount record count mismatch: manifest declares "
+                    f"{manifest.mount_count}, mounts.jsonl carries "
+                    f"{len(records)}. Bundle may have been tampered with."
+                )
             return records
 
         except KeyError:

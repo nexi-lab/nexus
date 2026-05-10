@@ -48,14 +48,6 @@ def _get_connection_args(backend_type: str) -> dict[str, Any]:
     Note: similar to ConnectorRegistry.get_connection_args, but kept local so
     tests can patch this single function to inject fake CONNECTION_ARGS without
     monkey-patching the global registry.
-
-    Forces ``_register_optional_backends()`` once at first call. Without this
-    the registry only contains backends imported by other code paths so far
-    (often just ``cas_local`` and ``path_local`` in a fresh server process),
-    and ``ConnectorRegistry.get_info("path_s3")`` would raise ``KeyError`` —
-    which would surface to the operator as ``Unknown connector 'path_s3'``
-    instead of either a clean redaction or an honest "extra not installed"
-    skip. The registration is idempotent; subsequent calls are a no-op.
     """
     from nexus.backends import _register_optional_backends
     from nexus.backends.base.registry import ConnectorRegistry
@@ -85,6 +77,23 @@ def _get_connection_args(backend_type: str) -> dict[str, Any]:
         pass
 
     return {}
+
+
+def _backend_is_registered(backend_type: str) -> bool:
+    """Return True if `backend_type` is in the ConnectorRegistry (with or
+    without a loaded connector_class). Used by ``redact_config`` to
+    distinguish 'unknown backend' from 'registered backend with no
+    CONNECTION_ARGS' — the latter is legitimate for CLI/YAML-defined
+    custom connectors, the former is a leak risk."""
+    from nexus.backends import _register_optional_backends
+    from nexus.backends.base.registry import ConnectorRegistry
+
+    _register_optional_backends()
+    try:
+        ConnectorRegistry.get_info(backend_type)
+        return True
+    except KeyError:
+        return False
 
 
 def declared_secret_fields(backend_type: str) -> frozenset[str]:
@@ -144,17 +153,40 @@ def redact_config(
     """
     args = _get_connection_args(backend_type)
     if not args:
-        # Backend not in registry, or connector class failed to import (e.g.,
-        # boto3 not installed on a slim server). We can't introspect the
-        # CONNECTION_ARGS contract, so we don't know which fields are secret —
-        # refuse the export rather than ship cleartext credentials. Operators
-        # see the offending fields in the error so they can install the
-        # missing extra (e.g., `pip install nexus-fs[s3]`) and retry.
-        raise SensitiveFieldNotDeclaredError(
-            backend_type=f"{backend_type} (CONNECTION_ARGS not loadable; "
-            f"install the matching extra so the redaction contract resolves)",
-            fields=sorted(config.keys()),
-        )
+        # Two cases produce empty args; only one is a leak risk:
+        #
+        # (a) backend_type is NOT in the ConnectorRegistry at all (e.g.
+        #     unknown name, slim install missing the matching extra so
+        #     the connector class never loaded). We can't introspect any
+        #     contract → refuse the export rather than ship cleartext.
+        #
+        # (b) backend_type IS registered but has no CONNECTION_ARGS
+        #     declared (CLI/YAML-defined custom connectors don't always
+        #     define the class attribute). Round-4 reviewer flagged the
+        #     blanket refuse path as too strict — it broke supported
+        #     workflows for these. For (b) we still scan the persisted
+        #     backend_config for secret-shaped keys and refuse if any
+        #     are found; otherwise allow export with no placeholders.
+        if not _backend_is_registered(backend_type):
+            raise SensitiveFieldNotDeclaredError(
+                backend_type=f"{backend_type} (unknown backend; CONNECTION_ARGS "
+                f"not loadable — install the matching extra or register the "
+                f"connector so the redaction contract resolves)",
+                fields=sorted(config.keys()),
+            )
+        # Registered backend with no CONNECTION_ARGS: scan only — can't
+        # use declared_secret_fields because there are none. Any
+        # secret-shaped key in the persisted config is a leak.
+        config_leaks = _scan_config_for_undeclared_secrets({}, config)
+        if config_leaks:
+            raise SensitiveFieldNotDeclaredError(
+                backend_type=f"{backend_type} (registered but declares no "
+                f"CONNECTION_ARGS; secret-shaped keys in persisted "
+                f"backend_config cannot be safely redacted)",
+                fields=config_leaks,
+            )
+        # No declared secrets, no scanned leaks → pass through unchanged.
+        return dict(config), []
 
     leaks = audit_backend(backend_type)
     if leaks:

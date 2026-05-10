@@ -679,7 +679,7 @@ class ContentMixin:
                     is_new_file=result.is_new,
                     content_id=result.content_id or "",
                     metadata=_meta_obj,
-                    old_metadata=_old_metadata,
+                    old_metadata=_old_metadata.to_dict() if _old_metadata else None,
                     new_version=result.version,
                 ),
             )
@@ -934,7 +934,7 @@ class ContentMixin:
                     gen=result.gen,
                     zone_id=zone_id,
                 ),
-                old_metadata=_old_meta,
+                old_metadata=_old_meta.to_dict() if _old_meta else None,
                 new_version=result.version,
             ),
         )

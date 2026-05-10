@@ -752,6 +752,28 @@ mod tests {
         let b = CachePaths::for_server(&root, url, "bob");
         assert_ne!(a.foyer_dir, b.foyer_dir);
         assert_ne!(a.sqlite_file, b.sqlite_file);
+    }
+
+    #[test]
+    fn test_cache_paths_split_by_agent_within_same_api_key() {
+        // #4055 R8: same api_key, different agent_id (X-Agent-ID header)
+        // must yield different cache directories. Otherwise an admin/owner
+        // key impersonating agent A could reopen a cache populated by
+        // agent B and serve cached bytes across the ReBAC scope boundary.
+        // The format "<api_key>|agent=<agent_id>" is the same convention
+        // open_file_cache uses to derive the principal.
+        let root = std::env::temp_dir().join("nexus-fuse-agent-test");
+        let url = "http://nx.test";
+        let api_key = "sk-shared";
+        let p_alice = format!("{api_key}|agent=alice");
+        let p_bob = format!("{api_key}|agent=bob");
+        let p_none = api_key.to_string();
+        let a = CachePaths::for_server(&root, url, &p_alice);
+        let b = CachePaths::for_server(&root, url, &p_bob);
+        let n = CachePaths::for_server(&root, url, &p_none);
+        assert_ne!(a.foyer_dir, b.foyer_dir, "alice and bob must not share");
+        assert_ne!(a.foyer_dir, n.foyer_dir, "alice and no-agent must not share");
+        assert_ne!(b.foyer_dir, n.foyer_dir, "bob and no-agent must not share");
         assert!(a
             .foyer_dir
             .file_name()

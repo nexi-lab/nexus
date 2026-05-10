@@ -251,12 +251,24 @@ fn collect_candidates(
     // tradeoff is an extra stat per candidate; the savings of pre-skipping
     // are worth giving up for correctness.
     let mut candidates: Vec<String> = Vec::new();
-    let mut queue: Vec<(String, u32)> = vec![(opts.workspace_root.clone(), 0)];
+    // Proper FIFO BFS (#4055 R8): a Vec+pop() gives LIFO/stack order,
+    // which combined with `break` on `depth > max_depth` could abandon
+    // shallower sibling directories still in the queue when a single
+    // deep branch is processed first. Use VecDeque + pop_front for true
+    // breadth-first order, and `continue` on over-depth so siblings at
+    // valid depths are still processed.
+    let mut queue: std::collections::VecDeque<(String, u32)> = std::collections::VecDeque::new();
+    queue.push_back((opts.workspace_root.clone(), 0));
     let mut total_seen: usize = 0;
     let mut root_listed = false;
 
-    while let Some((dir, depth)) = queue.pop() {
-        if depth > opts.max_depth || total_seen >= opts.max_entries {
+    while let Some((dir, depth)) = queue.pop_front() {
+        // Over-depth siblings: skip this dir, keep walking the queue.
+        if depth > opts.max_depth {
+            continue;
+        }
+        // Hard cap on processed entries — exhaust the walk.
+        if total_seen >= opts.max_entries {
             break;
         }
         let entries = match client.list(&dir) {
@@ -282,7 +294,7 @@ fn collect_candidates(
             total_seen += 1;
             let full_path = join_path(&dir, &entry.name);
             if is_directory(&entry) {
-                queue.push((full_path, depth + 1));
+                queue.push_back((full_path, depth + 1));
                 continue;
             }
             if (entry.size as usize) > opts.threshold_bytes {
@@ -780,6 +792,81 @@ mod tests {
 
         assert_eq!(stats.admitted_count, 1, "expected 1 admit from ok subdir, got {:?}", stats);
         // Per design: list errors mid-walk are not counted as `failed` (which is per-file fetch failures).
+        assert_eq!(stats.failed, 0, "stats={:?}", stats);
+    }
+
+    #[test]
+    fn test_hydrate_overdepth_branch_does_not_abandon_siblings() {
+        // #4055 R8: an over-depth branch must NOT short-circuit traversal
+        // of shallower sibling directories. The root has two children:
+        //   /deep  → infinitely recursive (would exceed max_depth)
+        //   /shallow → contains a single file we MUST admit
+        // Pre-fix the BFS used Vec+pop (LIFO) + break-on-depth, which
+        // could pop /deep first, exceed max_depth, and break out of the
+        // loop before ever visiting /shallow.
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+
+        let mut server = mockito::Server::new();
+        // Root list: two subdirs.
+        server
+            .mock("POST", "/api/nfs/list")
+            .match_body(mockito::Matcher::Regex(r#""path":\s*"/""#.into()))
+            .with_status(200)
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
+                {"path":"/deep","entry_type":1,"size":0},
+                {"path":"/shallow","entry_type":1,"size":0}
+            ]}}"#,
+            )
+            .create();
+        // /deep: infinitely recursive — every list returns another /deep/d
+        // directory. With max_depth=1 the BFS pops /deep at depth=1
+        // (allowed), descends into /deep/d at depth=2, which is over the
+        // cap and must be SKIPPED, not abort.
+        server
+            .mock("POST", "/api/nfs/list")
+            .match_body(mockito::Matcher::Regex(r#""path":\s*"/deep""#.into()))
+            .with_status(200)
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
+                {"path":"/deep/d","entry_type":1,"size":0}
+            ]}}"#,
+            )
+            .create();
+        // /shallow: one file we must admit.
+        server
+            .mock("POST", "/api/nfs/list")
+            .match_body(mockito::Matcher::Regex(r#""path":\s*"/shallow""#.into()))
+            .with_status(200)
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
+                {"path":"/shallow/keep.txt","entry_type":0,"size":3}
+            ]}}"#,
+            )
+            .create();
+        let _stat_mock = mock_small_stat(&mut server);
+        server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_header("etag", "\"e\"")
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"YWJj"}}"#)
+            .create();
+
+        let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
+        let cache = fresh_cache("overdepth_sibling");
+        let mut opts = HydrateOptions::new("/".into());
+        opts.max_depth = 1;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let stats = rt.block_on(hydrate_workspace(client, cache, opts));
+
+        // /shallow/keep.txt must be admitted despite /deep going over the cap.
+        assert_eq!(
+            stats.admitted_count, 1,
+            "BFS abandoned siblings: got {:?}",
+            stats
+        );
         assert_eq!(stats.failed, 0, "stats={:?}", stats);
     }
 

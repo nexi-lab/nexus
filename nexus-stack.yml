@@ -200,6 +200,11 @@ services:
       # hang HTTP request servicing after startup on some local runtimes.
       NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-false}
       NEXUS_DEBUG_STACK_DUMP: ${NEXUS_DEBUG_STACK_DUMP:-false}
+      # Agent self-observability (issue #4081) — JSONL session log knobs.
+      NEXUS_ACTIVITY_AGENT_LOG_ENABLED: ${NEXUS_ACTIVITY_AGENT_LOG_ENABLED:-1}
+      NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES: ${NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES:-10485760}
+      NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS: ${NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS:-7}
+      NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES: ${NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES:-4096}
     volumes:
       - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/app/data
       - ./configs:/app/configs:ro

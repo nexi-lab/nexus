@@ -9,7 +9,31 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from nexus.services.activity.agent_log_store import MemoryBackend
+
 logger = logging.getLogger(__name__)
+
+
+def sweep_agent_log(
+    store: MemoryBackend, *, retention_days: int, now: datetime | None = None
+) -> int:
+    """Drop (agent, date) buffers older than `retention_days`.
+
+    Returns the count of date keys dropped. Idempotent. retention_days <= 0
+    is treated as "retention disabled" — no keys are dropped.
+    """
+    if retention_days <= 0:
+        return 0
+    n = now or datetime.now(tz=UTC)
+    cutoff = (n.date() - timedelta(days=retention_days)).isoformat()
+    # Snapshot the dates to avoid mutating during iteration.
+    dates = store.iter_dates()
+    dropped = 0
+    for date in dates:
+        if date < cutoff:
+            store.drop_date(date)
+            dropped += 1
+    return dropped
 
 
 def prune_older_than(
@@ -115,6 +139,20 @@ class RetentionTask:
                 self._total_pruned += deleted
             except Exception:
                 logger.warning("activity retention loop tick failed", exc_info=True)
+            # Agent-log retention (RAM-only ring buffers, see issue #4081).
+            try:
+                from nexus.services.activity.lifespan import (
+                    get_agent_log_retention_days,
+                    get_agent_log_store,
+                )
+
+                store = get_agent_log_store()
+                retention_days = get_agent_log_retention_days()
+                if store is not None and isinstance(retention_days, int):
+                    dropped = sweep_agent_log(store, retention_days=retention_days)
+                    self._total_pruned += dropped
+            except Exception:
+                logger.warning("agent_log retention sweep failed", exc_info=True)
             try:
                 await asyncio.wait_for(self._stopping.wait(), timeout=self._interval_s)
             except TimeoutError:

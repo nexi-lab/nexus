@@ -40,6 +40,10 @@ class ActivityConfig:
     queue_size: int = 10_000
     batch_size: int = 200
     batch_timeout_s: float = 0.5
+    agent_log_enabled: bool = True
+    agent_log_cap_bytes: int = 10 * 1024 * 1024
+    agent_log_retention_days: int = 7
+    agent_log_cmd_max_bytes: int = 4 * 1024
 
     def __post_init__(self) -> None:
         # Bounded-queue contract: a non-positive queue_size disables
@@ -60,6 +64,20 @@ class ActivityConfig:
         if self.retention_days < 0:
             raise ValueError(
                 f"NEXUS_ACTIVITY_RETENTION_DAYS must be >= 0, got {self.retention_days}"
+            )
+        if self.agent_log_cap_bytes <= 0:
+            raise ValueError(
+                f"NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES must be > 0, got {self.agent_log_cap_bytes}"
+            )
+        if self.agent_log_retention_days < 0:
+            raise ValueError(
+                f"NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS must be >= 0, "
+                f"got {self.agent_log_retention_days}"
+            )
+        if self.agent_log_cmd_max_bytes <= 0:
+            raise ValueError(
+                f"NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES must be > 0, "
+                f"got {self.agent_log_cmd_max_bytes}"
             )
 
     @classmethod
@@ -88,5 +106,21 @@ class ActivityConfig:
                 "NEXUS_ACTIVITY_BATCH_TIMEOUT_S",
                 os.environ.get("NEXUS_ACTIVITY_BATCH_TIMEOUT_S"),
                 0.5,
+            ),
+            agent_log_enabled=_parse_bool(os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_ENABLED"), True),
+            agent_log_cap_bytes=_parse_int(
+                "NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES",
+                os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_CAP_BYTES"),
+                10 * 1024 * 1024,
+            ),
+            agent_log_retention_days=_parse_int(
+                "NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS",
+                os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_RETENTION_DAYS"),
+                7,
+            ),
+            agent_log_cmd_max_bytes=_parse_int(
+                "NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES",
+                os.environ.get("NEXUS_ACTIVITY_AGENT_LOG_CMD_MAX_BYTES"),
+                4 * 1024,
             ),
         )

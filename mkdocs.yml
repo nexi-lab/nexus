@@ -197,6 +197,8 @@ nav:
     - Kernel Architecture: architecture/KERNEL-ARCHITECTURE.md
     - Backend Architecture: architecture/backend-architecture.md
     - CLI Design: architecture/cli-design.md
+  - Agents:
+    - Self-Observability: agents/self-observability.md
   - Research:
     - CLI Experience Design Research: research/cli-experience-design-research.md
   - Proposals:

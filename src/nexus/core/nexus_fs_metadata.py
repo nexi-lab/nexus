@@ -27,6 +27,7 @@ from nexus.contracts.exceptions import (
 )
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 from nexus.contracts.types import OperationContext
+from nexus.core.nexus_fs_content import emit_op_completed
 from nexus.kernel_helpers import metastore_list_iter
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -788,6 +789,7 @@ class MetadataMixin:
         _pre_delete_meta = self._kernel.metastore_get(path)
 
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
+        _unlink_start = time.perf_counter()
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
@@ -828,6 +830,13 @@ class MetadataMixin:
             finally:
                 if _unlink_result.entry_type == DT_MOUNT:
                     self._forget_mounted_backend_instance(path)
+            emit_op_completed(
+                agent_id=agent_id,
+                op="delete",
+                path=path,
+                bytes_count=0,
+                latency_ms=int((time.perf_counter() - _unlink_start) * 1000),
+            )
             return {}
 
         # ── Rust miss: only DT_EXTERNAL_STORAGE (5) or not-found ─────
@@ -1735,6 +1744,18 @@ class MetadataMixin:
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
+        _list_start = time.perf_counter()
+        _, _list_agent_id, _ = self._get_context_identity(context)
+
+        def _emit_list() -> None:
+            emit_op_completed(
+                agent_id=_list_agent_id,
+                op="list",
+                path=path,
+                bytes_count=0,
+                latency_ms=int((time.perf_counter() - _list_start) * 1000),
+            )
+
         # PRE-DISPATCH: virtual resolvers (e.g., ``.readme/`` overlay)
         # contribute synthetic children before the kernel/metastore is
         # consulted. ``recursive`` is forwarded so resolvers may emit
@@ -1742,12 +1763,20 @@ class MetadataMixin:
         if hasattr(self, "resolve_list"):
             _handled, _virt = self.resolve_list(path, context=context, recursive=recursive)
             if _handled and _virt is not None:
-                if details:
-                    return [
-                        {"path": p, "size": 0, "content_id": "", "entry_type": et}
-                        for p, et in _virt
-                    ]
-                return [p for p, _ in _virt]
+                _emit_list()
+                # Always return rich dict entries (with size from try_stat)
+                # so virtual files render correctly regardless of the wire
+                # `details` arg. Both `_format_file_entry` shapes (CLI and
+                # API v2) consume dicts; strings would lose size+type info.
+                out: list[dict[str, Any]] = []
+                for p, et in _virt:
+                    size = 0
+                    if et == 0 and hasattr(self, "resolve_stat"):
+                        _ok, _stat = self.resolve_stat(p, context=context)
+                        if _ok and _stat is not None:
+                            size = int(_stat.get("size", 0))
+                    out.append({"path": p, "size": size, "content_id": "", "entry_type": et})
+                return out
 
         # /__sys__/locks intercept moved to Rust readdir_paged (C3/C7).
 
@@ -1808,7 +1837,9 @@ class MetadataMixin:
                             # Non-zone paths (root namespace) — keep; they
                             # are not the federation tenant data.
                             _filtered.append(_child)
+                    _emit_list()
                     return _filtered
+                _emit_list()
                 return _children
 
         prefix = path if path != "/" else ""
@@ -1884,6 +1915,7 @@ class MetadataMixin:
                 result.items = [self._entry_to_detail_dict(e, recursive) for e in result.items]
             else:
                 result.items = [e.path for e in result.items]
+            _emit_list()
             return result
 
         # Issue #3706: Use list_iter() instead of list() to avoid creating a
@@ -1897,8 +1929,12 @@ class MetadataMixin:
             if not self._is_internal_path(e.path) and _zone_allowed(e)
         )
         if details:
-            return [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
-        return [e.path for e in entries_iter]
+            _result = [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
+            _emit_list()
+            return _result
+        _result = [e.path for e in entries_iter]
+        _emit_list()
+        return _result
 
     @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)
     def backfill_directory_index(

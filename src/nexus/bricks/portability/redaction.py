@@ -37,6 +37,10 @@ def _get_connection_args(backend_type: str) -> dict[str, Any]:
     Returns {} for placeholder registry entries whose connector module failed
     to import (extra not installed) — those are skipped by callers, not
     treated as audit failures.
+
+    Note: similar to ConnectorRegistry.get_connection_args, but kept local so
+    tests can patch this single function to inject fake CONNECTION_ARGS without
+    monkey-patching the global registry.
     """
     from nexus.backends.base.registry import ConnectorRegistry
 

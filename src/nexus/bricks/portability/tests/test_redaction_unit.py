@@ -103,8 +103,9 @@ def test_redact_config_idempotent_on_already_redacted():
     pytest.importorskip("boto3")
     _ensure_registry()
     config = {"bucket_name": "acme", "access_key_id": "${MOUNT_m-1_ACCESS_KEY_ID}"}
-    redacted, _ = redact_config("path_s3", config, mount_id="m-1")
+    redacted, placeholders = redact_config("path_s3", config, mount_id="m-1")
     assert redacted["access_key_id"] == "${MOUNT_m-1_ACCESS_KEY_ID}"
+    assert placeholders == []  # no duplicate placeholder for already-redacted field
 
 
 def test_redact_config_audit_failure_raises():

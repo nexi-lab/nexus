@@ -309,3 +309,43 @@ class TestLifecycle:
     def test_close_idempotent(self, mock_client: RustFUSEClient) -> None:
         mock_client.close()
         mock_client.close()  # Should not raise
+
+
+# ── Cache Warm (Issue #4055) ───────────────────────────
+
+
+class TestCacheWarmMethod:
+    def test_cache_warm_default_params(self) -> None:
+        client = RustFUSEClient.__new__(RustFUSEClient)  # bypass __init__
+        with patch.object(client, "_send_request", return_value={"admitted_count": 3}) as send:
+            result = client.cache_warm("/workspace")
+        send.assert_called_once_with("cache_warm", {"workspace_root": "/workspace"})
+        assert result == {"admitted_count": 3}
+
+    def test_cache_warm_with_overrides(self) -> None:
+        client = RustFUSEClient.__new__(RustFUSEClient)
+        with patch.object(client, "_send_request", return_value={}) as send:
+            client.cache_warm(
+                "/ws",
+                threshold_bytes=4096,
+                budget_bytes=1024,
+                concurrency=2,
+            )
+        send.assert_called_once_with(
+            "cache_warm",
+            {
+                "workspace_root": "/ws",
+                "threshold_bytes": 4096,
+                "budget_bytes": 1024,
+                "concurrency": 2,
+            },
+        )
+
+    def test_cache_warm_omits_none_overrides(self) -> None:
+        client = RustFUSEClient.__new__(RustFUSEClient)
+        with patch.object(client, "_send_request", return_value={}) as send:
+            client.cache_warm("/ws", threshold_bytes=None, budget_bytes=512)
+        send.assert_called_once_with(
+            "cache_warm",
+            {"workspace_root": "/ws", "budget_bytes": 512},
+        )

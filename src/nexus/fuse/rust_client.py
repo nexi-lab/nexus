@@ -432,6 +432,28 @@ class RustFUSEClient:
         exists_value: bool = result["exists"]
         return exists_value
 
+    def cache_warm(
+        self,
+        workspace_root: str,
+        *,
+        threshold_bytes: int | None = None,
+        budget_bytes: int | None = None,
+        concurrency: int | None = None,
+    ) -> dict[str, Any]:
+        """Trigger eager cache hydration via the Rust daemon (Issue #4055).
+
+        Returns a `HydrateStats` dict with keys: admitted_count, admitted_bytes,
+        skipped_warm, skipped_size, skipped_budget, failed, duration_ms.
+        """
+        params: dict[str, Any] = {"workspace_root": workspace_root}
+        if threshold_bytes is not None:
+            params["threshold_bytes"] = threshold_bytes
+        if budget_bytes is not None:
+            params["budget_bytes"] = budget_bytes
+        if concurrency is not None:
+            params["concurrency"] = concurrency
+        return self._send_request("cache_warm", params)
+
     def close(self) -> None:
         """Close connection and shutdown daemon."""
         if self.sock:

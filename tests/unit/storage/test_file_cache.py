@@ -224,6 +224,31 @@ class TestFileContentCache:
         # Content should be the newer one
         assert cache.read("zone1", "/file.txt") == b"content2"
 
+    def test_read_if_fresh_rejects_fingerprint_mismatch(self, tmp_path: Path):
+        """Fingerprint-aware reads must not serve stale bytes."""
+        cache = FileContentCache(tmp_path)
+        cache.write(
+            "zone1",
+            "/file.txt",
+            b"v1",
+            meta={"fingerprint": "etag:v1"},
+        )
+
+        assert cache.read_if_fresh("zone1", "/file.txt", "etag:v2") is None
+        assert cache.read_if_fresh("zone1", "/file.txt", "etag:v1") == b"v1"
+
+    def test_read_if_fresh_allows_unfingerprinted_ttl_fallback(self, tmp_path: Path):
+        """When no fingerprint is available, fresh TTL metadata may guard cached bytes."""
+        cache = FileContentCache(tmp_path)
+        cache.write(
+            "zone1",
+            "/file.txt",
+            b"ttl-fallback",
+            meta={"expires_at": 4_102_444_800.0},
+        )
+
+        assert cache.read_if_fresh("zone1", "/file.txt", None) == b"ttl-fallback"
+
 
 class TestFileContentCacheStaleness:
     """Test suite for lease-aware staleness tracking (Issue #3400)."""

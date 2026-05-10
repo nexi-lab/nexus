@@ -181,6 +181,16 @@ class PathGCSBackend(PathAddressingEngine):
         blob_path = self._get_key_path(backend_path)
         return self._gcs_transport.get_generation(blob_path)
 
+    def fingerprint(self, path: str, context: "OperationContext | None" = None) -> str | None:
+        if context and context.backend_path:
+            backend_path = context.backend_path
+        else:
+            backend_path = path.lstrip("/")
+
+        blob_path = self._get_key_path(backend_path)
+        generation = self._gcs_transport.reload_blob_metadata(blob_path).get("generation")
+        return str(generation) if generation is not None else None
+
     def get_file_info(self, path: str, context: "OperationContext | None" = None) -> FileInfo:
         if context and context.backend_path:
             backend_path = context.backend_path

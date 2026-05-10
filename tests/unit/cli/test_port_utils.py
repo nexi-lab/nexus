@@ -16,6 +16,8 @@ from nexus.cli.port_utils import (
     resolve_ports,
 )
 
+pytestmark = pytest.mark.xdist_group("cli_port_utils")
+
 # ---------------------------------------------------------------------------
 # check_port_available — real socket tests
 # ---------------------------------------------------------------------------

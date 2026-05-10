@@ -18,7 +18,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
 from cachetools import TTLCache as _TTLCache
 from fuse import FuseOSError
@@ -30,7 +30,6 @@ from nexus.contracts.exceptions import (
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
 from nexus.lib.virtual_views import parse_virtual_path
 
 if TYPE_CHECKING:
@@ -79,6 +78,9 @@ class MetadataObj:
     group: str | None = None
     mode: int | None = None
     is_directory: bool | None = None
+    content_id: str | None = None
+    hash: str | None = None
+    version: str | int | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "MetadataObj":
@@ -89,7 +91,68 @@ class MetadataObj:
             group=d.get("group"),
             mode=d.get("mode"),
             is_directory=d.get("is_directory"),
+            content_id=d.get("content_id"),
+            hash=d.get("hash"),
+            version=d.get("version"),
         )
+
+
+class FUSECacheCoordinator(Protocol):
+    """Cache coordinator surface used by FUSE operation handlers."""
+
+    @property
+    def lease_manager(self) -> Any | None: ...
+
+    def _check_validity(self, path: str) -> bool: ...
+
+    def _validate_lease(self, path: str) -> Any | None: ...
+
+    def _acquire_read_lease(self, path: str) -> Any | None: ...
+
+    def _set_validity(self, path: str, expires_at: float) -> None: ...
+
+    def get_attr(self, path: str, scope_id: str = "default") -> dict[str, Any] | None: ...
+
+    def cache_attr(
+        self,
+        path: str,
+        attrs: dict[str, Any],
+        scope_id: str = "default",
+    ) -> None: ...
+
+    def get_content(self, path: str, expected_fingerprint: str | None = None) -> bytes | None: ...
+
+    def cache_content(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        fingerprint: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> None: ...
+
+    def get_parsed(self, path: str, view_type: str) -> bytes | None: ...
+
+    def get_parsed_size(self, path: str, view_type: str) -> int | None: ...
+
+    def cache_parsed(self, path: str, view_type: str, content: bytes) -> None: ...
+
+    def get_listing(self, path: str, scope_id: str = "default") -> list[str] | None: ...
+
+    def cache_listing(
+        self,
+        path: str,
+        entries: list[str],
+        scope_id: str = "default",
+    ) -> None: ...
+
+    def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None: ...
+
+    def invalidate_file(self, path: str, namespace: str | None = None) -> None: ...
+
+    def invalidate_path_all_scopes(self, path: str) -> None: ...
+
+    def invalidate_and_revoke(self, paths: list[str]) -> None: ...
 
 
 # ============================================================
@@ -110,7 +173,7 @@ class FUSESharedContext:
     mode: "MountMode"
     context: "OperationContext | None"
     namespace_manager: "NamespaceManager | None"
-    cache: FUSELeaseCoordinator
+    cache: FUSECacheCoordinator
     local_disk_cache: Any | None  # LocalDiskCache | None
     readahead: Any | None  # ReadaheadManager | None
     rust_client: Any | None
@@ -237,20 +300,22 @@ def dir_cache_key(ctx: FUSESharedContext, path: str) -> str | tuple[str, str, st
     return path
 
 
+def index_cache_scope_id(ctx: FUSESharedContext) -> str:
+    """Build the logical index-cache scope for a FUSE request context."""
+    if ctx.context is None:
+        return "default"
+    subj_type, subj_id = ctx.context.get_subject()
+    return f"{subj_type}:{subj_id}"
+
+
 def invalidate_dir_cache(ctx: FUSESharedContext, path: str) -> None:
     """Invalidate readdir cache for the parent directory of a mutated path.
 
     Mutations (create/unlink/mkdir/rmdir/rename) change directory contents
-    but FUSECacheManager.invalidate_path() only clears attr/content/parsed.
-    This clears the separate dir_cache (TTLCache on FUSESharedContext).
+    but FUSECacheManager.invalidate_path() only clears attr/content/parsed,
+    so listing invalidation is handled separately.
     """
-    parent = path.rsplit("/", 1)[0] or "/"
-    with ctx.dir_cache_lock:
-        # Invalidate both the plain key and any context-keyed variants
-        ctx.dir_cache.pop(parent, None)
-        key = dir_cache_key(ctx, parent)
-        if key != parent:
-            ctx.dir_cache.pop(key, None)
+    ctx.cache.invalidate_parent_listing(path, scope_id=index_cache_scope_id(ctx))
 
 
 async def check_namespace_visible(ctx: FUSESharedContext, path: str) -> None:
@@ -289,6 +354,42 @@ def parse_virtual_path_for_fuse(ctx: FUSESharedContext, path: str) -> tuple[str,
     return original_path, view_type
 
 
+def file_fingerprint_from_metadata(metadata: Any) -> str | None:
+    """Extract a content fingerprint from backend metadata."""
+    if metadata is None:
+        return None
+    if isinstance(metadata, dict):
+        for field in ("content_id", "hash", "fingerprint", "etag", "version"):
+            value = metadata.get(field)
+            if value is not None:
+                return str(value)
+        return None
+    for field in ("content_id", "hash", "fingerprint", "etag", "version"):
+        value = getattr(metadata, field, None)
+        if value is not None:
+            return str(value)
+    return None
+
+
+def logical_l2_key(
+    ctx: FUSESharedContext,
+    path: str,
+    fingerprint: str | None,
+    namespace: str = "raw",
+) -> str:
+    """Build the opaque local-disk key for logical FUSE file content."""
+    zone_id = get_zone_id(ctx) or "root"
+    if fingerprint is None:
+        ttl_seconds = int(
+            ctx.cache_config.get("content_cache_ttl", ctx.cache_config.get("attr_cache_ttl", 60))
+        )
+        ttl_seconds = max(1, ttl_seconds)
+        suffix = f"ttl:{int(time.time() // ttl_seconds)}"
+    else:
+        suffix = fingerprint
+    return f"fuse:{zone_id}:{path}:{suffix}:{namespace}"
+
+
 async def get_file_content(
     ctx: FUSESharedContext,
     path: str,
@@ -307,6 +408,8 @@ async def get_file_content(
     Cache hierarchy: L1 (memory) -> L2 (disk) -> L3/L4 (backend).
     """
     coordinator = ctx.cache
+    metadata = await get_metadata(ctx, path)
+    expected_fingerprint = file_fingerprint_from_metadata(metadata)
 
     # For parsed views, check parsed cache first
     if view_type and (ctx.mode.value == "text" or ctx.mode.value == "smart"):
@@ -318,7 +421,7 @@ async def get_file_content(
     # Lease-gated content read (Issue #3397)
     # Step 1: Hot path — validity cache + L1
     if coordinator._check_validity(path):
-        cached = coordinator.get_content(path)
+        cached = coordinator.get_content(path, expected_fingerprint=expected_fingerprint)
         if cached is not None:
             logger.info(f"[FUSE-CONTENT] L1 MEMORY HIT (leased): {path} ({len(cached)} bytes)")
             return _maybe_parse(ctx, path, view_type, cached)
@@ -329,7 +432,7 @@ async def get_file_content(
         lease = coordinator._validate_lease(path)
         if lease is not None:
             coordinator._set_validity(path, lease.expires_at)
-            cached = coordinator.get_content(path)
+            cached = coordinator.get_content(path, expected_fingerprint=expected_fingerprint)
             if cached is not None:
                 return _maybe_parse(ctx, path, view_type, cached)
             has_lease = True
@@ -338,14 +441,15 @@ async def get_file_content(
             has_lease = lease is not None
     else:
         # No lease manager — check L1 directly (backward compat)
-        cached = coordinator.get_content(path)
+        cached = coordinator.get_content(path, expected_fingerprint=expected_fingerprint)
         if cached is not None:
             logger.info(f"[FUSE-CONTENT] L1 MEMORY HIT: {path} ({len(cached)} bytes)")
             return _maybe_parse(ctx, path, view_type, cached)
         has_lease = True  # no lease manager = always "has lease" for caching
 
     # Step 3: L2/L3 fetch
-    content = get_from_local_disk_cache(ctx, path)
+    namespace = view_type or "raw"
+    content = get_from_local_disk_cache(ctx, path, expected_fingerprint, namespace=namespace)
     if content is not None:
         logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
     else:
@@ -359,11 +463,18 @@ async def get_file_content(
         logger.info(
             f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
         )
-        put_to_local_disk_cache(ctx, path, content, priority=cache_priority)
+        put_to_local_disk_cache(
+            ctx,
+            path,
+            content,
+            expected_fingerprint,
+            namespace=namespace,
+            priority=cache_priority,
+        )
 
     # Only cache if we hold a lease (Decision 11A: no caching without lease)
     if has_lease:
-        coordinator.cache_content(path, content)
+        coordinator.cache_content(path, content, fingerprint=expected_fingerprint)
 
     return _maybe_parse(ctx, path, view_type, content)
 
@@ -399,11 +510,7 @@ def get_content_hash(ctx: FUSESharedContext, path: str) -> str | None:
 
     try:
         metadata = _run_sync(get_metadata(ctx, path))
-        if metadata is None:
-            return None
-        if isinstance(metadata, dict):
-            return metadata.get("content_id") or metadata.get("hash")
-        return getattr(metadata, "content_id", None) or getattr(metadata, "hash", None)
+        return file_fingerprint_from_metadata(metadata)
     except Exception:
         return None  # FUSE hot path — no logging to avoid perf impact
 
@@ -459,18 +566,22 @@ def _accepts_context(func: Callable[..., Any]) -> bool:
     )
 
 
-def get_from_local_disk_cache(ctx: FUSESharedContext, path: str) -> bytes | None:
+def get_from_local_disk_cache(
+    ctx: FUSESharedContext,
+    path: str,
+    expected_fingerprint: str | None,
+    *,
+    namespace: str = "raw",
+) -> bytes | None:
     """Get content from L2 local disk cache."""
     if ctx.local_disk_cache is None:
         return None
 
     try:
-        content_hash = get_content_hash(ctx, path)
-        if content_hash is None:
-            return None
+        cache_key = logical_l2_key(ctx, path, expected_fingerprint, namespace)
         zone_id = get_zone_id(ctx)
         content: bytes | None = cast(
-            "bytes | None", ctx.local_disk_cache.get(content_hash, zone_id=zone_id)
+            "bytes | None", ctx.local_disk_cache.get(cache_key, zone_id=zone_id)
         )
         if content is not None:
             logger.debug(f"[FUSE-L2] HIT: {path} (zone={zone_id})")
@@ -481,23 +592,24 @@ def get_from_local_disk_cache(ctx: FUSESharedContext, path: str) -> bytes | None
 
 
 def put_to_local_disk_cache(
-    ctx: FUSESharedContext, path: str, content: bytes, *, priority: int = 0
+    ctx: FUSESharedContext,
+    path: str,
+    content: bytes,
+    fingerprint: str | None,
+    *,
+    namespace: str = "raw",
+    priority: int = 0,
 ) -> None:
     """Store content in L2 local disk cache."""
     if ctx.local_disk_cache is None:
         return
 
     try:
-        content_hash = get_content_hash(ctx, path)
-        if content_hash is None:
-            from nexus.core.hash_fast import hash_content
-
-            content_hash = hash_content(content)
-
+        cache_key = logical_l2_key(ctx, path, fingerprint, namespace)
         zone_id = get_zone_id(ctx)
         store_blocks = len(content) > ctx.local_disk_cache.block_size
         ctx.local_disk_cache.put(
-            content_hash,
+            cache_key,
             content,
             zone_id=zone_id,
             store_blocks=store_blocks,
@@ -605,7 +717,11 @@ def build_dir_attrs(metadata: Any = None) -> dict[str, Any]:
 
 
 def cache_file_attrs_from_list(
-    ctx: FUSESharedContext, file_path: str, file_info: dict[str, Any], is_dir: bool
+    ctx: FUSESharedContext,
+    file_path: str,
+    file_info: dict[str, Any],
+    is_dir: bool,
+    scope_id: str,
 ) -> None:
     """Cache file attributes from list() results to avoid N+1 queries."""
     now = time.time()
@@ -635,4 +751,4 @@ def cache_file_attrs_from_list(
             "st_gid": gid,
         }
 
-    ctx.cache.cache_attr(file_path, attrs)
+    ctx.cache.cache_attr(file_path, attrs, scope_id=scope_id)

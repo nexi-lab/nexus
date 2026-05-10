@@ -95,6 +95,19 @@ class TestCoordinatorWithoutLeaseManager:
         assert coord.get_attr("/file.txt") is None
         assert coord.get_content("/file.txt") is None
 
+    def test_invalidate_and_revoke_clears_scoped_metadata(
+        self,
+        bare_cache: FUSECacheManager,
+    ) -> None:
+        coord = FUSELeaseCoordinator(cache=bare_cache)
+        coord.cache_attr("/file.txt", {"st_size": 1}, scope_id="agent:one")
+        coord.cache_attr("/file.txt", {"st_size": 2}, scope_id="agent:two")
+
+        coord.invalidate_and_revoke(["/file.txt"])
+
+        assert coord.get_attr("/file.txt", scope_id="agent:one") is None
+        assert coord.get_attr("/file.txt", scope_id="agent:two") is None
+
     def test_delegated_methods(self, bare_cache: FUSECacheManager) -> None:
         coord = FUSELeaseCoordinator(cache=bare_cache)
 
@@ -107,6 +120,11 @@ class TestCoordinatorWithoutLeaseManager:
         coord.cache_parsed("/c", "md", b"# hello")
         assert coord.get_parsed("/c", "md") == b"# hello"
         assert coord.get_parsed_size("/c", "md") == 7
+
+        coord.cache_listing("/dir", [".", "..", "child.txt"])
+        assert coord.get_listing("/dir") == [".", "..", "child.txt"]
+        coord.invalidate_parent_listing("/dir/child.txt")
+        assert coord.get_listing("/dir") is None
 
         coord.invalidate_path("/a")
         assert coord.get_attr("/a") is None
@@ -306,6 +324,8 @@ class TestCoordinatorWithLeaseManager:
 
             # Populate cache
             bare_cache.cache_attr("/file.txt", {"st_size": 100})
+            bare_cache.cache_attr("/file.txt", {"st_size": 200}, scope_id="agent:one")
+            bare_cache.cache_attr("/file.txt", {"st_size": 300}, scope_id="agent:two")
             coord._set_validity("/file.txt", time.monotonic() + 30.0)
 
             # Simulate revocation of OUR lease (caused by another mount's write)
@@ -319,6 +339,8 @@ class TestCoordinatorWithLeaseManager:
                 loop.close()
 
             assert coord.get_attr("/file.txt") is None
+            assert coord.get_attr("/file.txt", scope_id="agent:one") is None
+            assert coord.get_attr("/file.txt", scope_id="agent:two") is None
             assert not coord._check_validity("/file.txt")
         finally:
             coord.close()

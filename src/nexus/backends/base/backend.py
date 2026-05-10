@@ -581,6 +581,14 @@ class Backend(ObjectStoreABC):
         """
         raise NotImplementedError(f"Backend '{self.name}' does not support directory listing")
 
+    def fingerprint(self, path: str, context: "OperationContext | None" = None) -> str | None:
+        """Return a cheap backend version fingerprint for a logical path.
+
+        ``None`` means the backend cannot provide a stable fingerprint and
+        callers should fall back to their TTL-based validation policy.
+        """
+        return None
+
     # === Delta Sync Support (Issue #1127) ===
 
     def get_file_info(self, path: str, context: "OperationContext | None" = None) -> "FileInfo":

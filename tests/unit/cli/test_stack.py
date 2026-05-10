@@ -344,6 +344,15 @@ class TestDeriveProjectEnv:
         assert env["NEXUS_AUTH_TYPE"] == "database"
         assert env["NEXUS_GRPC_TLS"] == "false"
 
+    def test_legacy_approvals_grpc_port_key(self, tmp_path: Path) -> None:
+        """Old configs used approvals_grpc; keep honoring them as approvals."""
+        config = {
+            "data_dir": str(tmp_path / "data"),
+            "ports": {"http": 58200, "grpc": 58201, "approvals_grpc": 58204},
+        }
+        env = _derive_project_env(config)
+        assert env["NEXUS_APPROVALS_GRPC_PORT"] == "58204"
+
     def test_image_ref_in_env(self, tmp_path: Path) -> None:
         """image_ref from config is passed as NEXUS_IMAGE_REF."""
         config = {

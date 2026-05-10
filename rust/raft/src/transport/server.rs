@@ -454,6 +454,12 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
         let node = match self.registry.get_node(&req.zone_id) {
             Some(n) => n,
             None => {
+                if self.registry.is_auto_join_suppressed(&req.zone_id) {
+                    return Err(Status::not_found(format!(
+                        "zone '{}' was recently removed on this node",
+                        req.zone_id
+                    )));
+                }
                 let root_peers = self
                     .registry
                     .get_peers(contracts::ROOT_ZONE_ID)

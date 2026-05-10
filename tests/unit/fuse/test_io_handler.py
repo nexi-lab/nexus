@@ -97,6 +97,21 @@ class TestWrite:
         # Issue #3397: write now calls invalidate_and_revoke instead of invalidate_path
         mock_cache.invalidate_and_revoke.assert_called()
 
+    def test_write_invalidates_file_and_parent_listing(
+        self, fuse_ops: Any, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        mock_nexus_fs.access.return_value = True
+        mock_nexus_fs.sys_read.return_value = b""
+        fd = fuse_ops.open("/dir/file.txt", os.O_RDWR)
+        fuse_ops.cache = mock_cache
+
+        fuse_ops.write("/dir/file.txt", b"data", 0, fd)
+
+        mock_cache.invalidate_file.assert_called_once_with("/dir/file.txt")
+        mock_cache.invalidate_parent_listing.assert_called_once_with(
+            "/dir/file.txt", scope_id="default"
+        )
+
     def test_write_to_virtual_view_raises_erofs(
         self, fuse_ops: Any, mock_nexus_fs: MagicMock
     ) -> None:

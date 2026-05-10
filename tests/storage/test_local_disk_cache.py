@@ -59,6 +59,13 @@ class TestLocalDiskCacheBasics:
         result = cache.get(hash_val)
         assert result == content
 
+    def test_accepts_opaque_logical_cache_key(self, cache):
+        """Logical cache keys may include backend, zone, path, fingerprint, and namespace."""
+        cache_key = "path_s3:zone1:/bucket/foo.txt:etag:abc123:raw"
+
+        assert cache.put(cache_key, b"payload") is True
+        assert cache.get(cache_key) == b"payload"
+
     def test_get_nonexistent(self, cache):
         """Test get for nonexistent content."""
         result = cache.get("nonexistent_hash")

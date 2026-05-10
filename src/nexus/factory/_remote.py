@@ -102,6 +102,15 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
             transport.call_rpc("sys_write", _write_params(path, buf, count=count, offset=offset)),
         )
 
+    def _remote_sys_stat(
+        _self: Any,
+        path: str,
+        *,
+        context: Any = None,  # noqa: ARG001
+        **_: Any,
+    ) -> dict[str, Any] | None:
+        return cast(dict[str, Any] | None, transport.call_rpc("sys_stat", {"path": path}))
+
     def _remote_write(
         _self: Any,
         path: str,
@@ -166,6 +175,7 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
 
     cast(Any, nfs).sys_read = types.MethodType(_remote_sys_read, nfs)
     cast(Any, nfs).sys_write = types.MethodType(_remote_sys_write, nfs)
+    cast(Any, nfs).sys_stat = types.MethodType(_remote_sys_stat, nfs)
     cast(Any, nfs).write = types.MethodType(_remote_write, nfs)
     cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)
     cast(Any, nfs).sys_readdir = types.MethodType(_remote_sys_readdir, nfs)

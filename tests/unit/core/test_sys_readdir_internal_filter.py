@@ -137,6 +137,28 @@ class TestSysReaddirInternalFilter:
         assert result[0]["path"] == "/workspace"
 
     @pytest.mark.asyncio
+    async def test_nonrecursive_details_batches_implicit_dir_detection(self) -> None:
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/workspace/alpha", entry_type=0),
+                _FakeMeta(path="/workspace/alpha/file.txt", entry_type=0),
+                _FakeMeta(path="/workspace/top.txt", entry_type=0),
+            ]
+        )
+        fs._kernel.metastore_is_implicit_directory.side_effect = AssertionError(
+            "nonrecursive details must not probe implicit directories per entry"
+        )
+
+        result = fs.sys_readdir("/workspace/", recursive=False, details=True)
+
+        paths = {entry["path"]: entry["entry_type"] for entry in result}
+        assert paths == {
+            "/workspace/alpha": 1,
+            "/workspace/top.txt": 0,
+        }
+        fs._kernel.metastore_is_implicit_directory.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_paginated_filters_internal_paths(self) -> None:
         fs = _build_fs(
             [

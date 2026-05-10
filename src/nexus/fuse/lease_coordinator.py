@@ -166,7 +166,7 @@ class FUSELeaseCoordinator:
             if path.startswith(_FUSE_RESOURCE_PREFIX):
                 path = path[len(_FUSE_RESOURCE_PREFIX) :]
             self._clear_validity(path)
-            self._cache.invalidate_path(path)
+            self._cache.invalidate_path_all_scopes(path)
 
             # Mark FileContentCache content stale (Issue #3400, Decision 3A)
             if self._file_cache is not None and self._zone_id is not None:
@@ -365,7 +365,7 @@ class FUSELeaseCoordinator:
         """
         for path in paths:
             # Immediate local invalidation
-            self._cache.invalidate_path(path)
+            self._cache.invalidate_path_all_scopes(path)
             self._clear_validity(path)
             # Mark shared disk cache stale for this mount too —
             # the revocation callback only covers other mounts
@@ -378,21 +378,38 @@ class FUSELeaseCoordinator:
     # Delegated cache methods (backward compatibility)
     # ------------------------------------------------------------------
 
-    def get_attr(self, path: str) -> dict[str, Any] | None:
+    def get_attr(self, path: str, scope_id: str = "default") -> dict[str, Any] | None:
         """Get cached file attributes (direct, no lease check)."""
-        return self._cache.get_attr(path)
+        return self._cache.get_attr(path, scope_id=scope_id)
 
-    def cache_attr(self, path: str, attrs: dict[str, Any]) -> None:
+    def cache_attr(
+        self,
+        path: str,
+        attrs: dict[str, Any],
+        scope_id: str = "default",
+    ) -> None:
         """Cache file attributes."""
-        self._cache.cache_attr(path, attrs)
+        self._cache.cache_attr(path, attrs, scope_id=scope_id)
 
-    def get_content(self, path: str) -> bytes | None:
+    def get_content(self, path: str, expected_fingerprint: str | None = None) -> bytes | None:
         """Get cached file content (direct, no lease check)."""
-        return self._cache.get_content(path)
+        return self._cache.get_content(path, expected_fingerprint=expected_fingerprint)
 
-    def cache_content(self, path: str, content: bytes) -> None:
+    def cache_content(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        fingerprint: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> None:
         """Cache file content."""
-        self._cache.cache_content(path, content)
+        self._cache.cache_content(
+            path,
+            content,
+            fingerprint=fingerprint,
+            ttl_seconds=ttl_seconds,
+        )
 
     def get_parsed(self, path: str, view_type: str) -> bytes | None:
         """Get cached parsed content (direct, no lease check)."""
@@ -406,9 +423,35 @@ class FUSELeaseCoordinator:
         """Cache parsed content."""
         self._cache.cache_parsed(path, view_type, content)
 
-    def invalidate_path(self, path: str) -> None:
+    def get_listing(self, path: str, scope_id: str = "default") -> list[str] | None:
+        """Get cached directory listing entries."""
+        return self._cache.get_listing(path, scope_id=scope_id)
+
+    def cache_listing(
+        self,
+        path: str,
+        entries: list[str],
+        scope_id: str = "default",
+    ) -> None:
+        """Cache directory listing entries."""
+        self._cache.cache_listing(path, entries, scope_id=scope_id)
+
+    def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None:
+        """Invalidate the immediate parent directory listing for a path."""
+        self._cache.invalidate_parent_listing(path, scope_id=scope_id)
+
+    def invalidate_file(self, path: str, namespace: str | None = None) -> None:
+        """Invalidate cached raw/parsed file content for a path."""
+        self._cache.invalidate_file(path, namespace=namespace)
+
+    def invalidate_path(self, path: str, scope_id: str = "default") -> None:
         """Invalidate all caches for a path (local only, no lease revocation)."""
-        self._cache.invalidate_path(path)
+        self._cache.invalidate_path(path, scope_id=scope_id)
+        self._clear_validity(path)
+
+    def invalidate_path_all_scopes(self, path: str) -> None:
+        """Invalidate all cached metadata scopes for a path."""
+        self._cache.invalidate_path_all_scopes(path)
         self._clear_validity(path)
 
     def invalidate_all(self) -> None:

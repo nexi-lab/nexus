@@ -1,10 +1,26 @@
 """FUSE-specific test fixtures."""
 
+import fnmatch
+import sys
+import types
 from enum import Enum
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if "nexus_runtime" not in sys.modules:
+    nexus_runtime_stub = types.ModuleType("nexus_runtime")
+
+    def _filter_paths(files: list[str], patterns: list[str]) -> list[str]:
+        return [
+            path
+            for path in files
+            if not any(fnmatch.fnmatch(path.rsplit("/", 1)[-1], pattern) for pattern in patterns)
+        ]
+
+    nexus_runtime_stub.filter_paths = _filter_paths
+    sys.modules["nexus_runtime"] = nexus_runtime_stub
 
 
 class _MockMountMode(Enum):
@@ -40,7 +56,10 @@ def mock_cache() -> MagicMock:
     cache = MagicMock()
     cache.get_attr.return_value = None
     cache.get_content.return_value = None
+    cache.get_listing.return_value = None
     cache.get_parsed.return_value = None
+    cache.invalidate_file.return_value = None
+    cache.invalidate_parent_listing.return_value = None
     return cache
 
 

@@ -267,4 +267,24 @@ After running benchmarks:
 
 **Status:** 🟡 Ready for measurement (benchmarks built, pending actual run)
 
+## 2026-05-09 — Issue #4055 Hydration Benchmark
+
+Setup: mockito local server, 50 small files of 256 bytes each, criterion `iter_custom` measuring wall time for sequential 50-file reads.
+
+| Scenario | Median wall time | Notes |
+|---|---|---|
+| `cold_read_p50_no_hydration` | 90.1 ms | Cache cold, each read goes to mockito (~0 RTT on localhost) |
+| `cold_read_p50_with_hydration` | 27.4 µs | Hydrate ran first (parallel admit, concurrency=8), then reads from foyer DRAM |
+
+Speedup ratio under mockito: **~3,284x**.
+
+Caveat: mockito has near-zero RTT, so the cold-cache scenario doesn't pay realistic network costs — its 90 ms is dominated by foyer's per-cache-open initialization overhead (new temp dir per iteration), not network latency. On a production backend with real network latency, the cold-read path would be even slower (serial HTTP round-trips at 10–100 ms each = 500 ms–5 s for 50 files), while hydration uses bounded-parallel fetches (concurrency=8) so its wall time scales much better. The ratio on a real backend is expected to be well above 3×.
+
+**Environment:**
+- Date: 2026-05-09
+- OS: Darwin 25.3.0 arm64
+- Rust: rustc 1.95.0
+- Foyer: 0.22.3
+- Criterion: 0.8, sample_size=20, measurement_time=8s
+
 **Next Step:** Run `./nexus-fuse/run-benchmarks.sh` to populate actual results

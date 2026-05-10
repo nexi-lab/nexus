@@ -135,7 +135,13 @@ def test_import_mounts_skip_existing_records_info(redacted_record):
 
 def test_import_mounts_overwrite_calls_update(redacted_record):
     mgr = MagicMock()
-    mgr.get_mount.return_value = {"mount_point": "/personal/alice"}
+    # Persisted record with matching identity (backend_type + owner)
+    # for the legitimate overwrite path.
+    mgr.get_mount.return_value = {
+        "mount_point": "/personal/alice",
+        "backend_type": "path_s3",
+        "owner_user_id": "alice",
+    }
     import_mounts(
         mounts=[redacted_record],
         overrides={"m-1": {"access_key_id": "AKIA", "secret_access_key": "w"}},
@@ -145,6 +151,29 @@ def test_import_mounts_overwrite_calls_update(redacted_record):
     )
     mgr.update_mount.assert_called_once()
     assert mgr.save_mount.call_count == 0
+
+
+def test_import_mounts_overwrite_refuses_missing_backend_type(redacted_record):
+    """Round 2 reviewer finding: persisted record without backend_type
+    (older or malformed schema) must NOT silently overwrite. update_mount
+    only writes backend_config + description, so the gap would persist
+    and break later restore."""
+    mgr = MagicMock()
+    mgr.get_mount.return_value = {
+        "mount_point": "/personal/alice",
+        # backend_type intentionally absent — simulates legacy/malformed record
+        "owner_user_id": "alice",
+    }
+    errors = import_mounts(
+        mounts=[redacted_record],
+        overrides={"m-1": {"access_key_id": "AKIA", "secret_access_key": "w"}},
+        mount_manager=mgr,
+        target_zone_id=None,
+        conflict_mode=ConflictMode.OVERWRITE,
+    )
+    assert mgr.update_mount.call_count == 0, "must not overwrite on missing backend_type"
+    assert mgr.save_mount.call_count == 0
+    assert any("no backend_type" in e.message.lower() for e in errors), [e.message for e in errors]
 
 
 def test_import_mounts_zone_remap_applied(redacted_record):

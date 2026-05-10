@@ -145,3 +145,44 @@ def test_bundle_validate_rejects_v3_manifest_with_unknown_root_key(tmp_path):
     assert any(
         "schema validation failed" in e.lower() or "totally_unknown_field" in e for e in errors
     ), errors
+
+
+def test_bundle_validate_accepts_v2_bundle_with_v1_schema(tmp_path):
+    """Round 2 reviewer finding: legacy v2 bundles emit
+    $schema=manifest-v1.json. The new schema-validation step must use
+    the v1 schema for v1.x/2.x bundles, not always reach for v3.
+    """
+    pytest.importorskip("jsonschema")
+    import tarfile
+
+    from nexus.bricks.portability.bundle import BundleReader
+
+    bundle_dir = tmp_path / "src"
+    bundle_dir.mkdir()
+    legacy_manifest = {
+        "$schema": "https://nexus.io/schemas/manifest-v1.json",
+        "format_version": "2.0.0",
+        "bundle_id": "550e8400-e29b-41d4-a716-446655440000",
+        "source_zone_id": "z1",
+        "export_timestamp": "2026-01-01T00:00:00+00:00",
+        "statistics": {
+            "file_count": 0,
+            "total_size_bytes": 0,
+            "content_blob_count": 0,
+            "permission_count": 0,
+            "embedding_count": 0,
+        },
+        "options": {"include_content": True, "include_permissions": True},
+        "checksums": {"algorithm": "sha256", "files": {}},
+    }
+    (bundle_dir / "manifest.json").write_text(json.dumps(legacy_manifest))
+
+    out = tmp_path / "legacy.nexus"
+    with tarfile.open(out, "w:gz") as tar:
+        for p in bundle_dir.rglob("*"):
+            tar.add(p, arcname=p.relative_to(bundle_dir))
+
+    with BundleReader(out) as reader:
+        ok, errors = reader.validate()
+
+    assert ok, f"v2 bundle should pass v1-schema validation; got: {errors}"

@@ -43,6 +43,47 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Param keys that carry credential material across the wire and must never
+# appear in DEBUG logs (Issue #4083 round-2 reviewer finding: mount_overrides
+# values were landing in support/debug logs). The redactor is method-agnostic
+# — it walks the params dict and replaces values for any matching top-level
+# key with a structure-preserving placeholder so we still see *which* mount
+# IDs and field names were sent.
+_SENSITIVE_PARAM_KEYS: frozenset[str] = frozenset(
+    {
+        "mount_overrides",
+        "injections",
+        "auth_token",
+        "api_key",
+        "credentials",
+    }
+)
+
+
+def _redact_params(params: Any) -> Any:
+    """Return a shallow copy of params with sensitive top-level keys redacted.
+
+    For dict-of-dicts shapes (mount_overrides: {mount_id: {field: value}})
+    we preserve the nested keys so the log still shows what fields were
+    supplied for which mount, but the values are replaced with "***".
+    """
+    if not isinstance(params, dict):
+        return params
+    out: dict[str, Any] = {}
+    for key, value in params.items():
+        if key in _SENSITIVE_PARAM_KEYS and value is not None:
+            if isinstance(value, dict):
+                out[key] = {
+                    k: (dict.fromkeys(v, "***") if isinstance(v, dict) else "***")
+                    for k, v in value.items()
+                }
+            else:
+                out[key] = "***"
+        else:
+            out[key] = value
+    return out
+
+
 _CHANNEL_OPTIONS = build_channel_options(
     keepalive_time_ms=30_000,
     keepalive_timeout_ms=10_000,
@@ -187,7 +228,7 @@ class RPCTransport:
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
 
-        logger.debug("RPCTransport.call_rpc: %s params=%s", method, params)
+        logger.debug("RPCTransport.call_rpc: %s params=%s", method, _redact_params(params))
 
         try:
             response = self._stub.Call(request, timeout=timeout)

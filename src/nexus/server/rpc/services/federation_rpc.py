@@ -223,6 +223,21 @@ class FederationRPCService(FederationRPCMixin):
                 if "already" not in str(e).lower() and "exists" not in str(e).lower():
                     raise
         mount_manager = self._build_mount_manager(nx) if restore_mounts else None
+
+        # Server-side audit trail for mount credential injection
+        # (Issue #4083 round-2 reviewer finding). Log only mount IDs and
+        # field names — never values — so the operator action is
+        # captured for forensics without writing secrets to disk.
+        if mount_overrides:
+            import logging as _logging
+
+            _audit = _logging.getLogger("nexus.audit.federation")
+            _audit.warning(
+                "federation_import_zone: mount_overrides supplied for %d mount(s): %s",
+                len(mount_overrides),
+                {mid: sorted(fields.keys()) for mid, fields in mount_overrides.items()},
+            )
+
         service = ZoneImportService(nx, mount_manager=mount_manager)
         options = ZoneImportOptions(
             bundle_path=Path(bundle_path),

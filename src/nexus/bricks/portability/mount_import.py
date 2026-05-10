@@ -163,17 +163,40 @@ def import_mounts(
                 # the live mount table on next restore. Reviewer flagged
                 # this as a real risk; conflict resolution must not
                 # silently change immutable fields.
+                #
+                # Round 2 follow-up: fail closed on missing backend_type
+                # in the persisted record. An older/malformed record
+                # without that field cannot be safely overwritten because
+                # update_mount preserves it (or leaves the gap), and any
+                # downstream restore that relies on backend_type would
+                # break. Operator must remove and re-add explicitly.
                 existing_backend_type = existing.get("backend_type")
                 existing_owner = existing.get("owner_user_id")
-                if existing_backend_type and existing_backend_type != record.backend_type:
+                if not existing_backend_type:
+                    errors.append(
+                        ImportError(
+                            path=record.mount_point,
+                            error_type="conflict",
+                            message=(
+                                f"mount {record.mount_point!r} has no "
+                                f"backend_type in the persisted record "
+                                f"(possibly malformed/legacy schema); "
+                                "OVERWRITE refused — remove the mount first"
+                            ),
+                        )
+                    )
+                    continue
+                if existing_backend_type != record.backend_type:
                     errors.append(
                         ImportError(
                             path=record.mount_point,
                             error_type="conflict",
                             message=(
                                 f"mount {record.mount_point!r} backend_type mismatch: "
-                                f"existing={existing_backend_type!r} bundle={record.backend_type!r}; "
-                                "OVERWRITE refused — remove the mount first or use a different target_zone"
+                                f"existing={existing_backend_type!r} "
+                                f"bundle={record.backend_type!r}; "
+                                "OVERWRITE refused — remove the mount first "
+                                "or use a different target_zone"
                             ),
                         )
                     )

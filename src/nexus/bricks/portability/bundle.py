@@ -53,6 +53,28 @@ class BundleReader:
         self.bundle_path = Path(bundle_path)
         self._tar: tarfile.TarFile | None = None
         self._manifest: ExportManifest | None = None
+        self._raw_manifest_dict: dict[str, Any] | None = None
+
+    @staticmethod
+    def _resolve_manifest_schema(raw_manifest: dict[str, Any]) -> Path | None:
+        """Pick the JSON-Schema file matching the manifest's declared version.
+
+        Returns None when the version is unknown or when no schema is
+        applicable (e.g., a future format we don't ship a schema for).
+        v1.x and v2.x bundles share manifest-v1.json (no v2 schema was
+        ever shipped, and v2 bundles set ``$schema`` to manifest-v1.json
+        in the wild); v3.x bundles use manifest-v3.json.
+        """
+        schemas_dir = Path(__file__).parent / "schemas"
+        version = (raw_manifest.get("format_version") or "").strip()
+        if version.startswith(("1.", "2.")):
+            return schemas_dir / "manifest-v1.json"
+        if version.startswith("3."):
+            return schemas_dir / "manifest-v3.json"
+        # Unknown/future version: best-effort fall back to the latest
+        # schema we ship so reviewers see an explicit error rather than
+        # silent acceptance.
+        return schemas_dir / "manifest-v3.json"
 
     def __enter__(self) -> "BundleReader":
         """Open the bundle for reading."""
@@ -130,26 +152,52 @@ class BundleReader:
             errors.append(f"Invalid manifest: {e}")
             return False, errors
 
-        # Strict JSON-Schema validation against the v3 schema (Issue #4083
-        # reviewer finding: from_dict drops unknown fields, so without
-        # this step a malformed v3 manifest with extra root keys is
-        # silently accepted). Skip if jsonschema isn't installed — the
-        # rest of validate() still runs.
-        try:
-            import jsonschema
-
-            from nexus.bricks.portability.models import MANIFEST_SCHEMA_PATH
-
-            raw = getattr(self, "_raw_manifest_dict", None)
-            if raw is not None and MANIFEST_SCHEMA_PATH.exists():
-                schema = json.loads(MANIFEST_SCHEMA_PATH.read_text())
+        # Strict JSON-Schema validation against the version-appropriate
+        # schema (Issue #4083 reviewer finding: from_dict drops unknown
+        # fields, so without this step a malformed manifest with extra
+        # root keys is silently accepted). Round 2 follow-up: select the
+        # schema by the manifest's own format_version / $schema rather
+        # than always validating against v3 — otherwise legacy v1/v2
+        # bundles are rejected by the new v3 const check while
+        # malformed v3 bundles slip past on slim installs.
+        raw = getattr(self, "_raw_manifest_dict", None)
+        if raw is not None:
+            schema_path = self._resolve_manifest_schema(raw)
+            if schema_path is not None:
                 try:
-                    jsonschema.validate(raw, schema)
-                except jsonschema.ValidationError as ve:
-                    errors.append(f"Manifest schema validation failed: {ve.message}")
-        except ImportError:
-            # jsonschema is an optional dep; skip strict validation.
-            pass
+                    import jsonschema
+
+                    if not schema_path.exists():
+                        # New v3 bundles MUST have the v3 schema available;
+                        # missing it is a hard validation error so a slim
+                        # wheel that dropped schemas/ doesn't silently
+                        # accept malformed bundles.
+                        if (raw.get("format_version") or "").startswith("3."):
+                            errors.append(
+                                f"Manifest schema {schema_path.name} not "
+                                f"packaged with this install — cannot validate "
+                                f"v3 manifest. Reinstall nexus with bundled "
+                                f"schemas or import on a full install."
+                            )
+                    else:
+                        try:
+                            jsonschema.validate(raw, json.loads(schema_path.read_text()))
+                        except jsonschema.ValidationError as ve:
+                            errors.append(
+                                f"Manifest schema validation failed "
+                                f"({schema_path.name}): {ve.message}"
+                            )
+                except ImportError:
+                    # jsonschema absent: only the v3 path is security-
+                    # critical (newly-added unknown-field guard). v1/v2
+                    # bundles fall back to ExportManifest.validate as
+                    # before.
+                    if (raw.get("format_version") or "").startswith("3."):
+                        errors.append(
+                            "jsonschema not installed; cannot validate v3 "
+                            "manifest. Install jsonschema or import on a "
+                            "full install."
+                        )
 
         # Check required files exist
         members = {m.name for m in self._tar.getmembers()}

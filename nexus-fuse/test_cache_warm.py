@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """End-to-end test for the cache_warm JSON-RPC method (Issue #4055).
 
-Prerequisites: a Nexus server running at http://localhost:2026 — same as the
-sibling test_python_ipc.py. Run via:
+Prerequisites: a running Nexus server. Run via:
 
-    python nexus-fuse/test_cache_warm.py
+    eval $(nexus env) && python nexus-fuse/test_cache_warm.py
+
+NEXUS_URL and NEXUS_API_KEY are read from the environment. Defaults to the
+same fallbacks as the sibling test_python_ipc.py for ad-hoc local runs.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -18,11 +21,13 @@ from nexus.fuse.rust_client import RustFUSEClient
 def main() -> int:
     print("🧪 Testing cache_warm round-trip\n")
     rust_binary = str(Path(__file__).parent / "target/debug/nexus-fuse")
+    nexus_url = os.environ.get("NEXUS_URL", "http://localhost:2026")
+    api_key = os.environ.get("NEXUS_API_KEY", "sk-test-key-123")
+    print(f"nexus_url={nexus_url}")
 
-    # Use the SAME constructor kwargs as the sibling test_python_ipc.py.
     with RustFUSEClient(
-        nexus_url="http://localhost:2026",
-        api_key="sk-test-key-123",
+        nexus_url=nexus_url,
+        api_key=api_key,
         rust_binary=rust_binary,
     ) as client:
         # Seed: create three small files via sys_write so the backend has content.

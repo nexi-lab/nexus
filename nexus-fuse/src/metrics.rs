@@ -72,6 +72,9 @@ struct MetricsState {
     write_coalesce_dirty_bytes: u64,
     write_backend_rpc_total: u64,
     generation_mismatch_total: u64,
+    hydration_files: HashMap<String, u64>,
+    hydration_bytes: HashMap<String, u64>,
+    hydration_duration_ms_total: u64,
 }
 
 impl Default for MetricsState {
@@ -97,6 +100,9 @@ impl Default for MetricsState {
             write_coalesce_dirty_bytes: 0,
             write_backend_rpc_total: 0,
             generation_mismatch_total: 0,
+            hydration_files: HashMap::new(),
+            hydration_bytes: HashMap::new(),
+            hydration_duration_ms_total: 0,
         }
     }
 }
@@ -155,6 +161,17 @@ fn cache_result(value: &str) -> String {
 
 fn cache_eviction_reason(value: &str) -> String {
     bounded(value, &["capacity", "ttl", "manual", "other"])
+}
+
+fn hydration_file_result(value: &str) -> String {
+    bounded(
+        value,
+        &["admitted", "skipped_warm", "skipped_size", "skipped_budget", "failed", "other"],
+    )
+}
+
+fn hydration_bytes_result(value: &str) -> String {
+    bounded(value, &["admitted", "skipped", "other"])
 }
 
 fn etag_result(value: &str) -> String {
@@ -339,6 +356,29 @@ pub fn record_write_backend_rpc() {
 pub fn record_generation_mismatch() {
     let mut metrics = METRICS.lock().unwrap();
     metrics.generation_mismatch_total += 1;
+}
+
+pub fn record_hydration_file(result: &str) {
+    let mut metrics = METRICS.lock().unwrap();
+    *metrics
+        .hydration_files
+        .entry(hydration_file_result(result))
+        .or_insert(0) += 1;
+}
+
+pub fn record_hydration_bytes(result: &str, n: u64) {
+    let mut metrics = METRICS.lock().unwrap();
+    *metrics
+        .hydration_bytes
+        .entry(hydration_bytes_result(result))
+        .or_insert(0) += n;
+}
+
+pub fn observe_hydration_duration_ms(ms: u64) {
+    let mut metrics = METRICS.lock().unwrap();
+    metrics.hydration_duration_ms_total = metrics
+        .hydration_duration_ms_total
+        .saturating_add(ms);
 }
 
 fn write_sample_line(out: &mut String, name: &str, labels: &str, value: impl Display) {
@@ -591,6 +631,38 @@ pub fn render() -> String {
         metrics.generation_mismatch_total,
     );
 
+    // Hydration files counter
+    let mut entries: Vec<(&String, &u64)> = metrics.hydration_files.iter().collect();
+    entries.sort();
+    out.push_str("# HELP nexus_hydration_files_total Files processed during eager hydration.\n");
+    out.push_str("# TYPE nexus_hydration_files_total counter\n");
+    for (result, count) in entries {
+        out.push_str(&format!(
+            "nexus_hydration_files_total{{result=\"{}\"}} {}\n",
+            result, count
+        ));
+    }
+
+    // Hydration bytes counter
+    let mut entries: Vec<(&String, &u64)> = metrics.hydration_bytes.iter().collect();
+    entries.sort();
+    out.push_str("# HELP nexus_hydration_bytes_total Bytes processed during eager hydration.\n");
+    out.push_str("# TYPE nexus_hydration_bytes_total counter\n");
+    for (result, bytes) in entries {
+        out.push_str(&format!(
+            "nexus_hydration_bytes_total{{result=\"{}\"}} {}\n",
+            result, bytes
+        ));
+    }
+
+    // Duration counter
+    out.push_str("# HELP nexus_hydration_duration_ms_total Cumulative hydration wall time in ms.\n");
+    out.push_str("# TYPE nexus_hydration_duration_ms_total counter\n");
+    out.push_str(&format!(
+        "nexus_hydration_duration_ms_total {}\n",
+        metrics.hydration_duration_ms_total
+    ));
+
     out
 }
 
@@ -661,4 +733,54 @@ pub fn start_server(addr: &str) -> std::io::Result<MetricsServer> {
         shutdown,
         thread: Some(thread),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_record_hydration_file_increments_per_result() {
+        let _guard = test_guard();
+        reset_for_tests();
+        record_hydration_file("admitted");
+        record_hydration_file("admitted");
+        record_hydration_file("skipped_warm");
+        record_hydration_file("failed");
+        let rendered = render();
+        assert!(rendered.contains(r#"nexus_hydration_files_total{result="admitted"} 2"#));
+        assert!(rendered.contains(r#"nexus_hydration_files_total{result="skipped_warm"} 1"#));
+        assert!(rendered.contains(r#"nexus_hydration_files_total{result="failed"} 1"#));
+    }
+
+    #[test]
+    fn test_record_hydration_bytes_accumulates() {
+        let _guard = test_guard();
+        reset_for_tests();
+        record_hydration_bytes("admitted", 1024);
+        record_hydration_bytes("admitted", 2048);
+        record_hydration_bytes("skipped", 512);
+        let rendered = render();
+        assert!(rendered.contains(r#"nexus_hydration_bytes_total{result="admitted"} 3072"#));
+        assert!(rendered.contains(r#"nexus_hydration_bytes_total{result="skipped"} 512"#));
+    }
+
+    #[test]
+    fn test_observe_hydration_duration_accumulates() {
+        let _guard = test_guard();
+        reset_for_tests();
+        observe_hydration_duration_ms(120);
+        observe_hydration_duration_ms(80);
+        let rendered = render();
+        assert!(rendered.contains("nexus_hydration_duration_ms_total 200"));
+    }
+
+    #[test]
+    fn test_record_hydration_file_unknown_result_buckets_to_other() {
+        let _guard = test_guard();
+        reset_for_tests();
+        record_hydration_file("not_a_real_result");
+        let rendered = render();
+        assert!(rendered.contains(r#"nexus_hydration_files_total{result="other"} 1"#));
+    }
 }

@@ -186,3 +186,43 @@ def test_bundle_validate_accepts_v2_bundle_with_v1_schema(tmp_path):
         ok, errors = reader.validate()
 
     assert ok, f"v2 bundle should pass v1-schema validation; got: {errors}"
+
+
+def test_bundle_validate_rejects_unknown_future_version(tmp_path):
+    """Round 3: a forged manifest with format_version='999.0.0' must be
+    rejected outright, not silently routed to v3 schema validation."""
+    pytest.importorskip("jsonschema")
+    import tarfile
+
+    from nexus.bricks.portability.bundle import BundleReader
+
+    bundle_dir = tmp_path / "src"
+    bundle_dir.mkdir()
+    forged = {
+        "$schema": "https://nexus.io/schemas/manifest-v3.json",
+        "format_version": "999.0.0",
+        "bundle_id": "550e8400-e29b-41d4-a716-446655440000",
+        "source_zone_id": "z1",
+        "export_timestamp": "2026-01-01T00:00:00+00:00",
+        "statistics": {
+            "file_count": 0,
+            "total_size_bytes": 0,
+            "content_blob_count": 0,
+            "permission_count": 0,
+            "embedding_count": 0,
+        },
+        "options": {"include_content": True, "include_permissions": True},
+        "checksums": {"algorithm": "sha256", "files": {}},
+    }
+    (bundle_dir / "manifest.json").write_text(json.dumps(forged))
+
+    out = tmp_path / "forged.nexus"
+    with tarfile.open(out, "w:gz") as tar:
+        for p in bundle_dir.rglob("*"):
+            tar.add(p, arcname=p.relative_to(bundle_dir))
+
+    with BundleReader(out) as reader:
+        ok, errors = reader.validate()
+
+    assert not ok
+    assert any("Unsupported manifest format_version" in e for e in errors), errors

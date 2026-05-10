@@ -21,8 +21,8 @@
     },
     "format_version": {
       "type": "string",
-      "description": "Bundle format version (semantic versioning)",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Bundle format version (semver). v3 schema requires major version 3.",
+      "pattern": "^3\\.\\d+\\.\\d+$",
       "examples": ["3.0.0"]
     },
     "nexus_version": {

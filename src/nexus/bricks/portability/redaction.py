@@ -160,6 +160,22 @@ def redact_config(
     if leaks:
         raise SensitiveFieldNotDeclaredError(backend_type=backend_type, fields=leaks)
 
+    # Round-3 reviewer finding: persisted backend_config can contain
+    # keys that aren't declared in CONNECTION_ARGS (a misconfigured
+    # mount, or a backend that accepts **kwargs). The declared-secrets
+    # pass below would silently ship those. Audit any undeclared key
+    # whose name matches the secret-shape regex and raise rather than
+    # leak. This also catches nested dict/list values whose contents
+    # look like secrets (e.g., a `metadata` blob containing
+    # `access_key`).
+    config_leaks = _scan_config_for_undeclared_secrets(args, config)
+    if config_leaks:
+        raise SensitiveFieldNotDeclaredError(
+            backend_type=f"{backend_type} (undeclared secret-shaped fields "
+            f"in persisted backend_config)",
+            fields=config_leaks,
+        )
+
     secrets = declared_secret_fields(backend_type)
     out = dict(config)
     placeholders: list[PlaceholderRef] = []
@@ -176,6 +192,47 @@ def redact_config(
         placeholders.append(PlaceholderRef(name=ph_name, field=f"mounts.{mount_id}.{field_name}"))
 
     return out, placeholders
+
+
+def _scan_config_for_undeclared_secrets(
+    args: dict[str, Any],
+    config: dict[str, Any],
+) -> list[str]:
+    """Return dotted paths of keys in `config` that look secret but are not
+    declared in `args`. Walks nested dicts/lists so a secret hiding under an
+    arbitrary `metadata` blob still surfaces.
+
+    Only secret-shaped *keys* are flagged. Values themselves aren't pattern-
+    matched here — we trust the connector author to declare structure
+    via CONNECTION_ARGS. The check is conservative: any undeclared key whose
+    name matches the heuristic, OR any nested dict/list key matching the
+    heuristic regardless of declaration (because nested keys are never in
+    CONNECTION_ARGS), is reported.
+    """
+    declared_top_level: set[str] = set(args.keys())
+    leaks: list[str] = []
+
+    def _walk(value: Any, path: str, *, top_level: bool) -> None:
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if not isinstance(k, str):
+                    continue
+                here = f"{path}.{k}" if path else k
+                # At top level, an undeclared secret-shaped key is a leak.
+                # Below top level, ANY secret-shaped key is a leak (nested
+                # secrets can't be redacted via CONNECTION_ARGS contract).
+                is_secret_shaped = bool(SECRET_SHAPED.search(k))
+                if is_secret_shaped and (
+                    (top_level and k not in declared_top_level) or not top_level
+                ):
+                    leaks.append(here)
+                _walk(v, here, top_level=False)
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                _walk(item, f"{path}[{i}]", top_level=False)
+
+    _walk(config, "", top_level=True)
+    return sorted(leaks)
 
 
 __all__ = [

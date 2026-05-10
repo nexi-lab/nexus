@@ -19,6 +19,7 @@ Issue #1202: gRPC for REMOTE profile.
 from __future__ import annotations
 
 import logging
+import re as _re
 from typing import TYPE_CHECKING, Any
 
 import grpc
@@ -43,44 +44,76 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Param keys that carry credential material across the wire and must never
-# appear in DEBUG logs (Issue #4083 round-2 reviewer finding: mount_overrides
-# values were landing in support/debug logs). The redactor is method-agnostic
-# — it walks the params dict and replaces values for any matching top-level
-# key with a structure-preserving placeholder so we still see *which* mount
-# IDs and field names were sent.
-_SENSITIVE_PARAM_KEYS: frozenset[str] = frozenset(
-    {
-        "mount_overrides",
-        "injections",
-        "auth_token",
-        "api_key",
-        "credentials",
-    }
+# Heuristic for credential-shaped key names (Issue #4083 rounds 2-3).
+# Recursive redactor walks every dict / list at any depth and replaces
+# values whose key matches this regex. Round-3 reviewer finding: a
+# top-level allowlist (mount_overrides, auth_token, ...) missed nested
+# headers/env, sandbox_api_key, nexus_api_key, and any future RPC param
+# shape. Heuristic-shaped redaction is the safer default: it errs on the
+# side of over-redacting in DEBUG logs (operators see structure, not
+# values) rather than leaking a freshly-added secret-shaped param.
+_SENSITIVE_KEY_RE = _re.compile(
+    r"(?i)(secret|token|password|passwd|credential|api[_-]?key|"
+    r"access[_-]?key|session[_-]?token|authorization|auth[_-]?key|"
+    r"private[_-]?key)"
 )
+
+# Top-level RPC params known to carry secret material as VALUES even when
+# their KEY name doesn't match the heuristic. Used in addition to the
+# recursive scan.
+_SENSITIVE_TOP_LEVEL: frozenset[str] = frozenset({"mount_overrides", "injections", "credentials"})
 
 
 def _redact_params(params: Any) -> Any:
-    """Return a shallow copy of params with sensitive top-level keys redacted.
+    """Return a deep redacted copy of params with credential-shaped keys
+    replaced by ``"***"``.
 
-    For dict-of-dicts shapes (mount_overrides: {mount_id: {field: value}})
-    we preserve the nested keys so the log still shows what fields were
-    supplied for which mount, but the values are replaced with "***".
+    Walks dicts and lists recursively. At every level, a key whose name
+    matches ``_SENSITIVE_KEY_RE`` has its value replaced (preserving
+    structure: a dict value becomes a dict of "***", a list becomes a
+    list of "***"). At the top level, ``mount_overrides`` /
+    ``injections`` / ``credentials`` are also redacted regardless of
+    key-name shape.
+
+    The original ``params`` is never mutated.
     """
-    if not isinstance(params, dict):
-        return params
-    out: dict[str, Any] = {}
-    for key, value in params.items():
-        if key in _SENSITIVE_PARAM_KEYS and value is not None:
-            if isinstance(value, dict):
-                out[key] = {
-                    k: (dict.fromkeys(v, "***") if isinstance(v, dict) else "***")
-                    for k, v in value.items()
-                }
+    return _redact(params, top_level=True)
+
+
+def _redact(value: Any, *, top_level: bool) -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            key_str = k if isinstance(k, str) else ""
+            sensitive = bool(_SENSITIVE_KEY_RE.search(key_str)) or (
+                top_level and key_str in _SENSITIVE_TOP_LEVEL
+            )
+            if sensitive and v is not None:
+                if isinstance(v, dict):
+                    out[k] = _redact_dict_to_stars(v)
+                elif isinstance(v, list):
+                    out[k] = ["***" for _ in v]
+                else:
+                    out[k] = "***"
             else:
-                out[key] = "***"
+                out[k] = _redact(v, top_level=False)
+        return out
+    if isinstance(value, list):
+        return [_redact(item, top_level=False) for item in value]
+    return value
+
+
+def _redact_dict_to_stars(d: dict[str, Any]) -> dict[str, Any]:
+    """Recursively replace every leaf value with ``"***"`` while preserving
+    keys at every level so the redacted log still shows the call shape."""
+    out: dict[str, Any] = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out[k] = _redact_dict_to_stars(v)
+        elif isinstance(v, list):
+            out[k] = ["***" for _ in v]
         else:
-            out[key] = value
+            out[k] = "***"
     return out
 
 

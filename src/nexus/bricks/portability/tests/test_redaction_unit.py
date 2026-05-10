@@ -187,3 +187,35 @@ def test_get_connection_args_finds_slack_manifest_args():
         "Slack connector_args missed by _get_connection_args — extension-store "
         "manifest fallback may be broken."
     )
+
+
+def test_redact_config_rejects_undeclared_secret_shaped_top_level_key():
+    """Round 3: persisted backend_config can hold extra keys not in
+    CONNECTION_ARGS. If one looks like a secret (e.g., a path_local
+    record polluted with `secret_access_key`), the export must abort
+    rather than ship it cleartext."""
+    pytest.importorskip("boto3")
+    _ensure_registry()
+    config = {
+        "root_path": "/tmp/data",
+        "secret_access_key": "AKIA-LIVE-LEAK",  # not in path_local CONNECTION_ARGS
+    }
+    with pytest.raises(SensitiveFieldNotDeclaredError) as exc:
+        redact_config("path_local", config, mount_id="m-leak")
+    assert "secret_access_key" in exc.value.fields
+
+
+def test_redact_config_rejects_nested_secret_shaped_key():
+    """Round 3: nested credential dicts (e.g., a `metadata` blob
+    containing `auth_token`) must also fail closed — CONNECTION_ARGS
+    can't declare structure for a nested dict, so any nested
+    secret-shaped key is treated as a leak."""
+    pytest.importorskip("boto3")
+    _ensure_registry()
+    config = {
+        "root_path": "/tmp/data",
+        "metadata": {"description": "ok", "auth_token": "LIVE-NESTED"},
+    }
+    with pytest.raises(SensitiveFieldNotDeclaredError) as exc:
+        redact_config("path_local", config, mount_id="m-leak")
+    assert any("auth_token" in f for f in exc.value.fields), exc.value.fields

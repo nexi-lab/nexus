@@ -59,11 +59,16 @@ class BundleReader:
     def _resolve_manifest_schema(raw_manifest: dict[str, Any]) -> Path | None:
         """Pick the JSON-Schema file matching the manifest's declared version.
 
-        Returns None when the version is unknown or when no schema is
-        applicable (e.g., a future format we don't ship a schema for).
-        v1.x and v2.x bundles share manifest-v1.json (no v2 schema was
-        ever shipped, and v2 bundles set ``$schema`` to manifest-v1.json
-        in the wild); v3.x bundles use manifest-v3.json.
+        Returns the matching schema for v1.x/v2.x/v3.x bundles. Returns
+        None for any other version (unknown majors, future formats,
+        garbage), signaling to the caller that validate() must reject
+        the bundle rather than fall through.
+
+        Round 3 reviewer finding: previously this fell back to v3 for
+        any unknown version, which let a forged manifest with
+        ``format_version=999.0.0`` pass v3 validation (the v3 schema
+        only checked semver pattern, not the major). Now we require an
+        explicit supported major.
         """
         schemas_dir = Path(__file__).parent / "schemas"
         version = (raw_manifest.get("format_version") or "").strip()
@@ -71,10 +76,7 @@ class BundleReader:
             return schemas_dir / "manifest-v1.json"
         if version.startswith("3."):
             return schemas_dir / "manifest-v3.json"
-        # Unknown/future version: best-effort fall back to the latest
-        # schema we ship so reviewers see an explicit error rather than
-        # silent acceptance.
-        return schemas_dir / "manifest-v3.json"
+        return None  # unknown major — caller rejects
 
     def __enter__(self) -> "BundleReader":
         """Open the bundle for reading."""
@@ -163,7 +165,19 @@ class BundleReader:
         raw = getattr(self, "_raw_manifest_dict", None)
         if raw is not None:
             schema_path = self._resolve_manifest_schema(raw)
-            if schema_path is not None:
+            if schema_path is None:
+                # Unknown / unsupported manifest version. Fail closed —
+                # the importer cannot apply meaningful validation, and
+                # the rest of validate()/from_dict will silently accept
+                # garbage. (Round 3 reviewer: previously fell through
+                # to v3 schema and let format_version=999.0.0 pass.)
+                version = (raw.get("format_version") or "").strip() or "<missing>"
+                errors.append(
+                    f"Unsupported manifest format_version {version!r}: "
+                    "this importer recognizes 1.x, 2.x, and 3.x. "
+                    "Upgrade nexus or use a compatible bundle."
+                )
+            else:
                 try:
                     import jsonschema
 

@@ -346,6 +346,9 @@ class ZoneExportOptions:
     # Security
     encryption_key: bytes | None = None
 
+    # Mounts (Issue #4083)
+    include_mounts: bool = False  # opt-in mount config export
+
     # Signing (v2+)
     sign: bool = True
     strip_credentials: bool = True
@@ -375,6 +378,7 @@ class ZoneExportOptions:
             "include_api_keys": self.include_api_keys,
             "include_deleted": self.include_deleted,
             "include_versions": self.include_versions,
+            "include_mounts": self.include_mounts,
             "path_prefix": self.path_prefix,
             "after_time": self.after_time.isoformat() if self.after_time else None,
             "before_time": self.before_time.isoformat() if self.before_time else None,
@@ -447,6 +451,10 @@ class ZoneImportOptions:
     rebuild_embeddings: bool = False
     force: bool = False
 
+    # Mount portability (Issue #4083)
+    restore_mounts: bool = True
+    mount_overrides: dict[str, dict[str, str]] | None = None
+
     def __post_init__(self) -> None:
         """Validate options after initialization."""
         if isinstance(self.bundle_path, str):
@@ -510,6 +518,8 @@ class ZoneImportOptions:
             "import_api_keys": self.import_api_keys,
             "batch_size": self.batch_size,
             "max_concurrent_writes": self.max_concurrent_writes,
+            "restore_mounts": self.restore_mounts,
+            "mount_overrides": self.mount_overrides,
             # Note: decryption_key intentionally excluded for security
         }
 

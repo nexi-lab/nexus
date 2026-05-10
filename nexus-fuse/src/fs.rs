@@ -693,9 +693,30 @@ impl Filesystem for NexusFs {
         debug!("read: ino={}, offset={}, size={}", ino, offset, size);
 
         let path = resolve_path!(self, ino.0, reply);
-        let gen = self.client.stat(&path).map(|m| m.gen).unwrap_or(0);
 
         let started_at = std::time::Instant::now();
+
+        // #4055 R10: when a foyer cache is present, fail closed on stat
+        // errors instead of substituting gen=0 and probing the cache.
+        // A cached gen=0 entry could otherwise be served past current
+        // authorization (403/404). With no cache the gen value never
+        // gates a cache hit, so we keep the lightweight unwrap_or path.
+        let gen = if self.file_cache.is_some() {
+            match self.client.stat(&path) {
+                Ok(meta) => meta.gen,
+                Err(e) => {
+                    metrics::record_read("error", 0, started_at.elapsed());
+                    if e.is_not_found() {
+                        reply.error(Errno::ENOENT);
+                    } else {
+                        reply.error(Errno::EIO);
+                    }
+                    return;
+                }
+            }
+        } else {
+            self.client.stat(&path).map(|m| m.gen).unwrap_or(0)
+        };
 
         if fh.0 != 0 {
             let mut open_cache = self.open_file_cache.lock().unwrap();

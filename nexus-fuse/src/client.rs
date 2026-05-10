@@ -232,12 +232,17 @@ impl NexusClient {
         }
 
         impl DetailedEntry {
-            /// Treat any non-regular-file entry_type as a directory for BFS
-            /// traversal (DT_DIR=1, DT_MOUNT=2 both have nested children).
-            /// `is_directory` is the legacy boolean fallback.
+            /// Only DT_DIR=1 and DT_MOUNT=2 are directory-like in the
+            /// server's metadata contract (see src/nexus/contracts/metadata.py).
+            /// DT_PIPE=3, DT_STREAM=4, DT_EXTERNAL_STORAGE=5, DT_LINK=6 are
+            /// not normal directories; classifying them as such would have
+            /// BFS try to list them (failing or returning unexpected shape)
+            /// and would mislabel them in FUSE readdir output. (#4055 R10)
+            /// `is_directory` is the legacy boolean fallback for older
+            /// server responses / tests that don't emit `entry_type`.
             fn is_dir(&self) -> bool {
                 if let Some(et) = self.entry_type {
-                    et != 0
+                    et == 1 || et == 2
                 } else {
                     self.is_directory
                 }

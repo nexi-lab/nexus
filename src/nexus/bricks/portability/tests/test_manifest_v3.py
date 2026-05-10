@@ -1,7 +1,6 @@
 """Tests for v3 bundle manifest additions."""
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -10,10 +9,9 @@ from nexus.bricks.portability.models import (
     MANIFEST_SCHEMA_URL,
     ExportManifest,
 )
-
-jsonschema = pytest.importorskip("jsonschema")
-
-SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "manifest-v3.json"
+from nexus.bricks.portability.models import (
+    MANIFEST_SCHEMA_PATH as SCHEMA_PATH,
+)
 
 
 def test_format_version_is_v3():
@@ -74,6 +72,7 @@ def test_v3_schema_file_exists_and_is_valid_json():
 
 
 def test_v3_manifest_validates_against_schema():
+    jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads(SCHEMA_PATH.read_text())
     m = ExportManifest(source_zone_id="z1")
     m.mount_count = 3
@@ -81,8 +80,34 @@ def test_v3_manifest_validates_against_schema():
 
 
 def test_v3_schema_rejects_unknown_root_field():
+    jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads(SCHEMA_PATH.read_text())
     bad = ExportManifest(source_zone_id="z1").to_dict()
     bad["totally_unknown_field"] = "bogus"
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(bad, schema)
+
+
+def test_v3_schema_validates_placeholders_array():
+    """PlaceholderRef $def is reachable via the placeholders array."""
+    jsonschema = pytest.importorskip("jsonschema")
+    from nexus.bricks.portability.models import PlaceholderRef
+
+    schema = json.loads(SCHEMA_PATH.read_text())
+    m = ExportManifest(source_zone_id="z1")
+    m.placeholders = [
+        PlaceholderRef(name="MOUNT_m-1_ACCESS_KEY_ID", field="mounts.m-1.access_key_id"),
+    ]
+    jsonschema.validate(m.to_dict(), schema)
+
+
+def test_v3_schema_rejects_placeholder_with_extra_field():
+    """PlaceholderRef has additionalProperties: false."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(SCHEMA_PATH.read_text())
+    bad = ExportManifest(source_zone_id="z1").to_dict()
+    bad["placeholders"] = [
+        {"name": "X", "field": "a.b", "extra": "not allowed"},
+    ]
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(bad, schema)

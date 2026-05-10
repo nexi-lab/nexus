@@ -411,4 +411,44 @@ mod tests {
         );
         assert_eq!(stats.failed, 0);
     }
+
+    #[test]
+    fn test_hydrate_continues_on_per_file_error() {
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
+
+        let mut server = mockito::Server::new();
+        let _list_mock = server
+            .mock("POST", "/api/nfs/list")
+            .with_status(200)
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
+                {"path":"/ok1.txt","is_directory":false,"size":3},
+                {"path":"/bad.txt","is_directory":false,"size":3},
+                {"path":"/ok2.txt","is_directory":false,"size":3}
+            ]}}"#)
+            .create();
+
+        // Order matters: register the more-specific match first so mockito tries it before the catch-all.
+        let _bad_mock = server
+            .mock("POST", "/api/nfs/read")
+            .match_body(mockito::Matcher::Regex(r#""path":\s*"/bad\.txt""#.into()))
+            .with_status(500)
+            .with_body("internal error")
+            .create();
+        let _ok_mock = server
+            .mock("POST", "/api/nfs/read")
+            .match_body(mockito::Matcher::Regex(r#""path":\s*"/ok\d\.txt""#.into()))
+            .with_status(200)
+            .with_header("etag", "\"e\"")
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"aGk="}}"#)
+            .create();
+
+        let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
+        let cache = fresh_cache("per_file_err");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let stats = rt.block_on(hydrate_workspace(client, cache, HydrateOptions::new("/".into())));
+
+        assert_eq!(stats.admitted_count, 2);
+        assert_eq!(stats.failed, 1);
+    }
 }

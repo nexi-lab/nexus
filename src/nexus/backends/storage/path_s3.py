@@ -169,18 +169,6 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
         )
         return self._s3_transport.get_version_id(self._get_key_path(backend_path))
 
-    def fingerprint(self, path: str, context: "OperationContext | None" = None) -> str | None:
-        backend_path = (
-            context.backend_path if context and context.backend_path else path.lstrip("/")
-        )
-        meta = self._s3_transport.get_object_metadata(self._get_key_path(backend_path))
-        version_id = meta.get("version_id")
-        if version_id and str(version_id) != "null":
-            return str(version_id)
-
-        etag = meta.get("etag")
-        return f"etag:{etag}" if etag else None
-
     def get_file_info(self, path: str, context: "OperationContext | None" = None) -> FileInfo:
         backend_path = (
             context.backend_path if context and context.backend_path else path.lstrip("/")

@@ -38,17 +38,15 @@ def test_path_s3_fingerprint_prefers_version_id_then_etag() -> None:
     backend = object.__new__(PathS3Backend)
     backend._s3_transport = MagicMock()
     backend._get_key_path = lambda path: path
-    backend._s3_transport.get_object_metadata.return_value = {
-        "version_id": "v123",
-        "etag": "abc123",
-        "size": 1,
-        "last_modified": None,
-    }
+    backend._s3_transport.fingerprint.return_value = "version:v123"
 
-    assert backend.fingerprint("/file.txt") == "v123"
+    assert backend.fingerprint("/file.txt") == "version:v123"
+    backend._s3_transport.fingerprint.assert_called_once_with("file.txt")
 
-    backend._s3_transport.get_object_metadata.return_value["version_id"] = "null"
+    backend._s3_transport.fingerprint.reset_mock()
+    backend._s3_transport.fingerprint.return_value = "etag:abc123"
     assert backend.fingerprint("/file.txt") == "etag:abc123"
+    backend._s3_transport.fingerprint.assert_called_once_with("file.txt")
 
 
 def test_backend_fingerprint_defaults_to_none() -> None:
@@ -63,14 +61,11 @@ def test_path_s3_fingerprint_uses_context_backend_path() -> None:
     backend = object.__new__(PathS3Backend)
     backend._s3_transport = MagicMock()
     backend._get_key_path = MagicMock(side_effect=lambda path: f"prefix/{path}")
-    backend._s3_transport.get_object_metadata.return_value = {
-        "version_id": "v123",
-        "etag": "abc123",
-    }
+    backend._s3_transport.fingerprint.return_value = "version:v123"
 
-    assert backend.fingerprint("/ignored.txt", context=context) == "v123"
+    assert backend.fingerprint("/ignored.txt", context=context) == "version:v123"
     backend._get_key_path.assert_called_once_with("context/file.txt")
-    backend._s3_transport.get_object_metadata.assert_called_once_with("prefix/context/file.txt")
+    backend._s3_transport.fingerprint.assert_called_once_with("prefix/context/file.txt")
 
 
 def test_path_gcs_fingerprint_returns_generation() -> None:

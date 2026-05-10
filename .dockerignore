@@ -165,3 +165,22 @@ test_*.py
 .ruff_cache/
 .mypy_cache/
 gcs-credentials.json
+# Docker FUSE e2e harness runs from the repo build context.
+!tests/
+tests/*
+!tests/__init__.py
+!tests/e2e/
+tests/e2e/*
+!tests/e2e/__init__.py
+!tests/e2e/self_contained/
+tests/e2e/self_contained/*
+!tests/e2e/self_contained/__init__.py
+!tests/e2e/self_contained/Dockerfile.fuse-test
+!tests/e2e/self_contained/test_fuse_docker_e2e.py
+!tests/helpers/
+tests/helpers/*
+!tests/helpers/__init__.py
+!tests/helpers/dict_metastore.py
+!tests/testkit/
+tests/testkit/*
+!tests/testkit/metadata.py

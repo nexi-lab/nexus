@@ -23,7 +23,7 @@ Python orchestrates Rust FUSE daemon via Unix socket IPC for 10-100x performance
 │  │  - Unix socket server (/tmp/nexus-fuse.sock)     │       │
 │  │  - Hot path operations (read, write, list, etc)  │       │
 │  │  - HTTP client to Nexus server                   │       │
-│  │  - SQLite cache (persistent)                     │       │
+│  │  - Foyer hybrid cache (DRAM + filesystem tier)   │       │
 │  │  - No permission checks (trusts Python layer)    │       │
 │  └────────────────┬─────────────────────────────────┘       │
 │                   │ HTTPS                                    │
@@ -47,7 +47,7 @@ Python orchestrates Rust FUSE daemon via Unix socket IPC for 10-100x performance
 - Accept JSON-RPC commands from Python
 - Execute NexusClient operations (read, write, list, stat, etc.)
 - Return results as JSON-RPC responses
-- Maintain persistent SQLite cache
+- Maintain foyer-backed file-content cache with ETag revalidation
 - Handle errors and map to errno
 
 **Does NOT handle:**
@@ -199,7 +199,7 @@ class NexusFUSEOperations:
 **Why faster:**
 - No GIL contention (Rust is native, Python uses GIL for I/O)
 - Async I/O (tokio vs synchronous blocking)
-- Persistent cache (SQLite vs in-memory)
+- Persistent hybrid cache (foyer DRAM tier plus filesystem tier)
 - Compiled native code vs interpreted Python
 
 ## Fallback Strategy

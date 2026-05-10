@@ -99,11 +99,9 @@ impl NexusClientError {
     /// Check if error is transient and potentially retry-able.
     pub fn is_transient(&self) -> bool {
         match self {
-            Self::Timeout { .. }
-            | Self::ConnectionRefused(_)
-            | Self::RateLimited
-            | Self::ServerError { .. }
-            | Self::HttpError(_) => true,
+            Self::Timeout { .. } | Self::ConnectionRefused(_) | Self::RateLimited => true,
+            Self::HttpError(e) => e.is_timeout() || e.is_connect(),
+            Self::ServerError { status, .. } => (500..600).contains(status),
             Self::NotFound(_)
             | Self::InvalidResponse(_)
             | Self::JsonError(_)
@@ -145,6 +143,16 @@ mod tests {
         };
         assert_eq!(err.to_errno(), libc::EIO);
         assert!(err.is_transient());
+    }
+
+    #[test]
+    fn test_client_error_server_response_is_not_transient() {
+        let err = NexusClientError::ServerError {
+            status: 403,
+            message: "Forbidden".to_string(),
+        };
+        assert_eq!(err.to_errno(), libc::EIO);
+        assert!(!err.is_transient());
     }
 
     #[test]

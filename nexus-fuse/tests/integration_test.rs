@@ -5,7 +5,6 @@
 //! Requires: Nexus server running on localhost:2026
 
 use nexus_fuse::client::NexusClient;
-use nexus_fuse::error::NexusClientError;
 
 #[test]
 #[ignore] // Run with: cargo test -- --ignored --nocapture

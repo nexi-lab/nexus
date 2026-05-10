@@ -21,6 +21,50 @@ uv run nexus serve --port 2026 --api-key sk-test-key-123 --auth-type static &
 open target/criterion/report/index.html
 ```
 
+## Issue #4053 Foyer Cache Benchmark
+
+This section records the cache-backend benchmark used to validate replacing the
+old SQLite file-content cache with the foyer hybrid cache.
+
+**Command:**
+```bash
+cd nexus-fuse && cargo bench --bench cache_backends
+```
+
+**Environment:**
+- Date: 2026-05-08 19:17:41 PDT
+- OS: Darwin KWN9VC2WN4 25.3.0 arm64
+- Rust: rustc 1.95.0 (59807616e 2026-04-14)
+- Foyer: 0.22.3
+
+**Benchmark setup:**
+- Warm reads: 32 MiB foyer DRAM tier, 256 MiB filesystem tier
+- Agent churn trace: 192 objects, 32-object hot set, 64 KiB/object, 2 MiB foyer DRAM tier, 256 MiB filesystem tier
+- SQLite baseline: benchmark-only in-memory table with the same path/content/ETag shape
+- No live Nexus server is required
+
+The p99 values below are computed from Criterion's per-sample operation times
+(`sample.json` sample time divided by sample iterations).
+
+| Workload | Foyer mean | SQLite mean | Mean delta | Foyer p99 sample/op | SQLite p99 sample/op | p99 delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Warm read, 1 KiB | 215.6 ns | 1.09 us | 80.1% faster | 222.1 ns | 1.16 us | 80.8% faster |
+| Warm read, 10 KiB | 325.9 ns | 1.54 us | 78.8% faster | 355.3 ns | 1.77 us | 80.0% faster |
+| Warm read, 100 KiB | 2.27 us | 8.27 us | 72.6% faster | 3.14 us | 9.90 us | 68.3% faster |
+| Warm read, 1 MiB | 21.65 us | 85.55 us | 74.7% faster | 45.87 us | 119.59 us | 61.6% faster |
+| Agent churn trace | 27.43 us | 7.28 us | 276.7% slower | 34.01 us | 8.39 us | 305.4% slower |
+
+Acceptance criterion met: the warm-read cache hot path shows at least 61.6%
+p99 read-latency reduction versus the SQLite baseline, exceeding the 30%
+target. The churn trace intentionally exceeds the foyer DRAM hot set and is
+kept as visibility into filesystem-tier behavior; it is not the passing
+criterion for this run.
+
+Existing SQLite cache files under the nexus-fuse cache root are dropped on
+cache startup, including legacy sanitized URL names like `http___host_2026.db`
+and hash names like `nexus_HASH.db`. New foyer cache content is stored under a
+sibling `nexus_HASH.foyer/` directory.
+
 ## Expected vs Actual Performance
 
 ### Startup Latency
@@ -120,9 +164,9 @@ ps aux | grep nexus-fuse
    - Python: Blocking I/O with thread pools
    - Rust: Tokio async runtime (epoll/kqueue)
 
-3. **Persistent Cache**
+3. **Persistent Hybrid Cache**
    - Python: In-memory dict (process lifetime)
-   - Rust: SQLite (persistent across restarts)
+   - Rust: Foyer DRAM tier plus filesystem tier
 
 4. **Zero-Copy Operations**
    - Python: Multiple object allocations per operation

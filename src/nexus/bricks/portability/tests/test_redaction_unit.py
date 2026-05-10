@@ -393,3 +393,54 @@ def test_redact_config_no_args_refuses_jwt():
         pytest.raises(SensitiveFieldNotDeclaredError),
     ):
         redact_config("custom_backend", {"creds_blob": jwt}, mount_id="m-1")
+
+
+def test_value_scan_does_not_false_positive_on_long_username_url():
+    """Round 7: a username-only URL (no colon, no password) is a real
+    URL shape, not a credential. The previous round-6 pattern matched
+    ``https://username@host`` for any 16+ char username and broke
+    legitimate workflows. Round-7 dropped that pattern."""
+    from unittest.mock import patch
+
+    with (
+        patch(
+            "nexus.bricks.portability.redaction._get_connection_args",
+            return_value={},
+        ),
+        patch(
+            "nexus.bricks.portability.redaction._backend_is_registered",
+            return_value=True,
+        ),
+    ):
+        # Long username, no password — should pass.
+        out, _ = redact_config(
+            "custom_backend",
+            {"endpoint": "https://regularlongusername@host"},
+            mount_id="m-1",
+        )
+        assert out["endpoint"] == "https://regularlongusername@host"
+
+
+def test_value_scan_does_not_false_positive_on_sk_path():
+    """Round 7: a filesystem path containing 'sk-' is not an OpenAI
+    key. Round-6's bare sk-[A-Za-z0-9]{20,} pattern matched
+    ``/data/sk-1234...`` and broke benign mount configs. Round-7
+    dropped that pattern."""
+    from unittest.mock import patch
+
+    with (
+        patch(
+            "nexus.bricks.portability.redaction._get_connection_args",
+            return_value={},
+        ),
+        patch(
+            "nexus.bricks.portability.redaction._backend_is_registered",
+            return_value=True,
+        ),
+    ):
+        out, _ = redact_config(
+            "custom_backend",
+            {"root_path": "/data/sk-1234567890ABCDEFGHIJ"},
+            mount_id="m-1",
+        )
+        assert out["root_path"] == "/data/sk-1234567890ABCDEFGHIJ"

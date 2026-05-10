@@ -261,27 +261,37 @@ def redact_config(
 # any of these shapes, refuse the export and ask the operator to
 # declare a contract or skip mounts.
 _VALUE_SECRET_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"AKIA[0-9A-Z]{12,}"),  # AWS access key IDs
-    re.compile(r"ASIA[0-9A-Z]{12,}"),  # AWS temp access key
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),  # OpenAI / anthropic prefixed keys
-    re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"),  # anthropic
-    re.compile(r"ghp_[A-Za-z0-9]{36,}"),  # GitHub PAT
-    re.compile(r"gho_[A-Za-z0-9]{36,}"),  # GitHub OAuth token
-    re.compile(r"glpat-[A-Za-z0-9_-]{20,}"),  # GitLab PAT
-    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),  # Slack tokens
-    re.compile(r"AIza[0-9A-Za-z_-]{35,}"),  # Google API key
-    re.compile(r"-----BEGIN [A-Z ]+PRIVATE KEY-----"),  # PEM private keys
-    re.compile(r"(?i)bearer\s+[A-Za-z0-9._-]{20,}"),  # bearer tokens
-    re.compile(
-        r"(?i)(?:password|secret|token|api[_-]?key|access[_-]?key)\s*=\s*[^\s]{8,}"
-    ),  # KEY=VALUE assignments inside command strings
-    re.compile(r"://[^/\s:@]+:[^/\s@]+@"),  # URL userinfo (user:pass@host)
-    # Round-6 additions — token-only userinfo and JWTs that the
-    # round-5 patterns missed.
-    re.compile(r"://[A-Za-z0-9._\-+/=]{16,}@"),  # URL token-only (https://TOKEN@host)
-    re.compile(
-        r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
-    ),  # JWT (header.payload.signature, base64url, eyJ prefix)
+    # Provider-specific tokens with strong unique prefixes — high
+    # specificity, low false-positive rate.
+    re.compile(r"\bAKIA[0-9A-Z]{12,}\b"),  # AWS access key IDs
+    re.compile(r"\bASIA[0-9A-Z]{12,}\b"),  # AWS temp access key
+    re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b"),  # anthropic
+    re.compile(r"\bghp_[A-Za-z0-9]{36,}\b"),  # GitHub PAT
+    re.compile(r"\bgho_[A-Za-z0-9]{36,}\b"),  # GitHub OAuth token
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),  # GitLab PAT
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),  # Slack tokens
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35,}\b"),  # Google API key
+    # PEM private key armoring is unmistakable.
+    re.compile(r"-----BEGIN [A-Z ]+PRIVATE KEY-----"),
+    # Bearer-prefixed tokens (the literal "Bearer " is the signal).
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._-]{20,}"),
+    # KEY=VALUE assignments where the KEY is itself credential-named.
+    # Must be a credential-shaped key on the LHS so a benign
+    # ``--threshold=12345678`` doesn't match.
+    re.compile(r"(?i)\b(?:password|secret|token|api[_-]?key|access[_-]?key)\s*=\s*[^\s]{8,}"),
+    # URL userinfo with both user AND password — high-confidence
+    # credential leak. (Round-6's bare "token-only" pattern was too
+    # loose and matched ``https://username@host`` legitimately;
+    # dropped in round-7.)
+    re.compile(r"://[^/\s:@]+:[^/\s@]+@"),
+    # JWT — three base64url segments separated by dots, eyJ prefix.
+    # Strict shape, low FPR.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    # NOTE: round-6's bare ``sk-[A-Za-z0-9]{20,}`` was dropped in
+    # round-7 as too loose (matched legitimate paths like
+    # ``/data/sk-FOO20chars``). OpenAI keys without sk-ant prefix lose
+    # this guard — operators MUST mark such fields secret=True if their
+    # backend persists them.
 ]
 
 

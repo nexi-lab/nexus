@@ -3,6 +3,8 @@
 //! The daemon listens on a Unix socket and accepts JSON-RPC commands from Python.
 //! This enables Python to orchestrate Rust FUSE operations for 10-100x performance.
 
+use crate::cache::FileCache;
+use crate::cached_read::read_with_cache;
 use crate::client::NexusClient;
 use crate::error::NexusClientError;
 use base64::Engine;
@@ -10,6 +12,7 @@ use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -18,7 +21,8 @@ use tokio::signal;
 /// JSON-RPC request from Python client.
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
-    jsonrpc: String,
+    #[serde(rename = "jsonrpc")]
+    _jsonrpc: String,
     id: Option<Value>,
     method: String,
     params: Value,
@@ -73,12 +77,14 @@ pub struct DaemonConfig {
     pub nexus_url: String,
     pub api_key: String,
     pub agent_id: Option<String>,
+    pub file_cache: Option<Arc<FileCache>>,
 }
 
 /// Unix socket IPC daemon.
 pub struct Daemon {
     config: DaemonConfig,
     client: NexusClient,
+    file_cache: Option<Arc<FileCache>>,
 }
 
 impl Daemon {
@@ -86,7 +92,11 @@ impl Daemon {
     pub fn new(config: DaemonConfig) -> Result<Self, NexusClientError> {
         let client = NexusClient::new(&config.nexus_url, &config.api_key, config.agent_id.clone())?;
 
-        Ok(Self { config, client })
+        Ok(Self {
+            file_cache: config.file_cache.clone(),
+            config,
+            client,
+        })
     }
 
     /// Start the daemon and listen for connections.
@@ -120,7 +130,7 @@ impl Daemon {
         println!("{}", self.config.socket_path.display());
 
         // Setup graceful shutdown on SIGTERM/SIGINT
-        let shutdown = signal::ctrl_c();
+        let shutdown = shutdown_signal();
         tokio::pin!(shutdown);
 
         loop {
@@ -128,13 +138,17 @@ impl Daemon {
                 Ok((stream, _)) = listener.accept() => {
                     debug!("New connection accepted");
                     let client = self.client.clone();
+                    let file_cache = self.file_cache.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, client).await {
+                        if let Err(e) = handle_connection(stream, client, file_cache).await {
                             error!("Connection error: {}", e);
                         }
                     });
                 }
-                _ = &mut shutdown => {
+                shutdown_result = &mut shutdown => {
+                    if let Err(e) = shutdown_result {
+                        warn!("Shutdown signal handler failed: {}", e);
+                    }
                     info!("Received shutdown signal, cleaning up...");
                     break;
                 }
@@ -151,8 +165,32 @@ impl Daemon {
     }
 }
 
+async fn shutdown_signal() -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = signal::ctrl_c() => {
+                result?;
+            }
+            _ = sigterm.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        signal::ctrl_c().await?;
+    }
+
+    Ok(())
+}
+
 /// Handle a single Unix socket connection.
-async fn handle_connection(stream: UnixStream, client: NexusClient) -> anyhow::Result<()> {
+async fn handle_connection(
+    stream: UnixStream,
+    client: NexusClient,
+    file_cache: Option<Arc<FileCache>>,
+) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -167,7 +205,7 @@ async fn handle_connection(stream: UnixStream, client: NexusClient) -> anyhow::R
         }
 
         let response = match serde_json::from_str::<JsonRpcRequest>(&line) {
-            Ok(request) => handle_request(request, &client).await,
+            Ok(request) => handle_request(request, &client, file_cache.clone()).await,
             Err(e) => {
                 error!("Failed to parse JSON-RPC request: {}", e);
                 JsonRpcResponse::error(None, -32700, format!("Parse error: {}", e), None)
@@ -192,7 +230,11 @@ fn extract_params<T: for<'de> Deserialize<'de>>(params: &Value) -> Result<T, Nex
 }
 
 /// Handle a single JSON-RPC request.
-async fn handle_request(request: JsonRpcRequest, client: &NexusClient) -> JsonRpcResponse {
+async fn handle_request(
+    request: JsonRpcRequest,
+    client: &NexusClient,
+    file_cache: Option<Arc<FileCache>>,
+) -> JsonRpcResponse {
     debug!("Handling method: {}", request.method);
 
     // Clone client for spawn_blocking
@@ -202,13 +244,13 @@ async fn handle_request(request: JsonRpcRequest, client: &NexusClient) -> JsonRp
 
     // Run blocking operations in a separate thread pool
     let result = tokio::task::spawn_blocking(move || match method.as_str() {
-        "read" => handle_read(&params, &client),
-        "write" => handle_write(&params, &client),
+        "read" => handle_read(&params, &client, file_cache.as_deref()),
+        "write" => handle_write(&params, &client, file_cache.as_deref()),
         "list" => handle_list(&params, &client),
         "stat" => handle_stat(&params, &client),
         "mkdir" => handle_mkdir(&params, &client),
-        "delete" => handle_delete(&params, &client),
-        "rename" => handle_rename(&params, &client),
+        "delete" => handle_delete(&params, &client, file_cache.as_deref()),
+        "rename" => handle_rename(&params, &client, file_cache.as_deref()),
         "exists" => handle_exists(&params, &client),
         _ => Err(NexusClientError::InvalidResponse(format!(
             "Method not found: {}",
@@ -243,7 +285,11 @@ async fn handle_request(request: JsonRpcRequest, client: &NexusClient) -> JsonRp
 // Handler functions — Issue 5A: use extract_params<T>() to eliminate
 // repeated deserialization boilerplate.
 
-fn handle_read(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
+fn handle_read(
+    params: &Value,
+    client: &NexusClient,
+    file_cache: Option<&FileCache>,
+) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
     struct P {
         path: String,
@@ -251,17 +297,22 @@ fn handle_read(params: &Value, client: &NexusClient) -> Result<Value, NexusClien
     let p: P = extract_params(params)?;
 
     let started_at = Instant::now();
-    let content = match client.read(&p.path) {
-        Ok(content) => {
-            crate::metrics::record_read("backend", content.len(), started_at.elapsed());
-            content
+    let gen = if file_cache.is_some() {
+        client.stat(&p.path).map(|m| m.gen).unwrap_or(0)
+    } else {
+        0
+    };
+    let read_result = match read_with_cache(client, file_cache, &p.path, gen) {
+        Ok(result) => {
+            crate::metrics::record_read(result.tier, result.content.len(), started_at.elapsed());
+            result
         }
         Err(error) => {
             crate::metrics::record_read("error", 0, started_at.elapsed());
             return Err(error);
         }
     };
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&content);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&read_result.content);
 
     Ok(json!({
         "__type__": "bytes",
@@ -269,11 +320,15 @@ fn handle_read(params: &Value, client: &NexusClient) -> Result<Value, NexusClien
     }))
 }
 
-fn handle_write(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
+fn handle_write(
+    params: &Value,
+    client: &NexusClient,
+    file_cache: Option<&FileCache>,
+) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
     struct ContentBytes {
         #[serde(rename = "__type__")]
-        type_tag: String,
+        _type_tag: String,
         data: String,
     }
     #[derive(Deserialize)]
@@ -288,6 +343,9 @@ fn handle_write(params: &Value, client: &NexusClient) -> Result<Value, NexusClie
         .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid base64: {}", e)))?;
 
     client.write(&p.path, &content)?;
+    if let Some(cache) = file_cache {
+        cache.invalidate(&p.path);
+    }
     crate::metrics::record_write_backend_rpc();
     Ok(json!({}))
 }
@@ -311,8 +369,8 @@ fn handle_stat(params: &Value, client: &NexusClient) -> Result<Value, NexusClien
     let p: P = extract_params(params)?;
 
     let metadata = client.stat(&p.path)?;
-    Ok(serde_json::to_value(metadata)
-        .map_err(|e| NexusClientError::InvalidResponse(format!("Serialization error: {}", e)))?)
+    serde_json::to_value(metadata)
+        .map_err(|e| NexusClientError::InvalidResponse(format!("Serialization error: {}", e)))
 }
 
 fn handle_mkdir(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
@@ -326,7 +384,11 @@ fn handle_mkdir(params: &Value, client: &NexusClient) -> Result<Value, NexusClie
     Ok(json!({}))
 }
 
-fn handle_delete(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
+fn handle_delete(
+    params: &Value,
+    client: &NexusClient,
+    file_cache: Option<&FileCache>,
+) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
     struct P {
         path: String,
@@ -334,10 +396,17 @@ fn handle_delete(params: &Value, client: &NexusClient) -> Result<Value, NexusCli
     let p: P = extract_params(params)?;
 
     client.delete(&p.path)?;
+    if let Some(cache) = file_cache {
+        cache.invalidate(&p.path);
+    }
     Ok(json!({}))
 }
 
-fn handle_rename(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
+fn handle_rename(
+    params: &Value,
+    client: &NexusClient,
+    file_cache: Option<&FileCache>,
+) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
     struct P {
         old_path: String,
@@ -346,6 +415,10 @@ fn handle_rename(params: &Value, client: &NexusClient) -> Result<Value, NexusCli
     let p: P = extract_params(params)?;
 
     client.rename(&p.old_path, &p.new_path)?;
+    if let Some(cache) = file_cache {
+        cache.invalidate(&p.old_path);
+        cache.invalidate(&p.new_path);
+    }
     Ok(json!({}))
 }
 
@@ -389,7 +462,7 @@ mod tests {
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
 
-        let result = handle_read(&json!({"path": "/daemon.txt"}), &client).unwrap();
+        let result = handle_read(&json!({"path": "/daemon.txt"}), &client, None).unwrap();
 
         assert_eq!(result["data"], payload);
         let metrics = crate::metrics::render();
@@ -411,7 +484,7 @@ mod tests {
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
 
-        let result = handle_read(&json!({"path": "/daemon.txt"}), &client);
+        let result = handle_read(&json!({"path": "/daemon.txt"}), &client, None);
 
         assert!(result.is_err());
         let metrics = crate::metrics::render();
@@ -441,6 +514,7 @@ mod tests {
                 "content": {"__type__": "bytes", "data": payload}
             }),
             &client,
+            None,
         )
         .unwrap();
 

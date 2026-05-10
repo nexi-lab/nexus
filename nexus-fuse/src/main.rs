@@ -8,6 +8,7 @@ use fuser::{Config, MountOption, SessionACL};
 use log::{error, info};
 use nexus_fuse::{cache, client, daemon, fs, metrics};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "nexus-fuse")]
@@ -50,6 +51,18 @@ enum Commands {
         #[arg(long, env = "NEXUS_AGENT_ID")]
         agent_id: Option<String>,
 
+        /// Foyer DRAM cache size in MiB
+        #[arg(long, env = "NEXUS_FUSE_CACHE_MEMORY_MB", default_value_t = 256)]
+        cache_memory_mb: usize,
+
+        /// Foyer filesystem cache size in GiB
+        #[arg(long, env = "NEXUS_FUSE_CACHE_DISK_GB", default_value_t = 10)]
+        cache_disk_gb: usize,
+
+        /// Override cache root directory
+        #[arg(long, env = "NEXUS_FUSE_CACHE_DIR")]
+        cache_dir: Option<PathBuf>,
+
         /// Prometheus metrics bind address, for example 127.0.0.1:9464
         #[arg(long, env = "NEXUS_FUSE_METRICS_ADDR")]
         metrics_addr: Option<String>,
@@ -75,6 +88,18 @@ enum Commands {
         /// Agent ID for file attribution
         #[arg(long, env = "NEXUS_AGENT_ID")]
         agent_id: Option<String>,
+
+        /// Foyer DRAM cache size in MiB
+        #[arg(long, env = "NEXUS_FUSE_CACHE_MEMORY_MB", default_value_t = 256)]
+        cache_memory_mb: usize,
+
+        /// Foyer filesystem cache size in GiB
+        #[arg(long, env = "NEXUS_FUSE_CACHE_DISK_GB", default_value_t = 10)]
+        cache_disk_gb: usize,
+
+        /// Override cache root directory
+        #[arg(long, env = "NEXUS_FUSE_CACHE_DIR")]
+        cache_dir: Option<PathBuf>,
 
         /// Prometheus metrics bind address, for example 127.0.0.1:9464
         #[arg(long, env = "NEXUS_FUSE_METRICS_ADDR")]
@@ -113,6 +138,51 @@ fn resolve_api_key(
     ))
 }
 
+fn mib_to_bytes(mib: usize) -> anyhow::Result<usize> {
+    mib.checked_mul(1024 * 1024)
+        .ok_or_else(|| anyhow::anyhow!("cache memory size overflows usize"))
+}
+
+fn gib_to_bytes(gib: usize) -> anyhow::Result<usize> {
+    gib.checked_mul(1024 * 1024 * 1024)
+        .ok_or_else(|| anyhow::anyhow!("cache disk size overflows usize"))
+}
+
+fn build_cache_config(
+    cache_memory_mb: usize,
+    cache_disk_gb: usize,
+    cache_dir: Option<PathBuf>,
+) -> anyhow::Result<cache::CacheConfig> {
+    let root_dir = cache_dir.unwrap_or_else(|| cache::CacheConfig::default().root_dir);
+    cache::CacheConfig::new(
+        root_dir,
+        mib_to_bytes(cache_memory_mb)?,
+        gib_to_bytes(cache_disk_gb)?,
+        cache::MAX_FILE_SIZE,
+    )
+}
+
+fn open_file_cache(url: &str, config: cache::CacheConfig) -> Option<Arc<cache::FileCache>> {
+    match cache::FileCache::new_with_config(url, config) {
+        Ok(cache) => {
+            let stats = cache.stats();
+            info!(
+                "Foyer cache ready: {} current-process files ({} MB)",
+                stats.file_count,
+                stats.total_size / 1024 / 1024
+            );
+            Some(Arc::new(cache))
+        }
+        Err(e) => {
+            error!(
+                "Failed to initialize foyer cache: {} (continuing without cache)",
+                e
+            );
+            None
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // Initialize logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -128,6 +198,9 @@ fn main() -> anyhow::Result<()> {
             allow_other,
             foreground,
             agent_id,
+            cache_memory_mb,
+            cache_disk_gb,
+            cache_dir,
             metrics_addr,
         } => {
             let api_key = resolve_api_key(api_key, api_key_file)?;
@@ -160,25 +233,8 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Create persistent cache
-            let file_cache = match cache::FileCache::new(&url) {
-                Ok(cache) => {
-                    let stats = cache.stats();
-                    info!(
-                        "Cache loaded: {} files ({} MB)",
-                        stats.file_count,
-                        stats.total_size / 1024 / 1024
-                    );
-                    Some(cache)
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to initialize cache: {} (continuing without cache)",
-                        e
-                    );
-                    None
-                }
-            };
+            let cache_config = build_cache_config(cache_memory_mb, cache_disk_gb, cache_dir)?;
+            let file_cache = open_file_cache(&url, cache_config);
 
             // Create filesystem
             let filesystem = fs::NexusFs::new(client, file_cache);
@@ -213,6 +269,9 @@ fn main() -> anyhow::Result<()> {
             api_key_file,
             socket,
             agent_id,
+            cache_memory_mb,
+            cache_disk_gb,
+            cache_dir,
             metrics_addr,
         } => {
             let api_key = resolve_api_key(api_key, api_key_file)?;
@@ -230,12 +289,15 @@ fn main() -> anyhow::Result<()> {
                 PathBuf::from(format!("/tmp/nexus-fuse-{}.sock", pid))
             });
 
-            // Create daemon config
+            let cache_config = build_cache_config(cache_memory_mb, cache_disk_gb, cache_dir)?;
+            let file_cache = open_file_cache(&url, cache_config);
+
             let config = daemon::DaemonConfig {
                 socket_path,
                 nexus_url: url,
                 api_key,
                 agent_id,
+                file_cache,
             };
 
             // Create daemon

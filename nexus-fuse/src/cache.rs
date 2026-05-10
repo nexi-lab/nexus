@@ -1,26 +1,113 @@
-//! SQLite-based persistent cache for Nexus FUSE.
+//! Foyer-backed hybrid cache for Nexus FUSE.
 //!
 //! Provides ETag-based cache invalidation to minimize network round-trips
-//! while ensuring data consistency with the Nexus server.
+//! while using a DRAM tier and filesystem-backed disk tier for hot-path reads.
 
 #![allow(dead_code)]
 
 use crate::metrics;
-use anyhow::{anyhow, Result};
-use log::{debug, error, info, warn};
-use rusqlite::{params, Connection, OptionalExtension};
-use std::path::PathBuf;
+use anyhow::{anyhow, Context, Result};
+use foyer::{
+    BlockEngineConfig, Code, DeviceBuilder, FsDeviceBuilder, HybridCache, HybridCacheBuilder,
+    StorageFilter,
+};
+use log::{debug, info, warn};
+use std::collections::HashMap;
+use std::future::Future;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Maximum age for cached content before forcing revalidation (1 hour).
 const MAX_CACHE_AGE_SECS: u64 = 3600;
 
-/// Maximum cache size in bytes (500 MB).
-const MAX_CACHE_SIZE: u64 = 500 * 1024 * 1024;
+/// Default DRAM cache size in bytes (256 MiB).
+pub const DEFAULT_MEMORY_CACHE_BYTES: usize = 256 * 1024 * 1024;
 
-/// Maximum file size to cache (10 MB) - larger files bypass cache.
-const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
+/// Default filesystem cache size in bytes (10 GiB).
+pub const DEFAULT_DISK_CACHE_BYTES: usize = 10 * 1024 * 1024 * 1024;
+
+/// Maximum file size to cache (10 MiB) - larger files bypass cache.
+pub const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
+
+#[derive(Debug, Clone)]
+pub struct CacheConfig {
+    pub root_dir: PathBuf,
+    pub memory_bytes: usize,
+    pub disk_bytes: usize,
+    pub max_file_size: usize,
+}
+
+impl CacheConfig {
+    pub fn new(
+        root_dir: PathBuf,
+        memory_bytes: usize,
+        disk_bytes: usize,
+        max_file_size: usize,
+    ) -> Result<Self> {
+        if memory_bytes == 0 {
+            return Err(anyhow!("memory cache size must be greater than zero"));
+        }
+        if disk_bytes == 0 {
+            return Err(anyhow!("disk cache size must be greater than zero"));
+        }
+        if max_file_size == 0 {
+            return Err(anyhow!("max file size must be greater than zero"));
+        }
+        Ok(Self {
+            root_dir,
+            memory_bytes,
+            disk_bytes,
+            max_file_size,
+        })
+    }
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        let root_dir = dirs::cache_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("nexus-fuse");
+        Self {
+            root_dir,
+            memory_bytes: DEFAULT_MEMORY_CACHE_BYTES,
+            disk_bytes: DEFAULT_DISK_CACHE_BYTES,
+            max_file_size: MAX_FILE_SIZE,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CachePaths {
+    pub foyer_dir: PathBuf,
+    pub sqlite_file: PathBuf,
+    pub legacy_sqlite_file: PathBuf,
+}
+
+impl CachePaths {
+    pub fn for_server(root_dir: &Path, server_url: &str) -> Self {
+        let hash = server_hash(server_url);
+        Self {
+            foyer_dir: root_dir.join(format!("nexus_{hash:016x}.foyer")),
+            sqlite_file: root_dir.join(format!("nexus_{hash:016x}.db")),
+            legacy_sqlite_file: root_dir.join(format!("{}.db", legacy_server_filename(server_url))),
+        }
+    }
+}
+
+fn server_hash(server_url: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    server_url.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn legacy_server_filename(server_url: &str) -> String {
+    server_url
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
+}
 
 /// Cache entry for file content.
 #[derive(Debug, Clone)]
@@ -41,101 +128,185 @@ pub enum CacheLookup {
     Miss,
 }
 
-/// Persistent SQLite cache for file content and metadata.
+#[derive(Debug, Clone)]
+struct CacheRecord {
+    content: Vec<u8>,
+    etag: Option<String>,
+    gen: u64,
+    cached_at_secs: u64,
+}
+
+impl Code for CacheRecord {
+    fn encode(&self, writer: &mut impl std::io::Write) -> foyer::Result<()> {
+        self.content.encode(writer)?;
+        self.etag.is_some().encode(writer)?;
+        if let Some(etag) = &self.etag {
+            etag.encode(writer)?;
+        }
+        self.gen.encode(writer)?;
+        self.cached_at_secs.encode(writer)
+    }
+
+    fn decode(reader: &mut impl std::io::Read) -> foyer::Result<Self> {
+        let content = Vec::<u8>::decode(reader)?;
+        let etag = if bool::decode(reader)? {
+            Some(String::decode(reader)?)
+        } else {
+            None
+        };
+        let gen = u64::decode(reader)?;
+        let cached_at_secs = u64::decode(reader)?;
+        Ok(Self {
+            content,
+            etag,
+            gen,
+            cached_at_secs,
+        })
+    }
+
+    fn estimated_size(&self) -> usize {
+        std::mem::size_of::<u64>() * 2
+            + std::mem::size_of::<bool>()
+            + std::mem::size_of::<usize>()
+            + self.content.len()
+            + self
+                .etag
+                .as_ref()
+                .map_or(0, |etag| std::mem::size_of::<usize>() + etag.len())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CacheMeta {
+    etag: Option<String>,
+    gen: u64,
+    cached_at_secs: u64,
+    size: usize,
+}
+
 pub struct FileCache {
-    conn: Mutex<Connection>,
+    cache: HybridCache<String, CacheRecord>,
+    runtime: CacheRuntime,
+    metadata: Mutex<HashMap<String, CacheMeta>>,
+    config: CacheConfig,
+}
+
+struct CacheRuntime {
+    runtime: Option<tokio::runtime::Runtime>,
+}
+
+impl CacheRuntime {
+    fn new(runtime: tokio::runtime::Runtime) -> Self {
+        Self {
+            runtime: Some(runtime),
+        }
+    }
+
+    fn get(&self) -> &tokio::runtime::Runtime {
+        self.runtime
+            .as_ref()
+            .expect("cache runtime must exist while FileCache is alive")
+    }
+}
+
+impl Drop for CacheRuntime {
+    fn drop(&mut self) {
+        let Some(runtime) = self.runtime.take() else {
+            return;
+        };
+
+        if tokio::runtime::Handle::try_current().is_ok() {
+            std::thread::spawn(move || drop(runtime))
+                .join()
+                .expect("foyer cache runtime drop thread panicked");
+        } else {
+            drop(runtime);
+        }
+    }
+}
+
+fn block_on_foyer<Fut, T>(runtime: &tokio::runtime::Runtime, future: Fut) -> T
+where
+    Fut: Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let handle = runtime.handle().clone();
+    if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::spawn(move || handle.block_on(future))
+            .join()
+            .expect("foyer cache runtime thread panicked")
+    } else {
+        runtime.block_on(future)
+    }
 }
 
 impl FileCache {
-    /// Initialise a cache from an already-opened SQLite connection.
-    fn open_connection(conn: Connection) -> Result<Self> {
-        // Configure SQLite for performance
-        conn.execute_batch(
-            "
-            PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = NORMAL;
-            PRAGMA cache_size = -64000;  -- 64MB cache
-            PRAGMA temp_store = MEMORY;
-            ",
-        )?;
+    pub fn new(server_url: &str) -> Result<Self> {
+        Self::new_with_config(server_url, CacheConfig::default())
+    }
 
-        // Create tables
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS file_cache (
-                path TEXT PRIMARY KEY,
-                content BLOB NOT NULL,
-                etag TEXT,
-                size INTEGER NOT NULL,
-                gen INTEGER NOT NULL DEFAULT 0,
-                cached_at INTEGER NOT NULL
-            );
+    pub fn new_with_config(server_url: &str, config: CacheConfig) -> Result<Self> {
+        std::fs::create_dir_all(&config.root_dir).with_context(|| {
+            format!("failed to create cache root {}", config.root_dir.display())
+        })?;
 
-            CREATE TABLE IF NOT EXISTS metadata_cache (
-                path TEXT PRIMARY KEY,
-                is_dir INTEGER NOT NULL,
-                size INTEGER NOT NULL,
-                entry_type TEXT NOT NULL,
-                cached_at INTEGER NOT NULL
-            );
+        let paths = CachePaths::for_server(&config.root_dir, server_url);
+        migrate_sqlite_file(&paths.sqlite_file);
+        if paths.legacy_sqlite_file != paths.sqlite_file {
+            migrate_sqlite_file(&paths.legacy_sqlite_file);
+        }
+        std::fs::create_dir_all(&paths.foyer_dir).with_context(|| {
+            format!(
+                "failed to create foyer cache dir {}",
+                paths.foyer_dir.display()
+            )
+        })?;
 
-            CREATE INDEX IF NOT EXISTS idx_file_cache_cached_at ON file_cache(cached_at);
-            CREATE INDEX IF NOT EXISTS idx_file_cache_size ON file_cache(size);
-            ",
-        )?;
-        let _ = conn.execute(
-            "ALTER TABLE file_cache ADD COLUMN gen INTEGER NOT NULL DEFAULT 0",
-            [],
+        info!(
+            "Opening foyer cache at: {} (memory={} MB, disk={} GB)",
+            paths.foyer_dir.display(),
+            config.memory_bytes / 1024 / 1024,
+            config.disk_bytes / 1024 / 1024 / 1024,
         );
 
-        let cache = Self {
-            conn: Mutex::new(conn),
-        };
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_name("nexus-fuse-cache")
+            .worker_threads(2)
+            .build()
+            .context("failed to create foyer cache runtime")?;
 
-        // Cleanup old entries on startup
-        if let Err(e) = cache.cleanup() {
-            warn!("Cache cleanup failed: {}", e);
-        }
+        let foyer_dir = paths.foyer_dir.clone();
+        let disk_bytes = config.disk_bytes;
+        let memory_bytes = config.memory_bytes;
+        let cache = block_on_foyer(&runtime, async move {
+            let device = FsDeviceBuilder::new(&foyer_dir)
+                .with_capacity(disk_bytes)
+                .build()?;
 
-        Ok(cache)
+            let cache = HybridCacheBuilder::new()
+                .with_name("nexus-fuse-file-cache")
+                .with_flush_on_close(true)
+                .memory(memory_bytes)
+                .with_weighter(|_key, value: &CacheRecord| value.estimated_size().max(1))
+                .storage()
+                .with_engine_config(
+                    BlockEngineConfig::new(device).with_admission_filter(StorageFilter::new()),
+                )
+                .build()
+                .await?;
+
+            Ok::<HybridCache<String, CacheRecord>, foyer::Error>(cache)
+        })?;
+
+        Ok(Self {
+            cache,
+            runtime: CacheRuntime::new(runtime),
+            metadata: Mutex::new(HashMap::new()),
+            config,
+        })
     }
 
-    /// Create or open a cache database.
-    pub fn new(server_url: &str) -> Result<Self> {
-        let cache_path = Self::cache_path(server_url)?;
-
-        // Ensure cache directory exists
-        if let Some(parent) = cache_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        info!("Opening cache at: {}", cache_path.display());
-
-        let conn = Connection::open(&cache_path)?;
-        Self::open_connection(conn)
-    }
-
-    /// Get cache file path based on server URL.
-    ///
-    /// Uses a hash-based filename (Issue 19A) instead of lossy URL sanitization
-    /// which could collide for URLs differing only in special characters
-    /// (e.g. `http://a:8080` vs `http://a/8080` both became `http___a_8080`).
-    fn cache_path(server_url: &str) -> Result<PathBuf> {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let cache_dir = dirs::cache_dir()
-            .ok_or_else(|| anyhow!("Could not determine cache directory"))?
-            .join("nexus-fuse");
-
-        let mut hasher = DefaultHasher::new();
-        server_url.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        Ok(cache_dir.join(format!("nexus_{:016x}.db", hash)))
-    }
-
-    /// Get current timestamp.
     fn now() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -143,284 +314,278 @@ impl FileCache {
             .unwrap_or(0)
     }
 
-    #[cfg(test)]
-    pub(crate) fn open_in_memory_for_tests() -> Self {
-        let conn = Connection::open_in_memory().unwrap();
-        Self::open_connection(conn).unwrap()
+    fn update_metadata(&self, path: &str, record: &CacheRecord) {
+        if let Ok(mut metadata) = self.metadata.lock() {
+            metadata.insert(
+                path.to_string(),
+                CacheMeta {
+                    etag: record.etag.clone(),
+                    gen: record.gen,
+                    cached_at_secs: record.cached_at_secs,
+                    size: record.content.len(),
+                },
+            );
+        }
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_cached_at_for_tests(&self, path: &str, cached_at: u64) {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE file_cache SET cached_at = ? WHERE path = ?",
-            params![cached_at as i64, path],
-        )
-        .unwrap();
+    fn remove_metadata(&self, path: &str) {
+        if let Ok(mut metadata) = self.metadata.lock() {
+            metadata.remove(path);
+        }
     }
 
-    /// Look up a file in the cache using two-phase metadata-first query (Issue 16A).
-    ///
-    /// Phase 1: Query only lightweight metadata (etag, cached_at) to determine
-    ///          freshness without deserializing the (potentially large) BLOB.
-    /// Phase 2: Only fetch content if the entry is fresh; stale entries with an
-    ///          etag return NeedsRevalidation without touching the BLOB column.
+    fn read_record(&self, path: &str) -> Option<CacheRecord> {
+        if let Some(entry) = self.cache.memory().get(path) {
+            let record = entry.value().clone();
+            self.update_metadata(path, &record);
+            return Some(record);
+        }
+
+        let key = path.to_string();
+        let cache = self.cache.clone();
+        match block_on_foyer(self.runtime.get(), async move { cache.get(&key).await }) {
+            Ok(Some(entry)) => {
+                let record = entry.value().clone();
+                self.update_metadata(path, &record);
+                Some(record)
+            }
+            Ok(None) => {
+                self.remove_metadata(path);
+                None
+            }
+            Err(e) => {
+                warn!("Foyer cache read failed for {}: {}", path, e);
+                None
+            }
+        }
+    }
+
     pub fn get(&self, path: &str, gen: u64) -> CacheLookup {
-        let conn = self.conn.lock().unwrap();
         let now = Self::now();
-
-        // Phase 1: metadata-only query — avoids reading the content BLOB
-        let meta: Option<(Option<String>, i64, i64)> = conn
-            .query_row(
-                "SELECT etag, cached_at, gen FROM file_cache WHERE path = ?",
-                params![path],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .optional()
+        let meta = self
+            .metadata
+            .lock()
             .ok()
-            .flatten();
+            .and_then(|metadata| metadata.get(path).cloned());
 
-        match meta {
-            Some((etag, cached_at, cached_gen)) => {
-                let cached_gen = cached_gen.max(0) as u64;
-                if cached_gen != gen {
-                    debug!(
-                        "Cache generation mismatch for {} (cached={}, current={})",
-                        path, cached_gen, gen
-                    );
-                    let _ = conn.execute("DELETE FROM file_cache WHERE path = ?", params![path]);
-                    return CacheLookup::Miss;
-                }
+        if let Some(meta) = meta {
+            if meta.gen != gen {
+                debug!(
+                    "Cache generation mismatch for {} (cached={}, current={})",
+                    path, meta.gen, gen
+                );
+                metrics::record_generation_mismatch();
+                self.invalidate(path);
+                metrics::record_cache_request("dram", "miss");
+                return CacheLookup::Miss;
+            }
 
-                let age = now.saturating_sub(cached_at.max(0) as u64);
-
-                if age < MAX_CACHE_AGE_SECS {
-                    // Fresh — Phase 2: fetch content
-                    let content: Option<Vec<u8>> = conn
-                        .query_row(
-                            "SELECT content FROM file_cache WHERE path = ?",
-                            params![path],
-                            |row| row.get(0),
-                        )
-                        .optional()
-                        .ok()
-                        .flatten();
-
-                    match content {
-                        Some(content) => {
-                            debug!("Cache hit for {} (age: {}s)", path, age);
-                            metrics::record_cache_request("sqlite", "hit");
-                            CacheLookup::Hit(CacheEntry { content, etag, gen })
-                        }
-                        None => {
-                            // Shouldn't happen (metadata existed but content gone)
-                            debug!(
-                                "Cache inconsistency for {} — metadata without content",
-                                path
-                            );
-                            metrics::record_cache_request("sqlite", "miss");
-                            CacheLookup::Miss
-                        }
+            let age = now.saturating_sub(meta.cached_at_secs);
+            if age >= MAX_CACHE_AGE_SECS {
+                if meta.etag.is_some() {
+                    let Some(record) = self.read_record(path) else {
+                        debug!("Cache stale for {} but backing record is missing", path);
+                        metrics::record_cache_request("dram", "miss");
+                        return CacheLookup::Miss;
+                    };
+                    if record.gen != gen {
+                        debug!(
+                            "Cache generation mismatch for {} (cached={}, current={})",
+                            path, record.gen, gen
+                        );
+                        metrics::record_generation_mismatch();
+                        self.invalidate(path);
+                        metrics::record_cache_request("dram", "miss");
+                        return CacheLookup::Miss;
                     }
-                } else if let Some(etag) = etag {
-                    // Stale but has etag — can revalidate without fetching content
+                    let Some(etag) = record.etag else {
+                        debug!("Cache stale for {} with no etag in backing record", path);
+                        metrics::record_cache_request("dram", "miss");
+                        return CacheLookup::Miss;
+                    };
                     debug!(
                         "Cache stale for {} (age: {}s), needs revalidation",
                         path, age
                     );
-                    metrics::record_cache_request("sqlite", "stale");
-                    CacheLookup::NeedsRevalidation { etag }
-                } else {
-                    // Stale with no etag — treat as miss
-                    debug!("Cache stale for {} with no etag", path);
-                    metrics::record_cache_request("sqlite", "miss");
-                    CacheLookup::Miss
+                    metrics::record_cache_request("dram", "stale");
+                    return CacheLookup::NeedsRevalidation { etag };
                 }
-            }
-            None => {
-                debug!("Cache miss for {}", path);
-                metrics::record_cache_request("sqlite", "miss");
-                CacheLookup::Miss
+                debug!("Cache stale for {} with no etag", path);
+                metrics::record_cache_request("dram", "miss");
+                return CacheLookup::Miss;
             }
         }
+
+        let Some(record) = self.read_record(path) else {
+            metrics::record_cache_request("dram", "miss");
+            return CacheLookup::Miss;
+        };
+
+        if record.gen != gen {
+            debug!(
+                "Cache generation mismatch for {} (cached={}, current={})",
+                path, record.gen, gen
+            );
+            metrics::record_generation_mismatch();
+            self.invalidate(path);
+            metrics::record_cache_request("dram", "miss");
+            return CacheLookup::Miss;
+        }
+
+        let age = now.saturating_sub(record.cached_at_secs);
+        if age < MAX_CACHE_AGE_SECS {
+            debug!("Cache hit for {} (age: {}s)", path, age);
+            metrics::record_cache_request("dram", "hit");
+            return CacheLookup::Hit(CacheEntry {
+                content: record.content,
+                etag: record.etag,
+                gen: record.gen,
+            });
+        }
+        if let Some(etag) = record.etag {
+            metrics::record_cache_request("dram", "stale");
+            return CacheLookup::NeedsRevalidation { etag };
+        }
+        metrics::record_cache_request("dram", "miss");
+        CacheLookup::Miss
     }
 
-    /// Fetch cached content for an entry that already entered revalidation.
-    ///
-    /// This deliberately bypasses freshness checks and cache request metrics.
-    /// Use it only after `get()` returned `NeedsRevalidation`.
-    pub fn get_entry_for_revalidation(&self, path: &str) -> Option<CacheEntry> {
-        let conn = self.conn.lock().unwrap();
-
-        conn.query_row(
-            "SELECT content, etag, gen FROM file_cache WHERE path = ?",
-            params![path],
-            |row| {
-                let gen: i64 = row.get(2)?;
-                Ok(CacheEntry {
-                    content: row.get(0)?,
-                    etag: row.get(1)?,
-                    gen: gen.max(0) as u64,
-                })
-            },
-        )
-        .optional()
-        .ok()
-        .flatten()
-    }
-
-    /// Get etag for a cached file (for conditional requests).
     pub fn get_etag(&self, path: &str) -> Option<String> {
-        let conn = self.conn.lock().unwrap();
+        if let Some(etag) = self
+            .metadata
+            .lock()
+            .ok()
+            .and_then(|metadata| metadata.get(path).map(|meta| meta.etag.clone()))
+        {
+            return etag;
+        }
 
-        conn.query_row(
-            "SELECT etag FROM file_cache WHERE path = ?",
-            params![path],
-            |row| row.get(0),
-        )
-        .optional()
-        .ok()
-        .flatten()
+        self.read_record(path).and_then(|record| record.etag)
     }
 
-    /// Store file content in the cache.
-    /// Files larger than MAX_FILE_SIZE are not cached.
+    pub fn get_stale(&self, path: &str) -> Option<CacheEntry> {
+        self.read_record(path).map(|record| CacheEntry {
+            content: record.content,
+            etag: record.etag,
+            gen: record.gen,
+        })
+    }
+
     pub fn put(&self, path: &str, content: &[u8], etag: Option<&str>, gen: u64) {
-        // Skip caching large files
-        if content.len() > MAX_FILE_SIZE {
+        if content.len() > self.config.max_file_size {
             debug!(
                 "Skipping cache for {} ({} bytes > {} limit)",
                 path,
                 content.len(),
-                MAX_FILE_SIZE
+                self.config.max_file_size
             );
             return;
         }
 
-        let inserted = {
-            let conn = self.conn.lock().unwrap();
-            let now = Self::now();
+        let now = Self::now();
+        let record = CacheRecord {
+            content: content.to_vec(),
+            etag: etag.map(str::to_string),
+            gen,
+            cached_at_secs: now,
+        };
+        self.cache.insert(path.to_string(), record.clone());
+        if let Ok(mut metadata) = self.metadata.lock() {
+            metadata.insert(
+                path.to_string(),
+                CacheMeta {
+                    etag: record.etag,
+                    gen,
+                    cached_at_secs: now,
+                    size: content.len(),
+                },
+            );
+        }
+        self.stats();
+    }
 
-            let gen = i64::try_from(gen).unwrap_or(i64::MAX);
-            match conn.execute(
-                "INSERT OR REPLACE INTO file_cache (path, content, etag, size, gen, cached_at)
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                params![path, content, etag, content.len() as i64, gen, now as i64],
-            ) {
-                Ok(_) => true,
-                Err(e) => {
-                    error!("Failed to cache {}: {}", path, e);
-                    false
-                }
-            }
+    pub fn touch(&self, path: &str) {
+        let Some(mut record) = self.read_record(path) else {
+            debug!("Cache touch skipped for missing entry {}", path);
+            return;
         };
 
-        if inserted {
-            debug!(
-                "Cached {} ({} bytes, etag: {:?})",
-                path,
-                content.len(),
-                etag
-            );
-            self.stats();
-        }
+        record.cached_at_secs = Self::now();
+        self.cache.insert(path.to_string(), record.clone());
+        self.update_metadata(path, &record);
     }
 
-    /// Mark a cached entry as still valid (update timestamp without re-storing content).
-    pub fn touch(&self, path: &str) {
-        let conn = self.conn.lock().unwrap();
-        let now = Self::now();
-
-        if let Err(e) = conn.execute(
-            "UPDATE file_cache SET cached_at = ? WHERE path = ?",
-            params![now as i64, path],
-        ) {
-            warn!("Failed to touch cache entry {}: {}", path, e);
-        } else {
-            debug!("Touched cache entry {}", path);
-        }
-    }
-
-    /// Invalidate a specific path.
     pub fn invalidate(&self, path: &str) {
-        {
-            let conn = self.conn.lock().unwrap();
-
-            let _ = conn.execute("DELETE FROM file_cache WHERE path = ?", params![path]);
-            let _ = conn.execute("DELETE FROM metadata_cache WHERE path = ?", params![path]);
+        self.cache.remove(path);
+        if let Ok(mut metadata) = self.metadata.lock() {
+            metadata.remove(path);
         }
-
         self.stats();
-
         debug!("Invalidated cache for {}", path);
     }
 
-    /// Cleanup old and oversized cache entries.
-    fn cleanup(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let now = Self::now();
-        let max_age = now.saturating_sub(MAX_CACHE_AGE_SECS * 24); // 24 hours
-
-        // Delete very old entries
-        conn.execute(
-            "DELETE FROM file_cache WHERE cached_at < ?",
-            params![max_age as i64],
-        )?;
-
-        // Check total cache size
-        let total_size: i64 =
-            conn.query_row("SELECT COALESCE(SUM(size), 0) FROM file_cache", [], |row| {
-                row.get(0)
-            })?;
-        let total_size = total_size.max(0) as u64;
-
-        if total_size > MAX_CACHE_SIZE {
-            info!(
-                "Cache size {} MB exceeds limit {} MB, pruning...",
-                total_size / 1024 / 1024,
-                MAX_CACHE_SIZE / 1024 / 1024
-            );
-
-            // Delete oldest entries until under limit
-            conn.execute(
-                "DELETE FROM file_cache WHERE path IN (
-                    SELECT path FROM file_cache ORDER BY cached_at ASC
-                    LIMIT (SELECT COUNT(*) / 2 FROM file_cache)
-                )",
-                [],
-            )?;
-        }
-
-        // Cleanup metadata cache
-        conn.execute(
-            "DELETE FROM metadata_cache WHERE cached_at < ?",
-            params![max_age as i64],
-        )?;
-
-        Ok(())
-    }
-
-    /// Get cache statistics.
     pub fn stats(&self) -> CacheStats {
-        let conn = self.conn.lock().unwrap();
+        let Ok(metadata) = self.metadata.lock() else {
+            metrics::set_cache_bytes_in_use("dram", 0);
+            return CacheStats {
+                file_count: 0,
+                total_size: 0,
+            };
+        };
 
-        let file_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM file_cache", [], |row| row.get(0))
-            .unwrap_or(0);
-        let file_count = file_count.max(0) as u64;
-
-        let total_size: i64 = conn
-            .query_row("SELECT COALESCE(SUM(size), 0) FROM file_cache", [], |row| {
-                row.get(0)
-            })
-            .unwrap_or(0);
-        let total_size = total_size.max(0) as u64;
-
-        metrics::set_cache_bytes_in_use("sqlite", total_size);
+        let total_size = metadata.values().map(|meta| meta.size as u64).sum();
+        metrics::set_cache_bytes_in_use("dram", total_size);
 
         CacheStats {
-            file_count,
+            file_count: metadata.len() as u64,
             total_size,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn backdate_for_test(&self, path: &str, age_secs: u64) {
+        let cached_at_secs = Self::now().saturating_sub(age_secs);
+        if let Ok(mut metadata) = self.metadata.lock() {
+            if let Some(meta) = metadata.get_mut(path) {
+                meta.cached_at_secs = cached_at_secs;
+            }
+        }
+
+        let Some(mut record) = self.read_record(path) else {
+            return;
+        };
+        record.cached_at_secs = cached_at_secs;
+        self.cache.insert(path.to_string(), record.clone());
+        self.update_metadata(path, &record);
+    }
+}
+
+impl Drop for FileCache {
+    fn drop(&mut self) {
+        let cache = self.cache.clone();
+        if let Err(e) = block_on_foyer(self.runtime.get(), async move { cache.close().await }) {
+            warn!("Failed to close foyer cache: {}", e);
+        }
+    }
+}
+
+fn migrate_sqlite_file(sqlite_file: &Path) {
+    for path in [
+        sqlite_file.to_path_buf(),
+        sqlite_file.with_extension("db-wal"),
+        sqlite_file.with_extension("db-shm"),
+    ] {
+        if !path.exists() {
+            continue;
+        }
+
+        match std::fs::remove_file(&path) {
+            Ok(()) => info!("Dropped old SQLite cache file {}", path.display()),
+            Err(e) => warn!(
+                "Failed to delete old SQLite cache file {}: {}",
+                path.display(),
+                e
+            ),
         }
     }
 }
@@ -436,10 +601,110 @@ pub struct CacheStats {
 mod tests {
     use super::*;
 
-    /// Helper: create an in-memory cache for testing (no filesystem access).
-    fn test_cache(_label: &str) -> FileCache {
-        let conn = Connection::open_in_memory().unwrap();
-        FileCache::open_connection(conn).unwrap()
+    #[test]
+    fn test_cache_config_defaults() {
+        let config = CacheConfig::default();
+        assert_eq!(config.memory_bytes, DEFAULT_MEMORY_CACHE_BYTES);
+        assert_eq!(config.disk_bytes, DEFAULT_DISK_CACHE_BYTES);
+        assert_eq!(config.max_file_size, MAX_FILE_SIZE);
+        assert!(config.root_dir.ends_with("nexus-fuse"));
+    }
+
+    #[test]
+    fn test_cache_config_rejects_zero_tiers() {
+        let root = std::env::temp_dir().join("nexus-fuse-config-test");
+        let err = CacheConfig::new(root, 0, DEFAULT_DISK_CACHE_BYTES, MAX_FILE_SIZE)
+            .expect_err("zero memory tier must be rejected");
+        assert!(err
+            .to_string()
+            .contains("memory cache size must be greater than zero"));
+
+        let root = std::env::temp_dir().join("nexus-fuse-config-test");
+        let err = CacheConfig::new(root, DEFAULT_MEMORY_CACHE_BYTES, 0, MAX_FILE_SIZE)
+            .expect_err("zero disk tier must be rejected");
+        assert!(err
+            .to_string()
+            .contains("disk cache size must be greater than zero"));
+    }
+
+    #[test]
+    fn test_cache_paths_are_stable_and_distinct() {
+        let root = std::env::temp_dir().join("nexus-fuse-path-test");
+        let a = CachePaths::for_server(&root, "http://a:8080");
+        let b = CachePaths::for_server(&root, "http://a/8080");
+
+        assert_ne!(a.foyer_dir, b.foyer_dir);
+        assert_ne!(a.sqlite_file, b.sqlite_file);
+        assert!(a
+            .foyer_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .ends_with(".foyer"));
+        assert!(a
+            .sqlite_file
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .ends_with(".db"));
+    }
+
+    #[test]
+    fn test_old_sqlite_file_is_deleted_on_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = CacheConfig::new(
+            dir.path().to_path_buf(),
+            4 * 1024 * 1024,
+            32 * 1024 * 1024,
+            MAX_FILE_SIZE,
+        )
+        .unwrap();
+        let paths = CachePaths::for_server(dir.path(), "http://migration.test");
+        std::fs::write(&paths.sqlite_file, b"old sqlite cache").unwrap();
+        std::fs::write(paths.sqlite_file.with_extension("db-wal"), b"old wal").unwrap();
+        std::fs::write(paths.sqlite_file.with_extension("db-shm"), b"old shm").unwrap();
+
+        let _cache = FileCache::new_with_config("http://migration.test", config).unwrap();
+
+        assert!(!paths.sqlite_file.exists());
+        assert!(!paths.sqlite_file.with_extension("db-wal").exists());
+        assert!(!paths.sqlite_file.with_extension("db-shm").exists());
+        assert!(paths.foyer_dir.exists());
+    }
+
+    #[test]
+    fn test_legacy_sanitized_sqlite_file_is_deleted_on_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let server_url = "http://legacy.example:2026";
+        let config = CacheConfig::new(
+            dir.path().to_path_buf(),
+            4 * 1024 * 1024,
+            32 * 1024 * 1024,
+            MAX_FILE_SIZE,
+        )
+        .unwrap();
+        let legacy_file = CachePaths::for_server(dir.path(), server_url).legacy_sqlite_file;
+        std::fs::write(&legacy_file, b"old sqlite cache").unwrap();
+        std::fs::write(legacy_file.with_extension("db-wal"), b"old wal").unwrap();
+        std::fs::write(legacy_file.with_extension("db-shm"), b"old shm").unwrap();
+
+        let _cache = FileCache::new_with_config(server_url, config).unwrap();
+
+        assert!(!legacy_file.exists());
+        assert!(!legacy_file.with_extension("db-wal").exists());
+        assert!(!legacy_file.with_extension("db-shm").exists());
+    }
+
+    fn test_cache(label: &str) -> FileCache {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let config = CacheConfig::new(
+            dir.join(label),
+            4 * 1024 * 1024,
+            64 * 1024 * 1024,
+            MAX_FILE_SIZE,
+        )
+        .unwrap();
+        FileCache::new_with_config(&format!("http://{label}.test"), config).unwrap()
     }
 
     fn metric_value(rendered: &str, metric: &str) -> Option<u64> {
@@ -457,10 +722,6 @@ mod tests {
             "expected {metric}{expected} or greater, got {actual}\n{rendered}"
         );
     }
-
-    // ──────────────────────────────────────────────────────
-    // 1. Basic put / get / invalidate (existing test, kept)
-    // ──────────────────────────────────────────────────────
 
     #[test]
     fn test_cache_basic() {
@@ -497,7 +758,7 @@ mod tests {
             CacheLookup::Miss
         ));
         assert_metric_at_least(
-            "nexus_cache_requests_total{tier=\"sqlite\",result=\"miss\"} ",
+            "nexus_cache_requests_total{tier=\"dram\",result=\"miss\"} ",
             1,
         );
 
@@ -507,25 +768,17 @@ mod tests {
             CacheLookup::Hit(_)
         ));
         assert_metric_at_least(
-            "nexus_cache_requests_total{tier=\"sqlite\",result=\"hit\"} ",
+            "nexus_cache_requests_total{tier=\"dram\",result=\"hit\"} ",
             1,
         );
 
-        let old_cached_at = FileCache::now().saturating_sub(MAX_CACHE_AGE_SECS + 1);
-        {
-            let conn = cache.conn.lock().unwrap();
-            conn.execute(
-                "UPDATE file_cache SET cached_at = ? WHERE path = ?",
-                params![old_cached_at as i64, "/metrics-hit.txt"],
-            )
-            .unwrap();
-        }
+        cache.backdate_for_test("/metrics-hit.txt", MAX_CACHE_AGE_SECS + 1);
         assert!(matches!(
             cache.get("/metrics-hit.txt", 0),
             CacheLookup::NeedsRevalidation { .. }
         ));
         assert_metric_at_least(
-            "nexus_cache_requests_total{tier=\"sqlite\",result=\"stale\"} ",
+            "nexus_cache_requests_total{tier=\"dram\",result=\"stale\"} ",
             1,
         );
     }
@@ -541,7 +794,7 @@ mod tests {
         assert_eq!(
             metric_value(
                 &crate::metrics::render(),
-                "nexus_cache_bytes_in_use{tier=\"sqlite\"} "
+                "nexus_cache_bytes_in_use{tier=\"dram\"} "
             ),
             Some(4)
         );
@@ -559,19 +812,14 @@ mod tests {
         assert_eq!(
             metric_value(
                 &crate::metrics::render(),
-                "nexus_cache_bytes_in_use{tier=\"sqlite\"} "
+                "nexus_cache_bytes_in_use{tier=\"dram\"} "
             ),
             Some(0)
         );
     }
 
-    // ──────────────────────────────────────────────────────
-    // 2. Put without etag → stale entries become Miss (not NeedsRevalidation)
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_put_without_etag() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("no-etag");
         cache.put("/no-etag.txt", b"data", None, 0);
 
@@ -584,13 +832,8 @@ mod tests {
         }
     }
 
-    // ──────────────────────────────────────────────────────
-    // 3. Overwrite existing entry
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_overwrite_entry() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("overwrite");
         cache.put("/f.txt", b"v1", Some("e1"), 0);
         cache.put("/f.txt", b"v2", Some("e2"), 0);
@@ -604,13 +847,8 @@ mod tests {
         }
     }
 
-    // ──────────────────────────────────────────────────────
-    // 4. get_etag returns stored etag (or None)
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_get_etag() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("etag");
         assert_eq!(cache.get_etag("/missing.txt"), None);
 
@@ -621,47 +859,99 @@ mod tests {
         assert_eq!(cache.get_etag("/no-e.txt"), None);
     }
 
-    // ──────────────────────────────────────────────────────
-    // 5. Touch refreshes timestamp (keeps entry fresh)
-    // ──────────────────────────────────────────────────────
+    #[test]
+    fn test_get_etag_reads_foyer_when_metadata_missing() {
+        let cache = test_cache("etag-fallback");
+        cache.put("/e.txt", b"x", Some("etag-42"), 0);
+        cache.metadata.lock().unwrap().clear();
+
+        assert_eq!(cache.get_etag("/e.txt"), Some("etag-42".to_string()));
+    }
 
     #[test]
-    fn test_touch_refreshes_entry() {
-        let _guard = crate::metrics::test_guard();
+    fn test_get_rebuilds_metadata_from_foyer_record() {
+        let cache = test_cache("metadata-rebuild");
+        cache.put("/e.txt", b"data", Some("etag-42"), 0);
+        cache.metadata.lock().unwrap().clear();
+
+        assert!(matches!(cache.get("/e.txt", 0), CacheLookup::Hit(_)));
+        assert_eq!(cache.get_etag("/e.txt"), Some("etag-42".to_string()));
+    }
+
+    #[test]
+    fn test_touch_refreshes_stale_entry() {
         let cache = test_cache("touch");
         cache.put("/t.txt", b"data", Some("e1"), 0);
+        cache.backdate_for_test("/t.txt", MAX_CACHE_AGE_SECS + 1);
 
-        // Touch should succeed and entry should still be a hit
         cache.touch("/t.txt");
 
         match cache.get("/t.txt", 0) {
-            CacheLookup::Hit(entry) => assert_eq!(entry.content, b"data"),
+            CacheLookup::Hit(entry) => {
+                assert_eq!(entry.content, b"data");
+                assert_eq!(entry.etag, Some("e1".to_string()));
+            }
             _ => panic!("Expected cache hit after touch"),
         }
     }
 
-    // ──────────────────────────────────────────────────────
-    // 6. Large files are NOT cached (>MAX_FILE_SIZE)
-    // ──────────────────────────────────────────────────────
+    #[test]
+    fn test_stale_entry_with_etag_needs_revalidation() {
+        let cache = test_cache("stale-etag");
+        cache.put("/stale.txt", b"data", Some("stale-etag"), 0);
+        cache.backdate_for_test("/stale.txt", MAX_CACHE_AGE_SECS + 1);
+
+        match cache.get("/stale.txt", 0) {
+            CacheLookup::NeedsRevalidation { etag } => assert_eq!(etag, "stale-etag"),
+            _ => panic!("Expected stale entry with etag to require revalidation"),
+        }
+
+        let stale = cache.get_stale("/stale.txt").expect("stale entry exists");
+        assert_eq!(stale.content, b"data");
+        assert_eq!(stale.etag, Some("stale-etag".to_string()));
+    }
+
+    #[test]
+    fn test_stale_metadata_without_foyer_record_is_miss() {
+        let cache = test_cache("stale-metadata-missing-record");
+        cache.put("/missing-record.txt", b"data", Some("stale-etag"), 0);
+
+        cache.cache.remove("/missing-record.txt");
+        {
+            let mut metadata = cache.metadata.lock().unwrap();
+            let meta = metadata
+                .get_mut("/missing-record.txt")
+                .expect("metadata should exist after put");
+            meta.cached_at_secs = FileCache::now().saturating_sub(MAX_CACHE_AGE_SECS + 1);
+        }
+
+        assert!(matches!(
+            cache.get("/missing-record.txt", 0),
+            CacheLookup::Miss
+        ));
+        assert_eq!(cache.get_etag("/missing-record.txt"), None);
+    }
+
+    #[test]
+    fn test_stale_entry_without_etag_is_miss() {
+        let cache = test_cache("stale-no-etag");
+        cache.put("/stale.txt", b"data", None, 0);
+        cache.backdate_for_test("/stale.txt", MAX_CACHE_AGE_SECS + 1);
+
+        assert!(matches!(cache.get("/stale.txt", 0), CacheLookup::Miss));
+    }
 
     #[test]
     fn test_large_file_not_cached() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("large");
         let big = vec![0u8; MAX_FILE_SIZE + 1];
         cache.put("/big.bin", &big, Some("e1"), 0);
 
-        // Should still be a miss — file was too large
         assert!(matches!(cache.get("/big.bin", 0), CacheLookup::Miss));
     }
 
-    // ──────────────────────────────────────────────────────
-    // 7. File exactly at MAX_FILE_SIZE IS cached
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_max_size_file_cached() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("maxsize");
         let data = vec![42u8; MAX_FILE_SIZE];
         cache.put("/exact.bin", &data, Some("e1"), 0);
@@ -672,36 +962,30 @@ mod tests {
         }
     }
 
-    // ──────────────────────────────────────────────────────
-    // 8. Stats report correct counts and sizes
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_cache_stats() {
         let _guard = crate::metrics::test_guard();
         let cache = test_cache("stats");
 
-        // Ensure clean slate (DB persists on disk between runs)
-        cache.invalidate("/stat-a.txt");
-        cache.invalidate("/stat-b.txt");
-        let baseline = cache.stats();
-
         cache.put("/stat-a.txt", b"aaa", Some("e1"), 0);
         cache.put("/stat-b.txt", b"bb", Some("e2"), 0);
 
         let stats = cache.stats();
-        assert_eq!(stats.file_count, baseline.file_count + 2);
-        assert_eq!(stats.total_size, baseline.total_size + 5); // 3 + 2
+        assert_eq!(stats.file_count, 2);
+        assert_eq!(stats.total_size, 5);
     }
 
     #[test]
     fn test_generation_mismatch_invalidates_cache() {
+        let _guard = crate::metrics::test_guard();
+        crate::metrics::reset_for_tests();
         let cache = test_cache("generation-mismatch");
         cache.put("/gen.txt", b"v1", Some("e1"), 1);
 
         assert!(matches!(cache.get("/gen.txt", 1), CacheLookup::Hit(_)));
         assert!(matches!(cache.get("/gen.txt", 2), CacheLookup::Miss));
         assert!(matches!(cache.get("/gen.txt", 2), CacheLookup::Miss));
+        assert_metric_at_least("nexus_generation_mismatch_total ", 1);
     }
 
     #[test]
@@ -715,13 +999,8 @@ mod tests {
         }
     }
 
-    // ──────────────────────────────────────────────────────
-    // 9. Stats after invalidation
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_stats_after_invalidation() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("stats-inv");
         cache.put("/x.txt", b"12345", None, 0);
 
@@ -736,13 +1015,8 @@ mod tests {
         assert_eq!(stats.total_size, 0);
     }
 
-    // ──────────────────────────────────────────────────────
-    // 10. Multiple paths are independent
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_multiple_independent_paths() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("multi");
         cache.put("/a.txt", b"aaa", Some("ea"), 0);
         cache.put("/b.txt", b"bbb", Some("eb"), 0);
@@ -756,13 +1030,8 @@ mod tests {
         assert!(matches!(cache.get("/c.txt", 0), CacheLookup::Hit(_)));
     }
 
-    // ──────────────────────────────────────────────────────
-    // 11. Empty content is valid and cached
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_empty_content_cached() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("empty");
         cache.put("/empty.txt", b"", Some("e0"), 0);
 
@@ -775,13 +1044,8 @@ mod tests {
         }
     }
 
-    // ──────────────────────────────────────────────────────
-    // 12. Binary content is preserved exactly
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_binary_content_preserved() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("binary");
         let binary: Vec<u8> = (0..=255).collect();
         cache.put("/bin.dat", &binary, Some("ebin"), 0);
@@ -792,13 +1056,8 @@ mod tests {
         }
     }
 
-    // ──────────────────────────────────────────────────────
-    // 13. Concurrent access doesn't panic (basic safety check)
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_concurrent_access() {
-        let _guard = crate::metrics::test_guard();
         use std::sync::Arc;
         use std::thread;
 
@@ -826,51 +1085,65 @@ mod tests {
         assert_eq!(stats.file_count, 8);
     }
 
-    // ──────────────────────────────────────────────────────
-    // 14. Cleanup removes very old entries
-    // ──────────────────────────────────────────────────────
-
-    #[test]
-    fn test_cleanup_removes_old_entries() {
-        let _guard = crate::metrics::test_guard();
-        let cache = test_cache("cleanup");
-
-        // Insert an entry, then manually backdate it
-        cache.put("/old.txt", b"old-data", Some("e1"), 0);
-
-        {
-            let conn = cache.conn.lock().unwrap();
-            // Set cached_at to 0 (epoch) so it's very old
-            conn.execute(
-                "UPDATE file_cache SET cached_at = 0 WHERE path = '/old.txt'",
-                [],
-            )
-            .unwrap();
-        }
-
-        // Insert a fresh entry
-        cache.put("/new.txt", b"new-data", Some("e2"), 0);
-
-        // Run cleanup — should remove the backdated entry
-        cache.cleanup().unwrap();
-
-        assert!(matches!(cache.get("/old.txt", 0), CacheLookup::Miss));
-        assert!(matches!(cache.get("/new.txt", 0), CacheLookup::Hit(_)));
-    }
-
-    // ──────────────────────────────────────────────────────
-    // 15. Invalidate on non-existent path is a no-op
-    // ──────────────────────────────────────────────────────
-
     #[test]
     fn test_invalidate_nonexistent_is_noop() {
-        let _guard = crate::metrics::test_guard();
         let cache = test_cache("inv-noop");
-        // Should not panic or error
         cache.invalidate("/does-not-exist.txt");
         assert!(matches!(
             cache.get("/does-not-exist.txt", 0),
             CacheLookup::Miss
         ));
+    }
+
+    #[tokio::test]
+    async fn test_cache_calls_inside_tokio_runtime_do_not_panic() {
+        let cache = test_cache("inside-runtime");
+        cache.put("/runtime.txt", b"data", Some("runtime-etag"), 0);
+
+        match cache.get("/runtime.txt", 0) {
+            CacheLookup::Hit(entry) => assert_eq!(entry.content, b"data"),
+            _ => panic!("Expected cache hit inside tokio runtime"),
+        }
+
+        cache.backdate_for_test("/runtime.txt", MAX_CACHE_AGE_SECS + 1);
+        assert!(matches!(
+            cache.get("/runtime.txt", 0),
+            CacheLookup::NeedsRevalidation { .. }
+        ));
+
+        let stale = cache
+            .get_stale("/runtime.txt")
+            .expect("stale entry should be readable inside runtime");
+        assert_eq!(stale.etag, Some("runtime-etag".to_string()));
+
+        cache.touch("/runtime.txt");
+        assert!(matches!(cache.get("/runtime.txt", 0), CacheLookup::Hit(_)));
+    }
+
+    #[tokio::test]
+    async fn test_cache_drop_inside_tokio_runtime_flushes_to_disk() {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let config = CacheConfig::new(
+            dir.join("flush-on-drop"),
+            4 * 1024 * 1024,
+            64 * 1024 * 1024,
+            MAX_FILE_SIZE,
+        )
+        .unwrap();
+
+        {
+            let cache =
+                FileCache::new_with_config("http://flush-on-drop.test", config.clone()).unwrap();
+            cache.put("/persisted.txt", b"persisted", Some("persisted-etag"), 0);
+        }
+
+        let cache = FileCache::new_with_config("http://flush-on-drop.test", config).unwrap();
+        match cache.get("/persisted.txt", 0) {
+            CacheLookup::Hit(entry) => {
+                assert_eq!(entry.content, b"persisted");
+                assert_eq!(entry.etag, Some("persisted-etag".to_string()));
+            }
+            _ => panic!("Expected cache hit after drop and reopen"),
+        }
     }
 }

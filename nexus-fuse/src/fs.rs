@@ -1,7 +1,8 @@
 //! FUSE filesystem implementation for Nexus.
 
-use crate::cache::{CacheLookup, FileCache};
-use crate::client::{FileEntry, NexusClient, ReadResponse};
+use crate::cache::FileCache;
+use crate::cached_read::{read_with_cache, CachedReadResult};
+use crate::client::{FileEntry, NexusClient};
 use crate::metrics;
 use fuser::{
     AccessFlags, BsdFileFlags, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
@@ -211,6 +212,7 @@ impl InodeTable {
     }
 
     /// Get inode for a path (promotes in LRU).
+    #[cfg(test)]
     fn get_inode(&mut self, path: &str) -> Option<u64> {
         self.path_to_inode.get(path).copied()
     }
@@ -245,23 +247,16 @@ pub struct NexusFs {
     attr_cache: Mutex<LruCache<u64, (FileAttr, SystemTime)>>,
     /// Directory listing cache (in-memory).
     dir_cache: Mutex<LruCache<u64, (Vec<FileEntry>, SystemTime)>>,
-    /// Persistent SQLite cache for file content (optional).
-    file_cache: Option<FileCache>,
-    /// Per-open file content cache for range reads that bypass SQLite size limits.
+    /// Persistent foyer cache for file content (optional).
+    file_cache: Option<Arc<FileCache>>,
+    /// Per-open file content cache for range reads that bypass persistent cache size limits.
     open_file_cache: Mutex<OpenFileCache>,
     next_file_handle: Mutex<u64>,
 }
 
-#[derive(Debug)]
-struct ReadCachedResult {
-    content: Vec<u8>,
-    etag: Option<String>,
-    tier: &'static str,
-}
-
 impl NexusFs {
     /// Create a new NexusFs instance.
-    pub fn new(client: NexusClient, file_cache: Option<FileCache>) -> Self {
+    pub fn new(client: NexusClient, file_cache: Option<Arc<FileCache>>) -> Self {
         Self {
             client: Arc::new(client),
             inodes: Mutex::new(InodeTable::new()),
@@ -522,102 +517,17 @@ impl NexusFs {
         }
     }
 
-    /// Read file with SQLite cache and ETag support.
+    /// Read file with foyer cache and ETag support.
     ///
     /// Cache flow:
-    /// 1. Check SQLite cache
+    /// 1. Check foyer cache
     /// 2. If hit and fresh -> return cached content
     /// 3. If hit but stale with etag -> send If-None-Match request
     /// 4. If server returns 304 -> touch cache, return cached content
     /// 5. If server returns 200 -> update cache, return new content
     /// 6. If miss -> fetch from server, store in cache
-    fn read_cached(&self, path: &str, gen: u64) -> anyhow::Result<ReadCachedResult> {
-        // Check persistent cache first
-        if let Some(ref cache) = self.file_cache {
-            match cache.get(path, gen) {
-                CacheLookup::Hit(entry) => {
-                    debug!("SQLite cache hit for {}", path);
-                    return Ok(ReadCachedResult {
-                        content: entry.content,
-                        etag: entry.etag,
-                        tier: "cache",
-                    });
-                }
-                CacheLookup::NeedsRevalidation { etag } => {
-                    // Send conditional request
-                    debug!("Revalidating cache for {} with etag {}", path, etag);
-                    match self.client.read_with_etag(path, Some(&etag)) {
-                        Ok(ReadResponse::NotModified) => {
-                            metrics::record_cache_etag_revalidate("304");
-                            metrics::record_etag_check("304");
-                            // Touch cache to refresh timestamp
-                            cache.touch(path);
-                            // Return cached content without recording another cache request.
-                            if let Some(entry) = cache.get_entry_for_revalidation(path) {
-                                return Ok(ReadCachedResult {
-                                    content: entry.content,
-                                    etag: entry.etag,
-                                    tier: "cache",
-                                });
-                            }
-                            // Cache inconsistency - should not happen
-                            error!("Cache inconsistency after 304 for {}", path);
-                        }
-                        Ok(ReadResponse::Content { content, etag }) => {
-                            // Update cache with new content
-                            metrics::record_cache_etag_revalidate("updated");
-                            metrics::record_etag_check("updated");
-                            cache.put(path, &content, etag.as_deref(), gen);
-                            return Ok(ReadCachedResult {
-                                content,
-                                etag,
-                                tier: "backend",
-                            });
-                        }
-                        Err(e) => {
-                            // On error, try to use stale cache as fallback
-                            debug!("Revalidation failed for {}: {}, using stale cache", path, e);
-                            if let Some(entry) = cache.get_entry_for_revalidation(path) {
-                                metrics::record_cache_etag_revalidate("fallback");
-                                metrics::record_etag_check("fallback");
-                                return Ok(ReadCachedResult {
-                                    content: entry.content,
-                                    etag: entry.etag,
-                                    tier: "cache",
-                                });
-                            }
-                            metrics::record_cache_etag_revalidate("error");
-                            metrics::record_etag_check("error");
-                            return Err(e.into());
-                        }
-                    }
-                }
-                CacheLookup::Miss => {
-                    // Fall through to fetch
-                }
-            }
-        }
-
-        // Fetch from server
-        match self.client.read_with_etag(path, None) {
-            Ok(ReadResponse::Content { content, etag }) => {
-                // Store in cache
-                if let Some(ref cache) = self.file_cache {
-                    cache.put(path, &content, etag.as_deref(), gen);
-                }
-                Ok(ReadCachedResult {
-                    content,
-                    etag,
-                    tier: "backend",
-                })
-            }
-            Ok(ReadResponse::NotModified) => {
-                // Shouldn't happen without etag, but handle gracefully
-                metrics::record_etag_check("unexpected_304");
-                Err(anyhow::anyhow!("Unexpected 304 response"))
-            }
-            Err(e) => Err(e.into()),
-        }
+    fn read_cached(&self, path: &str, gen: u64) -> anyhow::Result<CachedReadResult> {
+        read_with_cache(&self.client, self.file_cache.as_deref(), path, gen).map_err(Into::into)
     }
 }
 
@@ -799,13 +709,13 @@ impl Filesystem for NexusFs {
             }
         }
 
-        // Read using SQLite cache with ETag support
+        // Read using foyer cache with ETag support
         let read_result = match self.read_cached(&path, gen) {
             Ok(result) => result,
             Err(e) => {
                 metrics::record_read("error", 0, started_at.elapsed());
                 if e.downcast_ref::<crate::error::NexusClientError>()
-                    .map_or(false, |ne| ne.is_not_found())
+                    .is_some_and(|ne| ne.is_not_found())
                 {
                     reply.error(Errno::ENOENT);
                 } else {
@@ -816,7 +726,7 @@ impl Filesystem for NexusFs {
             }
         };
 
-        let ReadCachedResult {
+        let CachedReadResult {
             content,
             etag: _etag,
             tier,
@@ -1352,6 +1262,7 @@ impl Filesystem for NexusFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::{CacheConfig, MAX_FILE_SIZE};
     use mockito::{Matcher, Server};
 
     fn metric_value(rendered: &str, metric: &str) -> Option<u64> {
@@ -1359,6 +1270,18 @@ mod tests {
             line.strip_prefix(metric)
                 .and_then(|value| value.trim().parse::<u64>().ok())
         })
+    }
+
+    fn test_file_cache(label: &str) -> Arc<FileCache> {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let config = CacheConfig::new(
+            dir.join(label),
+            4 * 1024 * 1024,
+            64 * 1024 * 1024,
+            MAX_FILE_SIZE,
+        )
+        .unwrap();
+        Arc::new(FileCache::new_with_config(&format!("http://{label}.test"), config).unwrap())
     }
 
     #[test]
@@ -1406,9 +1329,9 @@ mod tests {
             .with_body("backend unavailable")
             .create();
 
-        let cache = FileCache::open_in_memory_for_tests();
+        let cache = test_file_cache("fs-stale-fallback");
         cache.put("/stale.txt", b"stale-data", Some("etag-1"), 0);
-        cache.set_cached_at_for_tests("/stale.txt", 0);
+        cache.backdate_for_test("/stale.txt", 3601);
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
         let fs = NexusFs::new(client, Some(cache));
@@ -1439,9 +1362,9 @@ mod tests {
             .with_status(304)
             .create();
 
-        let cache = FileCache::open_in_memory_for_tests();
+        let cache = test_file_cache("fs-not-modified");
         cache.put("/not-modified.txt", b"cached-data", Some("etag-1"), 0);
-        cache.set_cached_at_for_tests("/not-modified.txt", 0);
+        cache.backdate_for_test("/not-modified.txt", 3601);
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
         let fs = NexusFs::new(client, Some(cache));
@@ -1457,14 +1380,14 @@ mod tests {
         assert_eq!(
             metric_value(
                 &rendered,
-                "nexus_cache_requests_total{tier=\"sqlite\",result=\"stale\"} "
+                "nexus_cache_requests_total{tier=\"dram\",result=\"stale\"} "
             ),
             Some(1)
         );
         assert_eq!(
             metric_value(
                 &rendered,
-                "nexus_cache_requests_total{tier=\"sqlite\",result=\"hit\"} "
+                "nexus_cache_requests_total{tier=\"dram\",result=\"hit\"} "
             ),
             None
         );

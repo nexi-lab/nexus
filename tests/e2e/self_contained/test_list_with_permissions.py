@@ -54,7 +54,7 @@ class TestListWithZoneAndPermissions:
         """Basic list returns all files in the store."""
         store = _make_store()
         try:
-            store.sys_setattr("/file1.txt", 1)
+            store.sys_setattr("/file1.txt", 0)
             store.sys_setattr("/file2.txt", 1)
             store.sys_setattr("/dir/file3.txt", 1)
 
@@ -71,7 +71,7 @@ class TestListWithZoneAndPermissions:
         """Non-recursive list should exclude nested files."""
         store = _make_store()
         try:
-            store.sys_setattr("/file1.txt", 1)
+            store.sys_setattr("/file1.txt", 0)
             store.sys_setattr("/dir/file2.txt", 1)
             store.sys_setattr("/dir/sub/file3.txt", 1)
 
@@ -164,7 +164,7 @@ class TestListWithZoneAndPermissions:
             assert len(results) >= 1
             doc = next((r for r in results if r["path"] == "/doc.txt"), None)
             assert doc is not None
-            assert "size" in doc
-            assert "is_directory" in doc
+            assert doc["size"] == 0
+            assert doc["is_directory"] is False
         finally:
             pass  # kernel manages redb lifecycle

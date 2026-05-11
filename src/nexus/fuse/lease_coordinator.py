@@ -417,6 +417,10 @@ class FUSELeaseCoordinator:
         """Forward max_drain_bytes from the underlying cache for L2 callers."""
         return self._cache.max_drain_bytes
 
+    async def content_lock(self, path: str, view_type: str | None = None) -> Any:
+        """Forward per-path singleflight lock for content fetches."""
+        return await self._cache.content_lock(path, view_type)
+
     def get_parsed(self, path: str, view_type: str) -> bytes | None:
         """Get cached parsed content (direct, no lease check)."""
         return self._cache.get_parsed(path, view_type)

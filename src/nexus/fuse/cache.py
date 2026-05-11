@@ -131,11 +131,26 @@ class FUSECacheManager:
     def index_ttl_for_backend(self, backend_id: str) -> int:
         return _policy_index_ttl_for_backend(backend_id, self._ttl_overrides)
 
+    async def content_lock(self, path: str, view_type: str | None = None) -> Any:
+        """Per-path singleflight lock for content fetches.
+
+        Callers wrap the L2/L3 fill in ``async with await coordinator.content_lock(path):``
+        to ensure exactly one backend fetch under concurrent cold reads for the same path.
+        """
+        namespace = "raw" if view_type is None else f"parsed:{view_type}"
+        return await self._file_cache.lock(_file_key(path, namespace))
+
     def _resolve_index_ttl(self, backend_id: str | None, *, default: int) -> int:
-        """Pick a TTL for a metadata write: per-backend override or default."""
-        if backend_id is None or backend_id not in self._ttl_overrides:
+        """Pick a TTL for a metadata write.
+
+        When ``backend_id`` is known, defer to the policy table (which
+        consults ``index_ttl_overrides`` first, then per-backend defaults
+        from ``INDEX_TTL_BY_BACKEND``). When the backend cannot be resolved,
+        fall back to the caller's generic default.
+        """
+        if backend_id is None:
             return default
-        return self._ttl_overrides[backend_id]
+        return _policy_index_ttl_for_backend(backend_id, self._ttl_overrides)
 
     # ============================================================
     # Attribute Cache

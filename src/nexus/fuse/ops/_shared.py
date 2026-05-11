@@ -156,6 +156,8 @@ class FUSECacheCoordinator(Protocol):
 
     def invalidate_and_revoke(self, paths: list[str]) -> None: ...
 
+    async def content_lock(self, path: str, view_type: str | None = None) -> Any: ...
+
 
 # ============================================================
 # Shared context
@@ -332,8 +334,20 @@ def backend_id_for_path(ctx: FUSESharedContext, path: str) -> str | None:
     for attr in ("backend_name", "name", "_backend_name"):
         value = getattr(backend, attr, None)
         if isinstance(value, str) and value:
-            return value
+            return _normalize_backend_id(value)
     return None
+
+
+# CLI-backed connectors expose their CLI tool as `name` (e.g. `cli:gh`) but the
+# cache policy table keys them by their `@register_connector` identifier
+# (`github_connector`). Map the known divergences so TTL overrides hit.
+_BACKEND_ID_ALIASES = {
+    "cli:gh": "github_connector",
+}
+
+
+def _normalize_backend_id(value: str) -> str:
+    return _BACKEND_ID_ALIASES.get(value, value)
 
 
 def invalidate_dir_cache(ctx: FUSESharedContext, path: str) -> None:
@@ -475,22 +489,30 @@ async def get_file_content(
             return _maybe_parse(ctx, path, view_type, cached)
         has_lease = True  # no lease manager = always "has lease" for caching
 
-    # Step 3: L2/L3 fetch
+    # Step 3: L2/L3 fetch — guarded by per-path singleflight lock so 100
+    # concurrent cold readers cause exactly one backend fetch.
     namespace = view_type or "raw"
-    content = get_from_local_disk_cache(ctx, path, expected_fingerprint, namespace=namespace)
-    if content is not None:
-        logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
-    else:
-        read_ctx = ctx.context
-        logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
-        fetch_start = time.time()
-        raw_content = ctx.nexus_fs.sys_read(path, context=read_ctx)
-        fetch_time = time.time() - fetch_start
-        assert isinstance(raw_content, bytes), "Expected bytes from read()"
-        content = raw_content
-        logger.info(
-            f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
-        )
+    fill_lock = await coordinator.content_lock(path, view_type)
+    async with fill_lock:
+        # Re-check L1 inside the lock — another waiter may have filled it.
+        recheck = coordinator.get_content(path, expected_fingerprint=expected_fingerprint)
+        if recheck is not None:
+            logger.info(f"[FUSE-CONTENT] L1 FILLED BY OTHER WAITER: {path}")
+            return _maybe_parse(ctx, path, view_type, recheck)
+        content = get_from_local_disk_cache(ctx, path, expected_fingerprint, namespace=namespace)
+        if content is not None:
+            logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
+        else:
+            read_ctx = ctx.context
+            logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
+            fetch_start = time.time()
+            raw_content = ctx.nexus_fs.sys_read(path, context=read_ctx)
+            fetch_time = time.time() - fetch_start
+            assert isinstance(raw_content, bytes), "Expected bytes from read()"
+            content = raw_content
+            logger.info(
+                f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
+            )
         # Apply max_drain_bytes cap from L1 cache before any L2 disk write too:
         # oversize content shouldn't bloat either tier.
         drain_cap = getattr(coordinator, "max_drain_bytes", None)
@@ -503,11 +525,10 @@ async def get_file_content(
                 namespace=namespace,
                 priority=cache_priority,
             )
-
-    # Only cache if we hold a lease (Decision 11A: no caching without lease).
-    # cache_content internally honors max_drain_bytes; this also skips L2 above.
-    if has_lease:
-        coordinator.cache_content(path, content, fingerprint=expected_fingerprint)
+        # L1 fill happens inside the singleflight lock so a waiter's re-check
+        # observes the fill. Only cache if we hold a lease (Decision 11A).
+        if has_lease:
+            coordinator.cache_content(path, content, fingerprint=expected_fingerprint)
 
     return _maybe_parse(ctx, path, view_type, content)
 

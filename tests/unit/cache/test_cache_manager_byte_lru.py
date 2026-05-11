@@ -112,6 +112,34 @@ def test_index_cache_entry_count_bound():
     assert cache.get(IndexKey("b", "d", "/p9", "stat")) == {"i": 9}
 
 
+def test_ttl_policy_fallback_for_resolved_backend_without_override():
+    """A resolved backend_id with no explicit override uses the policy default,
+    not the caller's generic default."""
+    fake_now = [1000.0]
+    # path_local policy default is 0 (never cache). Override absent.
+    mgr = FUSECacheManager(attr_cache_ttl=60)  # generic default 60s
+    mgr._index_cache._now_fn = lambda: fake_now[0]
+
+    mgr.cache_attr("/local/file", {"st_size": 1}, backend_id="path_local")
+    # TTL=0 means the entry is immediately expired by the policy fallback.
+    # _now_fn unchanged → policy.index_ttl_for_backend('path_local') returns 0
+    # which results in expires_at == now, get() returns None on first read.
+    assert mgr.get_attr("/local/file") is None
+
+
+def test_ttl_policy_default_for_path_s3_without_override():
+    """path_s3 with no override should get the policy default (600s)."""
+    fake_now = [1000.0]
+    mgr = FUSECacheManager(attr_cache_ttl=60)  # generic 60s
+    mgr._index_cache._now_fn = lambda: fake_now[0]
+
+    mgr.cache_attr("/s3/file", {"st_size": 1}, backend_id="path_s3")
+    fake_now[0] = 1300.0  # 300s elapsed, well under 600s policy default
+    assert mgr.get_attr("/s3/file") == {"st_size": 1}
+    fake_now[0] = 1700.0  # past 600s
+    assert mgr.get_attr("/s3/file") is None
+
+
 def test_backend_id_for_path_resolver_fallback_chain():
     """backend_id_for_path tries backend_name → name → _backend_name."""
     from nexus.fuse.ops._shared import backend_id_for_path
@@ -133,13 +161,19 @@ def test_backend_id_for_path_resolver_fallback_chain():
         def __init__(self, mounts):
             self.nexus_fs = _FakeFS(mounts)
 
+    class _CLIGitHubAttr:
+        name = "cli:gh"
+
     mounts = {
         "/s3": _BackendNameAttr(),
         "/gcs": _NameAttr(),
         "/gh": _PrivateAttr(),
+        "/github-mount": _CLIGitHubAttr(),
     }
     ctx = _FakeCtx(mounts)
     assert backend_id_for_path(ctx, "/s3/file.txt") == "path_s3"
     assert backend_id_for_path(ctx, "/gcs/dir/x") == "path_gcs"
     assert backend_id_for_path(ctx, "/gh/repo/x") == "github_connector"
+    # cli:gh must normalize to github_connector so policy TTL applies.
+    assert backend_id_for_path(ctx, "/github-mount/file") == "github_connector"
     assert backend_id_for_path(ctx, "/unmounted/x") is None

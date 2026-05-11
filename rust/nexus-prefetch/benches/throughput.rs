@@ -122,5 +122,10 @@ fn bench_random_small_file(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_sequential, bench_stride, bench_random_small_file);
+criterion_group!(
+    benches,
+    bench_sequential,
+    bench_stride,
+    bench_random_small_file
+);
 criterion_main!(benches);

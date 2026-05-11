@@ -318,15 +318,18 @@ concurrency. A truly faithful comparison requires compiling against
 the `blocking` feature, which this crate dropped as part of #4056 —
 the comparison has to happen in a separate checkout of `develop`.
 
-Post-#4056 pooled throughput against the bench server (measured before
-the baseline was removed, R5-era hardware: arm64 / Darwin 25.3):
+Post-#4056 pooled throughput against the bench server (arm64 / Darwin
+25.3, after R9 fixed proper HTTP/1.1 framing — the earlier numbers
+were inflated because the bench server responded per-`read()` syscall
+instead of per-request, occasionally double-replying on bursts):
 
 | Threads | pooled ops/s |
 |---|---|
-| 1  | 10 256 |
-| 4  | 52 461 |
-| 8  | 59 568 |
-| 16 | 65 506 |
+| 1  |  8 926 |
+| 4  | 29 640 |
+| 8  | 41 187 |
+| 16 | 50 613 |
+| 32 | 57 000 |
 
 **Acceptance vs the issue's stated ≥2× bar:** *not met* on this
 hardware against any of the baselines we attempted. Single-thread

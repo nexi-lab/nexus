@@ -56,6 +56,18 @@ impl BenchServer {
     }
 }
 
+/// Find the first occurrence of `needle` in `haystack`. Small helper
+/// for the bench's HTTP framing parser; pulling in `memchr` or a full
+/// HTTP crate just for this would be overkill.
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 fn spawn_bench_server() -> BenchServer {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
@@ -78,14 +90,57 @@ fn spawn_bench_server() -> BenchServer {
                 Err(_) => continue,
             };
             tokio::spawn(async move {
-                let mut buf = [0u8; 4096];
+                // Proper HTTP/1.1 framing (#4056 R9). Earlier this
+                // loop wrote one response per arbitrary TCP read,
+                // which under keep-alive could misframe: a single
+                // socket.read() can return half of one request, a
+                // full request, or two requests concatenated.
+                // We now buffer until a full request (headers +
+                // Content-Length body) is parsed, then write exactly
+                // one response per request and loop.
+                let mut buf: Vec<u8> = Vec::with_capacity(8192);
+                let mut chunk = [0u8; 4096];
                 loop {
-                    let n = match socket.read(&mut buf).await {
-                        Ok(0) => break,
-                        Ok(n) => n,
-                        Err(_) => break,
+                    // 1. Read headers until CRLFCRLF.
+                    let headers_end = loop {
+                        if let Some(idx) = find_subslice(&buf, b"\r\n\r\n") {
+                            break idx + 4;
+                        }
+                        match socket.read(&mut chunk).await {
+                            Ok(0) => return,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                            Err(_) => return,
+                        }
                     };
-                    let _ = n;
+
+                    // 2. Parse Content-Length from headers.
+                    let header_str = std::str::from_utf8(&buf[..headers_end]).unwrap_or("");
+                    let content_length: usize = header_str
+                        .lines()
+                        .find_map(|line| {
+                            let lower = line.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+
+                    // 3. Read body bytes until we have `content_length` of them.
+                    let needed = headers_end + content_length;
+                    while buf.len() < needed {
+                        match socket.read(&mut chunk).await {
+                            Ok(0) => return,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                            Err(_) => return,
+                        }
+                    }
+
+                    // 4. Drop the consumed request bytes; keep any
+                    //    pipelined leftover in the buffer.
+                    buf.drain(..needed);
+
+                    // 5. Write exactly one response.
                     let response = format!(
                         "HTTP/1.1 200 OK\r\n\
                          Content-Type: application/json\r\n\
@@ -97,7 +152,7 @@ fn spawn_bench_server() -> BenchServer {
                         RESPONSE_BODY
                     );
                     if socket.write_all(response.as_bytes()).await.is_err() {
-                        break;
+                        return;
                     }
                 }
             });

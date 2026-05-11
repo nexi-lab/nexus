@@ -20,6 +20,11 @@ pub struct Session {
     pub buffer: BTreeMap<u64, Bytes>,
     pub hits: u64,
     pub misses: u64,
+    /// Monotonic epoch — bumps on `clear()` (invalidate / fh-reuse) so
+    /// in-flight prefetch jobs issued before the bump can be rejected
+    /// at deposit time.  Workers stamp the value at enqueue and check
+    /// it before mutating the buffer.
+    pub generation: u64,
 }
 
 impl Session {
@@ -41,6 +46,7 @@ impl Session {
             buffer: BTreeMap::new(),
             hits: 0,
             misses: 0,
+            generation: 1,
         }
     }
 
@@ -114,18 +120,22 @@ impl Session {
             out.extend_from_slice(&block[take_from as usize..take_to as usize]);
             cursor = block_end;
         }
-        // Second pass: only remove blocks the read fully consumed.
-        // A block that extends past `end` keeps its tail for the next
-        // read (e.g. successive 4 KiB reads through a 4 MiB prefetched
-        // block).  We materialise the keys before removal so we can
+        // Second pass: only remove blocks that the requested range
+        // *fully* covers, i.e. `offset <= block_start && block_end <= end`.
+        // A block that extends past `end` keeps its trailing tail
+        // (e.g. successive 4 KiB reads through a 4 MiB prefetched
+        // block); a block whose start lies BEFORE the requested offset
+        // also keeps its leading prefix for an overlapping/backward
+        // read.  We materialise the keys before removal so we can
         // mutate while iterating.
         let to_remove: Vec<u64> = self
             .buffer
             .range(first_block..end)
             .filter_map(|(k, v)| {
-                let block_end = k + v.len() as u64;
-                if block_end <= end {
-                    Some(*k)
+                let block_start = *k;
+                let block_end = block_start + v.len() as u64;
+                if offset <= block_start && block_end <= end {
+                    Some(block_start)
                 } else {
                     None
                 }
@@ -140,10 +150,19 @@ impl Session {
 
     /// Drop all pending and buffered state — invoked on invalidation
     /// (file write/delete) and on detector-driven Random resets that
-    /// also need to discard stale prefetched bytes.
+    /// also need to discard stale prefetched bytes.  Bumps the
+    /// generation so any in-flight prefetch jobs issued before the
+    /// call are rejected at deposit time.
     pub fn clear(&mut self) {
         self.pending.clear();
         self.buffer.clear();
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Snapshot the current generation — workers stamp this onto the
+    /// job at enqueue and check it before mutating the buffer.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 }
 
@@ -300,5 +319,35 @@ mod tests {
         s.clear();
         assert!(s.pending.is_empty());
         assert!(s.buffer.is_empty());
+    }
+
+    #[test]
+    fn clear_bumps_generation() {
+        let cfg = EngineConfig::default();
+        let mut s = sess(&cfg);
+        let before = s.generation();
+        s.clear();
+        assert_eq!(s.generation(), before + 1);
+    }
+
+    #[test]
+    fn take_range_keeps_leading_partial_block() {
+        // Codex round 2 finding #4: a read that starts inside a block
+        // (offset > block_start) but covers the rest of the block must
+        // NOT evict that block — the leading prefix is still useful for
+        // a subsequent overlapping/backward read.
+        let cfg = EngineConfig {
+            block_size: 8,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from((0u8..8).collect::<Vec<_>>()));
+        // Read 4..8 — block covers 0..8, only 4..8 consumed.
+        let r = s.take_range(4, 4, 8).expect("hit");
+        assert_eq!(&r[..], &[4, 5, 6, 7]);
+        assert!(
+            s.buffer.contains_key(&0),
+            "leading partial block was evicted (round 2 regression)"
+        );
     }
 }

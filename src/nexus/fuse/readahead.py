@@ -95,6 +95,10 @@ class ReadaheadConfig:
     warm_l2_cache: bool = True  # Also store prefetched data in L2 SSD cache
     max_blocks_per_trigger: int = DEFAULT_MAX_BLOCKS_PER_TRIGGER  # Parallel prefetch count
     prefetch_on_open: bool = DEFAULT_PREFETCH_ON_OPEN  # Start prefetching on file open
+    # Pattern detector for the Rust prefetch engine — one of
+    # "sequential" (default), "stride", or "trend" (Leap ATC'20
+    # majority-trend).  Ignored when `use_rust_engine=False`.
+    rust_detector: str = "sequential"
 
     @classmethod
     def from_dict(cls, config: dict[str, Any]) -> "ReadaheadConfig":
@@ -117,6 +121,7 @@ class ReadaheadConfig:
                 "readahead_max_blocks", DEFAULT_MAX_BLOCKS_PER_TRIGGER
             ),
             prefetch_on_open=config.get("readahead_prefetch_on_open", DEFAULT_PREFETCH_ON_OPEN),
+            rust_detector=config.get("readahead_rust_detector", "sequential"),
         )
 
 
@@ -632,6 +637,7 @@ class ReadaheadManager:
                     config.max_blocks_per_trigger,
                     config.sequential_tolerance,
                     config.min_sequential_count,
+                    config.rust_detector,
                 )
                 logger.info("[READAHEAD] Routing to Rust PrefetchEngine")
             except ImportError:

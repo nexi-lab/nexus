@@ -124,6 +124,19 @@ impl PrefetchEngine {
 
     pub fn on_open(&self, fh: u64, path: &str, file_size: Option<u64>) {
         let det = (self.detector_factory)();
+        // If the fh was reused (caller skipped on_release), drop any
+        // existing session for that fh first.  This ensures in-flight
+        // prefetch jobs from the old lifetime can't deposit into the
+        // new one (their generation token won't match).
+        if let Some((_, old_slot)) = self.sessions.remove(&fh) {
+            // Prune the old path from path_index before swapping in
+            // the new session.  The old session's lock is released
+            // before re-entering DashMap to avoid lock-ordering risk.
+            let old_path = old_slot.lock().path.clone();
+            if let Some(mut set) = self.path_index.get_mut(&old_path) {
+                set.remove(&fh);
+            }
+        }
         let sess = Session::new(path.to_string(), fh, file_size, det, &self.cfg);
         self.sessions.insert(fh, Arc::new(Mutex::new(sess)));
         self.path_index
@@ -147,7 +160,7 @@ impl PrefetchEngine {
             | AccessPattern::Stride { .. }
             | AccessPattern::Trend { .. } => {
                 s.grow_window();
-                self.enqueue_prefetch(&mut s, offset, pattern);
+                self.enqueue_prefetch(&mut s, offset, size, pattern);
             }
             AccessPattern::Random => {
                 s.shrink_and_clear(self.cfg.initial_window);
@@ -228,15 +241,27 @@ impl PrefetchEngine {
         // The owned runtime, if any, is dropped here — workers torn down.
     }
 
-    fn enqueue_prefetch(&self, s: &mut Session, current_offset: u64, pattern: AccessPattern) {
+    fn enqueue_prefetch(
+        &self,
+        s: &mut Session,
+        current_offset: u64,
+        current_size: u32,
+        pattern: AccessPattern,
+    ) {
         let block_size = self.cfg.block_size as u64;
-        // For sequential we walk by block_size; for stride/trend we walk
-        // by the signed delta the detector observed, so positive strides
-        // larger than a block actually fetch future stride positions and
-        // negative strides walk backwards.
+        // For sequential we walk by block_size, starting at the block
+        // that contains the byte AFTER the current read.  With small
+        // FUSE reads (4 KiB) and a large block_size (4 MiB), this lands
+        // on the block currently being consumed so subsequent reads
+        // within the same block hit; for block-aligned reads it
+        // naturally advances to the next block.  For stride/trend we
+        // walk by the signed delta the detector observed, so positive
+        // strides larger than a block actually fetch future stride
+        // positions and negative strides walk backwards.
+        let next_byte = current_offset.saturating_add(current_size as u64);
         let (first_offset, step): (u64, i64) = match pattern {
             AccessPattern::Sequential => {
-                let first = ((current_offset / block_size) + 1) * block_size;
+                let first = (next_byte / block_size) * block_size;
                 (first, block_size as i64)
             }
             AccessPattern::Stride { stride } | AccessPattern::Trend { delta: stride } => {
@@ -269,6 +294,7 @@ impl PrefetchEngine {
                     key: s.path.clone(),
                     block_offset: cur,
                     block_size: self.cfg.block_size,
+                    generation: s.generation(),
                 };
                 if let Err(_e) = self.tx.try_send(job) {
                     self.metrics

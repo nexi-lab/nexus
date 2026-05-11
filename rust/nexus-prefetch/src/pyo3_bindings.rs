@@ -7,6 +7,7 @@
 
 #![cfg(feature = "python")]
 
+use crate::engine::DetectorKind;
 use crate::{EngineConfig, PrefetchEngine, PrefetchError, RangeReader};
 use bytes::Bytes;
 use pyo3::prelude::*;
@@ -53,6 +54,7 @@ impl PyPrefetchEngine {
         max_blocks_per_trigger,
         sequential_tolerance,
         min_sequential_count,
+        detector="sequential",
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -65,6 +67,7 @@ impl PyPrefetchEngine {
         max_blocks_per_trigger: u32,
         sequential_tolerance: u64,
         min_sequential_count: u32,
+        detector: &str,
     ) -> PyResult<Self> {
         let cfg = EngineConfig {
             block_size,
@@ -76,6 +79,16 @@ impl PyPrefetchEngine {
             sequential_tolerance,
             min_sequential_count,
         };
+        let detector_kind = match detector.to_ascii_lowercase().as_str() {
+            "sequential" => DetectorKind::Sequential,
+            "stride" => DetectorKind::Stride,
+            "trend" | "majority_trend" | "majority-trend" => DetectorKind::MajorityTrend,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown detector kind {other:?} (expected sequential|stride|trend)"
+                )));
+            }
+        };
         let reader: Arc<dyn RangeReader> = Arc::new(PyCallableReader {
             callable: read_callable,
         });
@@ -84,7 +97,7 @@ impl PyPrefetchEngine {
             .enable_all()
             .build()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("rt build: {e}")))?;
-        let engine = PrefetchEngine::new(cfg, reader, Some(rt));
+        let engine = PrefetchEngine::with_detector(cfg, reader, Some(rt), detector_kind);
         Ok(Self {
             inner: Some(engine),
         })

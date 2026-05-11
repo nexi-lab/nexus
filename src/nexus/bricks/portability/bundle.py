@@ -22,6 +22,7 @@ from nexus.bricks.portability.models import (
     MANIFEST_FILENAME,
     ExportManifest,
     FileRecord,
+    MountRecord,
     PermissionRecord,
 )
 
@@ -43,15 +44,61 @@ class BundleReader:
                 print(record.virtual_path)
     """
 
-    def __init__(self, bundle_path: Path | str):
+    def __init__(
+        self,
+        bundle_path: Path | str | None = None,
+        *,
+        tar: tarfile.TarFile | None = None,
+    ):
         """Initialize bundle reader.
 
         Args:
-            bundle_path: Path to .nexus bundle file
+            bundle_path: Path to .nexus bundle file. Mutually exclusive
+                with `tar`.
+            tar: Already-open tarfile.TarFile. Use this when the caller
+                already has the bundle open (e.g., archive.verify_archive
+                wants to perform integrity checks on the same handle as
+                the signature check, avoiding a TOCTOU window between
+                two open() calls on the same path — round-8 finding).
+                When provided, `close()` is a no-op (caller owns the
+                handle).
         """
-        self.bundle_path = Path(bundle_path)
-        self._tar: tarfile.TarFile | None = None
+        if (bundle_path is None) == (tar is None):
+            raise ValueError("Pass exactly one of bundle_path or tar")
+        if tar is not None:
+            self.bundle_path = Path(getattr(tar, "name", "") or "<unnamed-tar>")
+            self._tar: tarfile.TarFile | None = tar
+            self._owns_tar = False
+        else:
+            assert bundle_path is not None
+            self.bundle_path = Path(bundle_path)
+            self._tar = None
+            self._owns_tar = True
         self._manifest: ExportManifest | None = None
+        self._raw_manifest_dict: dict[str, Any] | None = None
+
+    @staticmethod
+    def _resolve_manifest_schema(raw_manifest: dict[str, Any]) -> Path | None:
+        """Pick the JSON-Schema file matching the manifest's declared version.
+
+        Returns the matching schema for v1.x/v2.x/v3.x bundles. Returns
+        None for any other version (unknown majors, future formats,
+        garbage), signaling to the caller that validate() must reject
+        the bundle rather than fall through.
+
+        Round 3 reviewer finding: previously this fell back to v3 for
+        any unknown version, which let a forged manifest with
+        ``format_version=999.0.0`` pass v3 validation (the v3 schema
+        only checked semver pattern, not the major). Now we require an
+        explicit supported major.
+        """
+        schemas_dir = Path(__file__).parent / "schemas"
+        version = (raw_manifest.get("format_version") or "").strip()
+        if version.startswith(("1.", "2.")):
+            return schemas_dir / "manifest-v1.json"
+        if version.startswith("3."):
+            return schemas_dir / "manifest-v3.json"
+        return None  # unknown major — caller rejects
 
     def __enter__(self) -> "BundleReader":
         """Open the bundle for reading."""
@@ -64,14 +111,18 @@ class BundleReader:
 
     def open(self) -> None:
         """Open the bundle file for reading."""
+        # If the caller passed a tarfile to __init__, keep using it —
+        # don't re-open by path (TOCTOU window).
+        if self._tar is not None:
+            return
         if not self.bundle_path.exists():
             raise FileNotFoundError(f"Bundle not found: {self.bundle_path}")
 
         self._tar = tarfile.open(self.bundle_path, mode="r:gz")  # noqa: SIM115
 
     def close(self) -> None:
-        """Close the bundle file."""
-        if self._tar is not None:
+        """Close the bundle file (only if we own the handle)."""
+        if self._tar is not None and self._owns_tar:
             self._tar.close()
             self._tar = None
 
@@ -92,16 +143,22 @@ class BundleReader:
 
         try:
             member = self._tar.getmember(MANIFEST_FILENAME)
-            file_obj = self._tar.extractfile(member)
-            if file_obj is None:
-                raise ValueError("Could not read manifest file")
-
-            manifest_data = json.loads(file_obj.read().decode("utf-8"))
-            self._manifest = ExportManifest.from_dict(manifest_data)
-            return self._manifest
-
         except KeyError:
+            # Only the tar lookup raises KeyError for "missing manifest";
+            # downstream parsing errors must NOT be misreported as
+            # "missing" (round-4 reviewer trace: a KeyError from
+            # ExportManifest.from_dict was being caught by this clause
+            # and surfaced as 'Bundle missing manifest.json'). Scope the
+            # try narrowly to the lookup.
             raise ValueError(f"Bundle missing {MANIFEST_FILENAME}") from None
+
+        file_obj = self._tar.extractfile(member)
+        if file_obj is None:
+            raise ValueError("Could not read manifest file")
+
+        self._raw_manifest_dict = json.loads(file_obj.read().decode("utf-8"))
+        self._manifest = ExportManifest.from_dict(self._raw_manifest_dict)
+        return self._manifest
 
     def validate(self) -> tuple[bool, list[str]]:
         """Validate bundle integrity.
@@ -129,11 +186,104 @@ class BundleReader:
             errors.append(f"Invalid manifest: {e}")
             return False, errors
 
+        # Strict JSON-Schema validation against the version-appropriate
+        # schema (Issue #4083 reviewer finding: from_dict drops unknown
+        # fields, so without this step a malformed manifest with extra
+        # root keys is silently accepted). Round 2 follow-up: select the
+        # schema by the manifest's own format_version / $schema rather
+        # than always validating against v3 — otherwise legacy v1/v2
+        # bundles are rejected by the new v3 const check while
+        # malformed v3 bundles slip past on slim installs.
+        raw = getattr(self, "_raw_manifest_dict", None)
+        if raw is not None:
+            schema_path = self._resolve_manifest_schema(raw)
+            if schema_path is None:
+                # Unknown / unsupported manifest version. Fail closed —
+                # the importer cannot apply meaningful validation, and
+                # the rest of validate()/from_dict will silently accept
+                # garbage. (Round 3 reviewer: previously fell through
+                # to v3 schema and let format_version=999.0.0 pass.)
+                version = (raw.get("format_version") or "").strip() or "<missing>"
+                errors.append(
+                    f"Unsupported manifest format_version {version!r}: "
+                    "this importer recognizes 1.x, 2.x, and 3.x. "
+                    "Upgrade nexus or use a compatible bundle."
+                )
+            else:
+                try:
+                    import jsonschema
+
+                    if not schema_path.exists():
+                        # New v3 bundles MUST have the v3 schema available;
+                        # missing it is a hard validation error so a slim
+                        # wheel that dropped schemas/ doesn't silently
+                        # accept malformed bundles.
+                        if (raw.get("format_version") or "").startswith("3."):
+                            errors.append(
+                                f"Manifest schema {schema_path.name} not "
+                                f"packaged with this install — cannot validate "
+                                f"v3 manifest. Reinstall nexus with bundled "
+                                f"schemas or import on a full install."
+                            )
+                    else:
+                        try:
+                            jsonschema.validate(raw, json.loads(schema_path.read_text()))
+                        except jsonschema.ValidationError as ve:
+                            errors.append(
+                                f"Manifest schema validation failed "
+                                f"({schema_path.name}): {ve.message}"
+                            )
+                except ImportError:
+                    # jsonschema absent: only the v3 path is security-
+                    # critical (newly-added unknown-field guard). v1/v2
+                    # bundles fall back to ExportManifest.validate as
+                    # before.
+                    if (raw.get("format_version") or "").startswith("3."):
+                        errors.append(
+                            "jsonschema not installed; cannot validate v3 "
+                            "manifest. Install jsonschema or import on a "
+                            "full install."
+                        )
+
         # Check required files exist
         members = {m.name for m in self._tar.getmembers()}
 
         if manifest.file_count > 0 and BUNDLE_PATHS["files"] not in members:
             errors.append(f"Missing required file: {BUNDLE_PATHS['files']}")
+
+        if manifest.mount_count > 0 and BUNDLE_PATHS["mounts"] not in members:
+            errors.append(
+                f"Manifest claims mount_count={manifest.mount_count} but "
+                f"{BUNDLE_PATHS['mounts']!r} is missing from the bundle"
+            )
+
+        # Round-4 reviewer finding: an attacker can append/tamper
+        # mounts.jsonl OUTSIDE the signed manifest envelope (manifest
+        # claims mount_count=0 but the tar carries a mounts.jsonl). The
+        # import path used to read it anyway. Reject any mounts.jsonl
+        # that isn't both: (a) declared by manifest.mount_count > 0,
+        # AND (b) present in manifest.checksums (so signature/integrity
+        # check covers it).
+        mounts_in_tar = BUNDLE_PATHS["mounts"] in members
+        mounts_in_checksums = BUNDLE_PATHS["mounts"] in manifest.checksums.files
+        if mounts_in_tar and manifest.mount_count == 0:
+            errors.append(
+                f"Bundle contains {BUNDLE_PATHS['mounts']!r} but manifest "
+                "claims mount_count=0 — refusing to trust unmanifested mount "
+                "records (potential tampering outside the signed envelope)."
+            )
+        if mounts_in_tar and not mounts_in_checksums:
+            errors.append(
+                f"{BUNDLE_PATHS['mounts']!r} is present but missing from "
+                "manifest.checksums.files — refusing to trust mount records "
+                "outside the signed/verified envelope."
+            )
+        if manifest.mount_count > 0 and not mounts_in_checksums:
+            errors.append(
+                f"Manifest claims mount_count={manifest.mount_count} but "
+                f"{BUNDLE_PATHS['mounts']!r} has no checksum entry — bundle "
+                "integrity cannot be verified for mount records."
+            )
 
         # Verify checksums if provided
         if manifest.checksums.files:
@@ -199,6 +349,80 @@ class BundleReader:
 
         except KeyError:
             logger.debug("Bundle missing %s", BUNDLE_PATHS["permissions"])
+
+    def read_mount_records(self) -> list[MountRecord]:
+        """Read mount records from mounts.jsonl.
+
+        Returns:
+            List of MountRecord objects, or empty list if mounts.jsonl is absent
+            or if the manifest does not declare mount records (round-4 reviewer
+            finding: refuse to consume mount records that fall outside the
+            signed/checksummed manifest envelope).
+
+        Raises:
+            ValueError: if the actual record count disagrees with
+                manifest.mount_count, indicating tampering.
+        """
+        if self._tar is None:
+            raise RuntimeError("Bundle not open. Call open() first.")
+
+        import json as _json
+
+        # Defense-in-depth: even if the caller skipped validate(), the
+        # import path must not consume mount records that the manifest
+        # didn't declare. validate() is the primary check; this is the
+        # belt against a caller bypass.
+        manifest = self.get_manifest()
+        if manifest.mount_count == 0:
+            return []
+        if BUNDLE_PATHS["mounts"] not in manifest.checksums.files:
+            raise ValueError(
+                f"Refusing to read {BUNDLE_PATHS['mounts']!r}: not present in "
+                "manifest.checksums.files (signed envelope). Run validate() to "
+                "see the full integrity report."
+            )
+
+        mounts_path = BUNDLE_PATHS["mounts"]
+        try:
+            member = self._tar.getmember(mounts_path)
+        except KeyError:
+            # tar lookup miss → genuinely no mounts.jsonl (manifest
+            # claimed mount_count > 0; the missing-file check in
+            # validate() should have already flagged this).
+            logger.debug("Bundle missing %s", mounts_path)
+            return []
+
+        file_obj = self._tar.extractfile(member)
+        if file_obj is None:
+            return []
+
+        # Round-5 reviewer finding: a malformed mounts.jsonl line could
+        # raise KeyError from MountRecord.from_dict, which the previous
+        # broad ``except KeyError`` swallowed as "no mounts" — silently
+        # skipping mount restore on a tampered bundle. Now any parse
+        # error is fatal, surfacing the integrity problem to the
+        # operator instead of falling through to a partial import.
+        records: list[MountRecord] = []
+        for lineno, line in enumerate(file_obj, start=1):
+            line_str = line.decode("utf-8").strip()
+            if not line_str:
+                continue
+            try:
+                records.append(MountRecord.from_dict(_json.loads(line_str)))
+            except (_json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Malformed mount record at {mounts_path}:{lineno}: "
+                    f"{type(exc).__name__}: {exc}. Bundle may have been "
+                    "tampered with."
+                ) from exc
+
+        if len(records) != manifest.mount_count:
+            raise ValueError(
+                f"Mount record count mismatch: manifest declares "
+                f"{manifest.mount_count}, mounts.jsonl carries "
+                f"{len(records)}. Bundle may have been tampered with."
+            )
+        return records
 
     def read_content_blob(self, content_id: str) -> bytes | None:
         """Read a content blob from the bundle.

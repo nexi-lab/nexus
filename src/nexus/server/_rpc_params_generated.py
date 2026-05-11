@@ -352,6 +352,7 @@ class FederationExportZoneParams:
     strip_credentials: bool = False
     after_time: str | None = None
     before_time: str | None = None
+    include_mounts: bool = False
 
 
 @dataclass
@@ -368,6 +369,8 @@ class FederationImportZoneParams:
     rebuild_embeddings: bool = False
     injections: dict[str, str] | None = None
     require_no_placeholders: bool = True
+    restore_mounts: bool = True
+    mount_overrides: dict[str, dict[str, str]] | None = None
 
 
 @dataclass

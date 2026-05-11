@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-06T06:30:29Z",
+  "generated_at": "2026-05-10T07:04:18Z",
   "manifests": [
     {
       "config_schema": null,
@@ -25,6 +25,7 @@
       "config_schema": null,
       "connection_args": {
         "cache_ttl": {
+          "audit_safe": false,
           "config_key": null,
           "default": 300,
           "description": "Default cache TTL in seconds",
@@ -34,6 +35,7 @@
           "type": "integer"
         },
         "include_comments": {
+          "audit_safe": false,
           "config_key": null,
           "default": true,
           "description": "Include nested comments in story files",
@@ -43,6 +45,7 @@
           "type": "boolean"
         },
         "stories_per_feed": {
+          "audit_safe": false,
           "config_key": null,
           "default": 10,
           "description": "Number of stories per feed (1-30)",
@@ -84,6 +87,7 @@
       "config_schema": null,
       "connection_args": {
         "access_key_id": {
+          "audit_safe": false,
           "config_key": null,
           "default": null,
           "description": "AWS access key ID",
@@ -93,6 +97,7 @@
           "type": "secret"
         },
         "bucket_name": {
+          "audit_safe": false,
           "config_key": "bucket",
           "default": null,
           "description": "S3 bucket name",
@@ -102,6 +107,7 @@
           "type": "string"
         },
         "credentials_path": {
+          "audit_safe": false,
           "config_key": null,
           "default": null,
           "description": "Path to AWS credentials JSON file",
@@ -111,6 +117,7 @@
           "type": "path"
         },
         "prefix": {
+          "audit_safe": false,
           "config_key": null,
           "default": "",
           "description": "Path prefix for all files in bucket",
@@ -120,6 +127,7 @@
           "type": "string"
         },
         "region_name": {
+          "audit_safe": false,
           "config_key": null,
           "default": null,
           "description": "AWS region (e.g., us-east-1)",
@@ -129,6 +137,7 @@
           "type": "string"
         },
         "secret_access_key": {
+          "audit_safe": false,
           "config_key": null,
           "default": null,
           "description": "AWS secret access key",
@@ -138,6 +147,7 @@
           "type": "password"
         },
         "session_token": {
+          "audit_safe": false,
           "config_key": null,
           "default": null,
           "description": "AWS session token (for temporary credentials)",
@@ -181,6 +191,7 @@
       "config_schema": null,
       "connection_args": {
         "max_messages_per_channel": {
+          "audit_safe": false,
           "config_key": null,
           "default": 100,
           "description": "Maximum number of messages to fetch per channel",
@@ -190,6 +201,7 @@
           "type": "integer"
         },
         "provider": {
+          "audit_safe": false,
           "config_key": null,
           "default": "slack",
           "description": "OAuth provider name from config",
@@ -199,15 +211,17 @@
           "type": "string"
         },
         "token_manager_db": {
+          "audit_safe": true,
           "config_key": null,
           "default": null,
-          "description": "Path to TokenManager database or database URL",
+          "description": "Path to TokenManager database or database URL (path, not credential)",
           "env_var": null,
           "required": true,
           "secret": false,
           "type": "path"
         },
         "user_email": {
+          "audit_safe": false,
           "config_key": null,
           "default": null,
           "description": "User email for OAuth lookup (None for multi-user from context)",

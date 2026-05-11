@@ -19,6 +19,7 @@ Issue #1202: gRPC for REMOTE profile.
 from __future__ import annotations
 
 import logging
+import re as _re
 from typing import TYPE_CHECKING, Any
 
 import grpc
@@ -42,6 +43,79 @@ if TYPE_CHECKING:
     from nexus.security.tls.config import ZoneTlsConfig
 
 logger = logging.getLogger(__name__)
+
+# Heuristic for credential-shaped key names (Issue #4083 rounds 2-3).
+# Recursive redactor walks every dict / list at any depth and replaces
+# values whose key matches this regex. Round-3 reviewer finding: a
+# top-level allowlist (mount_overrides, auth_token, ...) missed nested
+# headers/env, sandbox_api_key, nexus_api_key, and any future RPC param
+# shape. Heuristic-shaped redaction is the safer default: it errs on the
+# side of over-redacting in DEBUG logs (operators see structure, not
+# values) rather than leaking a freshly-added secret-shaped param.
+_SENSITIVE_KEY_RE = _re.compile(
+    r"(?i)(secret|token|password|passwd|credential|api[_-]?key|"
+    r"access[_-]?key|session[_-]?token|authorization|auth[_-]?key|"
+    r"private[_-]?key)"
+)
+
+# Top-level RPC params known to carry secret material as VALUES even when
+# their KEY name doesn't match the heuristic. Used in addition to the
+# recursive scan.
+_SENSITIVE_TOP_LEVEL: frozenset[str] = frozenset({"mount_overrides", "injections", "credentials"})
+
+
+def _redact_params(params: Any) -> Any:
+    """Return a deep redacted copy of params with credential-shaped keys
+    replaced by ``"***"``.
+
+    Walks dicts and lists recursively. At every level, a key whose name
+    matches ``_SENSITIVE_KEY_RE`` has its value replaced (preserving
+    structure: a dict value becomes a dict of "***", a list becomes a
+    list of "***"). At the top level, ``mount_overrides`` /
+    ``injections`` / ``credentials`` are also redacted regardless of
+    key-name shape.
+
+    The original ``params`` is never mutated.
+    """
+    return _redact(params, top_level=True)
+
+
+def _redact(value: Any, *, top_level: bool) -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            key_str = k if isinstance(k, str) else ""
+            sensitive = bool(_SENSITIVE_KEY_RE.search(key_str)) or (
+                top_level and key_str in _SENSITIVE_TOP_LEVEL
+            )
+            if sensitive and v is not None:
+                if isinstance(v, dict):
+                    out[k] = _redact_dict_to_stars(v)
+                elif isinstance(v, list):
+                    out[k] = ["***" for _ in v]
+                else:
+                    out[k] = "***"
+            else:
+                out[k] = _redact(v, top_level=False)
+        return out
+    if isinstance(value, list):
+        return [_redact(item, top_level=False) for item in value]
+    return value
+
+
+def _redact_dict_to_stars(d: dict[str, Any]) -> dict[str, Any]:
+    """Recursively replace every leaf value with ``"***"`` while preserving
+    keys at every level so the redacted log still shows the call shape."""
+    out: dict[str, Any] = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out[k] = _redact_dict_to_stars(v)
+        elif isinstance(v, list):
+            out[k] = ["***" for _ in v]
+        else:
+            out[k] = "***"
+    return out
+
 
 _CHANNEL_OPTIONS = build_channel_options(
     keepalive_time_ms=30_000,
@@ -187,7 +261,7 @@ class RPCTransport:
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
 
-        logger.debug("RPCTransport.call_rpc: %s params=%s", method, params)
+        logger.debug("RPCTransport.call_rpc: %s params=%s", method, _redact_params(params))
 
         try:
             response = self._stub.Call(request, timeout=timeout)

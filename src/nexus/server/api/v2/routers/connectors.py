@@ -85,6 +85,12 @@ class MountResponse(BaseModel):
     mounted: bool
     mount_point: str
     error: str | None = None
+    # Issue #4083: surface persistence-step status separately from kernel
+    # mount activation. The kernel can be `mounted=True` while the
+    # MountManager save step failed — bundle export would then quietly
+    # miss this connector. Operators (and the CLI) need to see the gap.
+    persisted: bool | None = None
+    persist_warning: str | None = None
 
 
 class WriteRequest(BaseModel):
@@ -682,7 +688,68 @@ async def mount_connector(
             context=mount_context,
         )
         _mount_types[req.mount_point] = req.connector_type
-        return MountResponse(mounted=True, mount_point=str(result))
+
+        # Also persist the mount config via MountManager so the bundle
+        # exporter (`nexus zone export --include-mounts`, Issue #4083)
+        # can find it. `add_mount` only registers in the kernel runtime
+        # mount table; without this, mounts created via the HTTP API
+        # surface as `mount_count=0` in exports — silently invisible.
+        #
+        # We don't roll back the kernel mount on persist failure: the
+        # caller still gets a working live mount, just not a portable
+        # one. But the response carries `persisted` / `persist_warning`
+        # so the caller (and audit log) sees the gap explicitly rather
+        # than discovering it later via an empty bundle.
+        persisted: bool | None = None
+        persist_warning: str | None = None
+        if getattr(mount_svc, "mount_manager", None) is not None:
+            persisted = False
+            try:
+                await mount_svc.save_mount(
+                    mount_point=req.mount_point,
+                    backend_type=req.connector_type,
+                    backend_config=req.config,
+                    context=mount_context,
+                )
+                persisted = True
+            except ValueError as dup_exc:
+                # ValueError can mean "mount_point already exists" (the
+                # idempotent-retry case we want to swallow) OR a real
+                # validation failure. Distinguish by message — if it
+                # doesn't look like an existence collision, surface as a
+                # warning so operators don't lose the signal.
+                msg = str(dup_exc).lower()
+                if "exist" in msg or "duplicate" in msg or "already" in msg:
+                    persisted = True  # already in store; treat as success
+                else:
+                    persist_warning = (
+                        f"Mount activated, but persistence rejected the "
+                        f"config: {dup_exc}. Bundle export will not include "
+                        f"this mount until the persistent record is fixed."
+                    )
+                    logger.warning(
+                        "Mount %s activated but save_mount rejected: %s",
+                        req.mount_point,
+                        dup_exc,
+                    )
+            except Exception as persist_exc:
+                persist_warning = (
+                    f"Mount activated, but persistence failed: {persist_exc}. "
+                    f"Bundle export will not include this mount until the "
+                    f"persistent record is fixed."
+                )
+                logger.warning(
+                    "Mount %s activated but persistence failed: %s",
+                    req.mount_point,
+                    persist_exc,
+                )
+
+        return MountResponse(
+            mounted=True,
+            mount_point=str(result),
+            persisted=persisted,
+            persist_warning=persist_warning,
+        )
     except Exception as e:
         return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))
 
@@ -725,6 +792,24 @@ async def unmount_connector(
     try:
         await mount_svc.remove_mount(mount_point=req.mount_point)
         _mount_types.pop(req.mount_point, None)
+
+        # Mirror the dual-write from the mount handler: also drop the
+        # persisted MountManager record so the bundle exporter (Issue
+        # #4083) doesn't keep returning a stale entry for an unmounted
+        # path. Best-effort — kernel unmount succeeded, so we report
+        # success regardless.
+        if getattr(mount_svc, "mount_manager", None) is not None:
+            try:
+                await mount_svc.delete_saved_mount(mount_point=req.mount_point)
+            except Exception as persist_exc:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Mount removed from kernel but config persistence cleanup failed for %s: %s",
+                    req.mount_point,
+                    persist_exc,
+                )
+
         return MountResponse(mounted=False, mount_point=req.mount_point)
     except Exception as e:
         return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))

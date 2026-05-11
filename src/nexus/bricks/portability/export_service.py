@@ -39,6 +39,7 @@ from nexus.bricks.portability.strip import (
 )
 
 if TYPE_CHECKING:
+    from nexus.bricks.portability.mount_export import _MountListing
     from nexus.contracts.portability_types import PortabilityFSProtocol
 
 logger = logging.getLogger(__name__)
@@ -121,11 +122,16 @@ class ZoneExportService:
     def __init__(
         self,
         nexus_fs: "PortabilityFSProtocol",
+        *,
+        mount_manager: "_MountListing | None" = None,
     ):
         """Initialize the export service.
 
         Args:
             nexus_fs: NexusFS-compatible instance with metadata store and backend access
+            mount_manager: Optional MountManager instance (must expose
+                ``list_mounts(zone_id=...)``).  Required when
+                ``ZoneExportOptions.include_mounts=True``.
         """
         self.nexus_fs = nexus_fs
         # ``nx.metadata`` was removed in W3b — reach the kernel directly so
@@ -137,6 +143,7 @@ class ZoneExportService:
         # R20.18.x: `NexusFS.backend` is gone — the kernel owns mount
         # routing now. Content reads go through `nexus_fs.sys_read`;
         # see `_export_content_blobs`.
+        self._mount_manager = mount_manager
 
     def export_zone(
         self,
@@ -161,6 +168,12 @@ class ZoneExportService:
         Returns:
             ExportManifest with export statistics and checksums
         """
+        if options.include_mounts and self._mount_manager is None:
+            raise ValueError(
+                "ZoneExportOptions.include_mounts=True requires "
+                "ZoneExportService(mount_manager=...)"
+            )
+
         import nexus
 
         logger.info("Starting export for zone %s to %s", zone_id, options.output_path)
@@ -233,6 +246,37 @@ class ZoneExportService:
                     logger.info(
                         "Credential stripping: %d placeholder(s) captured", len(placeholders)
                     )
+
+            # --- Mount-config export (v3+, Issue #4083) ---
+            if options.include_mounts:
+                from nexus.bricks.portability.mount_export import (
+                    collect_mounts,
+                    redact_and_write,
+                )
+
+                # Guard at export_zone entry ensures _mount_manager is non-None here.
+                assert self._mount_manager is not None
+                raw_mounts = collect_mounts(self._mount_manager, zone_id=zone_id)
+                if raw_mounts:
+                    mounts_path = temp_path / "mounts.jsonl"
+                    mount_phs = redact_and_write(raw_mounts, out_path=mounts_path)
+                    manifest.placeholders = list(manifest.placeholders) + list(mount_phs)
+                    manifest.mount_count = len(raw_mounts)
+                    mounts_bytes = mounts_path.read_bytes()
+                    checksums.add_file(BUNDLE_PATHS["mounts"], mounts_bytes)
+                    logger.info(
+                        "Mount export: %d mounts, %d placeholders",
+                        len(raw_mounts),
+                        len(mount_phs),
+                    )
+                else:
+                    # Round-5 reviewer finding: writing an empty
+                    # mounts.jsonl with mount_count=0 produced a bundle
+                    # that BundleReader.validate then rejected as
+                    # "unmanifested mounts.jsonl" — exporters must NOT
+                    # emit the file when there's nothing to record.
+                    manifest.mount_count = 0
+                    logger.info("Mount export: zone has no mounts; skipping mounts.jsonl")
 
             # Add checksum for files.jsonl
             if files_path.exists():

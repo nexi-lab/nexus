@@ -11,6 +11,13 @@ tqdm>=4.67.3
 pydantic[email]>=2.13.4
 pyyaml>=6.0.3
 
+# Schema validation — required by archive verify_archive (Issue
+# #4083) to validate v3 portability bundles against
+# manifest-v3.json before trusting mounts.jsonl checksums. Listed
+# here because the slim image installs the package with --no-deps
+# and would otherwise silently miss this dep.
+jsonschema>=4.20.0
+
 # HTTP client (used internally)
 httpx[http2]>=0.28.1
 requests>=2.33.1

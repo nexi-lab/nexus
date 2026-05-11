@@ -548,6 +548,11 @@ def unmount_zone_cmd(
     default=6,
     help="Compression level 1-9 (default: 6)",
 )
+@click.option(
+    "--include-mounts/--no-mounts",
+    default=False,
+    help="Include mount configurations (secrets are redacted; default: no, Issue #4083)",
+)
 @add_backend_options
 def export_zone(
     zone_id: str,
@@ -559,6 +564,7 @@ def export_zone(
     path_prefix: str | None,
     after: str | None,
     compression: int,
+    include_mounts: bool,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -625,6 +631,7 @@ def export_zone(
                 include_embeddings=include_embeddings,
                 include_deleted=include_deleted,
                 path_prefix=path_prefix,
+                include_mounts=include_mounts,
             )
             table = Table(title="Export Complete")
             table.add_column("Metric", style="nexus.value")
@@ -632,6 +639,8 @@ def export_zone(
             table.add_row("Files exported", f"{data.get('file_count', 0):,}")
             table.add_row("Total size", f"{data.get('total_size_bytes', 0):,} bytes")
             table.add_row("Bundle ID", str(data.get("bundle_id", ""))[:8] + "...")
+            if include_mounts:
+                table.add_row("Mounts exported", f"{data.get('mount_count', 0):,}")
             table.add_row("Output", str(output_path))
             console.print(table)
             return
@@ -652,7 +661,19 @@ def export_zone(
             path_prefix=path_prefix,
             after_time=after_time if after else None,
             compression_level=compression,
+            include_mounts=include_mounts,
         )
+
+        # MountManager is built locally so the offline path can carry
+        # mount configs alongside file data (Issue #4083). Only required
+        # when --include-mounts is set; otherwise leave the service
+        # without one to preserve back-compat.
+        mount_manager = None
+        if include_mounts:
+            from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
+            from nexus.bricks.mount.mount_manager import MountManager
+
+            mount_manager = MountManager(MetastoreMountStore(nx))
 
         with Progress(
             SpinnerColumn(),
@@ -664,7 +685,7 @@ def export_zone(
             def update_progress(current: int, total: int) -> None:
                 progress.update(task, description=f"Exporting... ({current}/{total} files)")
 
-            service = ZoneExportService(cast(Any, nx))
+            service = ZoneExportService(cast(Any, nx), mount_manager=mount_manager)
             manifest = service.export_zone(zone_id, options, update_progress)
 
         nx.close()
@@ -676,6 +697,8 @@ def export_zone(
         table.add_row("Content blobs", f"{manifest.content_blob_count:,}")
         table.add_row("Permissions", f"{manifest.permission_count:,}")
         table.add_row("Bundle ID", manifest.bundle_id[:8] + "...")
+        if include_mounts:
+            table.add_row("Mounts exported", f"{manifest.mount_count:,}")
         table.add_row("Output", str(output_path))
         if output_path.exists():
             table.add_row("Bundle size", f"{output_path.stat().st_size:,} bytes")
@@ -722,6 +745,30 @@ def export_zone(
     multiple=True,
     help="Path prefix remapping (format: old=new), can be repeated",
 )
+@click.option(
+    "--mount-override",
+    multiple=True,
+    help=(
+        "Re-inject a redacted mount field (format: MOUNT_ID:FIELD=VALUE), "
+        "can be repeated. Required for any field the bundle redacted. "
+        "Issue #4083."
+    ),
+)
+@click.option(
+    "--mount-overrides-file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "JSON file with mount overrides. Shape: "
+        '{"<mount_id>": {"<field>": "<value>", ...}, ...}. '
+        "Merges under any --mount-override flags (file values win on conflict)."
+    ),
+)
+@click.option(
+    "--restore-mounts/--no-restore-mounts",
+    default=True,
+    help="Restore mounts from bundle (default: yes; bundle without mounts.jsonl is unaffected)",
+)
 @add_backend_options
 def import_zone(
     bundle_path: str,
@@ -731,6 +778,9 @@ def import_zone(
     dry_run: bool,
     import_permissions: bool,
     path_remap: tuple[str, ...],
+    mount_override: tuple[str, ...],
+    mount_overrides_file: str | None,
+    restore_mounts: bool,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -765,6 +815,64 @@ def import_zone(
             old, new = remap.split("=", 1)
             path_prefix_remap[old] = new
 
+        # Parse mount overrides — accumulate from --mount-override flags
+        # first, then merge --mount-overrides-file on top (file wins on
+        # collision). Per-flag format is MOUNT_ID:FIELD=VALUE so a single
+        # override targets one field; the file form is a structured JSON
+        # for multi-field overrides without one flag per field.
+        #
+        # SECURITY: --mount-override puts secret values in argv, which
+        # leaks them via shell history, ps aux, audit logs, and CLI
+        # telemetry before they reach the server. Warn loudly and
+        # recommend --mount-overrides-file (which can carry strict file
+        # permissions) for any real credential. The flag remains
+        # supported for tests, scripts, and short-lived rotation keys.
+        if mount_override:
+            console.print(
+                "[nexus.warning]Warning:[/nexus.warning] --mount-override puts "
+                "credentials in argv (visible in shell history, ps aux, audit "
+                "logs). For production secrets, prefer --mount-overrides-file "
+                "with restrictive file permissions (chmod 600)."
+            )
+        mount_overrides: dict[str, dict[str, str]] = {}
+        for override in mount_override:
+            try:
+                mid_field, value = override.split("=", 1)
+                mid, field = mid_field.split(":", 1)
+            except ValueError:
+                console.print(
+                    f"[nexus.error]Error:[/nexus.error] Invalid mount override format: {override}"
+                )
+                console.print("Use format: MOUNT_ID:FIELD=VALUE")
+                sys.exit(1)
+            mount_overrides.setdefault(mid, {})[field] = value
+        if mount_overrides_file:
+            import json as _json
+
+            try:
+                file_data = _json.loads(Path(mount_overrides_file).read_text())
+            except Exception as exc:
+                console.print(
+                    f"[nexus.error]Error:[/nexus.error] Cannot parse {mount_overrides_file}: {exc}"
+                )
+                sys.exit(1)
+            if not isinstance(file_data, dict):
+                console.print(
+                    f"[nexus.error]Error:[/nexus.error] "
+                    f"{mount_overrides_file} must be a JSON object "
+                    "(shape: {mount_id: {field: value}})"
+                )
+                sys.exit(1)
+            for mid, fields in file_data.items():
+                if not isinstance(fields, dict):
+                    console.print(
+                        f"[nexus.error]Error:[/nexus.error] "
+                        f"mount_overrides[{mid!r}] must be an object "
+                        "of field-name -> value"
+                    )
+                    sys.exit(1)
+                mount_overrides.setdefault(mid, {}).update(fields)
+
         # Same remote-first routing as `nexus zone export` — lets a
         # running server own the write path to its live metastore
         # instead of the CLI trying to open the zone's redb in a
@@ -795,6 +903,8 @@ def import_zone(
                 preserve_timestamps=preserve_timestamps,
                 import_permissions=import_permissions,
                 path_prefix_remap=path_prefix_remap,
+                restore_mounts=restore_mounts,
+                mount_overrides=mount_overrides or None,
             )
             table = Table(title="Import Complete")
             table.add_column("Metric", style="nexus.value")
@@ -805,6 +915,23 @@ def import_zone(
             table.add_row("Files failed", f"{data.get('files_failed', 0):,}")
             table.add_row("Permissions imported", f"{data.get('permissions_imported', 0):,}")
             console.print(table)
+
+            # Surface mount-restore errors over the wire. Without this,
+            # the CLI prints "Import Complete" even when mount restore
+            # silently failed for half the bundle (Issue #4083 review).
+            errors = data.get("errors") or []
+            warnings = data.get("warnings") or []
+            for w in warnings[:5]:
+                console.print(f"[nexus.warning]warning:[/nexus.warning] {w}")
+            non_info_errors = [e for e in errors if e.get("error_type") != "info"]
+            if non_info_errors:
+                console.print()
+                console.print("[nexus.error]Errors:[/nexus.error]")
+                for e in non_info_errors[:10]:
+                    console.print(f"  - {e.get('path', '?')}: {e.get('message', '')}")
+                if len(non_info_errors) > 10:
+                    console.print(f"  ... and {len(non_info_errors) - 10} more")
+                sys.exit(1)
             return
 
         # Local-only path kept for offline snapshot restore.
@@ -824,7 +951,19 @@ def import_zone(
             dry_run=dry_run,
             import_permissions=import_permissions,
             path_prefix_remap=path_prefix_remap,
+            restore_mounts=restore_mounts,
+            mount_overrides=mount_overrides or None,
         )
+
+        # MountManager for offline restore (Issue #4083). Constructed
+        # only when the caller opted into mount restore so existing
+        # offline-snapshot workflows keep working unchanged.
+        mount_manager = None
+        if restore_mounts:
+            from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
+            from nexus.bricks.mount.mount_manager import MountManager
+
+            mount_manager = MountManager(MetastoreMountStore(nx))
 
         # Show import configuration
         console.print(f"[nexus.path]Importing from:[/nexus.path] {bundle_path}")
@@ -845,7 +984,7 @@ def import_zone(
             def update_progress(current: int, total: int, phase: str) -> None:
                 progress.update(task, description=f"Importing {phase}... ({current}/{total})")
 
-            service = ZoneImportService(cast(Any, nx))
+            service = ZoneImportService(cast(Any, nx), mount_manager=mount_manager)
             result = service.import_zone(options, update_progress)
 
         nx.close()

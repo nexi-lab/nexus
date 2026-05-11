@@ -10,8 +10,8 @@ from nexus.bricks.portability.models import (
 )
 
 
-def test_format_version_is_v2():
-    assert BUNDLE_FORMAT_VERSION == "2.0.0"
+def test_format_version_constant_bumped_to_v3():
+    assert BUNDLE_FORMAT_VERSION == "3.0.0"
 
 
 def test_manifest_round_trip_with_v2_fields():

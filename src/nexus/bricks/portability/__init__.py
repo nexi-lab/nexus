@@ -66,10 +66,28 @@ from nexus.bricks.portability.models import (
     FileRecord,
     ImportError,
     ImportResult,
+    MissingCredentialsError,
+    MountRecord,
     PermissionRecord,
     PlaceholderRef,
+    SensitiveFieldNotDeclaredError,
     ZoneExportOptions,
     ZoneImportOptions,
+)
+from nexus.bricks.portability.mount_export import (
+    collect_mounts,
+    redact_and_write,
+)
+from nexus.bricks.portability.mount_import import (
+    import_mounts,
+    materialize,
+    read_mounts,
+    validate_overrides,
+)
+from nexus.bricks.portability.redaction import (
+    audit_backend,
+    declared_secret_fields,
+    redact_config,
 )
 
 __all__ = [
@@ -109,4 +127,17 @@ __all__ = [
     "BundleReader",
     "validate_bundle",
     "inspect_bundle",
+    # Mount portability (Issue #4083)
+    "MountRecord",
+    "MissingCredentialsError",
+    "SensitiveFieldNotDeclaredError",
+    "audit_backend",
+    "declared_secret_fields",
+    "redact_config",
+    "collect_mounts",
+    "redact_and_write",
+    "read_mounts",
+    "validate_overrides",
+    "materialize",
+    "import_mounts",
 ]

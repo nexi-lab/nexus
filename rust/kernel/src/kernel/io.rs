@@ -2721,6 +2721,20 @@ impl Kernel {
             let entry = self
                 .with_metastore_route(&route, |ms| ms.get(&req.path).ok().flatten())
                 .flatten();
+            // Reject pipe/stream — they have blocking IPC semantics that
+            // don't belong in batch reads. Per-item Err so the rest of
+            // the batch keeps going.
+            if let Some(m) = entry.as_ref() {
+                if m.entry_type == crate::meta_store::DT_PIPE
+                    || m.entry_type == crate::meta_store::DT_STREAM
+                {
+                    results[i] = Some(Err(KernelError::IOError(format!(
+                        "batch read does not support pipes/streams: {}",
+                        req.path
+                    ))));
+                    continue;
+                }
+            }
             resolved[i] = Some(ResolvedRead { route, entry });
         }
 
@@ -3376,6 +3390,35 @@ mod read_batch_tests {
         assert_eq!(out[1].as_ref().unwrap().data.as_deref().unwrap(), b"3456");
         assert_eq!(out[2].as_ref().unwrap().data.as_deref().unwrap(), b"");
         assert_eq!(out[3].as_ref().unwrap().data.as_deref().unwrap(), b"89");
+    }
+
+    #[test]
+    fn read_batch_rejects_pipe_entry() {
+        use crate::meta_store::{FileMetadata, DT_PIPE};
+        // kernel_with_backend registers a "/" mount so vfs_router.route succeeds.
+        let k = kernel_with_backend();
+        let c = ctx();
+        // Inject a DT_PIPE metadata row directly into the boot metastore.
+        // This bypasses the full pipe-creation pipeline and exercises
+        // exactly the guard we are testing.
+        let meta = FileMetadata {
+            entry_type: DT_PIPE,
+            ..FileMetadata::default()
+        };
+        k.metastore_put("/fake_pipe", meta).expect("put");
+        let reqs = vec![crate::kernel::BatchReadRequest {
+            path: "/fake_pipe".into(),
+            offset: 0,
+            len: None,
+        }];
+        let out = k._read_batch(&reqs, &c).expect("outer ok");
+        match &out[0] {
+            Err(KernelError::IOError(m)) => {
+                assert!(m.contains("pipe") || m.contains("stream"), "got: {m}");
+            }
+            Err(e) => panic!("expected IOError, got different KernelError: {e:?}"),
+            Ok(_) => panic!("expected IOError, got Ok"),
+        }
     }
 
     #[test]

@@ -56,7 +56,7 @@ COPY rust/contracts/ ./rust/contracts/
 # contracts already copied above).  Empty `lib.rs` keeps the workspace
 # manifest resolvable without dragging in the heavier pyo3 / tokio
 # surface those crates carry.
-RUN for d in services backends nexus-cdylib; do \
+RUN for d in services backends nexus-cdylib nexus-prefetch; do \
         mkdir -p rust/$d/src && \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \

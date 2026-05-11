@@ -625,6 +625,9 @@ class ReadaheadManager:
         self._rust_engine = None
         if use_rust_engine:
             try:
+                # PrefetchEngine is added by rust/nexus-prefetch/src/pyo3_bindings.rs
+                # (Issue #4057).  The stub at stubs/nexus_runtime/__init__.pyi
+                # declares the symbol explicitly so mypy resolves the import.
                 from nexus_runtime import PrefetchEngine as _RustEngine
 
                 self._rust_engine = _RustEngine(
@@ -748,7 +751,8 @@ class ReadaheadManager:
         if self._shutdown:
             return None
         if self._rust_engine is not None:
-            return self._rust_engine.on_read(fh, offset, size)
+            result: bytes | None = self._rust_engine.on_read(fh, offset, size)
+            return result
 
         if not self._config.enabled:
             return None

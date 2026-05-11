@@ -24,7 +24,11 @@ lib = { workspace = true, features = ["transport"] }
 # `crate::prefetch_adapter`, which lets `PrefetchEngine` issue range
 # reads through the `ObjectStore` pillar. The dep direction is one-way
 # `kernel -> nexus-prefetch`; the prefetch crate is kernel-agnostic.
-nexus-prefetch = { workspace = true }
+# Optional + behind the `prefetch` feature (default-on) so slim
+# downstream consumers (the federation witness, which builds raft
+# with `--no-default-features`) can opt out without compiling the
+# prefetch surface or stubbing `nexus-prefetch`.
+nexus-prefetch = { workspace = true, optional = true }
 # Kernel depends on `contracts` and `shared/` only; the dep direction
 # is one-way `services -> kernel`. AgentRegistry is the kernel SSOT at
 # `crate::core::agents::registry`. Raft depends on kernel for
@@ -83,7 +87,12 @@ mimalloc = { workspace = true, optional = true }
 [features]
 # Keep direct `cargo test -p kernel` pure-Rust by default. The Python
 # wheel cdylib explicitly enables `py-hook-adapters` and `python`.
-default = ["mimalloc", "connectors"]
+default = ["mimalloc", "connectors", "prefetch"]
+# Compile the `prefetch_adapter` module + pull in `nexus-prefetch`.
+# On by default for the python wheel and full kernel builds; the
+# federation witness disables this via `--no-default-features` so the
+# raft binary builds without the prefetcher surface.
+prefetch = ["dep:nexus-prefetch"]
 mimalloc = ["dep:mimalloc"]
 connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
 # Python binding support (PyO3). Enables #[pyclass]/#[pymethods] on kernel

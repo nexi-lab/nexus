@@ -1083,6 +1083,44 @@ def generate_stubs(
     )
     lines.append("")
 
+    # ──────────────────────────────────────────────────────────────────
+    # Manual section: PrefetchEngine (Issue #4057).  The class is
+    # implemented in rust/nexus-prefetch/src/pyo3_bindings.rs, not in
+    # rust/kernel/src, so the auto-scan above doesn't see it.  Keeping
+    # the canonical stub in this script keeps `Codegen Sync Check`
+    # consistent — re-running codegen reproduces the same output.
+    # ──────────────────────────────────────────────────────────────────
+    lines.append("# " + "-" * 75)
+    lines.append("# PrefetchEngine PyO3 surface (rust/nexus-prefetch/src/pyo3_bindings.rs)")
+    lines.append("# Issue #4057 — adaptive prefetcher exposed to Python via cdylib.  Manually")
+    lines.append("# maintained: the codegen at scripts/codegen_kernel_abi.py only scans")
+    lines.append("# rust/kernel/src; PrefetchEngine lives in rust/nexus-prefetch.")
+    lines.append("# " + "-" * 75)
+    lines.append("")
+    lines.append("class PrefetchEngine:")
+    lines.append("    def __init__(")
+    lines.append("        self,")
+    lines.append("        read_callable: Any,")
+    lines.append("        block_size: int,")
+    lines.append("        initial_window: int,")
+    lines.append("        max_window: int,")
+    lines.append("        max_workers: int,")
+    lines.append("        queue_capacity: int,")
+    lines.append("        max_blocks_per_trigger: int,")
+    lines.append("        sequential_tolerance: int,")
+    lines.append("        min_sequential_count: int,")
+    lines.append('        detector: str = "sequential",')
+    lines.append("        shutdown_timeout_ms: int = 2000,")
+    lines.append("        max_buffer_bytes: int = 134217728,")
+    lines.append("    ) -> None: ...")
+    lines.append("    def on_open(self, fh: int, path: str, file_size: int | None) -> None: ...")
+    lines.append("    def on_read(self, fh: int, offset: int, size: int) -> bytes | None: ...")
+    lines.append("    def on_release(self, fh: int) -> None: ...")
+    lines.append("    def invalidate_fh(self, fh: int) -> None: ...")
+    lines.append("    def invalidate_path(self, path: str) -> None: ...")
+    lines.append("    def metrics(self) -> tuple[int, int, int, int, int]: ...")
+    lines.append("    def shutdown(self) -> None: ...")
+
     return "\n".join(lines)
 
 

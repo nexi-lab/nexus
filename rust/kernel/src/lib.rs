@@ -126,6 +126,7 @@ pub mod agent_registry_py;
 // other kernel-owned primitives because it bridges a §3.A pillar
 // (ObjectStore) to an external rlib (nexus-prefetch) without being
 // a kernel primitive itself.
+#[cfg(feature = "prefetch")]
 pub mod prefetch_adapter;
 
 // Kernel-side prefetch hint emission trait. The kernel does not own

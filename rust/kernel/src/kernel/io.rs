@@ -26,6 +26,18 @@ use super::{
     SysUnlinkResult, SysWriteResult,
 };
 
+/// Per-request resolved state produced by Phase A of `_read_batch`.
+/// Kept file-private; callers only see the final `Vec<Result<…>>`.
+/// `entry` is `None` when the metastore has no record yet; Phase B
+/// falls back to `sys_read` which retries the backend directly.
+///
+/// Fields are consumed by Task 4 coalescing; allow dead_code until then.
+#[allow(dead_code)]
+struct ResolvedRead {
+    route: crate::core::vfs_router::RouteResult,
+    entry: Option<FileMetadata>,
+}
+
 impl Kernel {
     pub fn sys_read(
         &self,
@@ -2591,16 +2603,60 @@ impl Kernel {
     pub fn _read_batch(
         &self,
         reqs: &[crate::kernel::BatchReadRequest],
-        _ctx: &OperationContext,
+        ctx: &OperationContext,
     ) -> Result<Vec<Result<SysReadResult, KernelError>>, KernelError> {
         if reqs.is_empty() {
             return Ok(Vec::new());
         }
-        // Stubbed body — filled in by subsequent tasks.
-        Ok(reqs
-            .iter()
-            .map(|_| Err(KernelError::IOError("not yet implemented".into())))
-            .collect())
+
+        let n = reqs.len();
+        let mut results: Vec<Option<Result<SysReadResult, KernelError>>> =
+            (0..n).map(|_| None).collect();
+        let mut resolved: Vec<Option<ResolvedRead>> = (0..n).map(|_| None).collect();
+
+        // Phase A — validate, permission, route, metadata lookup.
+        for (i, req) in reqs.iter().enumerate() {
+            // 1. Path validation
+            if let Err(e) = validate_path_fast(&req.path) {
+                results[i] = Some(Err(e));
+                continue;
+            }
+            // 2. Permission gate
+            if let Err(e) = self.check_permission(&req.path, Permission::Read, ctx) {
+                results[i] = Some(Err(e));
+                continue;
+            }
+            // 3. Routing
+            let route = match self.vfs_router.route(&req.path, &ctx.zone_id) {
+                Ok(r) => r,
+                Err(_) => {
+                    results[i] = Some(Err(KernelError::FileNotFound(req.path.clone())));
+                    continue;
+                }
+            };
+            // 4. Metadata lookup (best-effort; None means cold-cache /
+            //    backend-only file — Phase B falls through to sys_read
+            //    which has its own backend fallback path).
+            let entry = self
+                .with_metastore_route(&route, |ms| ms.get(&req.path).ok().flatten())
+                .flatten();
+            resolved[i] = Some(ResolvedRead { route, entry });
+        }
+
+        // Phase B — leaf work (fallback to sys_read for every still-resolved
+        // request). Coalescing arrives in Task 4; parallelism in Task 5.
+        for (i, req) in reqs.iter().enumerate() {
+            if results[i].is_some() {
+                continue;
+            }
+            if resolved[i].is_none() {
+                continue;
+            }
+            let r = self.sys_read(&req.path, ctx, 5000, req.offset);
+            results[i] = Some(r);
+        }
+
+        Ok(results.into_iter().map(|o| o.unwrap()).collect())
     }
 
     /// Internal: batch delete — full Rust + batch metastore.
@@ -2920,12 +2976,110 @@ impl Kernel {
 
 #[cfg(test)]
 mod read_batch_tests {
-    use crate::kernel::Kernel;
+    use crate::abc::object_store::{ObjectStore, StorageError, WriteResult};
+    use crate::kernel::{Kernel, KernelError};
     use contracts::OperationContext;
+    use parking_lot::Mutex;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn ctx() -> OperationContext {
         // Admin + system bypass — fine for unit tests.
         OperationContext::new("test", "root", true, None, true)
+    }
+
+    /// Minimal in-memory backend — enough for write + read round-trips.
+    #[derive(Default)]
+    struct MemBackend {
+        blobs: Mutex<HashMap<String, Vec<u8>>>,
+    }
+
+    impl ObjectStore for MemBackend {
+        fn name(&self) -> &str {
+            "mem"
+        }
+
+        fn write_content(
+            &self,
+            content: &[u8],
+            content_id: &str,
+            _ctx: &OperationContext,
+            offset: u64,
+        ) -> Result<WriteResult, StorageError> {
+            let mut map = self.blobs.lock();
+            let entry = map.entry(content_id.to_string()).or_default();
+            let start = offset as usize;
+            if start > entry.len() {
+                entry.resize(start, 0);
+            }
+            let end = start + content.len();
+            if end > entry.len() {
+                entry.resize(end, 0);
+            }
+            entry[start..end].copy_from_slice(content);
+            let size = entry.len() as u64;
+            Ok(WriteResult {
+                content_id: content_id.to_string(),
+                version: content_id.to_string(),
+                size,
+            })
+        }
+
+        fn read_content(
+            &self,
+            content_id: &str,
+            _ctx: &OperationContext,
+        ) -> Result<Vec<u8>, StorageError> {
+            self.blobs
+                .lock()
+                .get(content_id)
+                .cloned()
+                .ok_or_else(|| StorageError::NotFound(content_id.into()))
+        }
+
+        fn delete_file(&self, path: &str) -> Result<(), StorageError> {
+            self.blobs.lock().remove(path);
+            Ok(())
+        }
+
+        fn get_content_size(&self, content_id: &str) -> Result<u64, StorageError> {
+            self.blobs
+                .lock()
+                .get(content_id)
+                .map(|d| d.len() as u64)
+                .ok_or_else(|| StorageError::NotFound(content_id.into()))
+        }
+
+        fn copy_file(&self, src: &str, dst: &str) -> Result<WriteResult, StorageError> {
+            let mut map = self.blobs.lock();
+            let data = map
+                .get(src)
+                .cloned()
+                .ok_or_else(|| StorageError::NotFound(src.into()))?;
+            let size = data.len() as u64;
+            map.insert(dst.to_string(), data);
+            Ok(WriteResult {
+                content_id: dst.to_string(),
+                version: dst.to_string(),
+                size,
+            })
+        }
+    }
+
+    /// Kernel pre-wired with an in-memory backend at `/`.
+    fn kernel_with_backend() -> Kernel {
+        let k = Kernel::new();
+        let backend: Arc<dyn ObjectStore> = Arc::new(MemBackend::default());
+        k.add_mount(
+            "/",
+            contracts::ROOT_ZONE_ID,
+            Some(backend),
+            None,
+            None,
+            false,
+        )
+        .expect("add_mount");
+        k
     }
 
     #[test]
@@ -2933,5 +3087,42 @@ mod read_batch_tests {
         let k = Kernel::new();
         let out = k._read_batch(&[], &ctx()).expect("ok");
         assert_eq!(out.len(), 0);
+    }
+
+    #[test]
+    fn read_batch_invalid_path_yields_per_item_err() {
+        let k = Kernel::new();
+        let reqs = vec![
+            crate::kernel::BatchReadRequest {
+                path: "".into(), // invalid
+                offset: 0,
+                len: None,
+            },
+            crate::kernel::BatchReadRequest {
+                path: "/definitely/does/not/exist".into(),
+                offset: 0,
+                len: None,
+            },
+        ];
+        let out = k._read_batch(&reqs, &ctx()).expect("outer ok");
+        assert_eq!(out.len(), 2);
+        assert!(matches!(out[0], Err(KernelError::InvalidPath(_))));
+        assert!(matches!(out[1], Err(KernelError::FileNotFound(_))));
+    }
+
+    #[test]
+    fn read_batch_single_file_round_trip() {
+        let k = kernel_with_backend();
+        let c = ctx();
+        k.sys_write("/r3.txt", &c, b"hi there", 0).expect("write");
+        let reqs = vec![crate::kernel::BatchReadRequest {
+            path: "/r3.txt".into(),
+            offset: 0,
+            len: None,
+        }];
+        let out = k._read_batch(&reqs, &c).expect("ok");
+        assert_eq!(out.len(), 1);
+        let r = out[0].as_ref().expect("inner ok");
+        assert_eq!(r.data.as_deref().unwrap(), b"hi there");
     }
 }

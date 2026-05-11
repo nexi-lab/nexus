@@ -71,6 +71,10 @@ impl PyPrefetchEngine {
         detector: &str,
         shutdown_timeout_ms: u64,
     ) -> PyResult<Self> {
+        // Normalize before building the tokio runtime — passing
+        // worker_threads(0) panics (round 6 finding #1).  Clamp +
+        // normalize are idempotent, so `with_detector` re-applying
+        // them is harmless.
         let cfg = EngineConfig {
             block_size,
             initial_window,
@@ -81,7 +85,9 @@ impl PyPrefetchEngine {
             sequential_tolerance,
             min_sequential_count,
             shutdown_timeout_ms,
-        };
+        }
+        .clamp()
+        .normalize();
         let detector_kind = match detector.to_ascii_lowercase().as_str() {
             "sequential" => DetectorKind::Sequential,
             "stride" => DetectorKind::Stride,

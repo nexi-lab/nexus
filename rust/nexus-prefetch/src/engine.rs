@@ -401,14 +401,14 @@ impl PrefetchEngine {
             };
             // Advance the logical cursor.  When `step_abs < block_size`
             // many successive iterations would snap to the same block;
-            // jump straight to the next block boundary after issuance
-            // so the loop terminates in O(max_blocks_per_trigger) steps
-            // even with sub-block strides (round 5 finding #1).
-            let advance_by = if did_issue {
-                step_abs.max(block_size)
-            } else {
-                step_abs
-            };
+            // we ALWAYS jump at least one block forward after either
+            // issuing a job OR landing on a dup (mark_pending returned
+            // false because the key is already in-flight/buffered).
+            // That way sub-block strides hitting an already-pending
+            // block don't burn the iter budget at the same key (round
+            // 6 finding #4).  Issuing-by-stride is still preserved
+            // when stride >= block_size.
+            let advance_by = step_abs.max(block_size);
             let next = if step > 0 {
                 logical.saturating_add(advance_by)
             } else {

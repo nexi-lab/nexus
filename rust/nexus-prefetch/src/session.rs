@@ -88,21 +88,43 @@ impl Session {
 
     /// Deposit a completed block; remove from pending.  Zero-length
     /// blocks are dropped (would otherwise hang `take_range`'s cursor
-    /// loop with no progress).  Blocks entirely behind `consumed_end`
-    /// are also dropped — the read cursor has already moved past them
-    /// so they'd be evicted on the next take_range anyway, and
-    /// retaining them between deposit and take_range needlessly
-    /// inflates the buffer (round 4 finding #1).
+    /// loop with no progress).  We do NOT reject blocks behind
+    /// `consumed_end` here: backward-stride / random-access patterns
+    /// can legitimately enqueue offsets below the high-water mark,
+    /// and forward-only inflation is bounded by `evict_consumed_blocks`
+    /// running on every read and by the per-session buffer cap
+    /// enforced below (round 6 findings #2 + #3).
     pub fn deposit(&mut self, block_offset: u64, bytes: Bytes) {
         self.pending.remove(&block_offset);
         if bytes.is_empty() {
             return;
         }
-        let block_end = block_offset + bytes.len() as u64;
-        if block_end <= self.consumed_end {
-            return;
-        }
         self.buffer.insert(block_offset, bytes);
+        // Enforce per-session buffer cap.  The cap is `max_window`
+        // bytes — the configured ceiling on read-ahead distance — so
+        // a session can never hold more data than the user opted into.
+        // Eviction prefers the block whose end is furthest behind the
+        // read cursor, which under forward-only access matches FIFO
+        // and under backward-stride is a reasonable heuristic.
+        self.enforce_buffer_cap();
+    }
+
+    fn enforce_buffer_cap(&mut self) {
+        let cap = self.max_window;
+        let mut total: u64 = self.buffer.values().map(|b| b.len() as u64).sum();
+        while total > cap {
+            // Pop the lowest-offset block.  For forward-only access
+            // this collapses to FIFO (oldest first); for negative-
+            // stride access we'd ideally evict from the high end, but
+            // detecting direction here is more state than the marginal
+            // win is worth — the next backward prefetch will repopulate.
+            let Some((k, _)) = self.buffer.iter().next().map(|(k, _)| (*k, ())) else {
+                break;
+            };
+            if let Some(v) = self.buffer.remove(&k) {
+                total = total.saturating_sub(v.len() as u64);
+            }
+        }
     }
 
     /// Advance the consumed-bytes high-water mark AND evict buffered
@@ -453,11 +475,14 @@ mod tests {
     }
 
     #[test]
-    fn deposit_drops_block_behind_cursor() {
-        // Round 4 finding #1: a slow worker depositing after the read
-        // cursor has already moved past must NOT insert the block —
-        // it'd be evicted on the next take_range anyway and just
-        // inflates the buffer in between.
+    fn note_read_drops_block_behind_cursor() {
+        // Round 4 finding #1 / round 6 finding #3: the eviction model
+        // is cursor-driven, not deposit-driven.  A slow worker can
+        // deposit a block that's already behind `consumed_end` (e.g.
+        // the read cursor advanced via a miss path while the prefetch
+        // was in flight) — the block enters the buffer, but the next
+        // forward `note_read` evicts it.  This preserves the backward-
+        // stride deposit path while still bounding forward-only growth.
         let cfg = EngineConfig {
             block_size: 8,
             ..Default::default()
@@ -466,9 +491,14 @@ mod tests {
         s.mark_pending(0);
         s.note_read(0, 16); // consumed_end = 16
         s.deposit(0, Bytes::from(vec![1u8; 8])); // block 0..8, end=8 <= 16
+                                                 // Deposit succeeded (backward-friendly), so the block IS in
+                                                 // the buffer.
+        assert!(s.buffer.contains_key(&0));
+        // But a forward `note_read` evicts it before the next read.
+        s.note_read(16, 4);
         assert!(
             !s.buffer.contains_key(&0),
-            "obsolete block deposited despite cursor past it"
+            "stale forward block not evicted by next note_read"
         );
         assert!(!s.pending.contains(&0));
     }
@@ -506,6 +536,60 @@ mod tests {
             !s.buffer.contains_key(&0),
             "stale block kept across miss-path note_read (round 5 regression)"
         );
+    }
+
+    #[test]
+    fn deposit_enforces_per_session_buffer_cap() {
+        // Round 6 finding #2: total buffered bytes per session must
+        // not exceed max_window.  Otherwise long sequential streams
+        // through many open fhs can blow process memory.
+        let cfg = EngineConfig {
+            block_size: 16,
+            initial_window: 16,
+            max_window: 32, // only 2 blocks worth
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from(vec![1u8; 16]));
+        s.deposit(16, Bytes::from(vec![2u8; 16]));
+        let total: usize = s.buffer.values().map(|b| b.len()).sum();
+        assert_eq!(total, 32);
+        // Adding a third block should evict the oldest (block 0).
+        s.deposit(32, Bytes::from(vec![3u8; 16]));
+        let total: usize = s.buffer.values().map(|b| b.len()).sum();
+        assert!(total <= 32, "buffer exceeded cap: total={total}");
+        assert!(
+            !s.buffer.contains_key(&0),
+            "oldest block not evicted to honor cap"
+        );
+    }
+
+    #[test]
+    fn deposit_accepts_blocks_behind_consumed_end_for_backward_stride() {
+        // Round 6 finding #3: backward-stride detector emits offsets
+        // below the cursor; deposits there must NOT be rejected as
+        // obsolete.  The cap + evict_consumed_blocks combo handles
+        // forward-only inflation without this guard.
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        // Advance cursor past the would-be deposit offset.
+        s.note_read(0, 32);
+        assert_eq!(s.consumed_end, 32);
+        // Backward-stride deposit at offset 0..16 — below cursor.
+        s.deposit(0, Bytes::from(vec![7u8; 16]));
+        // Cursor's beyond it, so evict_consumed_blocks (called from
+        // note_read earlier) won't see it — but the deposit itself
+        // should NOT have rejected; the block IS in the buffer until
+        // the next note_read evicts.  Verify it's present.
+        //
+        // Note: a follow-up `note_read` call would evict via the
+        // forward-only `consumed_end` model; for backward-access
+        // hot paths the engine restarts the session (Random -> reset)
+        // which resets consumed_end to 0.
+        assert!(s.buffer.contains_key(&0));
     }
 
     #[test]

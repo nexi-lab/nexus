@@ -342,12 +342,19 @@ impl NexusFs {
         }
     }
 
-    /// Check if a path is a directory using attr_cache first, falling back to
-    /// stat() RPC. Replaces the old is_directory() which made a full parent
-    /// list() RPC every call — 50-200ms waste (Issue 13A).
-    fn check_is_directory(&self, path: &str) -> Option<bool> {
+    /// Check if a path is a directory using attr_cache first, falling
+    /// back to stat() RPC. Replaces the old is_directory() which made a
+    /// full parent list() RPC every call — 50-200ms waste (Issue 13A).
+    ///
+    /// #4056 R5: returns the typed NexusClientError on RPC failure so
+    /// callers can map it to the correct errno (EACCES/EPERM/etc.)
+    /// instead of flattening every error to ENOENT.
+    fn check_is_directory(
+        &self,
+        path: &str,
+    ) -> Result<bool, crate::error::NexusClientError> {
         if path == "/" {
-            return Some(true);
+            return Ok(true);
         }
 
         // Fast path: check attr_cache for existing info
@@ -357,17 +364,14 @@ impl NexusFs {
                 let mut cache = self.attr_cache.lock().unwrap();
                 if let Some((attr, cached_at)) = cache.get(&inode) {
                     if cached_at.elapsed().unwrap_or(Duration::MAX) < ATTR_TTL {
-                        return Some(attr.kind == FileType::Directory);
+                        return Ok(attr.kind == FileType::Directory);
                     }
                 }
             }
         }
 
-        // Slow path: single stat() RPC (vs old approach of listing parent dir)
-        match self.client.stat(path) {
-            Ok(meta) => Some(meta.is_directory),
-            Err(_) => None, // Path doesn't exist or error
-        }
+        // Slow path: single stat() RPC.
+        self.client.stat(path).map(|meta| meta.is_directory)
     }
 
     /// Get attributes for a path, using cache.
@@ -804,13 +808,37 @@ impl Filesystem for NexusFs {
         // For simplicity, we only support full file writes (offset 0)
         // For partial writes, we'd need to read-modify-write
         if offset != 0 {
-            let gen = self.client.stat(&path).map(|m| m.gen).unwrap_or(0);
-            // Read existing content first (use cache if available)
+            // #4056 R5: surface stat errors as their typed errno
+            // (EACCES/EPERM/EAGAIN/ENOENT/…) instead of silently
+            // substituting gen=0, which would let auth failures masquerade
+            // as a regular read-modify-write that then hits the same
+            // wall on the read call.
+            let gen = match self.client.stat(&path) {
+                Ok(meta) => meta.gen,
+                Err(e) => {
+                    if !e.is_not_found() && !e.is_permission_denied() {
+                        error!("partial write: stat failed for {}: {}", path, e);
+                    }
+                    reply.error(errno_for(&e));
+                    return;
+                }
+            };
+            // Read existing content first (use cache if available).
+            // read_cached returns anyhow::Error; recover the typed
+            // NexusClientError when possible so the FUSE caller still
+            // sees the right errno.
             let existing = match self.read_cached(&path, gen) {
                 Ok(result) => result.content,
                 Err(e) => {
-                    error!("partial write: read failed for {}: {}", path, e);
-                    reply.error(Errno::EIO);
+                    let typed = e.downcast_ref::<crate::error::NexusClientError>();
+                    let errno = typed.map(errno_for).unwrap_or(Errno::EIO);
+                    let is_noisy = typed
+                        .map(|ne| !ne.is_not_found() && !ne.is_permission_denied())
+                        .unwrap_or(true);
+                    if is_noisy {
+                        error!("partial write: read failed for {}: {}", path, e);
+                    }
+                    reply.error(errno);
                     return;
                 }
             };
@@ -1099,7 +1127,19 @@ impl Filesystem for NexusFs {
                 }
             } else {
                 // Truncate to specific size - read and rewrite (use cache if available)
-                let gen = self.client.stat(&path).map(|m| m.gen).unwrap_or(0);
+                // #4056 R5: same change as the partial-write path —
+                // propagate typed stat errors instead of substituting
+                // gen=0.
+                let gen = match self.client.stat(&path) {
+                    Ok(meta) => meta.gen,
+                    Err(e) => {
+                        if !e.is_not_found() && !e.is_permission_denied() {
+                            error!("truncate stat error for {}: {}", path, e);
+                        }
+                        reply.error(errno_for(&e));
+                        return;
+                    }
+                };
                 match self.read_cached(&path, gen) {
                     Ok(result) => {
                         let mut data = result.content;
@@ -1122,8 +1162,19 @@ impl Filesystem for NexusFs {
                         }
                     }
                     Err(e) => {
-                        error!("truncate read error for {}: {}", path, e);
-                        reply.error(Errno::EIO);
+                        // read_cached returns anyhow::Error; recover the
+                        // typed NexusClientError when present so the
+                        // FUSE caller sees EACCES/EPERM/EAGAIN/ENOENT
+                        // instead of a flat EIO (#4056 R5).
+                        let typed = e.downcast_ref::<crate::error::NexusClientError>();
+                        let errno = typed.map(errno_for).unwrap_or(Errno::EIO);
+                        let is_noisy = typed
+                            .map(|ne| !ne.is_not_found() && !ne.is_permission_denied())
+                            .unwrap_or(true);
+                        if is_noisy {
+                            error!("truncate read error for {}: {}", path, e);
+                        }
+                        reply.error(errno);
                         return;
                     }
                 }
@@ -1203,19 +1254,17 @@ impl Filesystem for NexusFs {
 
         let path = resolve_path!(self, ino.0, reply);
 
-        // Issue 13A: Use stat() via check_is_directory() instead of the old
-        // is_directory() which listed the entire parent directory.
         match self.check_is_directory(&path) {
-            Some(true) => {
-                reply.error(Errno::EISDIR);
-            }
-            Some(false) => {
+            Ok(true) => reply.error(Errno::EISDIR),
+            Ok(false) => {
                 let fh = self.allocate_file_handle();
                 reply.opened(FileHandle(fh), FopenFlags::empty());
             }
-            None => {
-                // Path doesn't exist
-                reply.error(Errno::ENOENT);
+            Err(e) => {
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("open stat error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1231,17 +1280,14 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        // Issue 13A: Use stat() via check_is_directory() instead of the old
-        // is_directory() which listed the entire parent directory.
         match self.check_is_directory(&path) {
-            Some(true) => {
-                reply.opened(FileHandle(0), FopenFlags::empty());
-            }
-            Some(false) => {
-                reply.error(Errno::ENOTDIR);
-            }
-            None => {
-                reply.error(Errno::ENOENT);
+            Ok(true) => reply.opened(FileHandle(0), FopenFlags::empty()),
+            Ok(false) => reply.error(Errno::ENOTDIR),
+            Err(e) => {
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("opendir stat error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1289,10 +1335,17 @@ impl Filesystem for NexusFs {
 
         let path = resolve_path!(self, ino.0, reply);
 
-        if self.client.exists(&path) {
-            reply.ok();
-        } else {
-            reply.error(Errno::ENOENT);
+        // #4056 R5: surface auth failures as EACCES/EPERM instead of
+        // collapsing them to ENOENT through best-effort `exists`.
+        match self.client.exists_result(&path) {
+            Ok(true) => reply.ok(),
+            Ok(false) => reply.error(Errno::ENOENT),
+            Err(e) => {
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("access exists error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
+            }
         }
     }
 }

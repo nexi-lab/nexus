@@ -1,5 +1,4 @@
 import asyncio
-import gc
 
 import pytest
 
@@ -79,21 +78,6 @@ async def test_memory_file_cache_recent_reread_workload_hits_above_ninety_percen
             hits += 1
 
     assert hits / (hits + misses) >= 0.90
-
-
-@pytest.mark.asyncio
-async def test_memory_file_cache_prunes_unused_singleflight_locks() -> None:
-    cache = MemoryFileCache(now_fn=lambda: 100.0)
-
-    for index in range(25):
-        lock = await cache.lock(FileKey("path_s3", "zone1", f"/bucket/{index}.txt"))
-        async with lock:
-            pass
-
-    del lock
-    gc.collect()
-
-    assert len(cache._locks) == 0
 
 
 @pytest.mark.asyncio

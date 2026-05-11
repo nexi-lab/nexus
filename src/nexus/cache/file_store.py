@@ -45,7 +45,7 @@ class MemoryFileCache:
         # Lock lifecycle: bounded dict (not WeakValueDictionary) to prevent
         # singleflight bypass when GC drops a Lock between two waiters' awaits.
         self._max_lock_entries = max_lock_entries
-        self._locks: OrderedDict[FileKey, asyncio.Lock] = OrderedDict()
+        self._locks: OrderedDict[FileKey, _SingleflightLock] = OrderedDict()
         self._lock_guard = RLock()
 
     @property
@@ -92,6 +92,9 @@ class MemoryFileCache:
                 size,
                 self._max_bytes,
             )
+            # Don't leave a stale prior entry behind after a rejected replacement.
+            with self._entry_lock:
+                self._discard_locked(key)
             return
         expires_at = None if ttl_seconds is None else self._now_fn() + max(ttl_seconds, 0)
         with self._entry_lock:
@@ -133,16 +136,16 @@ class MemoryFileCache:
             for key in keys:
                 self._discard_locked(key)
 
-    async def lock(self, key: FileKey) -> asyncio.Lock:
+    async def lock(self, key: FileKey) -> _SingleflightLock:
         with self._lock_guard:
-            lock = self._locks.get(key)
+            lock: _SingleflightLock | None = self._locks.get(key)
             if lock is None:
-                lock = asyncio.Lock()
+                lock = _SingleflightLock()
                 self._locks[key] = lock
                 self._evict_unused_locks_locked()
             else:
                 self._locks.move_to_end(key)
-            return lock
+        return lock
 
     def _discard_locked(self, key: FileKey) -> None:
         entry = self._entries.pop(key, None)
@@ -162,6 +165,67 @@ class MemoryFileCache:
         for candidate in list(self._locks):
             if evicted >= target:
                 return
-            if not self._locks[candidate].locked():
-                del self._locks[candidate]
-                evicted += 1
+            # Skip in-use locks: any task that holds a reference
+            # (holders > 0) or is contending on the underlying lock
+            # (locked() True or waiters pending). Evicting any of those
+            # would break singleflight by letting a fresh lock be created
+            # for the same key while the old one still has live users.
+            if self._locks[candidate]._is_in_use():
+                continue
+            del self._locks[candidate]
+            evicted += 1
+
+
+class _SingleflightLock:
+    """asyncio.Lock-compatible context manager with usage tracking.
+
+    `holders` counts callers that have received this lock from
+    `MemoryFileCache.lock(key)` but have not yet exited their critical section.
+    `_is_in_use()` is true while any holder exists or while the inner lock has
+    waiters/is held — preventing the eviction-with-queued-waiters race that an
+    `asyncio.Lock.locked()`-only check misses.
+    """
+
+    __slots__ = ("_lock", "holders")
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self.holders = 0
+
+    async def __aenter__(self) -> "_SingleflightLock":
+        self.holders += 1
+        try:
+            await self._lock.acquire()
+        except BaseException:
+            self.holders = max(0, self.holders - 1)
+            raise
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+        try:
+            self._lock.release()
+        finally:
+            self.holders = max(0, self.holders - 1)
+
+    async def acquire(self) -> bool:
+        self.holders += 1
+        try:
+            return await self._lock.acquire()
+        except BaseException:
+            self.holders = max(0, self.holders - 1)
+            raise
+
+    def release(self) -> None:
+        try:
+            self._lock.release()
+        finally:
+            self.holders = max(0, self.holders - 1)
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    def _is_in_use(self) -> bool:
+        if self.holders > 0 or self._lock.locked():
+            return True
+        waiters = getattr(self._lock, "_waiters", None)
+        return bool(waiters)

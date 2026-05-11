@@ -387,9 +387,10 @@ class FUSELeaseCoordinator:
         path: str,
         attrs: dict[str, Any],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None:
         """Cache file attributes."""
-        self._cache.cache_attr(path, attrs, scope_id=scope_id)
+        self._cache.cache_attr(path, attrs, scope_id=scope_id, backend_id=backend_id)
 
     def get_content(self, path: str, expected_fingerprint: str | None = None) -> bytes | None:
         """Get cached file content (direct, no lease check)."""
@@ -437,9 +438,10 @@ class FUSELeaseCoordinator:
         path: str,
         entries: list[str],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None:
         """Cache directory listing entries."""
-        self._cache.cache_listing(path, entries, scope_id=scope_id)
+        self._cache.cache_listing(path, entries, scope_id=scope_id, backend_id=backend_id)
 
     def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None:
         """Invalidate the immediate parent directory listing for a path."""

@@ -118,6 +118,7 @@ class FUSECacheCoordinator(Protocol):
         path: str,
         attrs: dict[str, Any],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None: ...
 
     def get_content(self, path: str, expected_fingerprint: str | None = None) -> bytes | None: ...
@@ -144,6 +145,7 @@ class FUSECacheCoordinator(Protocol):
         path: str,
         entries: list[str],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None: ...
 
     def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None: ...
@@ -306,6 +308,25 @@ def index_cache_scope_id(ctx: FUSESharedContext) -> str:
         return "default"
     subj_type, subj_id = ctx.context.get_subject()
     return f"{subj_type}:{subj_id}"
+
+
+def backend_id_for_path(ctx: FUSESharedContext, path: str) -> str | None:
+    """Resolve the backend identifier for a path, or None if unknown.
+
+    Best-effort lookup via the kernel's mounted-backend registry: walks the
+    longest matching mount prefix and reads ``backend_name`` off the bound
+    instance. Returns None when nothing matches so callers fall back to
+    default TTLs.
+    """
+    mounted = getattr(ctx.nexus_fs, "_mounted_backend_instances", None)
+    if not mounted:
+        return None
+    candidates = [mp for mp in mounted if path == mp or path.startswith(mp.rstrip("/") + "/")]
+    if not candidates:
+        return None
+    longest = max(candidates, key=len)
+    backend = mounted.get(longest)
+    return getattr(backend, "backend_name", None)
 
 
 def invalidate_dir_cache(ctx: FUSESharedContext, path: str) -> None:

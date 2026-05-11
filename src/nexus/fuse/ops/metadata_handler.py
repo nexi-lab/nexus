@@ -10,6 +10,7 @@ from fuse import FuseOSError
 from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
+    backend_id_for_path,
     build_dir_attrs,
     cache_file_attrs_from_list,
     check_namespace_visible,
@@ -78,7 +79,12 @@ class MetadataHandler:
 
         # Only cache if we hold a lease (Decision 11A)
         if has_lease:
-            coordinator.cache_attr(path, attrs, scope_id=scope_id)
+            coordinator.cache_attr(
+                path,
+                attrs,
+                scope_id=scope_id,
+                backend_id=backend_id_for_path(self._ctx, path),
+            )
 
         elapsed = time.time() - start_time
         if elapsed > 0.01:
@@ -271,7 +277,9 @@ class MetadataHandler:
                 f"[FUSE-PERF] readdir DONE via RUST: path={path}, "
                 f"{len(entries)} entries, {elapsed:.3f}s"
             )
-            ctx.cache.cache_listing(path, entries, scope_id=scope_id)
+            ctx.cache.cache_listing(
+                path, entries, scope_id=scope_id, backend_id=backend_id_for_path(ctx, path)
+            )
             return entries
 
         # Python path: list from filesystem
@@ -351,6 +359,8 @@ class MetadataHandler:
             f"{total_elapsed:.3f}s total"
         )
 
-        ctx.cache.cache_listing(path, entries, scope_id=scope_id)
+        ctx.cache.cache_listing(
+            path, entries, scope_id=scope_id, backend_id=backend_id_for_path(ctx, path)
+        )
 
         return entries

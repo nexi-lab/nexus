@@ -26,7 +26,7 @@ pub struct PrefetchEngine {
     tx: mpsc::Sender<PrefetchJob>,
     metrics: Arc<EngineMetrics>,
     workers: Mutex<Vec<JoinHandle<()>>>,
-    runtime: Option<tokio::runtime::Runtime>,
+    _runtime: Option<tokio::runtime::Runtime>,
     detector_factory: Box<dyn Fn() -> Box<dyn Detector> + Send + Sync>,
 }
 
@@ -77,7 +77,7 @@ impl PrefetchEngine {
             tx,
             metrics,
             workers: Mutex::new(workers),
-            runtime,
+            _runtime: runtime,
             detector_factory,
         }
     }

@@ -924,6 +924,16 @@ impl Kernel {
             .store(n.max(1), Ordering::Relaxed);
     }
 
+    /// Evict every entry from the in-process file cache.
+    ///
+    /// Useful in benchmarks and integration tests that need cache-cold
+    /// reads without discarding the `Kernel` instance. Calling this in
+    /// production is safe but degrades hot-path read throughput until the
+    /// cache warms up again.
+    pub fn clear_file_cache(&self) {
+        self.file_cache.clear();
+    }
+
     // ── Node identity (federation content origin) ─────────────────────
 
     /// Set this node's advertise address for origin-aware metadata.

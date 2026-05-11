@@ -103,7 +103,9 @@ impl Drop for VfsGrpcHandle {
 struct VfsServiceImpl {
     kernel: Arc<Kernel>,
     api_key: Option<Arc<str>>,
-    bridge: Arc<PyBridge>,
+    /// `None` only in `#[cfg(test)]` scenarios where the API-key fast-path
+    /// is always taken and the Python bridge is never reached.
+    bridge: Option<Arc<PyBridge>>,
     server_started_at: Instant,
     server_version: Arc<str>,
     /// Best-effort uptime in seconds reported by `Ping`.
@@ -138,7 +140,10 @@ impl VfsServiceImpl {
         }
 
         // OIDC path: delegate to Python authenticate callback.
-        let bridge = self.bridge.clone();
+        let bridge = match self.bridge.clone() {
+            Some(b) => b,
+            None => return Err(Status::unauthenticated("no auth bridge configured")),
+        };
         let token_owned = token.to_string();
         let auth_dict_serialized = tokio::task::spawn_blocking(move || {
             Python::attach(|py| -> PyResult<Option<AuthResult>> {
@@ -179,6 +184,22 @@ impl VfsServiceImpl {
             }
             // KernelError doesn't impl Display — use Debug formatter.
             other => (RpcErrorCode::InternalError, format!("{:?}", other)),
+        }
+    }
+
+    /// Test-only constructor: bypasses the `PyBridge` requirement.
+    /// The instance uses the API-key fast-path exclusively — Python is
+    /// never invoked. The token `"test-key"` is hard-coded so test
+    /// callers just pass `auth_token: "test-key".into()`.
+    #[cfg(test)]
+    pub(crate) fn for_test(kernel: Arc<Kernel>) -> Self {
+        Self {
+            kernel,
+            api_key: Some(Arc::from("test-key")),
+            bridge: None,
+            server_started_at: Instant::now(),
+            server_version: Arc::from("test"),
+            started_secs: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -316,6 +337,16 @@ impl NexusVfsService for VfsServiceImpl {
         }))
     }
 
+    async fn batch_read(
+        &self,
+        _req: Request<kernel::kernel::vfs_proto::BatchReadRequest>,
+    ) -> Result<
+        Response<kernel::kernel::vfs_proto::BatchReadResponse>,
+        Status,
+    > {
+        Err(Status::unimplemented("batch_read: stub (#4058 Task 12)"))
+    }
+
     async fn call(&self, req: Request<CallRequest>) -> Result<Response<CallResponse>, Status> {
         let req = req.into_inner();
 
@@ -334,7 +365,18 @@ impl NexusVfsService for VfsServiceImpl {
             };
 
         let kernel = Arc::clone(&self.kernel);
-        let bridge = self.bridge.clone();
+        let bridge = match self.bridge.clone() {
+            Some(b) => b,
+            None => {
+                return Ok(Response::new(CallResponse {
+                    payload: encode_rpc_error_bytes(
+                        RpcErrorCode::InternalError,
+                        "Call RPC requires Python bridge (not configured)",
+                    ),
+                    is_error: true,
+                }))
+            }
+        };
         let api_key = self.api_key.clone();
         let payload = req.payload;
         let method = req.method;
@@ -453,7 +495,7 @@ pub fn spawn(
     let svc = VfsServiceImpl {
         kernel,
         api_key: cfg.api_key.clone(),
-        bridge: Arc::new(bridge),
+        bridge: Some(Arc::new(bridge)),
         server_started_at: Instant::now(),
         server_version: Arc::from(cfg.server_version.clone()),
         started_secs: Arc::new(AtomicU64::new(0)),

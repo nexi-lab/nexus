@@ -168,7 +168,7 @@ jobs:
         shell: bash
 
       - name: Run unit tests
-        timeout-minutes: 45
+        timeout-minutes: 30
         run: |
           start=$(date +%s)
           uv run python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
@@ -270,7 +270,7 @@ jobs:
         # 30 min budget = pre-build (~3 min warm cache, ~10 min cold) +
         # ~20 min for the test bodies. Per-test --timeout=120 still catches
         # real hangs fast.
-        timeout-minutes: 45
+        timeout-minutes: 30
 
   e2e-postgres:
     name: E2E Tests (PostgreSQL)

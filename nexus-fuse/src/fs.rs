@@ -238,6 +238,19 @@ macro_rules! resolve_path {
     };
 }
 
+/// Map a NexusClientError to a fuser Errno via the typed `to_errno()`
+/// helper, so HTTP 401/403, RPC -32003/-32004, -32001, -32002,
+/// -32005, -32006 each surface as their proper errno
+/// (EACCES/EPERM/EEXIST/EINVAL/EAGAIN) instead of getting flattened
+/// to EIO at the FUSE boundary (#4056 R4).
+///
+/// Callers should still log the error when it isn't NotFound or a
+/// permission error — those are routine, everything else means the
+/// backend is misbehaving and the operator wants to see it.
+fn errno_for(e: &crate::error::NexusClientError) -> Errno {
+    Errno::from_i32(e.to_errno())
+}
+
 /// Nexus FUSE filesystem.
 pub struct NexusFs {
     client: Arc<NexusClient>,
@@ -329,12 +342,19 @@ impl NexusFs {
         }
     }
 
-    /// Check if a path is a directory using attr_cache first, falling back to
-    /// stat() RPC. Replaces the old is_directory() which made a full parent
-    /// list() RPC every call — 50-200ms waste (Issue 13A).
-    fn check_is_directory(&self, path: &str) -> Option<bool> {
+    /// Check if a path is a directory using attr_cache first, falling
+    /// back to stat() RPC. Replaces the old is_directory() which made a
+    /// full parent list() RPC every call — 50-200ms waste (Issue 13A).
+    ///
+    /// #4056 R5: returns the typed NexusClientError on RPC failure so
+    /// callers can map it to the correct errno (EACCES/EPERM/etc.)
+    /// instead of flattening every error to ENOENT.
+    fn check_is_directory(
+        &self,
+        path: &str,
+    ) -> Result<bool, crate::error::NexusClientError> {
         if path == "/" {
-            return Some(true);
+            return Ok(true);
         }
 
         // Fast path: check attr_cache for existing info
@@ -344,17 +364,14 @@ impl NexusFs {
                 let mut cache = self.attr_cache.lock().unwrap();
                 if let Some((attr, cached_at)) = cache.get(&inode) {
                     if cached_at.elapsed().unwrap_or(Duration::MAX) < ATTR_TTL {
-                        return Some(attr.kind == FileType::Directory);
+                        return Ok(attr.kind == FileType::Directory);
                     }
                 }
             }
         }
 
-        // Slow path: single stat() RPC (vs old approach of listing parent dir)
-        match self.client.stat(path) {
-            Ok(meta) => Some(meta.is_directory),
-            Err(_) => None, // Path doesn't exist or error
-        }
+        // Slow path: single stat() RPC.
+        self.client.stat(path).map(|meta| meta.is_directory)
     }
 
     /// Get attributes for a path, using cache.
@@ -397,12 +414,10 @@ impl NexusFs {
                 Ok(attr)
             }
             Err(e) => {
-                if e.is_not_found() {
-                    Err(Errno::ENOENT)
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("get_attr error for {}: {}", path, e);
-                    Err(Errno::EIO)
                 }
+                Err(errno_for(&e))
             }
         }
     }
@@ -438,12 +453,10 @@ impl NexusFs {
 
     fn stat_gen(&self, path: &str) -> Result<u64, Errno> {
         self.client.stat(path).map(|meta| meta.gen).map_err(|e| {
-            if e.is_not_found() {
-                Errno::ENOENT
-            } else {
+            if !e.is_not_found() && !e.is_permission_denied() {
                 error!("stat error for {}: {}", path, e);
-                Errno::EIO
             }
+            errno_for(&e)
         })
     }
 
@@ -529,6 +542,23 @@ impl NexusFs {
     fn read_cached(&self, path: &str, gen: u64) -> anyhow::Result<CachedReadResult> {
         read_with_cache(&self.client, self.file_cache.as_deref(), path, gen).map_err(Into::into)
     }
+
+    /// Read the authoritative current bytes for an RMW source.
+    ///
+    /// Used by partial-write (offset != 0) and non-zero truncate.
+    /// Deliberately bypasses `read_cached` / the FileCache so a stale
+    /// cache entry can't end up as the source for a full-file rewrite
+    /// (#4056 R6). The lost-update window between this read and the
+    /// follow-up `client.write` is still open — the server's `write`
+    /// RPC doesn't accept an `if_match` / generation guard yet; a
+    /// follow-up that adds conditional writes will close it.
+    ///
+    /// Extracted as a method so a regression test can exercise the
+    /// "no cache involvement" property: even with a primed FileCache,
+    /// this call must hit the backend `/api/nfs/read` endpoint.
+    fn rmw_read(&self, path: &str) -> Result<Vec<u8>, crate::error::NexusClientError> {
+        self.client.read(path)
+    }
 }
 
 impl Filesystem for NexusFs {
@@ -597,12 +627,10 @@ impl Filesystem for NexusFs {
                         entries
                     }
                     Err(e) => {
-                        if e.is_not_found() {
-                            reply.error(Errno::ENOENT);
-                        } else {
+                        if !e.is_not_found() && !e.is_permission_denied() {
                             error!("readdir error for {}: {}", path, e);
-                            reply.error(Errno::EIO);
                         }
+                        reply.error(errno_for(&e));
                         return;
                     }
                 }
@@ -706,11 +734,10 @@ impl Filesystem for NexusFs {
                 Ok(meta) => meta.gen,
                 Err(e) => {
                     metrics::record_read("error", 0, started_at.elapsed());
-                    if e.is_not_found() {
-                        reply.error(Errno::ENOENT);
-                    } else {
-                        reply.error(Errno::EIO);
+                    if !e.is_not_found() && !e.is_permission_denied() {
+                        error!("read stat error for {}: {}", path, e);
                     }
+                    reply.error(errno_for(&e));
                     return;
                 }
             }
@@ -735,14 +762,21 @@ impl Filesystem for NexusFs {
             Ok(result) => result,
             Err(e) => {
                 metrics::record_read("error", 0, started_at.elapsed());
-                if e.downcast_ref::<crate::error::NexusClientError>()
-                    .is_some_and(|ne| ne.is_not_found())
-                {
-                    reply.error(Errno::ENOENT);
-                } else {
+                // Recover the typed NexusClientError if present so the
+                // full to_errno() table applies (auth, conflict, etc.);
+                // otherwise default to EIO. (#4056 R4)
+                let errno = e
+                    .downcast_ref::<crate::error::NexusClientError>()
+                    .map(errno_for)
+                    .unwrap_or(Errno::EIO);
+                let is_noisy = e
+                    .downcast_ref::<crate::error::NexusClientError>()
+                    .map(|ne| !ne.is_not_found() && !ne.is_permission_denied())
+                    .unwrap_or(true);
+                if is_noisy {
                     error!("read error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno);
                 return;
             }
         };
@@ -788,16 +822,36 @@ impl Filesystem for NexusFs {
 
         let path = resolve_path!(self, ino.0, reply);
 
-        // For simplicity, we only support full file writes (offset 0)
-        // For partial writes, we'd need to read-modify-write
+        // For simplicity, we only support full file writes (offset 0).
+        // Partial writes are implemented as read-modify-write.
+        //
+        // #4056 R8 — Pre-existing lost-update window, not addressed here.
+        //   `git blame` traces this RMW pattern to the initial commit
+        //   (fd152335e, 2025-12-19); the server's `write` RPC has never
+        //   accepted an `if_match` / generation guard. Closing the
+        //   window requires a server-protocol change (conditional
+        //   writes that map server-side conflicts to RPC -32006 —
+        //   which we already map to `Conflict`/`EAGAIN` on this side).
+        //   That is a separate, server-tier scope item. Adding it
+        //   under the banner of "migrate to async hyper" would be
+        //   well outside #4056's stated charter.
+        //
+        // #4056 R6 — In-scope mitigation that *did* land:
+        //   The source read used to go through `read_cached`, which
+        //   on a transient revalidation failure could serve stale
+        //   FileCache bytes that then got blind-written back. The
+        //   `rmw_read` helper goes straight to `client.read` so the
+        //   source is always the backend's current view (no cache
+        //   staleness in the read). `tests::rmw_read_bypasses_file_cache_even_when_warm`
+        //   locks that property in.
         if offset != 0 {
-            let gen = self.client.stat(&path).map(|m| m.gen).unwrap_or(0);
-            // Read existing content first (use cache if available)
-            let existing = match self.read_cached(&path, gen) {
-                Ok(result) => result.content,
+            let existing = match self.rmw_read(&path) {
+                Ok(bytes) => bytes,
                 Err(e) => {
-                    error!("partial write: read failed for {}: {}", path, e);
-                    reply.error(Errno::EIO);
+                    if !e.is_not_found() && !e.is_permission_denied() {
+                        error!("partial write: read failed for {}: {}", path, e);
+                    }
+                    reply.error(errno_for(&e));
                     return;
                 }
             };
@@ -826,8 +880,10 @@ impl Filesystem for NexusFs {
                     reply.written(data.len() as u32);
                 }
                 Err(e) => {
-                    error!("write error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
+                    if !e.is_not_found() && !e.is_permission_denied() {
+                        error!("write error for {}: {}", path, e);
+                    }
+                    reply.error(errno_for(&e));
                 }
             }
         } else {
@@ -841,8 +897,10 @@ impl Filesystem for NexusFs {
                     reply.written(data.len() as u32);
                 }
                 Err(e) => {
-                    error!("write error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
+                    if !e.is_not_found() && !e.is_permission_denied() {
+                        error!("write error for {}: {}", path, e);
+                    }
+                    reply.error(errno_for(&e));
                 }
             }
         }
@@ -882,8 +940,10 @@ impl Filesystem for NexusFs {
                 );
             }
             Err(e) => {
-                error!("create error for {}: {}", path, e);
-                reply.error(Errno::EIO);
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("create error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -913,8 +973,10 @@ impl Filesystem for NexusFs {
                 reply.entry(&ATTR_TTL, &attr, Generation(0));
             }
             Err(e) => {
-                error!("mkdir error for {}: {}", path, e);
-                reply.error(Errno::EIO);
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("mkdir error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -933,12 +995,10 @@ impl Filesystem for NexusFs {
                 reply.ok();
             }
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("unlink error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -958,12 +1018,10 @@ impl Filesystem for NexusFs {
                 return;
             }
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("rmdir list error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
                 return;
             }
             _ => {}
@@ -975,8 +1033,10 @@ impl Filesystem for NexusFs {
                 reply.ok();
             }
             Err(e) => {
-                error!("rmdir error for {}: {}", path, e);
-                reply.error(Errno::EIO);
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("rmdir error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1028,12 +1088,10 @@ impl Filesystem for NexusFs {
                 reply.ok();
             }
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("rename error: {} -> {}: {}", old_path, new_path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1073,17 +1131,30 @@ impl Filesystem for NexusFs {
                         self.invalidate_path(&path);
                     }
                     Err(e) => {
-                        error!("truncate error for {}: {}", path, e);
-                        reply.error(Errno::EIO);
+                        if !e.is_not_found() && !e.is_permission_denied() {
+                            error!("truncate error for {}: {}", path, e);
+                        }
+                        reply.error(errno_for(&e));
                         return;
                     }
                 }
             } else {
-                // Truncate to specific size - read and rewrite (use cache if available)
-                let gen = self.client.stat(&path).map(|m| m.gen).unwrap_or(0);
-                match self.read_cached(&path, gen) {
-                    Ok(result) => {
-                        let mut data = result.content;
+                // Truncate to specific size - read and rewrite.
+                //
+                // #4056 R6 mitigation: bypass the read-through cache
+                // for the source read (rmw_read goes straight to the
+                // backend) so a stale-cache revalidation cannot feed
+                // a blind full-file rewrite.
+                //
+                // #4056 R8: same pre-existing lost-update window as
+                // the partial-write path above — between rmw_read and
+                // the follow-up `client.write` a concurrent writer can
+                // commit and be silently overwritten. Closing it
+                // requires a conditional-write RPC on the server.
+                // Out of scope for this PR (transport migration).
+                match self.rmw_read(&path) {
+                    Ok(bytes) => {
+                        let mut data = bytes;
                         data.resize(new_size as usize, 0);
                         match self.client.write(&path, &data) {
                             Ok(_) => {
@@ -1094,15 +1165,21 @@ impl Filesystem for NexusFs {
                                 self.invalidate_path(&path);
                             }
                             Err(e) => {
-                                error!("truncate write error for {}: {}", path, e);
-                                reply.error(Errno::EIO);
+                                if !e.is_not_found() && !e.is_permission_denied() {
+                                    error!("truncate write error for {}: {}", path, e);
+                                }
+                                reply.error(errno_for(&e));
                                 return;
                             }
                         }
                     }
                     Err(e) => {
-                        error!("truncate read error for {}: {}", path, e);
-                        reply.error(Errno::EIO);
+                        // Direct backend read (no cache) — typed error
+                        // already in scope, just map it. (#4056 R6)
+                        if !e.is_not_found() && !e.is_permission_denied() {
+                            error!("truncate read error for {}: {}", path, e);
+                        }
+                        reply.error(errno_for(&e));
                         return;
                     }
                 }
@@ -1144,12 +1221,10 @@ impl Filesystem for NexusFs {
                 Self::reply_xattr(reply, &names, size);
             }
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("listxattr stat error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1171,12 +1246,10 @@ impl Filesystem for NexusFs {
             Ok(_) if name == OsStr::new(XATTR_GEN) => reply.error(Errno::EROFS),
             Ok(_) => reply.error(Errno::NO_XATTR),
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("setxattr stat error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1186,19 +1259,17 @@ impl Filesystem for NexusFs {
 
         let path = resolve_path!(self, ino.0, reply);
 
-        // Issue 13A: Use stat() via check_is_directory() instead of the old
-        // is_directory() which listed the entire parent directory.
         match self.check_is_directory(&path) {
-            Some(true) => {
-                reply.error(Errno::EISDIR);
-            }
-            Some(false) => {
+            Ok(true) => reply.error(Errno::EISDIR),
+            Ok(false) => {
                 let fh = self.allocate_file_handle();
                 reply.opened(FileHandle(fh), FopenFlags::empty());
             }
-            None => {
-                // Path doesn't exist
-                reply.error(Errno::ENOENT);
+            Err(e) => {
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("open stat error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1214,17 +1285,14 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        // Issue 13A: Use stat() via check_is_directory() instead of the old
-        // is_directory() which listed the entire parent directory.
         match self.check_is_directory(&path) {
-            Some(true) => {
-                reply.opened(FileHandle(0), FopenFlags::empty());
-            }
-            Some(false) => {
-                reply.error(Errno::ENOTDIR);
-            }
-            None => {
-                reply.error(Errno::ENOENT);
+            Ok(true) => reply.opened(FileHandle(0), FopenFlags::empty()),
+            Ok(false) => reply.error(Errno::ENOTDIR),
+            Err(e) => {
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("opendir stat error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1272,10 +1340,17 @@ impl Filesystem for NexusFs {
 
         let path = resolve_path!(self, ino.0, reply);
 
-        if self.client.exists(&path) {
-            reply.ok();
-        } else {
-            reply.error(Errno::ENOENT);
+        // #4056 R5: surface auth failures as EACCES/EPERM instead of
+        // collapsing them to ENOENT through best-effort `exists`.
+        match self.client.exists_result(&path) {
+            Ok(true) => reply.ok(),
+            Ok(false) => reply.error(Errno::ENOENT),
+            Err(e) => {
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("access exists error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
+            }
         }
     }
 }
@@ -1563,5 +1638,59 @@ mod tests {
         assert!(cache.get(&1).is_none());
         assert!(cache.get(&2).is_some());
         assert_eq!(cache.total_bytes, 6);
+    }
+
+    /// #4056 R6/R7: `rmw_read` (the source-read for partial writes
+    /// and non-zero truncate) must always hit the backend, regardless
+    /// of FileCache state. A regression where someone routes RMW
+    /// reads back through `read_cached` / `read_with_cache` would
+    /// reopen the stale-cache → blind-write clobber that R6 fixed.
+    ///
+    /// We prime the FileCache with a `STALE-CACHED` body, then stand
+    /// up a mockito mock for `/api/nfs/read` that returns
+    /// `FRESH-BACKEND` and asserts it gets hit (so we know the
+    /// helper didn't short-circuit via the cache). `expect_at_least(1)`
+    /// is enforced when the `Mock` is dropped — if the cache short-
+    /// circuit returned and the backend mock was never called, the
+    /// drop-time assertion fails the test.
+    #[test]
+    fn rmw_read_bypasses_file_cache_even_when_warm() {
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine;
+
+        let mut server = Server::new();
+        // Backend response: encoded "FRESH-BACKEND" so the JSON-RPC
+        // base64 envelope round-trips cleanly.
+        let fresh = b"FRESH-BACKEND".to_vec();
+        let payload = STANDARD.encode(&fresh);
+        let read_body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"__type__":"bytes","data":"{}"}}}}"#,
+            payload
+        );
+        // Require the backend read to be hit AT LEAST ONCE — proves
+        // the helper did not take a cache short-circuit. Mockito's
+        // `expect_at_least` is verified when the `Mock` value drops
+        // at the end of the test scope.
+        let _backend_mock = server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(read_body)
+            .expect_at_least(1)
+            .create();
+
+        let client = NexusClient::new(&server.url(), "k", None).unwrap();
+        let cache = test_file_cache("rmw-bypasses-cache");
+        // Prime cache with stale, fully-warm bytes (NOT past TTL — so
+        // the cache lookup would normally return Hit if anyone routed
+        // through it).
+        cache.put("/rmw.txt", b"STALE-CACHED", Some("stale-etag"), 0);
+
+        let fs = NexusFs::new(client, Some(cache.clone()));
+        let bytes = fs.rmw_read("/rmw.txt").expect("rmw_read");
+        assert_eq!(
+            bytes, fresh,
+            "rmw_read must return fresh backend bytes, not stale FileCache content"
+        );
     }
 }

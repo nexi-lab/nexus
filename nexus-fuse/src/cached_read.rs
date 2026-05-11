@@ -55,7 +55,19 @@ pub fn read_with_cache(
                         });
                     }
                     Err(e) => {
-                        if e.is_transient() {
+                        // #4056 R5: Conflict (-32006) is `is_transient()` for
+                        // retry purposes, but it carries the explicit
+                        // semantic "you are looking at a stale version".
+                        // Serving the cached bytes here would turn an
+                        // optimistic-concurrency signal into silent stale
+                        // data. Fall through to the invalidate + return
+                        // path so the caller sees EAGAIN.
+                        let safe_to_serve_stale = e.is_transient()
+                            && !matches!(
+                                e,
+                                NexusClientError::Conflict(_)
+                            );
+                        if safe_to_serve_stale {
                             debug!("Revalidation failed for {}: {}, using stale cache", path, e);
                             if let Some(entry) = cache.get_stale(path) {
                                 crate::metrics::record_cache_etag_revalidate("fallback");
@@ -160,6 +172,42 @@ mod tests {
         assert_eq!(result.content, b"stale");
         assert_eq!(result.etag.as_deref(), Some("stale-etag"));
         assert_eq!(result.tier, "cache");
+    }
+
+    /// #4056 R5: Conflict (-32006) is technically `is_transient()` so the
+    /// caller can retry with a fresh generation, but it carries an
+    /// explicit "your view is stale" signal — serving the cached bytes
+    /// would turn that signal into silent stale data. Verify the
+    /// revalidation path invalidates and propagates EAGAIN instead.
+    #[test]
+    fn conflict_during_revalidation_invalidates_and_propagates_eagain() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("POST", "/api/nfs/read")
+            .match_header("if-none-match", "\"stale-etag\"")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32006,"message":"gen conflict"}}"#,
+            )
+            .create();
+        let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+        let cache = test_cache("revalidation-conflict");
+        cache.put("/conflict.txt", b"stale", Some("stale-etag"), 0);
+        cache.backdate_for_test("/conflict.txt", 3601);
+
+        let err = read_with_cache(&client, Some(&cache), "/conflict.txt", 0).unwrap_err();
+        assert!(
+            matches!(err, NexusClientError::Conflict(_)),
+            "expected Conflict, got {:?}",
+            err
+        );
+        assert_eq!(err.to_errno(), libc::EAGAIN);
+        // Stale entry was invalidated, not served.
+        assert!(matches!(
+            cache.get("/conflict.txt", 0),
+            CacheLookup::Miss
+        ));
     }
 
     #[test]

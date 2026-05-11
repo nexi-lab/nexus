@@ -15,8 +15,11 @@ repository = "https://github.com/nexi-lab/nexus"
 # FUSE filesystem
 fuser = "0.17"
 
-# HTTP client for Nexus server communication (rustls for fast compilation)
-reqwest = { version = "0.13", default-features = false, features = ["json", "blocking", "rustls"] }
+# HTTP client for Nexus server communication (rustls for fast compilation).
+# Async-only: the blocking feature was dropped in #4056 so every request
+# rides the shared hyper connection pool / HTTP keep-alive instead of
+# spinning a fresh current-thread runtime per call.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -92,6 +95,10 @@ harness = false
 
 [[bench]]
 name = "cache_backends"
+harness = false
+
+[[bench]]
+name = "concurrent_read"
 harness = false
 
 [profile.release]

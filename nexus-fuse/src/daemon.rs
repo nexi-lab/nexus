@@ -307,7 +307,7 @@ fn handle_read(
     // otherwise be served back to a caller whose stat just failed with
     // 403/404/etc. — leaking content past current authorization. With
     // no cache the gen value is irrelevant, so we keep the simpler path.
-    let gen = if let Some(_) = file_cache {
+    let gen = if file_cache.is_some() {
         match client.stat(&p.path) {
             Ok(meta) => meta.gen,
             Err(err) => {
@@ -445,7 +445,11 @@ fn handle_exists(params: &Value, client: &NexusClient) -> Result<Value, NexusCli
     }
     let p: P = extract_params(params)?;
 
-    let exists = client.exists(&p.path);
+    // #4056 R4: use the fallible variant so 401/403 / -32003 / -32004
+    // surface as proper EACCES/EPERM in the JSON-RPC error response
+    // instead of being silently folded into {"exists": false}, which
+    // would let auth failures masquerade as missing paths.
+    let exists = client.exists_result(&p.path)?;
     Ok(json!({ "exists": exists }))
 }
 

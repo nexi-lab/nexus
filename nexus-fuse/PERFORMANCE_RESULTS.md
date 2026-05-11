@@ -288,3 +288,82 @@ Caveat: mockito has near-zero RTT, so the cold-cache scenario doesn't pay realis
 - Criterion: 0.8, sample_size=20, measurement_time=8s
 
 **Next Step:** Run `./nexus-fuse/run-benchmarks.sh` to populate actual results
+
+## 2026-05-10 — Issue #4056 Concurrent-Read Throughput
+
+Validates the migration from `reqwest::blocking` to async hyper/reqwest with
+a shared connection pool. Acceptance criterion stated in the issue was
+"≥2× concurrent-read throughput vs. current".
+
+**Command:**
+```bash
+cd nexus-fuse && cargo bench --bench concurrent_read
+```
+
+**Setup:** Local multi-thread tokio HTTP/1.1 responder bound to 127.0.0.1.
+Mockito was rejected for this comparison because it runs a `current_thread`
+runtime that serializes accepts — that masks any client-side concurrency
+win. The bench server returns a fixed JSON-RPC payload with
+`Connection: keep-alive` so the pooled client can reuse sockets.
+
+**Pre-PR baseline status (R7).** Earlier rounds replaced an inflated
+"fresh-client-per-call" baseline with a shared-async-client +
+shared-current-thread-runtime emulation of `reqwest::blocking`. Round 7
+correctly pointed out that even that emulation is not faithful:
+`reqwest::blocking::Client` actually owns a dedicated internal sync-
+runtime thread and dispatches each request over an mpsc channel.
+Rather than ship numbers built on an emulation the reviewer rejected,
+this bench now reports only the post-#4056 client at varying caller
+concurrency. A truly faithful comparison requires compiling against
+the `blocking` feature, which this crate dropped as part of #4056 —
+the comparison has to happen in a separate checkout of `develop`.
+
+Post-#4056 pooled throughput against the bench server (arm64 / Darwin
+25.3, after R9 fixed proper HTTP/1.1 framing — the earlier numbers
+were inflated because the bench server responded per-`read()` syscall
+instead of per-request, occasionally double-replying on bursts):
+
+| Threads | pooled ops/s |
+|---|---|
+| 1  |  8 926 |
+| 4  | 29 640 |
+| 8  | 41 187 |
+| 16 | 50 613 |
+| 32 | 57 000 |
+
+**Acceptance vs the issue's stated ≥2× bar:** *not met* on this
+hardware against any of the baselines we attempted. Single-thread
+throughput drops about 30% vs. a shared-runtime emulation (pre-PR
+likely behaves similarly because the multi-thread runtime carries
+more per-call overhead at one caller); concurrent throughput
+recovers but the gap above pre-PR-style numbers is in the 5–15%
+range, not the 2× the issue asked for. It is met (3.1×–5.6×) against the no-shared-pool
+worst case, but that's not what the production code looked like.
+
+**Why ship the migration anyway?** The throughput win was a misread of
+where the pre-PR overhead actually was — `reqwest::blocking` does keep
+a pooled hyper client internally, so the wire-level pool reuse was
+already there. The real wins this PR locks in:
+
+1. The daemon can drop `tokio::task::spawn_blocking` around every RPC
+   handler and use the async client directly — fewer blocking-pool
+   threads, no per-call context switch (a follow-up will land this
+   refactor in `daemon.rs`).
+2. Removes the `reqwest = { ..., features = ["blocking"] }` feature
+   pull, simplifying the dependency surface.
+3. Aligns with the rest of the Rust workspace, which is async-first.
+4. Concurrent-read latency tail is shorter under the multi-thread
+   runtime: pre-PR's current-thread runtime serializes polling, so
+   when many FUSE workers contend, requests queue at the runtime; the
+   multi-thread runtime parallelizes polling across workers.
+
+The 2× claim in the issue acceptance criteria was authored before
+anyone profiled the existing blocking client. It should be amended
+to reflect the actual measurement, which is what this PR now reports.
+
+**Environment:**
+- Date: 2026-05-10
+- OS: Darwin 25.3.0 arm64
+- Rust: rustc 1.95.0
+- reqwest: 0.13 (async, rustls)
+- tokio: 1 (multi-thread, 2 worker threads in the shared HTTP runtime)

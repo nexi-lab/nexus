@@ -1,12 +1,16 @@
-//! Minimal HTTP test to debug connection issues
+//! Minimal HTTP test to debug connection issues.
+//!
+//! `#[ignore]` so it only runs on demand (`cargo test -- --ignored`).
+//! Uses the async `reqwest::Client` directly to match the production
+//! path post-#4056.
 
-use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::Client;
 
-#[test]
+#[tokio::test]
 #[ignore]
-fn test_raw_http_request() {
-    println!("\n🧪 Testing raw HTTP request to Nexus server...\n");
+async fn test_raw_http_request() {
+    println!("\nTesting raw HTTP request to Nexus server...\n");
 
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -25,18 +29,18 @@ fn test_raw_http_request() {
     let url = "http://localhost:2026/api/auth/whoami";
     println!("Making GET request to: {}", url);
 
-    let resp = client.get(url).headers(headers).send();
+    let resp = client.get(url).headers(headers).send().await;
 
     match resp {
         Ok(response) => {
-            println!("✓ Got response!");
+            println!("Got response!");
             println!("  Status: {}", response.status());
             println!("  Headers: {:?}", response.headers());
-            let body = response.text().unwrap_or_default();
+            let body = response.text().await.unwrap_or_default();
             println!("  Body: {}", body);
         }
         Err(e) => {
-            println!("✗ Request failed: {:?}", e);
+            println!("Request failed: {:?}", e);
             println!("  Error type: {:?}", e);
             if e.is_timeout() {
                 println!("  This is a timeout error");

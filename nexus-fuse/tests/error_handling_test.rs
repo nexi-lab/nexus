@@ -413,6 +413,192 @@ fn test_http_404_maps_to_not_found() {
     assert!(!err.is_transient());
 }
 
+/// #4056 R3: HTTP 401 (unauthenticated / bad credentials) must map
+/// to AccessDenied / EACCES so the FUSE caller surfaces "permission
+/// denied" instead of generic I/O failure.
+#[test]
+fn test_http_401_maps_to_access_denied() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body("unauthorized")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::AccessDenied(_)));
+    assert_eq!(err.to_errno(), libc::EACCES);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+    assert!(!err.is_not_found());
+}
+
+/// #4056 R3: HTTP 403 (policy denied) → PermissionDenied / EPERM.
+#[test]
+fn test_http_403_maps_to_permission_denied() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body("forbidden by rebac")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::PermissionDenied(_)));
+    assert_eq!(err.to_errno(), libc::EPERM);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+}
+
+/// #4056 R3: RPC -32003 ACCESS_DENIED (server contract code) →
+/// AccessDenied / EACCES.
+#[test]
+fn test_rpc_access_denied_code_maps_to_eaccess() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"access denied"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::AccessDenied(_)));
+    assert_eq!(err.to_errno(), libc::EACCES);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+}
+
+/// #4056 R3: RPC -32004 PERMISSION_ERROR → PermissionDenied / EPERM.
+#[test]
+fn test_rpc_permission_error_code_maps_to_eperm() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"permission denied"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::PermissionDenied(_)));
+    assert_eq!(err.to_errno(), libc::EPERM);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+}
+
+/// The /api/nfs/read endpoint has its own JSON-RPC error parser
+/// (separate from rpc_call). Verify -32004 also routes correctly
+/// through the read path.
+#[test]
+fn test_read_path_rpc_permission_error_code_maps_to_eperm() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/read")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"no permission to read"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.read("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::PermissionDenied(_)));
+    assert_eq!(err.to_errno(), libc::EPERM);
+}
+
+/// #4056 R4: -32001 FILE_EXISTS → AlreadyExists → EEXIST.
+#[test]
+fn test_rpc_file_exists_code_maps_to_eexist() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/mkdir")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"exists"}}"#)
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let err = client.mkdir("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::AlreadyExists(_)));
+    assert_eq!(err.to_errno(), libc::EEXIST);
+}
+
+/// #4056 R4: -32002 INVALID_PATH → InvalidPath → EINVAL.
+#[test]
+fn test_rpc_invalid_path_code_maps_to_einval() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32002,"message":"bad path"}}"#)
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::InvalidPath(_)));
+    assert_eq!(err.to_errno(), libc::EINVAL);
+}
+
+/// #4056 R4: -32005 VALIDATION_ERROR → ValidationError → EINVAL.
+#[test]
+fn test_rpc_validation_error_code_maps_to_einval() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"bad input"}}"#)
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::ValidationError(_)));
+    assert_eq!(err.to_errno(), libc::EINVAL);
+}
+
+/// #4056 R4: -32006 CONFLICT → Conflict → EAGAIN (transient).
+#[test]
+fn test_rpc_conflict_code_maps_to_eagain_and_is_transient() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32006,"message":"gen conflict"}}"#)
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::Conflict(_)));
+    assert_eq!(err.to_errno(), libc::EAGAIN);
+    assert!(err.is_transient(), "Conflict should be retry-able");
+}
+
+/// #4056 R4: exists_result must surface AccessDenied instead of folding
+/// it into Ok(false). Previously every error became "doesn't exist",
+/// masking auth failures as missing paths in daemon and FUSE.
+#[test]
+fn test_exists_result_surfaces_access_denied() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/exists")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body("unauthorized")
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let result = client.exists_result("/x");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(matches!(err, NexusClientError::AccessDenied(_)));
+    assert_eq!(err.to_errno(), libc::EACCES);
+    // Best-effort variant still returns false (documented behavior).
+    assert!(!client.exists("/x"));
+}
+
 #[test]
 fn test_rpc_internal_error_not_misclassified() {
     let mut server = Server::new();

@@ -1,14 +1,35 @@
 //! Nexus HTTP client for communicating with the Nexus server.
 //! Uses JSON-RPC style API.
+//!
+//! Async hyper/reqwest under the hood (#4056). Public methods stay sync
+//! so FUSE callbacks and existing callers don't change, but internally
+//! every request goes through one shared connection pool with HTTP
+//! keep-alive enabled. The client owns a small multi-thread tokio
+//! runtime that drives the futures; this lets concurrent reads from
+//! distinct FUSE worker threads share one TCP/TLS connection pool
+//! instead of each spinning a fresh `reqwest::blocking` runtime.
 
 #![allow(dead_code)]
 
 use crate::error::NexusClientError;
 use log::debug;
-use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, IF_NONE_MATCH};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::future::Future;
+use std::sync::OnceLock;
+use std::time::Duration;
+use tokio::runtime::Runtime;
+
+/// Default connection-pool tunables. Tuned for FUSE fan-out: enough
+/// idle slots that bursty parallel `read`/`stat` calls all hit a warm
+/// connection instead of dialing a fresh one.
+const POOL_MAX_IDLE_PER_HOST: usize = 64;
+const POOL_IDLE_TIMEOUT_SECS: u64 = 60;
+const TCP_KEEPALIVE_SECS: u64 = 30;
+const REQUEST_TIMEOUT_SECS: u64 = 30;
+const CONNECT_TIMEOUT_SECS: u64 = 5;
 
 /// User information returned by whoami endpoint.
 #[derive(Debug, Deserialize)]
@@ -81,7 +102,34 @@ pub enum ReadResponse {
     NotModified,
 }
 
+/// Process-wide tokio runtime that drives every NexusClient HTTP
+/// future. Stored in a `OnceLock` so it lives for the entire process
+/// and never drops in an async context (which would panic). One
+/// runtime serves every client/clone — the underlying reqwest::Client
+/// already shares its connection pool across clones, so a shared
+/// runtime adds no contention beyond the pool itself.
+static HTTP_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+/// Build (once) and return a reference to the process-wide HTTP runtime.
+/// Two worker threads is enough — per-call parallelism comes from many
+/// FUSE worker threads each blocking on their own future, not from this
+/// runtime fanning out internally. The runtime is `enable_all()` so
+/// reqwest's hyper driver gets both the I/O and timer reactors.
+fn http_runtime() -> &'static Runtime {
+    HTTP_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .thread_name("nexus-fuse-http")
+            .build()
+            .expect("failed to build nexus-fuse HTTP runtime")
+    })
+}
+
 /// Nexus HTTP client.
+///
+/// `Clone` is cheap: `reqwest::Client` shares its connection pool via
+/// an internal `Arc`.
 #[derive(Clone)]
 pub struct NexusClient {
     client: Client,
@@ -98,10 +146,17 @@ impl NexusClient {
         agent_id: Option<String>,
     ) -> Result<Self, NexusClientError> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .pool_max_idle_per_host(POOL_MAX_IDLE_PER_HOST)
+            .pool_idle_timeout(Some(Duration::from_secs(POOL_IDLE_TIMEOUT_SECS)))
+            .tcp_keepalive(Some(Duration::from_secs(TCP_KEEPALIVE_SECS)))
             .no_proxy() // Disable proxy to avoid HTTP_PROXY interference
             .build()?;
+
+        // Eagerly initialize the process-wide HTTP runtime so the
+        // first request doesn't pay the build cost.
+        let _ = http_runtime();
 
         Ok(Self {
             client,
@@ -111,9 +166,48 @@ impl NexusClient {
         })
     }
 
+    /// Run a future to completion on the shared process-wide HTTP runtime.
+    ///
+    /// # Contract
+    ///
+    /// The sync `read`/`write`/`stat`/… methods exist for **sync
+    /// callsites only** — fuser callback threads, hydrate's
+    /// `spawn_blocking` tasks, plain `#[test]` threads. Anywhere
+    /// inside an `async fn` that is being polled by a tokio runtime,
+    /// callers **must** use the `*_async` variants (`read_async`,
+    /// `stat_async`, …). Calling a sync wrapper from an async task
+    /// will trip tokio's `Cannot start a runtime from within a
+    /// runtime` guard inside `Runtime::block_on` and panic the
+    /// caller's task. This is intentional: the API surface stays
+    /// minimal and the panic loudly catches the misuse. The
+    /// "calling-from-async-panics" behavior is locked in by
+    /// `tests/concurrent_stress_test.rs::sync_wrapper_panics_inside_async_task`
+    /// (#4056 R2).
+    ///
+    /// # Why not auto-offload to a blocking thread?
+    ///
+    /// Tempting, but it would require every future returned by the
+    /// `*_async` methods to be `Send + 'static`, forcing us to clone
+    /// `self`'s state into the future. That's churn for a footgun
+    /// the type system can't help us with anyway. The simpler
+    /// contract — sync API for sync code, async API for async code,
+    /// loud panic if you mix them — is what daemon refactors will
+    /// reach for naturally.
+    fn block_on<F: Future>(&self, fut: F) -> F::Output {
+        http_runtime().block_on(fut)
+    }
+
     /// Map HTTP status code to NexusClientError.
+    ///
+    /// 401 → `AccessDenied` (credentials missing/rejected, EACCES).
+    /// 403 → `PermissionDenied` (policy denied the operation, EPERM).
+    /// These two are kept distinct so callers can pick correct
+    /// remediation (re-auth vs. give up) and so FUSE surfaces the
+    /// right errno (#4056 R3).
     fn status_to_error(status: reqwest::StatusCode, body: String) -> NexusClientError {
         match status.as_u16() {
+            401 => NexusClientError::AccessDenied(body),
+            403 => NexusClientError::PermissionDenied(body),
             404 => NexusClientError::NotFound(body),
             429 => NexusClientError::RateLimited,
             500..=599 => NexusClientError::ServerError {
@@ -124,6 +218,39 @@ impl NexusClient {
                 status: status.as_u16(),
                 message: body,
             },
+        }
+    }
+
+    /// Map a JSON-RPC error code from `rpc_types.py::RPCErrorCode` to
+    /// a typed `NexusClientError`. Server contract (kept in sync with
+    /// `src/nexus/contracts/rpc_types.py::RPCErrorCode`):
+    ///
+    /// | Code  | Constant          | Variant            | errno    |
+    /// |-------|-------------------|--------------------|----------|
+    /// | -32000 | FILE_NOT_FOUND   | NotFound           | ENOENT   |
+    /// | -32001 | FILE_EXISTS      | AlreadyExists      | EEXIST   |
+    /// | -32002 | INVALID_PATH     | InvalidPath        | EINVAL   |
+    /// | -32003 | ACCESS_DENIED    | AccessDenied       | EACCES   |
+    /// | -32004 | PERMISSION_ERROR | PermissionDenied   | EPERM    |
+    /// | -32005 | VALIDATION_ERROR | ValidationError    | EINVAL   |
+    /// | -32006 | CONFLICT         | Conflict           | EAGAIN   |
+    ///
+    /// Unknown codes fall through to `InvalidResponse` with the
+    /// structured code preserved in the message so logs / triage
+    /// retain the signal (#4056 R3 / R4).
+    fn rpc_error_to_client_error(code: i32, message: String) -> NexusClientError {
+        match code {
+            -32000 => NexusClientError::NotFound(message),
+            -32001 => NexusClientError::AlreadyExists(message),
+            -32002 => NexusClientError::InvalidPath(message),
+            -32003 => NexusClientError::AccessDenied(message),
+            -32004 => NexusClientError::PermissionDenied(message),
+            -32005 => NexusClientError::ValidationError(message),
+            -32006 => NexusClientError::Conflict(message),
+            other => NexusClientError::InvalidResponse(format!(
+                "RPC error {}: {}",
+                other, message
+            )),
         }
     }
 
@@ -144,15 +271,14 @@ impl NexusClient {
         headers
     }
 
-    /// Call a JSON-RPC method.
-    fn rpc_call<T: for<'de> Deserialize<'de>>(
+    /// Async core: call a JSON-RPC method.
+    async fn rpc_call_async<T: for<'de> Deserialize<'de>>(
         &self,
         method: &str,
         params: Value,
     ) -> Result<T, NexusClientError> {
         let url = format!("{}/api/nfs/{}", self.base_url, method);
 
-        // Build proper JSON-RPC request
         let rpc_request = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -166,26 +292,22 @@ impl NexusClient {
             .post(&url)
             .headers(self.headers())
             .json(&rpc_request)
-            .send()?;
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(Self::status_to_error(status, text));
         }
 
-        let rpc_resp: JsonRpcResponse<T> = resp.json()?;
+        let rpc_resp: JsonRpcResponse<T> = resp.json().await?;
 
         if let Some(err) = rpc_resp.error {
-            // Classify by structured error code (rpc_types.py RPCErrorCode),
-            // not message text. -32000 = FILE_NOT_FOUND per server contract.
-            if err.code == -32000 {
-                return Err(NexusClientError::NotFound(err.message));
-            }
-            return Err(NexusClientError::InvalidResponse(format!(
-                "RPC error {}: {}",
-                err.code, err.message
-            )));
+            // Classify by structured error code per rpc_types.py
+            // RPCErrorCode contract (-32000 NOT_FOUND, -32003 ACCESS_DENIED,
+            // -32004 PERMISSION_ERROR). #4056 R3.
+            return Err(Self::rpc_error_to_client_error(err.code, err.message));
         }
 
         rpc_resp
@@ -193,24 +315,34 @@ impl NexusClient {
             .ok_or_else(|| NexusClientError::InvalidResponse("no result in response".to_string()))
     }
 
-    /// Get current user info.
-    pub fn whoami(&self) -> Result<UserInfo, NexusClientError> {
+    /// Async core: whoami.
+    pub async fn whoami_async(&self) -> Result<UserInfo, NexusClientError> {
         let url = format!("{}/api/auth/whoami", self.base_url);
         debug!("GET {}", url);
 
-        let resp = self.client.get(&url).headers(self.headers()).send()?;
+        let resp = self
+            .client
+            .get(&url)
+            .headers(self.headers())
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(Self::status_to_error(status, text));
         }
 
-        Ok(resp.json()?)
+        Ok(resp.json().await?)
     }
 
-    /// List directory contents.
-    pub fn list(&self, path: &str) -> Result<Vec<FileEntry>, NexusClientError> {
+    /// Get current user info.
+    pub fn whoami(&self) -> Result<UserInfo, NexusClientError> {
+        self.block_on(self.whoami_async())
+    }
+
+    /// Async core: list.
+    pub async fn list_async(&self, path: &str) -> Result<Vec<FileEntry>, NexusClientError> {
         // Use details=true, recursive=false to get entry types from server
         #[derive(Deserialize)]
         struct DetailedEntry {
@@ -254,14 +386,16 @@ impl NexusClient {
             files: Vec<DetailedEntry>,
         }
 
-        let result: ListResult = self.rpc_call(
-            "list",
-            json!({
-                "path": path,
-                "recursive": false,
-                "details": true
-            }),
-        )?;
+        let result: ListResult = self
+            .rpc_call_async(
+                "list",
+                json!({
+                    "path": path,
+                    "recursive": false,
+                    "details": true
+                }),
+            )
+            .await?;
 
         // Convert to FileEntry objects - extract immediate children only
         let parent_prefix = if path == "/" { "/" } else { path };
@@ -314,9 +448,19 @@ impl NexusClient {
         Ok(entries)
     }
 
+    /// List directory contents.
+    pub fn list(&self, path: &str) -> Result<Vec<FileEntry>, NexusClientError> {
+        self.block_on(self.list_async(path))
+    }
+
+    /// Async core: stat.
+    pub async fn stat_async(&self, path: &str) -> Result<FileMetadata, NexusClientError> {
+        self.rpc_call_async("stat", json!({"path": path})).await
+    }
+
     /// Get file/directory metadata.
     pub fn stat(&self, path: &str) -> Result<FileMetadata, NexusClientError> {
-        self.rpc_call("stat", json!({"path": path}))
+        self.block_on(self.stat_async(path))
     }
 
     /// Read file contents.
@@ -329,9 +473,8 @@ impl NexusClient {
         }
     }
 
-    /// Read file contents with ETag support for conditional requests.
-    /// If `if_none_match` is provided and content hasn't changed, returns NotModified.
-    pub fn read_with_etag(
+    /// Async core: read with optional If-None-Match.
+    pub async fn read_with_etag_async(
         &self,
         path: &str,
         if_none_match: Option<&str>,
@@ -362,7 +505,8 @@ impl NexusClient {
             .post(&url)
             .headers(headers)
             .json(&rpc_request)
-            .send()?;
+            .send()
+            .await?;
 
         // Handle 304 Not Modified
         if resp.status().as_u16() == 304 {
@@ -372,7 +516,7 @@ impl NexusClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(Self::status_to_error(status, text));
         }
 
@@ -397,16 +541,10 @@ impl NexusClient {
             error: Option<JsonRpcError>,
         }
 
-        let rpc_resp: JsonRpcReadResponse = resp.json()?;
+        let rpc_resp: JsonRpcReadResponse = resp.json().await?;
 
         if let Some(err) = rpc_resp.error {
-            if err.code == -32000 {
-                return Err(NexusClientError::NotFound(err.message));
-            }
-            return Err(NexusClientError::InvalidResponse(format!(
-                "RPC error {}: {}",
-                err.code, err.message
-            )));
+            return Err(Self::rpc_error_to_client_error(err.code, err.message));
         }
 
         let result = rpc_resp.result.ok_or_else(|| {
@@ -419,58 +557,135 @@ impl NexusClient {
         Ok(ReadResponse::Content { content, etag })
     }
 
-    /// Write file contents.
-    pub fn write(&self, path: &str, content: &[u8]) -> Result<(), NexusClientError> {
+    /// Read file contents with ETag support for conditional requests.
+    /// If `if_none_match` is provided and content hasn't changed, returns NotModified.
+    pub fn read_with_etag(
+        &self,
+        path: &str,
+        if_none_match: Option<&str>,
+    ) -> Result<ReadResponse, NexusClientError> {
+        self.block_on(self.read_with_etag_async(path, if_none_match))
+    }
+
+    /// Async core: write.
+    pub async fn write_async(
+        &self,
+        path: &str,
+        content: &[u8],
+    ) -> Result<(), NexusClientError> {
         use base64::{engine::general_purpose::STANDARD, Engine};
 
         // API expects {"__type__": "bytes", "data": "base64..."} format
-        let _: Value = self.rpc_call(
-            "write",
-            json!({
-                "path": path,
-                "content": {
-                    "__type__": "bytes",
-                    "data": STANDARD.encode(content)
-                }
-            }),
-        )?;
+        let _: Value = self
+            .rpc_call_async(
+                "write",
+                json!({
+                    "path": path,
+                    "content": {
+                        "__type__": "bytes",
+                        "data": STANDARD.encode(content)
+                    }
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Write file contents.
+    pub fn write(&self, path: &str, content: &[u8]) -> Result<(), NexusClientError> {
+        self.block_on(self.write_async(path, content))
+    }
+
+    /// Async core: mkdir.
+    pub async fn mkdir_async(&self, path: &str) -> Result<(), NexusClientError> {
+        let _: Value = self
+            .rpc_call_async("mkdir", json!({"path": path}))
+            .await?;
         Ok(())
     }
 
     /// Create directory.
     pub fn mkdir(&self, path: &str) -> Result<(), NexusClientError> {
-        let _: Value = self.rpc_call("mkdir", json!({"path": path}))?;
+        self.block_on(self.mkdir_async(path))
+    }
+
+    /// Async core: delete.
+    pub async fn delete_async(&self, path: &str) -> Result<(), NexusClientError> {
+        let _: Value = self
+            .rpc_call_async("delete", json!({"path": path}))
+            .await?;
         Ok(())
     }
 
     /// Delete file or directory.
     pub fn delete(&self, path: &str) -> Result<(), NexusClientError> {
-        let _: Value = self.rpc_call("delete", json!({"path": path}))?;
+        self.block_on(self.delete_async(path))
+    }
+
+    /// Async core: rename.
+    pub async fn rename_async(
+        &self,
+        old_path: &str,
+        new_path: &str,
+    ) -> Result<(), NexusClientError> {
+        let _: Value = self
+            .rpc_call_async(
+                "rename",
+                json!({
+                    "old_path": old_path,
+                    "new_path": new_path
+                }),
+            )
+            .await?;
         Ok(())
     }
 
     /// Rename/move file or directory.
     pub fn rename(&self, old_path: &str, new_path: &str) -> Result<(), NexusClientError> {
-        let _: Value = self.rpc_call(
-            "rename",
-            json!({
-                "old_path": old_path,
-                "new_path": new_path
-            }),
-        )?;
-        Ok(())
+        self.block_on(self.rename_async(old_path, new_path))
     }
 
-    /// Check if path exists.
-    pub fn exists(&self, path: &str) -> bool {
+    /// Async core: existence check returning the raw server result.
+    /// Preserves `AccessDenied`/`PermissionDenied` instead of folding
+    /// them into `false`, so callers that need to distinguish
+    /// "path is missing" from "you don't have permission to ask" can
+    /// see the auth signal (#4056 R4).
+    pub async fn exists_result_async(
+        &self,
+        path: &str,
+    ) -> Result<bool, NexusClientError> {
         #[derive(Deserialize)]
         struct ExistsResult {
             exists: bool,
         }
 
-        match self.rpc_call::<ExistsResult>("exists", json!({"path": path})) {
-            Ok(result) => result.exists,
-            Err(_) => false,
-        }
+        let result: ExistsResult = self
+            .rpc_call_async("exists", json!({"path": path}))
+            .await?;
+        Ok(result.exists)
+    }
+
+    /// Async core: best-effort exists. Treats *all* errors (including
+    /// auth denials and network failures) as "does not exist". Kept
+    /// because most callers really do want a boolean and don't care
+    /// to discriminate; new callers that *do* care should use
+    /// `exists_result_async`.
+    pub async fn exists_async(&self, path: &str) -> bool {
+        self.exists_result_async(path).await.unwrap_or(false)
+    }
+
+    /// Fallible existence check (#4056 R4). Use this from any path
+    /// where confusing `not authorized` with `does not exist` would
+    /// be wrong — e.g. daemon JSON-RPC responses that must carry the
+    /// real errno back to the Python client.
+    pub fn exists_result(&self, path: &str) -> Result<bool, NexusClientError> {
+        self.block_on(self.exists_result_async(path))
+    }
+
+    /// Best-effort existence check. See `exists_async` for the
+    /// error-swallowing caveat; `exists_result` is the fallible
+    /// variant.
+    pub fn exists(&self, path: &str) -> bool {
+        self.block_on(self.exists_async(path))
     }
 }

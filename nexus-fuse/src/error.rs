@@ -13,6 +13,23 @@ pub enum NexusClientError {
     #[error("Not found: {0}")]
     NotFound(String),
 
+    /// The caller is not authenticated or the credentials are invalid
+    /// (HTTP 401 or JSON-RPC `-32003` `ACCESS_DENIED`). Mapped to
+    /// `EACCES` so FUSE clients see "permission denied" rather than
+    /// generic I/O failure. Distinct from `PermissionDenied` because
+    /// "no/invalid credentials" is recoverable by re-authenticating,
+    /// while "valid credentials, denied by ReBAC" is not.
+    #[error("Access denied: {0}")]
+    AccessDenied(String),
+
+    /// The caller is authenticated but the server's policy denied the
+    /// operation (HTTP 403 or JSON-RPC `-32004` `PERMISSION_ERROR`).
+    /// Mapped to `EPERM`. Surfaces as "operation not permitted" to
+    /// FUSE callers — different remediation than `AccessDenied`
+    /// (which is auth-layer), so retry / surface logic stays correct.
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+
     /// Network timeout occurred.
     #[error("Network timeout after {duration:?}")]
     Timeout {
@@ -67,6 +84,8 @@ impl NexusClientError {
     pub fn to_errno(&self) -> i32 {
         match self {
             Self::NotFound(_) => libc::ENOENT,
+            Self::AccessDenied(_) => libc::EACCES,
+            Self::PermissionDenied(_) => libc::EPERM,
             Self::Timeout { .. } => libc::ETIMEDOUT,
             Self::ConnectionRefused(_) => libc::ECONNREFUSED,
             Self::RateLimited => libc::EBUSY,
@@ -103,6 +122,8 @@ impl NexusClientError {
             Self::HttpError(e) => e.is_timeout() || e.is_connect(),
             Self::ServerError { status, .. } => (500..600).contains(status),
             Self::NotFound(_)
+            | Self::AccessDenied(_)
+            | Self::PermissionDenied(_)
             | Self::InvalidResponse(_)
             | Self::JsonError(_)
             | Self::Base64Error(_)
@@ -113,6 +134,15 @@ impl NexusClientError {
     /// Check if error indicates resource not found.
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound(_))
+    }
+
+    /// Check if error indicates the caller lacks authorization
+    /// (either unauthenticated/credentials-rejected `AccessDenied`
+    /// or authenticated-but-policy-denied `PermissionDenied`). FUSE
+    /// callers use this to short-circuit retry/cache-probing logic
+    /// that only makes sense for transient backend trouble.
+    pub fn is_permission_denied(&self) -> bool {
+        matches!(self, Self::AccessDenied(_) | Self::PermissionDenied(_))
     }
 }
 

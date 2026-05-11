@@ -198,8 +198,16 @@ impl NexusClient {
     }
 
     /// Map HTTP status code to NexusClientError.
+    ///
+    /// 401 → `AccessDenied` (credentials missing/rejected, EACCES).
+    /// 403 → `PermissionDenied` (policy denied the operation, EPERM).
+    /// These two are kept distinct so callers can pick correct
+    /// remediation (re-auth vs. give up) and so FUSE surfaces the
+    /// right errno (#4056 R3).
     fn status_to_error(status: reqwest::StatusCode, body: String) -> NexusClientError {
         match status.as_u16() {
+            401 => NexusClientError::AccessDenied(body),
+            403 => NexusClientError::PermissionDenied(body),
             404 => NexusClientError::NotFound(body),
             429 => NexusClientError::RateLimited,
             500..=599 => NexusClientError::ServerError {
@@ -210,6 +218,23 @@ impl NexusClient {
                 status: status.as_u16(),
                 message: body,
             },
+        }
+    }
+
+    /// Map a JSON-RPC error code from `rpc_types.py::RPCErrorCode` to
+    /// a typed `NexusClientError`. Server contract: -32000 FILE_NOT_FOUND,
+    /// -32003 ACCESS_DENIED, -32004 PERMISSION_ERROR. Everything else
+    /// goes into `InvalidResponse` with the structured code preserved
+    /// in the message so logs / triage retain the signal (#4056 R3).
+    fn rpc_error_to_client_error(code: i32, message: String) -> NexusClientError {
+        match code {
+            -32000 => NexusClientError::NotFound(message),
+            -32003 => NexusClientError::AccessDenied(message),
+            -32004 => NexusClientError::PermissionDenied(message),
+            other => NexusClientError::InvalidResponse(format!(
+                "RPC error {}: {}",
+                other, message
+            )),
         }
     }
 
@@ -263,15 +288,10 @@ impl NexusClient {
         let rpc_resp: JsonRpcResponse<T> = resp.json().await?;
 
         if let Some(err) = rpc_resp.error {
-            // Classify by structured error code (rpc_types.py RPCErrorCode),
-            // not message text. -32000 = FILE_NOT_FOUND per server contract.
-            if err.code == -32000 {
-                return Err(NexusClientError::NotFound(err.message));
-            }
-            return Err(NexusClientError::InvalidResponse(format!(
-                "RPC error {}: {}",
-                err.code, err.message
-            )));
+            // Classify by structured error code per rpc_types.py
+            // RPCErrorCode contract (-32000 NOT_FOUND, -32003 ACCESS_DENIED,
+            // -32004 PERMISSION_ERROR). #4056 R3.
+            return Err(Self::rpc_error_to_client_error(err.code, err.message));
         }
 
         rpc_resp
@@ -508,13 +528,7 @@ impl NexusClient {
         let rpc_resp: JsonRpcReadResponse = resp.json().await?;
 
         if let Some(err) = rpc_resp.error {
-            if err.code == -32000 {
-                return Err(NexusClientError::NotFound(err.message));
-            }
-            return Err(NexusClientError::InvalidResponse(format!(
-                "RPC error {}: {}",
-                err.code, err.message
-            )));
+            return Err(Self::rpc_error_to_client_error(err.code, err.message));
         }
 
         let result = rpc_resp.result.ok_or_else(|| {

@@ -413,6 +413,105 @@ fn test_http_404_maps_to_not_found() {
     assert!(!err.is_transient());
 }
 
+/// #4056 R3: HTTP 401 (unauthenticated / bad credentials) must map
+/// to AccessDenied / EACCES so the FUSE caller surfaces "permission
+/// denied" instead of generic I/O failure.
+#[test]
+fn test_http_401_maps_to_access_denied() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body("unauthorized")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::AccessDenied(_)));
+    assert_eq!(err.to_errno(), libc::EACCES);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+    assert!(!err.is_not_found());
+}
+
+/// #4056 R3: HTTP 403 (policy denied) → PermissionDenied / EPERM.
+#[test]
+fn test_http_403_maps_to_permission_denied() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body("forbidden by rebac")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::PermissionDenied(_)));
+    assert_eq!(err.to_errno(), libc::EPERM);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+}
+
+/// #4056 R3: RPC -32003 ACCESS_DENIED (server contract code) →
+/// AccessDenied / EACCES.
+#[test]
+fn test_rpc_access_denied_code_maps_to_eaccess() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"access denied"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::AccessDenied(_)));
+    assert_eq!(err.to_errno(), libc::EACCES);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+}
+
+/// #4056 R3: RPC -32004 PERMISSION_ERROR → PermissionDenied / EPERM.
+#[test]
+fn test_rpc_permission_error_code_maps_to_eperm() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"permission denied"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::PermissionDenied(_)));
+    assert_eq!(err.to_errno(), libc::EPERM);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+}
+
+/// The /api/nfs/read endpoint has its own JSON-RPC error parser
+/// (separate from rpc_call). Verify -32004 also routes correctly
+/// through the read path.
+#[test]
+fn test_read_path_rpc_permission_error_code_maps_to_eperm() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/read")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"no permission to read"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.read("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::PermissionDenied(_)));
+    assert_eq!(err.to_errno(), libc::EPERM);
+}
+
 #[test]
 fn test_rpc_internal_error_not_misclassified() {
     let mut server = Server::new();

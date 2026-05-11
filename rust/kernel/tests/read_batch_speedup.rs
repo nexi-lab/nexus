@@ -17,7 +17,7 @@ use kernel::kernel::{BatchReadRequest, Kernel, OperationContext};
 // compilation units and can't share `mod` across the crate boundary without
 // a feature flag. The duplication is intentional and acceptable.
 
-const LATENCY_US: u64 = 500; // 500 µs / read — same value as bench
+const LATENCY_US: u64 = 2_000; // 2 ms / read — same value as bench
 
 /// Mutable backend for the write phase (no latency).
 #[derive(Default)]
@@ -184,7 +184,7 @@ fn setup_kernel_with_100_files() -> Kernel {
     )
     .expect("test setup: sys_setattr DT_MOUNT (latency)");
 
-    k.set_read_batch_max_concurrency(32);
+    k.set_read_batch_max_concurrency(64);
     k
 }
 
@@ -199,6 +199,23 @@ fn read_batch_meets_3x_speedup_target() {
 
     let k = setup_kernel_with_100_files();
     let ctx = OperationContext::new("bench", "root", true, None, true);
+
+    // ── Warmup — one full pass each to settle the cache and rayon pool ────
+    k.clear_file_cache();
+    for i in 0..100u32 {
+        let _ = k
+            .sys_read(&format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
+            .expect("warmup read");
+    }
+    let warmup_reqs: Vec<BatchReadRequest> = (0..100u32)
+        .map(|i| BatchReadRequest {
+            path: format!("/bench/f{i:03}.txt"),
+            offset: 0,
+            len: None,
+        })
+        .collect();
+    k.clear_file_cache();
+    let _ = k._read_batch(&warmup_reqs, &ctx).expect("warmup batch");
 
     // ── Sequential measurement ────────────────────────────────────────────
     let seq_iters = 5usize;

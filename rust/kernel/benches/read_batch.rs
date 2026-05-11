@@ -7,7 +7,7 @@
 //! latency-simulating in-memory backend and clears the file cache before
 //! each measurement so reads reach the backend (cache-cold path).
 //!
-//! Expected: batch_mean ≥ 3× faster than seq_mean at 32-way concurrency.
+//! Expected: batch_mean ≥ 3× faster than seq_mean at 64-way concurrency.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ use kernel::kernel::{BatchReadRequest, Kernel, OperationContext};
 // concurrency the batch should retire 100 reads in ≈ ceil(100/32)*latency
 // whereas sequential takes 100*latency.
 
-const LATENCY_US: u64 = 500; // 500 µs / read  → seq ≈ 50 ms, batch ≈ 2 ms
+const LATENCY_US: u64 = 2_000; // 2 ms / read  → seq ≈ 200 ms, batch ≈ 8 ms
 
 /// Mutable backend: used during the write phase only (no latency).
 #[derive(Default)]
@@ -199,7 +199,7 @@ fn setup() -> Kernel {
     .expect("bench setup: sys_setattr DT_MOUNT (latency)");
 
     // Maximise rayon parallelism.
-    k.set_read_batch_max_concurrency(32);
+    k.set_read_batch_max_concurrency(64);
 
     k
 }

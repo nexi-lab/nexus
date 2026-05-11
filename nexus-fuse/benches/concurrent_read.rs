@@ -116,17 +116,6 @@ fn spawn_bench_server() -> BenchServer {
     }
 }
 
-/// Build a JSON-RPC `read` request body matching what `NexusClient`
-/// sends — same path, same JSON-RPC envelope. Lets the baselines hit
-/// the same server endpoint as the pooled path without depending on
-/// NexusClient internals.
-fn build_read_body() -> String {
-    format!(
-        r#"{{"jsonrpc":"2.0","id":1,"method":"read","params":{{"path":"{}"}}}}"#,
-        READ_PATH
-    )
-}
-
 /// Pooled path (post-#4056): one shared NexusClient. All reader
 /// threads reuse the same hyper connection pool with HTTP keep-alive.
 fn run_pooled(client: &Arc<NexusClient>, threads: usize, ops_per_thread: usize) {
@@ -145,40 +134,82 @@ fn run_pooled(client: &Arc<NexusClient>, threads: usize, ops_per_thread: usize) 
     }
 }
 
-/// Faithful pre-#4056 baseline: shared async `reqwest::Client` driven
-/// by a single shared **current-thread** tokio runtime. Mirrors what
-/// `reqwest::blocking::Client` did internally — one client, one
-/// current-thread runtime, every call multiplexed through it. The
-/// current-thread runtime serializes polling, so concurrent callers
-/// queue at the runtime rather than at TCP setup; that's the actual
-/// pre-PR bottleneck the migration was meant to lift.
+/// Pre-#4056 baseline ported into the bench as a full read pipeline.
+/// Same JSON-RPC envelope, same headers, same JSON parse, same base64
+/// decode as the production `NexusClient::read` — only the runtime /
+/// connectivity model differs: shared `reqwest::Client` driven by a
+/// single shared **current-thread** tokio runtime, every call
+/// multiplexed through `Runtime::block_on`. That matches what
+/// `reqwest::blocking::Client` did internally pre-#4056: one client,
+/// one current-thread runtime, every blocking call shared.
+/// (R2: previous raw-transport version was not full-stack and could
+/// move the ratio for reasons unrelated to the migration.)
+fn pre_pr_read(
+    client: &reqwest::Client,
+    runtime: &Runtime,
+    url: &str,
+    api_key: &str,
+) -> Vec<u8> {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+
+    let url = url.to_string();
+    let api_key = api_key.to_string();
+    runtime.block_on(async move {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "read",
+            "params": {"path": READ_PATH},
+        });
+        let resp = client
+            .post(format!("{}/api/nfs/read", url))
+            .header("authorization", format!("Bearer {}", api_key))
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .expect("send");
+
+        if !resp.status().is_success() {
+            panic!("non-success: {}", resp.status());
+        }
+        // Mirror NexusClient::read_with_etag_async: parse JSON-RPC
+        // envelope into the same shape and base64-decode `data`.
+        #[derive(serde::Deserialize)]
+        struct BytesResult {
+            #[allow(dead_code)]
+            #[serde(rename = "__type__")]
+            type_tag: String,
+            data: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct JsonRpcReadResponse {
+            result: Option<BytesResult>,
+        }
+        let parsed: JsonRpcReadResponse = resp.json().await.expect("json");
+        let payload = parsed.result.expect("missing result").data;
+        STANDARD.decode(&payload).expect("base64")
+    })
+}
+
 fn run_pre_pr_blocking(
     client: Arc<reqwest::Client>,
     runtime: Arc<Runtime>,
     url: &str,
+    api_key: &str,
     threads: usize,
     ops_per_thread: usize,
 ) {
-    let body = build_read_body();
-    let url = format!("{}/api/nfs/read", url);
     let mut handles = Vec::with_capacity(threads);
     for _ in 0..threads {
         let client = client.clone();
         let runtime = runtime.clone();
-        let url = url.clone();
-        let body = body.clone();
+        let url = url.to_string();
+        let api_key = api_key.to_string();
         handles.push(thread::spawn(move || {
             for _ in 0..ops_per_thread {
-                let bytes = runtime.block_on(async {
-                    let resp = client
-                        .post(&url)
-                        .header("content-type", "application/json")
-                        .body(body.clone())
-                        .send()
-                        .await
-                        .expect("send");
-                    resp.bytes().await.expect("read body")
-                });
+                let bytes = pre_pr_read(&client, &runtime, &url, &api_key);
                 black_box(bytes);
             }
         }));
@@ -254,24 +285,9 @@ fn main() {
     // its connector with the current reactor at construction.
     let pre_pr_runtime = Arc::new(build_pre_pr_runtime());
     let pre_pr_client = Arc::new(pre_pr_runtime.block_on(async { build_pre_pr_client() }));
-    // Warm pre-PR baseline. The request future has to be built
-    // inside `block_on` because reqwest's send() registers a
-    // tokio::time::Sleep for the request timeout, and Sleep::new
-    // requires runtime context (not just future-polling context).
-    let warm_body = build_read_body();
-    let warm_url = format!("{}/api/nfs/read", url);
+    // Warm pre-PR baseline via the full-stack pipeline.
     for _ in 0..8 {
-        let client = pre_pr_client.clone();
-        let url_inner = warm_url.clone();
-        let body_inner = warm_body.clone();
-        let _ = pre_pr_runtime.block_on(async move {
-            client
-                .post(&url_inner)
-                .header("content-type", "application/json")
-                .body(body_inner)
-                .send()
-                .await
-        });
+        let _ = pre_pr_read(&pre_pr_client, &pre_pr_runtime, &url, api_key);
     }
 
     println!(
@@ -300,6 +316,7 @@ fn main() {
                     pre_pr_client.clone(),
                     pre_pr_runtime.clone(),
                     &url,
+                    api_key,
                     threads,
                     pre_pr_ops,
                 )

@@ -323,14 +323,23 @@ lifecycle the production code never had, inflating the speedup):
 
 | Threads | pooled ops/s | pre_pr_blocking ops/s | unpooled ops/s | vs pre-PR | vs unpooled |
 |---|---|---|---|---|---|
-| 1  |  4 479 | 11 785 |  3 347 | 0.38× | 1.34× |
-| 4  | 32 654 | 33 322 | 10 600 | 0.98× | 3.08× |
-| 8  | 51 551 | 45 575 | 10 522 | 1.13× | 4.90× |
-| 16 | 60 051 | 55 127 | 10 743 | 1.09× | 5.59× |
+| 1  | 10 256 | 14 702 |  5 836 | 0.70× | 1.76× |
+| 4  | 52 461 | 50 022 | 10 816 | 1.05× | 4.85× |
+| 8  | 59 568 | 54 232 | 10 944 | 1.10× | 5.44× |
+| 16 | 65 506 | 56 559 | 11 323 | 1.16× | 5.79× |
+
+Both `pooled` and `pre_pr_blocking` run the full `NexusClient::read`
+pipeline — same JSON-RPC envelope, same `Authorization` header, same
+JSON parse, same base64 decode — so only the runtime / connectivity
+model differs (R2 follow-up: previous version compared raw transport
+on the baseline side, which the reviewer correctly flagged as not
+apples-to-apples).
 
 **Acceptance vs the issue's stated ≥2× bar:** *not met* against the
-faithful pre-PR baseline (1.09–1.13× at concurrency; pre-PR actually
-faster at one thread). It is met (3.1×–5.6×) against the no-shared-pool
+faithful pre-PR baseline (1.05–1.16× at concurrency; pre-PR is
+actually 1.4× faster at one thread because its current-thread
+runtime has lower per-call overhead when there is no concurrency to
+amortize). It is met (3.1×–5.6×) against the no-shared-pool
 worst case, but that's not what the production code looked like.
 
 **Why ship the migration anyway?** The throughput win was a misread of

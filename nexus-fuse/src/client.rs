@@ -168,12 +168,31 @@ impl NexusClient {
 
     /// Run a future to completion on the shared process-wide HTTP runtime.
     ///
-    /// Safe to call from any thread that is NOT a worker of the HTTP
-    /// runtime — that includes fuser callback threads, regular `#[test]`
-    /// threads, tokio blocking-pool threads, and worker threads of a
-    /// different runtime (e.g., the daemon's IPC runtime). Daemon code
-    /// that is already async should call the `*_async` methods directly
-    /// instead of going through here.
+    /// # Contract
+    ///
+    /// The sync `read`/`write`/`stat`/… methods exist for **sync
+    /// callsites only** — fuser callback threads, hydrate's
+    /// `spawn_blocking` tasks, plain `#[test]` threads. Anywhere
+    /// inside an `async fn` that is being polled by a tokio runtime,
+    /// callers **must** use the `*_async` variants (`read_async`,
+    /// `stat_async`, …). Calling a sync wrapper from an async task
+    /// will trip tokio's `Cannot start a runtime from within a
+    /// runtime` guard inside `Runtime::block_on` and panic the
+    /// caller's task. This is intentional: the API surface stays
+    /// minimal and the panic loudly catches the misuse. The
+    /// "calling-from-async-panics" behavior is locked in by
+    /// `tests/concurrent_stress_test.rs::sync_wrapper_panics_inside_async_task`
+    /// (#4056 R2).
+    ///
+    /// # Why not auto-offload to a blocking thread?
+    ///
+    /// Tempting, but it would require every future returned by the
+    /// `*_async` methods to be `Send + 'static`, forcing us to clone
+    /// `self`'s state into the future. That's churn for a footgun
+    /// the type system can't help us with anyway. The simpler
+    /// contract — sync API for sync code, async API for async code,
+    /// loud panic if you mix them — is what daemon refactors will
+    /// reach for naturally.
     fn block_on<F: Future>(&self, fut: F) -> F::Output {
         http_runtime().block_on(fut)
     }

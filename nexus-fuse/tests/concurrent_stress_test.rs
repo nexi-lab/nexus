@@ -86,6 +86,58 @@ fn concurrent_mixed_ops_do_not_panic_or_deadlock() {
     }
 }
 
+/// Contract test (#4056 R2): a sync method called from inside an
+/// async task on a multi-thread tokio runtime must panic loudly via
+/// tokio's nested-runtime guard. If a future refactor accidentally
+/// exposes a sync wrapper to an async-task caller, this test will
+/// catch it. We use `catch_unwind` because tokio's `Runtime::block_on`
+/// emits an unwinding panic; the assertion is that the panic
+/// happens, not silent corruption / hang.
+#[test]
+fn sync_wrapper_panics_inside_async_task() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    let mut server = Server::new();
+    let _read = server
+        .mock("POST", "/api/nfs/read")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(READ_BODY)
+        .expect_at_least(0)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+
+    // Build a multi-thread tokio runtime (the daemon's flavor) and
+    // run an async task that misuses the sync API. The async block
+    // is wrapped in catch_unwind so the test process doesn't abort
+    // — we just need to observe that the panic fired.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let outcome = runtime.block_on(async {
+        // The misuse: calling client.read() (sync wrapper) from
+        // inside an async task. tokio's nested-runtime guard fires.
+        let client = client.clone();
+        let join = tokio::spawn(async move {
+            // catch_unwind so the task doesn't abort the runtime.
+            catch_unwind(AssertUnwindSafe(|| {
+                // This is the misuse the contract forbids.
+                let _ = client.read("/x.txt");
+            }))
+        });
+        join.await.expect("task join")
+    });
+
+    assert!(
+        outcome.is_err(),
+        "expected sync read() from async task to panic via tokio's nested-runtime guard"
+    );
+}
+
 #[test]
 fn cloned_client_is_independent_under_load() {
     // The OnceLock-shared HTTP_RUNTIME is supposed to survive arbitrary

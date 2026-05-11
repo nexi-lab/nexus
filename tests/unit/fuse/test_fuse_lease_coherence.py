@@ -29,10 +29,10 @@ def _make_coordinator(
 ) -> FUSELeaseCoordinator:
     """Create a coordinator with a fresh cache backed by the shared lease manager."""
     cache = FUSECacheManager(
-        attr_cache_size=128,
+        content_cache_bytes=128 * 1024,
+        parsed_cache_bytes=16 * 1024,
+        max_drain_bytes=64 * 1024,
         attr_cache_ttl=300,  # long TTL so TTL expiry doesn't interfere
-        content_cache_size=128,
-        parsed_cache_size=16,
     )
     return FUSELeaseCoordinator(
         cache=cache,

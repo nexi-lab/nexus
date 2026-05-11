@@ -50,10 +50,10 @@ def test_content_cache_rejects_mismatched_fingerprint() -> None:
 
 def test_parent_only_invalidation_does_not_clear_grandparent_listing() -> None:
     cache = FUSECacheManager(
-        attr_cache_size=8,
+        content_cache_bytes=8 * 1024,
+        parsed_cache_bytes=8 * 1024,
+        max_drain_bytes=4 * 1024,
         attr_cache_ttl=60,
-        content_cache_size=8,
-        parsed_cache_size=8,
     )
     cache.cache_listing("/a", [".", "..", "b"])
     cache.cache_listing("/a/b", [".", "..", "c.txt"])
@@ -76,10 +76,10 @@ async def test_ttl_fallback_path_is_used_without_fingerprint() -> None:
 
 def test_invalidate_file_clears_raw_and_parsed_views_for_source_path() -> None:
     cache = FUSECacheManager(
-        attr_cache_size=8,
+        content_cache_bytes=8 * 1024,
+        parsed_cache_bytes=8 * 1024,
+        max_drain_bytes=4 * 1024,
         attr_cache_ttl=60,
-        content_cache_size=8,
-        parsed_cache_size=8,
     )
     cache.cache_content("/report.xlsx", b"raw", fingerprint="etag:1")
     cache.cache_parsed("/report.xlsx", "md", b"# parsed")

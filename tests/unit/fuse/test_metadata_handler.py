@@ -107,11 +107,10 @@ class TestReaddir:
 
 def test_parent_only_listing_invalidation_keeps_grandparent() -> None:
     cache = FUSECacheManager(
-        attr_cache_size=8,
-        listing_cache_size=8,
+        content_cache_bytes=8 * 1024,
+        parsed_cache_bytes=8 * 1024,
+        max_drain_bytes=4 * 1024,
         attr_cache_ttl=60,
-        content_cache_size=8,
-        parsed_cache_size=8,
     )
     cache.cache_listing("/a", [".", "..", "b"])
     cache.cache_listing("/a/b", [".", "..", "c.txt"])
@@ -160,11 +159,10 @@ def test_readdir_cache_hit_isolated_by_operation_context(
 
 def test_metadata_index_cache_is_bounded_by_configured_capacity() -> None:
     cache = FUSECacheManager(
-        attr_cache_size=1,
-        listing_cache_size=1,
+        content_cache_bytes=8 * 1024,
+        parsed_cache_bytes=8 * 1024,
+        max_drain_bytes=4 * 1024,
         attr_cache_ttl=60,
-        content_cache_size=8,
-        parsed_cache_size=8,
     )
 
     cache.cache_attr("/a.txt", {"st_size": 1})

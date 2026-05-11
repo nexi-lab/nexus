@@ -146,12 +146,12 @@ class NexusFUSEOperations(Operations):
         # Initialize cache with lease coordinator (Issue #3397)
         dir_cache_ttl = cache_config.get("dir_cache_ttl", 5)
         bare_cache = FUSECacheManager(
-            attr_cache_size=cache_config.get("attr_cache_size", 1024),
+            content_cache_bytes=cache_config.get("content_cache_bytes", 512 * 1024 * 1024),
+            parsed_cache_bytes=cache_config.get("parsed_cache_bytes", 64 * 1024 * 1024),
+            max_drain_bytes=cache_config.get("max_drain_bytes", 16 * 1024 * 1024),
             attr_cache_ttl=cache_config.get("attr_cache_ttl", 60),
-            listing_cache_size=cache_config.get("dir_cache_size", 1024),
             listing_cache_ttl=dir_cache_ttl,
-            content_cache_size=cache_config.get("content_cache_size", 10000),
-            parsed_cache_size=cache_config.get("parsed_cache_size", 50),
+            index_ttl_overrides=cache_config.get("index_ttl_overrides"),
             enable_metrics=cache_config.get("enable_metrics", False),
         )
 

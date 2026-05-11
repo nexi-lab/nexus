@@ -679,15 +679,19 @@ Issue #4057. Adaptive read-ahead engine replacing the Python
 - **Backpressure-aware worker pool** — bounded `tokio::sync::mpsc`
   with drop-on-full semantics; metric `dropped_backpressure` exported.
 - **`RangeReader` trait** decouples the engine from any specific
-  backend. Two adapters live in the kernel:
+  backend. The kernel ships one adapter:
   - `KernelRangeReader` (`rust/kernel/src/prefetch_adapter.rs`) —
     wraps `Arc<dyn ObjectStore>` so the engine issues range GETs
     through `ObjectStore::read_range` (added in this issue with a
     default slice impl; `CasLocalBackend` and `PathLocalBackend`
     override for native seek+read).
-  - `KernelEngineSink` (`rust/kernel/src/prefetch_hint.rs`) —
-    implements `PrefetchHintSink` so the kernel emits a hint from
-    every successful `sys_read` DT_REG path.
+- **`PrefetchHintSink` trait** (`rust/kernel/src/prefetch_hint.rs`)
+  with a `NullSink` default — the kernel's `sys_read` DT_REG path
+  invokes `prefetch_sink.on_read(path, offset, size)` after every
+  successful read, but no production code installs a non-null sink
+  today.  The Python `ReadaheadManager` is the canonical fan-out
+  point; the kernel trait is reserved for a future Python-callable
+  installer that includes explicit release/invalidate semantics.
 - **Python bridge** — `PyPrefetchEngine` exposed via `nexus_runtime`
   cdylib. The Python `ReadaheadManager` accepts `use_rust_engine=True`
   and routes `on_open`/`on_read`/`on_release` to the Rust engine. The

@@ -662,11 +662,13 @@ class ReadaheadManager:
             path: File path
             file_size: Optional file size (for smarter prefetch decisions)
         """
+        if self._shutdown:
+            return
         if self._rust_engine is not None:
             self._rust_engine.on_open(fh, path, file_size)
             return
 
-        if not self._config.enabled or not self._config.prefetch_on_open or self._shutdown:
+        if not self._config.enabled or not self._config.prefetch_on_open:
             return
 
         # Create session for this file handle
@@ -735,10 +737,12 @@ class ReadaheadManager:
         Returns:
             Prefetched data if available, None otherwise
         """
+        if self._shutdown:
+            return None
         if self._rust_engine is not None:
             return self._rust_engine.on_read(fh, offset, size)
 
-        if not self._config.enabled or self._shutdown:
+        if not self._config.enabled:
             return None
 
         # Get or create session
@@ -793,6 +797,8 @@ class ReadaheadManager:
         Args:
             fh: File handle being released
         """
+        if self._shutdown:
+            return
         if self._rust_engine is not None:
             self._rust_engine.on_release(fh)
             return
@@ -828,11 +834,24 @@ class ReadaheadManager:
     def invalidate_path(self, path: str) -> None:
         """Invalidate all prefetch state for a path.
 
-        Called on write/delete operations.
+        Called on write/delete operations.  Drops *both* the Python-side
+        buffer pool/futures AND the Rust engine's per-fh buffers for
+        this path, so the Rust path can never serve stale prefetched
+        bytes after a mutation (Issue #4057 adversarial review #1).
 
         Args:
             path: File path to invalidate
         """
+        # Rust engine drop first — if both paths happen to be active
+        # (transition during config-change), order doesn't matter, but
+        # we want the Rust drop to happen unconditionally on every
+        # invalidation since `on_read` consults the Rust buffer first.
+        if self._rust_engine is not None:
+            try:
+                self._rust_engine.invalidate_path(path)
+            except Exception as e:
+                logger.warning(f"[READAHEAD] Rust invalidate_path failed: {e}")
+
         self._buffer_pool.invalidate_path(path)
 
         # Cancel pending prefetches for this path
@@ -1036,6 +1055,20 @@ class ReadaheadManager:
     def shutdown(self) -> None:
         """Shutdown readahead manager."""
         self._shutdown = True
+
+        # Tear down the Rust engine first (release the GIL inside Rust
+        # while the tokio runtime drains).  After this returns, the
+        # `_rust_engine` reference is cleared so subsequent on_read /
+        # on_open / on_release / invalidate_path calls fall through to
+        # the Python path (or no-op if the executor is also gone).
+        # Without this, the engine's tokio worker threads outlive the
+        # Python ReadaheadManager (Issue #4057 adversarial review #3).
+        if self._rust_engine is not None:
+            try:
+                self._rust_engine.shutdown()
+            except Exception as e:
+                logger.warning(f"[READAHEAD] Rust engine shutdown failed: {e}")
+            self._rust_engine = None
 
         # Cancel pending futures
         with self._futures_lock:

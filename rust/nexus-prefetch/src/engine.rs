@@ -13,16 +13,30 @@ use tokio::task::JoinHandle;
 use tracing::debug;
 
 use crate::config::EngineConfig;
-use crate::detector::{Detector, SequentialDetector};
+use crate::detector::{Detector, MajorityTrendDetector, SequentialDetector, StrideDetector};
 use crate::metrics::{EngineMetrics, MetricsSnapshot};
 use crate::pattern::AccessPattern;
 use crate::range_reader::SharedRangeReader;
 use crate::session::Session;
-use crate::worker::{run_worker, PrefetchJob};
+use crate::worker::{run_worker, PrefetchJob, SharedReceiver};
+use tokio::sync::Mutex as AsyncMutex;
+
+/// Which detector each new session should be primed with.  Defaults
+/// to `Sequential` (the safe choice for cold sessions); callers that
+/// know their workload up-front can override via `PrefetchEngine::with_detector`.
+#[derive(Debug, Clone, Copy)]
+pub enum DetectorKind {
+    Sequential,
+    Stride,
+    MajorityTrend,
+}
 
 pub struct PrefetchEngine {
     cfg: EngineConfig,
     sessions: Arc<DashMap<u64, Arc<Mutex<Session>>>>,
+    /// path → set of fh — supports `invalidate_path` so the FUSE write
+    /// hook can drop prefetched data after a write/delete.
+    path_index: Arc<DashMap<String, std::collections::HashSet<u64>>>,
     tx: mpsc::Sender<PrefetchJob>,
     metrics: Arc<EngineMetrics>,
     workers: Mutex<Vec<JoinHandle<()>>>,
@@ -40,40 +54,66 @@ impl PrefetchEngine {
         reader: SharedRangeReader,
         runtime: Option<tokio::runtime::Runtime>,
     ) -> Self {
+        Self::with_detector(cfg, reader, runtime, DetectorKind::Sequential)
+    }
+
+    /// Build with an explicit detector kind.  Workers are spawned
+    /// `cfg.max_workers` deep, each consuming the shared receiver
+    /// concurrently — that's the unit of in-flight backend GET
+    /// parallelism.
+    pub fn with_detector(
+        cfg: EngineConfig,
+        reader: SharedRangeReader,
+        runtime: Option<tokio::runtime::Runtime>,
+        detector: DetectorKind,
+    ) -> Self {
         let cfg = cfg.clamp();
         let metrics = Arc::new(EngineMetrics::default());
         let sessions = Arc::new(DashMap::new());
+        let path_index = Arc::new(DashMap::new());
         let (tx, rx) = mpsc::channel(cfg.queue_capacity);
         let detector_factory: Box<dyn Fn() -> Box<dyn Detector> + Send + Sync> = {
             let tol = cfg.sequential_tolerance;
             let min = cfg.min_sequential_count;
-            Box::new(move || Box::new(SequentialDetector::new(tol, min)))
+            match detector {
+                DetectorKind::Sequential => {
+                    Box::new(move || Box::new(SequentialDetector::new(tol, min)))
+                }
+                DetectorKind::Stride => Box::new(move || Box::new(StrideDetector::new())),
+                DetectorKind::MajorityTrend => {
+                    Box::new(move || Box::new(MajorityTrendDetector::new()))
+                }
+            }
         };
 
-        let mut workers = Vec::with_capacity(cfg.max_workers);
-        // Spawn exactly one consumer that fans out per-job onto
-        // tokio's blocking pool inside run_worker. cfg.max_workers
-        // controls the spawn_blocking pool size via the runtime
-        // builder (configured by the caller).
-        let h = match runtime.as_ref() {
-            Some(rt) => rt.spawn(run_worker(
-                rx,
-                sessions.clone(),
-                reader.clone(),
-                metrics.clone(),
-            )),
-            None => tokio::spawn(run_worker(
-                rx,
-                sessions.clone(),
-                reader.clone(),
-                metrics.clone(),
-            )),
-        };
-        workers.push(h);
+        // Shared mpsc Receiver so all workers race for jobs.  The async
+        // lock is held only during `recv`; blocking I/O runs unlocked.
+        let shared_rx: SharedReceiver = Arc::new(AsyncMutex::new(rx));
+
+        let worker_count = cfg.max_workers.max(1);
+        let mut workers = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let h = match runtime.as_ref() {
+                Some(rt) => rt.spawn(run_worker(
+                    shared_rx.clone(),
+                    sessions.clone(),
+                    reader.clone(),
+                    metrics.clone(),
+                )),
+                None => tokio::spawn(run_worker(
+                    shared_rx.clone(),
+                    sessions.clone(),
+                    reader.clone(),
+                    metrics.clone(),
+                )),
+            };
+            workers.push(h);
+        }
 
         Self {
             cfg,
             sessions,
+            path_index,
             tx,
             metrics,
             workers: Mutex::new(workers),
@@ -86,6 +126,10 @@ impl PrefetchEngine {
         let det = (self.detector_factory)();
         let sess = Session::new(path.to_string(), fh, file_size, det, &self.cfg);
         self.sessions.insert(fh, Arc::new(Mutex::new(sess)));
+        self.path_index
+            .entry(path.to_string())
+            .or_default()
+            .insert(fh);
     }
 
     /// Return prefetched bytes covering `[offset, offset+size)` if
@@ -123,7 +167,52 @@ impl PrefetchEngine {
     }
 
     pub fn on_release(&self, fh: u64) {
-        self.sessions.remove(&fh);
+        // Removing from sessions first means any in-flight prefetch
+        // workers that haven't deposited yet see no Session entry and
+        // drop their bytes silently (run_worker's existing fallback).
+        let removed = self.sessions.remove(&fh);
+        if let Some((_, slot)) = removed {
+            // Drop buffer + pending eagerly so the next on_open of the
+            // same fh after release doesn't accidentally see stale data.
+            slot.lock().clear();
+        }
+        // Prune the path_index entry.
+        let mut empty_paths: Vec<String> = Vec::new();
+        for mut e in self.path_index.iter_mut() {
+            e.value_mut().remove(&fh);
+            if e.value().is_empty() {
+                empty_paths.push(e.key().clone());
+            }
+        }
+        for p in empty_paths {
+            self.path_index.remove(&p);
+        }
+    }
+
+    /// Drop all prefetched data + pending work for one file handle.
+    /// Intended for FUSE write/delete invalidation when the caller
+    /// still wants the session alive (read pattern restarts cold).
+    pub fn invalidate_fh(&self, fh: u64) {
+        if let Some(slot) = self.sessions.get(&fh) {
+            let mut s = slot.lock();
+            s.clear();
+            s.detector.reset();
+            s.window = self.cfg.initial_window;
+        }
+    }
+
+    /// Drop all prefetched data + pending work for every fh currently
+    /// open on `path`.  Called from the Python `ReadaheadManager`
+    /// invalidation hook (write/delete propagation).  Cheap when the
+    /// path has no active sessions.
+    pub fn invalidate_path(&self, path: &str) {
+        let fhs: Vec<u64> = match self.path_index.get(path) {
+            Some(set) => set.iter().copied().collect(),
+            None => return,
+        };
+        for fh in fhs {
+            self.invalidate_fh(fh);
+        }
     }
 
     pub fn metrics(&self) -> MetricsSnapshot {
@@ -141,23 +230,34 @@ impl PrefetchEngine {
 
     fn enqueue_prefetch(&self, s: &mut Session, current_offset: u64, pattern: AccessPattern) {
         let block_size = self.cfg.block_size as u64;
-        let first_block_offset = match pattern {
-            AccessPattern::Sequential => ((current_offset / block_size) + 1) * block_size,
-            AccessPattern::Stride { stride } if stride > 0 => current_offset + stride as u64,
-            AccessPattern::Stride { stride } if stride < 0 => {
-                current_offset.saturating_sub((-stride) as u64)
+        // For sequential we walk by block_size; for stride/trend we walk
+        // by the signed delta the detector observed, so positive strides
+        // larger than a block actually fetch future stride positions and
+        // negative strides walk backwards.
+        let (first_offset, step): (u64, i64) = match pattern {
+            AccessPattern::Sequential => {
+                let first = ((current_offset / block_size) + 1) * block_size;
+                (first, block_size as i64)
             }
-            AccessPattern::Trend { delta } if delta > 0 => current_offset + delta as u64,
-            AccessPattern::Trend { delta } if delta < 0 => {
-                current_offset.saturating_sub((-delta) as u64)
+            AccessPattern::Stride { stride } | AccessPattern::Trend { delta: stride } => {
+                if stride == 0 {
+                    return;
+                }
+                let first = if stride > 0 {
+                    current_offset.saturating_add(stride as u64)
+                } else {
+                    current_offset.saturating_sub((-stride) as u64)
+                };
+                (first, stride)
             }
             _ => return,
         };
 
-        let max_offset = first_block_offset + s.window;
-        let mut cur = first_block_offset;
+        let mut cur = first_offset;
         let mut issued = 0u32;
-        while cur < max_offset && issued < self.cfg.max_blocks_per_trigger {
+        let mut walked: u64 = 0;
+        let step_abs = step.unsigned_abs();
+        while walked < s.window && issued < self.cfg.max_blocks_per_trigger {
             if let Some(fs) = s.file_size {
                 if cur >= fs {
                     break;
@@ -179,7 +279,20 @@ impl PrefetchEngine {
                     break;
                 }
             }
-            cur += block_size;
+            // Advance by signed step.  Saturating prevents wraparound
+            // when a negative stride walks below 0 or a positive stride
+            // approaches u64::MAX — either case ends the loop because
+            // the next iteration won't make further progress.
+            let next = if step > 0 {
+                cur.saturating_add(step_abs)
+            } else {
+                cur.saturating_sub(step_abs)
+            };
+            if next == cur {
+                break; // hit a boundary; stop issuing
+            }
+            cur = next;
+            walked = walked.saturating_add(step_abs);
             issued += 1;
         }
     }

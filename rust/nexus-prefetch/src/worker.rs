@@ -1,8 +1,11 @@
 //! Worker task — consumes prefetch jobs off a bounded mpsc, calls the
 //! injected `RangeReader`, deposits bytes into the requesting session.
 //!
-//! Spawned `max_workers` times by the engine.  Loops until the
-//! channel is closed by `PrefetchEngine::shutdown`.
+//! Spawned `max_workers` times by the engine.  All worker tasks share
+//! a single `tokio::sync::Mutex<Receiver>` so they fan out true
+//! concurrent I/O (each in-flight `spawn_blocking` only blocks the
+//! worker that issued it, not the others).  Loops until the channel
+//! is closed by `PrefetchEngine::shutdown`.
 
 use crate::metrics::EngineMetrics;
 use crate::range_reader::SharedRangeReader;
@@ -10,7 +13,7 @@ use crate::session::Session;
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use tracing::{debug, warn};
 
 pub struct PrefetchJob {
@@ -20,13 +23,25 @@ pub struct PrefetchJob {
     pub block_size: u32,
 }
 
+/// Multi-consumer receiver — workers race for jobs under a brief async
+/// lock; the lock is released before the blocking read so workers run
+/// in parallel.
+pub type SharedReceiver = Arc<AsyncMutex<mpsc::Receiver<PrefetchJob>>>;
+
 pub async fn run_worker(
-    mut rx: mpsc::Receiver<PrefetchJob>,
+    rx: SharedReceiver,
     sessions: Arc<DashMap<u64, Arc<Mutex<Session>>>>,
     reader: SharedRangeReader,
     metrics: Arc<EngineMetrics>,
 ) {
-    while let Some(job) = rx.recv().await {
+    loop {
+        let job = {
+            let mut guard = rx.lock().await;
+            match guard.recv().await {
+                Some(j) => j,
+                None => return, // sender dropped
+            }
+        };
         // Block-on the sync reader.  In future revisions we may switch
         // to an async-native trait, but the current `ObjectStore::read`
         // is sync (`rust/kernel/src/abc/object_store.rs:86`) so any
@@ -63,7 +78,10 @@ pub async fn run_worker(
                 }
             }
             Err(join_err) => {
-                warn!(error = %join_err, "prefetch worker join failed");
+                warn!(error = %join_err, fh, offset = block_offset, "prefetch worker join failed");
+                if let Some(slot) = sessions.get(&fh) {
+                    slot.lock().pending.remove(&block_offset);
+                }
             }
         }
     }

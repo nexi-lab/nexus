@@ -114,6 +114,23 @@ impl PyPrefetchEngine {
         }
     }
 
+    /// Drop all prefetched data + pending work for a single open fh.
+    /// Wired into `ReadaheadManager.invalidate_path` so writes/deletes
+    /// can never serve stale prefetched bytes.
+    fn invalidate_fh(&self, fh: u64) {
+        if let Some(e) = self.inner.as_ref() {
+            e.invalidate_fh(fh);
+        }
+    }
+
+    /// Same as `invalidate_fh` but addresses every fh currently open
+    /// against `path`.  Used by the FUSE invalidation hook.
+    fn invalidate_path(&self, path: &str) {
+        if let Some(e) = self.inner.as_ref() {
+            e.invalidate_path(path);
+        }
+    }
+
     fn metrics(&self) -> PyResult<(u64, u64, u64, u64, u64)> {
         let e = self
             .inner

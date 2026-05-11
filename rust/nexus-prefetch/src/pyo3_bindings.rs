@@ -129,9 +129,26 @@ impl PyPrefetchEngine {
         ))
     }
 
-    fn shutdown(&mut self) {
+    fn shutdown(&mut self, py: Python<'_>) {
         if let Some(e) = self.inner.take() {
-            e.shutdown();
+            // Release the GIL while the tokio runtime is being dropped.
+            // Worker tasks may be mid-`spawn_blocking` calling back into
+            // Python via `Python::attach` — holding the GIL here would
+            // deadlock the runtime-drop barrier waiting for workers that
+            // are themselves blocked on GIL acquisition.
+            py.detach(|| drop(e));
+        }
+    }
+}
+
+// Drop runs without a Python<'_> argument; pyo3 invokes it during GC
+// while the GIL may or may not be held.  We mirror the explicit-shutdown
+// GIL-release dance via `Python::attach + py.detach` so implicit
+// drops (e.g. the Python __del__ path) cannot deadlock the runtime drop.
+impl Drop for PyPrefetchEngine {
+    fn drop(&mut self) {
+        if let Some(e) = self.inner.take() {
+            Python::attach(|py| py.detach(|| drop(e)));
         }
     }
 }

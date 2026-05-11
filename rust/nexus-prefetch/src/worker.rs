@@ -34,27 +34,10 @@ pub struct PrefetchJob {
 /// in parallel.
 pub type SharedReceiver = Arc<AsyncMutex<mpsc::Receiver<PrefetchJob>>>;
 
-/// Apply a signed byte-delta to the engine's global buffered-bytes
-/// counter.  Saturating to avoid u64 underflow in the cleanup paths.
-fn apply_delta(counter: &std::sync::atomic::AtomicU64, delta: i64) {
-    use std::sync::atomic::Ordering;
-    if delta >= 0 {
-        counter.fetch_add(delta as u64, Ordering::Relaxed);
-    } else {
-        // saturating subtract
-        let mag = (-delta) as u64;
-        loop {
-            let cur = counter.load(Ordering::Relaxed);
-            let new = cur.saturating_sub(mag);
-            if counter
-                .compare_exchange_weak(cur, new, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                break;
-            }
-        }
-    }
-}
+// (Round 8: the inline `apply_delta` helper is no longer needed —
+// `Session::deposit_with_global_cap` mutates the engine's global
+// counter directly via `fetch_add` / `fetch_sub`, which is race-free
+// against concurrent workers.)
 
 pub async fn run_worker(
     rx: SharedReceiver,
@@ -117,19 +100,19 @@ pub async fn run_worker(
                             "prefetch session-id mismatch; dropping bytes"
                         );
                     } else {
-                        // Engine-wide cap closure: returns true when
-                        // the current global counter (after this
-                        // session's bytes are factored in) is over
-                        // the configured ceiling.  Session::deposit
-                        // sheds blocks until both per-session and
-                        // global caps are honored.
-                        let gb = global_bytes.clone();
-                        let cap = max_buffer_bytes;
-                        let delta =
-                            s.deposit_with_global_cap(block_offset, bytes, |_per_session_total| {
-                                gb.load(std::sync::atomic::Ordering::Relaxed) > cap
-                            });
-                        apply_delta(&global_bytes, delta);
+                        // `deposit_with_global_cap` reserves the
+                        // incoming bytes against `global_bytes` upfront
+                        // and refunds any evicted bytes, all through
+                        // the same atomic — concurrent workers see a
+                        // consistent total instead of the stale value
+                        // a separate read+apply would expose (round 8
+                        // finding #1).
+                        let _delta = s.deposit_with_global_cap(
+                            block_offset,
+                            bytes,
+                            &global_bytes,
+                            max_buffer_bytes,
+                        );
                         metrics
                             .prefetched_bytes
                             .fetch_add(size, std::sync::atomic::Ordering::Relaxed);

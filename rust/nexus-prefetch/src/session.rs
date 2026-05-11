@@ -112,62 +112,87 @@ impl Session {
     /// total buffered byte count exceeds the global limit; this lets
     /// `enforce_buffer_cap` shed beyond the per-session cap when
     /// other sessions are also full (round 7 finding #2).
-    /// Test-only deposit without a global-cap closure.  Engine code
+    /// Test-only deposit without a global-cap counter.  Engine code
     /// should use `deposit_with_global_cap` so cross-session OOM is
     /// bounded.
     pub fn deposit(&mut self, block_offset: u64, bytes: Bytes) -> i64 {
-        self.deposit_with_global_cap(block_offset, bytes, |_| false)
+        let dummy = std::sync::atomic::AtomicU64::new(0);
+        self.deposit_with_global_cap(block_offset, bytes, &dummy, u64::MAX)
     }
 
+    /// Deposit a completed block while honoring both per-session
+    /// (`max_window`) and engine-wide (`global_cap`) byte caps.  All
+    /// reservations/refunds go through `global_counter` so concurrent
+    /// workers see consistent totals (round 8 finding #1: previously
+    /// the cap closure read a stale counter and could allow one
+    /// deposit to cross the ceiling).  Returns the signed net delta
+    /// the engine should apply to its global byte counter via the
+    /// same atomic — note: the function ITSELF updates the counter
+    /// (`fetch_add` of incoming, `fetch_sub` of any evicted), so the
+    /// caller should NOT also adjust the counter using the return
+    /// value.  The return value exists for metrics/tests.
     pub fn deposit_with_global_cap(
         &mut self,
         block_offset: u64,
         bytes: Bytes,
-        global_cap_breached: impl Fn(u64) -> bool,
+        global_counter: &std::sync::atomic::AtomicU64,
+        global_cap: u64,
     ) -> i64 {
+        use std::sync::atomic::Ordering;
         self.pending.remove(&block_offset);
         if bytes.is_empty() {
             return 0;
         }
         let added = bytes.len() as u64;
-        let mut delta: i64 = 0;
+        // Reserve upfront so concurrent workers see this allocation.
+        global_counter.fetch_add(added, Ordering::Relaxed);
+        let mut delta: i64 = added as i64;
         if let Some(old) = self.buffer.insert(block_offset, bytes) {
-            // Replacing an existing block — net delta is the size diff.
             let old_len = old.len() as u64;
             self.buffered_bytes = self.buffered_bytes + added - old_len;
-            delta += added as i64 - old_len as i64;
+            // Replaced bytes leave the buffer; refund their share.
+            global_counter.fetch_sub(old_len, Ordering::Relaxed);
+            delta -= old_len as i64;
         } else {
             self.buffered_bytes += added;
-            delta += added as i64;
         }
-        // Per-session cap is `max_window`; on top of that, shed more
-        // while the engine's global counter is over its cap.
-        let evicted_bytes = self.enforce_buffer_cap(&global_cap_breached);
-        delta -= evicted_bytes as i64;
+        // Evict while EITHER cap is breached.  The closure reads the
+        // counter EVERY iteration so eviction stops as soon as the
+        // global total drops under the cap.  Eviction REFUNDS the
+        // global counter incrementally so the cap check sees the
+        // freed bytes (round 8 finding #1).
+        let evicted = self.enforce_buffer_cap_atomic(global_counter, global_cap);
+        delta -= evicted as i64;
         delta
     }
 
-    /// Evict from this session until BOTH (a) per-session cap is
-    /// satisfied and (b) the engine's global cap is satisfied
-    /// (`global_cap_breached(self.buffered_bytes)` returns false).
-    /// Returns the total bytes evicted.
-    fn enforce_buffer_cap(&mut self, global_cap_breached: &dyn Fn(u64) -> bool) -> u64 {
+    /// Evict from this session until both per-session and global caps
+    /// are satisfied.  Caller subtracts the returned byte count from
+    /// the global counter.
+    fn enforce_buffer_cap_atomic(
+        &mut self,
+        global_counter: &std::sync::atomic::AtomicU64,
+        global_cap: u64,
+    ) -> u64 {
+        use std::sync::atomic::Ordering;
         let mut evicted: u64 = 0;
         let per_session_cap = self.max_window;
         loop {
             let over_per_session = self.buffered_bytes > per_session_cap;
-            let over_global = global_cap_breached(self.buffered_bytes);
+            let over_global = global_counter.load(Ordering::Relaxed) > global_cap;
             if !over_per_session && !over_global {
                 break;
             }
-            let Some((k, _)) = self.buffer.iter().next().map(|(k, _)| (*k, ())) else {
+            let Some((k, len)) = self.buffer.iter().next().map(|(k, v)| (*k, v.len() as u64))
+            else {
                 break;
             };
-            if let Some(v) = self.buffer.remove(&k) {
-                let n = v.len() as u64;
-                self.buffered_bytes = self.buffered_bytes.saturating_sub(n);
-                evicted += n;
-            }
+            self.buffer.remove(&k);
+            self.buffered_bytes = self.buffered_bytes.saturating_sub(len);
+            // Apply refund immediately so the next iteration's check
+            // sees the freed bytes.
+            global_counter.fetch_sub(len, Ordering::Relaxed);
+            evicted += len;
         }
         evicted
     }
@@ -201,27 +226,26 @@ impl Session {
     /// Remove every buffered block whose trailing edge is at or before
     /// `consumed_end`.  Shared between `note_read` (forward only) and
     /// the take_range success path.  Returns total bytes evicted.
+    ///
+    /// Uses `BTreeMap::pop_first` to walk the buffer in ascending key
+    /// order, breaking out as soon as a block extends past the cursor
+    /// — O(evicted) rather than O(buffered) (round 8 finding #4).
+    /// Under sequential workloads with block_size much smaller than
+    /// max_buffer_bytes, the previous full-map scan ran tens of
+    /// thousands of times per read under the session lock.
     fn evict_consumed_blocks(&mut self) -> u64 {
         let cursor = self.consumed_end;
-        let to_remove: Vec<u64> = self
-            .buffer
-            .iter()
-            .filter_map(|(k, v)| {
-                let block_end = k + v.len() as u64;
-                if block_end <= cursor {
-                    Some(*k)
-                } else {
-                    None
-                }
-            })
-            .collect();
         let mut evicted: u64 = 0;
-        for k in to_remove {
-            if let Some(v) = self.buffer.remove(&k) {
-                let n = v.len() as u64;
-                self.buffered_bytes = self.buffered_bytes.saturating_sub(n);
-                evicted += n;
+        loop {
+            let head = self.buffer.iter().next().map(|(k, v)| (*k, v.len() as u64));
+            let Some((k, len)) = head else { break };
+            let block_end = k + len;
+            if block_end > cursor {
+                break;
             }
+            self.buffer.remove(&k);
+            self.buffered_bytes = self.buffered_bytes.saturating_sub(len);
+            evicted += len;
         }
         evicted
     }
@@ -281,13 +305,22 @@ impl Session {
             cursor = block_end;
         }
         // Successful read: advance the consumed-bytes high-water mark
-        // and evict fully-passed blocks (forward semantics — the hit
-        // path is by definition consuming bytes monotonically through
-        // this read).
+        // and evict fully-passed blocks (forward semantics).  For a
+        // backward-moving read (offset below `last_read_offset`) we
+        // skip the eviction so a negative-stride workload doesn't
+        // discard its own freshly-prefetched lower blocks on the very
+        // first hit (round 8 finding #3).
+        let is_backward = self.last_read_seen && offset < self.last_read_offset;
+        self.last_read_offset = offset;
+        self.last_read_seen = true;
         if end > self.consumed_end {
             self.consumed_end = end;
         }
-        let evicted = self.evict_consumed_blocks();
+        let evicted = if is_backward {
+            0
+        } else {
+            self.evict_consumed_blocks()
+        };
         self.hits += 1;
         (Some(Bytes::from(out)), evicted)
     }
@@ -296,12 +329,21 @@ impl Session {
     /// re-assign `session_id` from its global counter so in-flight
     /// prefetch jobs are rejected at deposit time.
     pub fn clear(&mut self) {
+        let _ = self.clear_returning_bytes();
+    }
+
+    /// Same as `clear` but returns the byte count that was in the
+    /// buffer before the drop, so the engine can refund the global
+    /// counter (round 8 finding #2).
+    pub fn clear_returning_bytes(&mut self) -> u64 {
+        let drained = self.buffered_bytes;
         self.pending.clear();
         self.buffer.clear();
         self.buffered_bytes = 0;
         self.consumed_end = 0;
         self.last_read_seen = false;
         self.last_read_offset = 0;
+        drained
     }
 
     /// Snapshot the current session identity — workers stamp this onto

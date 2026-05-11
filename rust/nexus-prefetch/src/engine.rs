@@ -161,14 +161,15 @@ impl PrefetchEngine {
     pub fn on_open(&self, fh: u64, path: &str, file_size: Option<u64>) {
         let det = (self.detector_factory)();
         // If the fh was reused (caller skipped on_release), drop any
-        // existing session for that fh first.  This ensures in-flight
-        // prefetch jobs from the old lifetime can't deposit into the
-        // new one (their generation token won't match).
+        // existing session for that fh first.  Refund its buffered
+        // bytes to the global counter so the cap stays honest across
+        // fh churn (round 8 finding #2).
         if let Some((_, old_slot)) = self.sessions.remove(&fh) {
-            // Prune the old path from path_index before swapping in
-            // the new session.  The old session's lock is released
-            // before re-entering DashMap to avoid lock-ordering risk.
-            let old_path = old_slot.lock().path.clone();
+            let mut old = old_slot.lock();
+            let drained = old.clear_returning_bytes();
+            let old_path = old.path.clone();
+            drop(old);
+            self.refund_global(drained);
             if let Some(mut set) = self.path_index.get_mut(&old_path) {
                 set.remove(&fh);
             }
@@ -226,11 +227,11 @@ impl PrefetchEngine {
             evicted_miss
         };
         if evicted_total > 0 {
-            // Subtract evicted bytes from global counter so future
-            // deposits aren't falsely throttled.
-            let cur = self.global_bytes.load(Ordering::Relaxed);
-            let new = cur.saturating_sub(evicted_total);
-            self.global_bytes.store(new, Ordering::Relaxed);
+            // Single atomic refund — `fetch_sub` is race-free against
+            // concurrent worker deposits that use `fetch_add` upfront
+            // (round 8 finding #2 — previous load+store could lose
+            // concurrent worker reservations).
+            self.refund_global(evicted_total);
         }
         hit
     }
@@ -242,8 +243,10 @@ impl PrefetchEngine {
         let removed = self.sessions.remove(&fh);
         if let Some((_, slot)) = removed {
             // Drop buffer + pending eagerly so the next on_open of the
-            // same fh after release doesn't accidentally see stale data.
-            slot.lock().clear();
+            // same fh after release doesn't accidentally see stale data,
+            // AND refund the global counter (round 8 finding #2).
+            let drained = slot.lock().clear_returning_bytes();
+            self.refund_global(drained);
         }
         // Prune the path_index entry.
         let mut empty_paths: Vec<String> = Vec::new();
@@ -262,14 +265,26 @@ impl PrefetchEngine {
     /// Intended for FUSE write/delete invalidation when the caller
     /// still wants the session alive (read pattern restarts cold).
     /// Mints a fresh `session_id` so in-flight workers reject any
-    /// pre-invalidate deposits.
+    /// pre-invalidate deposits, and refunds the global byte counter
+    /// (round 8 finding #2).
     pub fn invalidate_fh(&self, fh: u64) {
-        if let Some(slot) = self.sessions.get(&fh) {
+        let drained = if let Some(slot) = self.sessions.get(&fh) {
             let mut s = slot.lock();
-            s.clear();
+            let d = s.clear_returning_bytes();
             s.detector.reset();
             s.window = self.cfg.initial_window;
             s.session_id = self.mint_session_id();
+            d
+        } else {
+            0
+        };
+        self.refund_global(drained);
+    }
+
+    fn refund_global(&self, bytes: u64) {
+        if bytes > 0 {
+            self.global_bytes
+                .fetch_sub(bytes, std::sync::atomic::Ordering::Relaxed);
         }
     }
 

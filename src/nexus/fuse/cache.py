@@ -492,6 +492,16 @@ class FUSECacheManager:
             else:
                 self._file_cache.invalidate_path_sync(path)
 
+        # Fence the in-flight registry: post-invalidation readers must not
+        # join a future that was started before the write. Drop the entry
+        # from the registry; existing waiters still receive the in-flight
+        # bytes (those reads were racing the write anyway) but the next
+        # `inflight_future` call for this path becomes a fresh owner.
+        with self._inflight_lock:
+            stale_keys = [k for k in self._inflight if k[0] == path]
+            for stale_key in stale_keys:
+                self._inflight.pop(stale_key, None)
+
         if self._enable_metrics:
             with self._metrics_lock:
                 self._metrics["invalidations"] += 1

@@ -209,6 +209,26 @@ def test_inflight_clear_identity_does_not_delete_new_owner():
     assert mgr._inflight.get(("/p", "fp")) is None
 
 
+def test_invalidate_file_fences_inflight_registry():
+    """A write/invalidation between two reads must not let read B join read A's future."""
+    mgr = FUSECacheManager()
+    a_fut, owner_a = mgr.inflight_future("/p", None)
+    assert owner_a
+
+    # Write invalidates the path while A's fetch is in flight.
+    mgr.invalidate_file("/p")
+
+    # B starts a new read — must become a NEW owner, not join A.
+    b_fut, owner_b = mgr.inflight_future("/p", None)
+    assert owner_b is True
+    assert b_fut is not a_fut
+
+    # Cleanup
+    a_fut.set_result(b"pre-write")
+    b_fut.set_result(b"post-write")
+    mgr.inflight_clear("/p", None, owner=b_fut)
+
+
 def test_inflight_owner_survives_waiter_cancellation():
     """A cancelled waiter must not poison the shared future for other waiters."""
     import asyncio

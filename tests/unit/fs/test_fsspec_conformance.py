@@ -152,7 +152,8 @@ class NexusFsFixtures(abstract.AbstractFixtures):
 
         nfs = _ConformanceFS(nexus_fs=kernel)
         yield nfs
-        nfs._runner.close()
+        if hasattr(nfs, "_runner") and nfs._runner is not None:
+            nfs._runner.close()
         _ConformanceFS.clear_instance_cache()
 
     @pytest.fixture

@@ -16,6 +16,7 @@ import pytest
 # installed (CI matrix without [sandbox] extra).
 sqlite_vec = pytest.importorskip("sqlite_vec")
 pytest.importorskip("litellm")
+pytest.importorskip("fastembed")
 
 from nexus.bricks.search.sqlite_vec_backend import (  # noqa: E402
     DEFAULT_EMBEDDING_DIM,

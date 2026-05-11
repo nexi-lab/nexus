@@ -114,8 +114,12 @@ impl Session {
     /// other sessions are also full (round 7 finding #2).
     /// Test-only deposit without a global-cap counter.  Engine code
     /// should use `deposit_with_global_cap` so cross-session OOM is
-    /// bounded.
+    /// bounded.  Auto-marks the block as pending so the pending-set
+    /// gate (round 9 finding #2) doesn't trip on direct-deposit
+    /// test usage that never went through `mark_pending` /
+    /// `enqueue_prefetch`.
     pub fn deposit(&mut self, block_offset: u64, bytes: Bytes) -> i64 {
+        self.pending.insert(block_offset);
         let dummy = std::sync::atomic::AtomicU64::new(0);
         self.deposit_with_global_cap(block_offset, bytes, &dummy, u64::MAX)
     }
@@ -139,7 +143,16 @@ impl Session {
         global_cap: u64,
     ) -> i64 {
         use std::sync::atomic::Ordering;
-        self.pending.remove(&block_offset);
+        // Drop deposits that aren't expected — i.e. blocks cleared by
+        // `shrink_and_clear` (Random reset) or `clear` (invalidate).
+        // Workers stamp jobs with `session_id`; we already reject id
+        // mismatches.  Pending-set membership is the second gate that
+        // catches in-flight jobs from the SAME session that the
+        // detector just decided to discard (round 9 finding #2).
+        let was_pending = self.pending.remove(&block_offset);
+        if !was_pending {
+            return 0;
+        }
         if bytes.is_empty() {
             return 0;
         }
@@ -183,11 +196,10 @@ impl Session {
             if !over_per_session && !over_global {
                 break;
             }
-            let Some((k, len)) = self.buffer.iter().next().map(|(k, v)| (*k, v.len() as u64))
-            else {
+            let Some((_k, v)) = self.buffer.pop_first() else {
                 break;
             };
-            self.buffer.remove(&k);
+            let len = v.len() as u64;
             self.buffered_bytes = self.buffered_bytes.saturating_sub(len);
             // Apply refund immediately so the next iteration's check
             // sees the freed bytes.
@@ -237,13 +249,16 @@ impl Session {
         let cursor = self.consumed_end;
         let mut evicted: u64 = 0;
         loop {
-            let head = self.buffer.iter().next().map(|(k, v)| (*k, v.len() as u64));
-            let Some((k, len)) = head else { break };
-            let block_end = k + len;
+            let Some((k, v)) = self.buffer.pop_first() else {
+                break;
+            };
+            let block_end = k + v.len() as u64;
             if block_end > cursor {
+                // Block extends past the cursor — put it back and stop.
+                self.buffer.insert(k, v);
                 break;
             }
-            self.buffer.remove(&k);
+            let len = v.len() as u64;
             self.buffered_bytes = self.buffered_bytes.saturating_sub(len);
             evicted += len;
         }

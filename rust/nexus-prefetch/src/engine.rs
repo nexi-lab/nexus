@@ -352,6 +352,14 @@ impl PrefetchEngine {
         pattern: AccessPattern,
     ) {
         let block_size = self.cfg.block_size as u64;
+        // Admission control: a prefetch block that exceeds the global
+        // cap can never survive eviction, so issuing the backend read
+        // is pure waste (round 9 finding #1).  Disable when the user
+        // configures a cap smaller than block_size — typically a
+        // misconfiguration where buffer_pool_mb=0 was passed through.
+        if (self.cfg.block_size as u64) > self.cfg.max_buffer_bytes {
+            return;
+        }
         // For sequential we walk by block_size, starting at the block
         // that contains the byte AFTER the current read.  With small
         // FUSE reads (4 KiB) and a large block_size (4 MiB), this lands

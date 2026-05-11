@@ -88,13 +88,31 @@ impl Session {
 
     /// Deposit a completed block; remove from pending.  Zero-length
     /// blocks are dropped (would otherwise hang `take_range`'s cursor
-    /// loop with no progress).
+    /// loop with no progress).  Blocks entirely behind `consumed_end`
+    /// are also dropped — the read cursor has already moved past them
+    /// so they'd be evicted on the next take_range anyway, and
+    /// retaining them between deposit and take_range needlessly
+    /// inflates the buffer (round 4 finding #1).
     pub fn deposit(&mut self, block_offset: u64, bytes: Bytes) {
         self.pending.remove(&block_offset);
         if bytes.is_empty() {
             return;
         }
+        let block_end = block_offset + bytes.len() as u64;
+        if block_end <= self.consumed_end {
+            return;
+        }
         self.buffer.insert(block_offset, bytes);
+    }
+
+    /// Advance the consumed-bytes high-water mark for any observed
+    /// read (hit OR miss).  Called from `PrefetchEngine::on_read`
+    /// before `take_range`.  Round 4 finding #1.
+    pub fn note_read(&mut self, offset: u64, size: u32) {
+        let end = offset.saturating_add(size as u64);
+        if end > self.consumed_end {
+            self.consumed_end = end;
+        }
     }
 
     /// Take a buffered range if it fully covers `[offset, offset+size)`.
@@ -131,18 +149,12 @@ impl Session {
             out.extend_from_slice(&block[take_from as usize..take_to as usize]);
             cursor = block_end;
         }
-        // Advance the consumed-bytes high-water mark first; we use
-        // it below to evict blocks the read cursor has moved past
-        // (round 3 finding #2 — without this the buffer grows
-        // unbounded under long sequential 4 KiB-read scans).
-        self.consumed_end = self.consumed_end.max(end);
-
         // Second pass: remove blocks the read cursor has fully moved
-        // past.  A block is dead when its trailing edge is at or
-        // before `consumed_end` — every byte of it has been delivered
-        // through one or more `take_range` calls.  Both leading and
-        // trailing partial blocks are preserved for overlapping reads
-        // (round 2 finding #4).
+        // past.  `consumed_end` is set by `PrefetchEngine::on_read`
+        // before this call (round 4 finding #1 — advances on miss too,
+        // so backend-served reads also retire stale prefetched blocks).
+        // A block is dead when its trailing edge is at or before
+        // `consumed_end`; partial overlaps are preserved.
         let cursor = self.consumed_end;
         let to_remove: Vec<u64> = self
             .buffer
@@ -293,8 +305,11 @@ mod tests {
         s.deposit(8, Bytes::from(vec![2u8; 8]));
         s.deposit(16, Bytes::from(vec![3u8; 8]));
         // Consume blocks 0 and 8 fully (offsets 0..16) plus 4 bytes of
-        // block 16. Blocks 0 and 8 should be removed; block 16 must
-        // stay because 4 of its 8 bytes are unconsumed.
+        // block 16.  Round 4: the engine advances `consumed_end` via
+        // `note_read` before calling `take_range`, so we mirror that
+        // here.  Blocks 0 and 8 should be removed; block 16 must stay
+        // because 4 of its 8 bytes are unconsumed.
+        s.note_read(0, 20);
         let out = s.take_range(0, 20, 8).expect("hit");
         assert_eq!(out.len(), 20);
         assert!(!s.buffer.contains_key(&0));
@@ -370,11 +385,13 @@ mod tests {
         s.deposit(0, Bytes::from((0u8..8).collect::<Vec<_>>()));
         // Two sub-reads sweep the block; second read pushes
         // consumed_end past block_end, so it's evicted.
+        s.note_read(0, 4);
         let _ = s.take_range(0, 4, 8).expect("hit 1");
         assert!(
             s.buffer.contains_key(&0),
             "block evicted too early at consumed_end=4"
         );
+        s.note_read(4, 4);
         let _ = s.take_range(4, 4, 8).expect("hit 2");
         assert!(
             !s.buffer.contains_key(&0),
@@ -398,6 +415,7 @@ mod tests {
         let mut s = sess(&cfg);
         s.deposit(0, Bytes::from((0u8..16).collect::<Vec<_>>()));
         // Read 4..8 — block 0..16 end=16, consumed_end=8 < 16 → keep.
+        s.note_read(4, 4);
         let r = s.take_range(4, 4, 16).expect("hit 1");
         assert_eq!(&r[..], &[4, 5, 6, 7]);
         assert!(
@@ -405,10 +423,47 @@ mod tests {
             "block evicted before cursor reached block_end"
         );
         // Bumping the cursor past block_end now does evict.
+        s.note_read(12, 4);
         let _ = s.take_range(12, 4, 16).expect("hit 2");
         assert!(
             !s.buffer.contains_key(&0),
             "block not evicted after consumed_end >= block_end (round 3 regression)"
         );
+    }
+
+    #[test]
+    fn deposit_drops_block_behind_cursor() {
+        // Round 4 finding #1: a slow worker depositing after the read
+        // cursor has already moved past must NOT insert the block —
+        // it'd be evicted on the next take_range anyway and just
+        // inflates the buffer in between.
+        let cfg = EngineConfig {
+            block_size: 8,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.mark_pending(0);
+        s.note_read(0, 16); // consumed_end = 16
+        s.deposit(0, Bytes::from(vec![1u8; 8])); // block 0..8, end=8 <= 16
+        assert!(
+            !s.buffer.contains_key(&0),
+            "obsolete block deposited despite cursor past it"
+        );
+        assert!(!s.pending.contains(&0));
+    }
+
+    #[test]
+    fn note_read_advances_consumed_end_on_miss() {
+        // Round 4 finding #1: cursor must advance for every observed
+        // read (hit or miss), so even backend-served reads retire
+        // stale prefetched blocks.
+        let cfg = EngineConfig::default();
+        let mut s = sess(&cfg);
+        assert_eq!(s.consumed_end, 0);
+        s.note_read(100, 200);
+        assert_eq!(s.consumed_end, 300);
+        // Smaller reads don't reduce the high-water.
+        s.note_read(50, 10);
+        assert_eq!(s.consumed_end, 300);
     }
 }

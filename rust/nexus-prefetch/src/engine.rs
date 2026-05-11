@@ -48,6 +48,11 @@ pub struct PrefetchEngine {
     /// never share an id — workers compare this to reject stale
     /// deposits (round 3 finding #1).
     next_session_id: Arc<std::sync::atomic::AtomicU64>,
+    /// Shared shutdown flag — set by `shutdown` so workers can drop
+    /// queued jobs before issuing more backend reads (round 4 finding
+    /// #4).  Lets a hung in-flight `read_callable` finish in the
+    /// background without holding up unmount.
+    shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PrefetchEngine {
@@ -82,6 +87,7 @@ impl PrefetchEngine {
         let sessions = Arc::new(DashMap::new());
         let path_index = Arc::new(DashMap::new());
         let next_session_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let shutdown_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (tx, rx) = mpsc::channel(cfg.queue_capacity);
         let detector_factory: Box<dyn Fn() -> Box<dyn Detector> + Send + Sync> = {
             let tol = cfg.sequential_tolerance;
@@ -110,12 +116,14 @@ impl PrefetchEngine {
                     sessions.clone(),
                     reader.clone(),
                     metrics.clone(),
+                    shutdown_flag.clone(),
                 )),
                 None => tokio::spawn(run_worker(
                     shared_rx.clone(),
                     sessions.clone(),
                     reader.clone(),
                     metrics.clone(),
+                    shutdown_flag.clone(),
                 )),
             };
             workers.push(h);
@@ -131,6 +139,7 @@ impl PrefetchEngine {
             runtime,
             detector_factory,
             next_session_id,
+            shutdown_flag,
         }
     }
 
@@ -176,6 +185,12 @@ impl PrefetchEngine {
     pub fn on_read(&self, fh: u64, offset: u64, size: u32) -> Option<Bytes> {
         let slot = self.sessions.get(&fh)?;
         let mut s = slot.lock();
+
+        // Advance the consumed-bytes high-water FIRST so subsequent
+        // worker deposits can reject blocks already behind the cursor,
+        // and so subsequent `take_range` eviction sees the current
+        // read in its bound (round 4 finding #1).
+        s.note_read(offset, size);
 
         // Drive detector first so window decisions reflect current obs.
         let pattern = s.detector.observe(offset, size);
@@ -259,13 +274,22 @@ impl PrefetchEngine {
         self.metrics.snapshot()
     }
 
-    /// Tear down the engine.  Closes the work queue, aborts the
-    /// worker tasks, and (if the engine owns its runtime) hands the
-    /// runtime off to `shutdown_timeout` so a hung backend `read`
-    /// can't block unmount/remount indefinitely (round 3 finding #3).
+    /// Tear down the engine.  Sets the shared `shutdown_flag` so
+    /// workers drop queued jobs without issuing more backend reads,
+    /// closes the work queue, aborts the worker tasks, and (if the
+    /// engine owns its runtime) hands the runtime off to
+    /// `shutdown_timeout` so a hung backend `read` can't block
+    /// unmount/remount indefinitely (round 3 finding #3, round 4
+    /// finding #4 — timeout now configurable via
+    /// `EngineConfig.shutdown_timeout_ms`).
     pub fn shutdown(mut self) {
-        // Close the queue first so workers' `recv().await` returns
-        // None on the next iteration and they exit cleanly.
+        // Signal in-flight workers BEFORE closing the queue so they
+        // see the flag on the next iteration and drain the queue
+        // without issuing more reads.
+        self.shutdown_flag
+            .store(true, std::sync::atomic::Ordering::Release);
+        // Close the queue so workers' `recv().await` returns None
+        // on the next iteration and they exit cleanly.
         drop(self.tx);
         // Cancel any in-flight worker future.  `abort()` is best-effort
         // — a worker that is currently awaiting `spawn_blocking().await`
@@ -282,7 +306,9 @@ impl PrefetchEngine {
         // but short enough not to hang FUSE unmount on degraded
         // backends).  After the timeout the blocking pool is detached.
         if let Some(rt) = self.runtime.take() {
-            rt.shutdown_timeout(std::time::Duration::from_millis(500));
+            rt.shutdown_timeout(std::time::Duration::from_millis(
+                self.cfg.shutdown_timeout_ms,
+            ));
         }
     }
 
@@ -304,15 +330,15 @@ impl PrefetchEngine {
         // strides larger than a block actually fetch future stride
         // positions and negative strides walk backwards.
         let next_byte = current_offset.saturating_add(current_size as u64);
-        // Snap all prefetch offsets to block boundaries so the buffer
-        // index `(offset / block_size) * block_size` used by
-        // `Session::take_range` lines up with deposited keys (round 3
-        // finding #5).  For Stride/Trend we also raise the walk step
-        // to at least `block_size` so successive iterations land on
-        // distinct blocks instead of repeatedly hitting the same one.
+        // All prefetch offsets must be block-aligned: `Session::take_range`
+        // looks up buffered bytes via `(offset / block_size) * block_size`,
+        // so deposits must use the same key shape.  For Stride/Trend we
+        // walk by the signed raw delta and snap every landing position
+        // to its block boundary; the `mark_pending` dedup handles cases
+        // where successive snaps collapse onto the same block.
         let snap = |off: u64| (off / block_size) * block_size;
-        let (first_offset, step): (u64, i64) = match pattern {
-            AccessPattern::Sequential => (snap(next_byte), block_size as i64),
+        let (first_logical, step): (u64, i64) = match pattern {
+            AccessPattern::Sequential => (next_byte, block_size as i64),
             AccessPattern::Stride { stride } | AccessPattern::Trend { delta: stride } => {
                 if stride == 0 {
                     return;
@@ -322,32 +348,31 @@ impl PrefetchEngine {
                 } else {
                     current_offset.saturating_sub(stride.unsigned_abs())
                 };
-                let aligned_step = stride.unsigned_abs().max(block_size) as i64;
-                let signed_step = if stride > 0 {
-                    aligned_step
-                } else {
-                    -aligned_step
-                };
-                (snap(raw_first), signed_step)
+                (raw_first, stride)
             }
             _ => return,
         };
-
-        let mut cur = first_offset;
+        let mut logical = first_logical;
         let mut issued = 0u32;
         let mut walked: u64 = 0;
         let step_abs = step.unsigned_abs();
         while walked < s.window && issued < self.cfg.max_blocks_per_trigger {
+            let key = snap(logical);
             if let Some(fs) = s.file_size {
-                if cur >= fs {
+                if key >= fs {
                     break;
                 }
             }
-            if s.mark_pending(cur) {
+            // `mark_pending` dedups against in-flight + buffered keys,
+            // which is exactly the case where successive snaps collide
+            // (e.g. stride=2K with block_size=4K).  Only count `issued`
+            // when we actually emit a job — dup snaps shouldn't burn
+            // the per-trigger budget.
+            let did_issue = if s.mark_pending(key) {
                 let job = PrefetchJob {
                     fh: s.fh,
                     key: s.path.clone(),
-                    block_offset: cur,
+                    block_offset: key,
                     block_size: self.cfg.block_size,
                     session_id: s.session_id(),
                 };
@@ -355,26 +380,31 @@ impl PrefetchEngine {
                     self.metrics
                         .dropped_backpressure
                         .fetch_add(1, Ordering::Relaxed);
-                    s.pending.remove(&cur);
-                    debug!(fh = s.fh, offset = cur, "queue full — dropping prefetch");
+                    s.pending.remove(&key);
+                    debug!(fh = s.fh, offset = key, "queue full — dropping prefetch");
                     break;
                 }
-            }
-            // Advance by signed step.  Saturating prevents wraparound
-            // when a negative stride walks below 0 or a positive stride
-            // approaches u64::MAX — either case ends the loop because
-            // the next iteration won't make further progress.
-            let next = if step > 0 {
-                cur.saturating_add(step_abs)
+                true
             } else {
-                cur.saturating_sub(step_abs)
+                false
             };
-            if next == cur {
-                break; // hit a boundary; stop issuing
+            // Advance the logical cursor by signed step.  Saturating
+            // prevents wraparound when a negative stride walks below 0
+            // or a positive stride approaches u64::MAX — either case
+            // ends the loop because the next iteration won't progress.
+            let next = if step > 0 {
+                logical.saturating_add(step_abs)
+            } else {
+                logical.saturating_sub(step_abs)
+            };
+            if next == logical {
+                break; // saturated; stop issuing
             }
-            cur = next;
+            logical = next;
             walked = walked.saturating_add(step_abs);
-            issued += 1;
+            if did_issue {
+                issued += 1;
+            }
         }
     }
 }
@@ -454,6 +484,7 @@ mod tests {
             sequential_tolerance: 0,
             min_sequential_count: 2,
             max_workers: 1,
+            shutdown_timeout_ms: 500,
         };
         let reader_data = vec![0u8; 1 << 20];
         // Throttle the reader so jobs back up.

@@ -39,6 +39,7 @@ pub async fn run_worker(
     sessions: Arc<DashMap<u64, Arc<Mutex<Session>>>>,
     reader: SharedRangeReader,
     metrics: Arc<EngineMetrics>,
+    shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
 ) {
     loop {
         let job = {
@@ -48,6 +49,17 @@ pub async fn run_worker(
                 None => return, // sender dropped
             }
         };
+        // Cancellation: if the engine is shutting down, drop queued
+        // jobs without hitting the backend (round 4 finding #4).
+        if shutdown_flag.load(std::sync::atomic::Ordering::Acquire) {
+            if let Some(slot) = sessions.get(&job.fh) {
+                let mut s = slot.lock();
+                if s.session_id == job.session_id {
+                    s.pending.remove(&job.block_offset);
+                }
+            }
+            continue;
+        }
         // Block-on the sync reader.  In future revisions we may switch
         // to an async-native trait, but the current `ObjectStore::read`
         // is sync (`rust/kernel/src/abc/object_store.rs:86`) so any

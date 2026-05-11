@@ -37,6 +37,7 @@ fn sequential_workload_majority_hits() {
         sequential_tolerance: 0,
         min_sequential_count: 2,
         max_workers: 4,
+        shutdown_timeout_ms: 500,
     };
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

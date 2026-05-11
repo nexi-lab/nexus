@@ -21,6 +21,14 @@ pub struct EngineConfig {
     pub sequential_tolerance: u64,
     /// Confirmations before a pattern triggers prefetch.
     pub min_sequential_count: u32,
+    /// Upper bound on how long `PrefetchEngine::shutdown` will wait
+    /// for in-flight `spawn_blocking` reads to finish.  After the
+    /// timeout, the blocking pool is detached and the runtime exits.
+    /// Default 2 seconds is well above CAS-local IO but short enough
+    /// not to wedge FUSE unmount on degraded backends.  Round 4
+    /// finding #4 — was hardcoded 500ms which can be shorter than a
+    /// real network range read.
+    pub shutdown_timeout_ms: u64,
 }
 
 impl Default for EngineConfig {
@@ -34,6 +42,7 @@ impl Default for EngineConfig {
             max_blocks_per_trigger: 8,
             sequential_tolerance: 64 * 1024,
             min_sequential_count: 2,
+            shutdown_timeout_ms: 2000,
         }
     }
 }
@@ -50,9 +59,11 @@ impl EngineConfig {
     }
 
     /// Normalize all invariants so downstream code can divide /
-    /// allocate without runtime panics (round 3 finding #4).  We
-    /// saturate-to-minimum rather than panic so Python callers can
-    /// pass slightly malformed config dicts.
+    /// allocate without runtime panics (round 3 finding #4) AND
+    /// re-applies the 2 GiB ceiling at the end so an `initial_window`
+    /// above the cap can't drag `max_window` back over it (round 4
+    /// finding #3).  We saturate-to-minimum rather than panic so
+    /// Python callers can pass slightly malformed config dicts.
     pub fn normalize(mut self) -> Self {
         if self.block_size == 0 {
             self.block_size = 4 * 1024;
@@ -66,8 +77,16 @@ impl EngineConfig {
         if self.initial_window == 0 {
             self.initial_window = self.block_size as u64;
         }
+        // Re-cap *both* windows AFTER any inflation so the 2 GiB
+        // ceiling holds end-to-end.
+        if self.initial_window > MAX_ALLOWED_WINDOW {
+            self.initial_window = MAX_ALLOWED_WINDOW;
+        }
         if self.max_window < self.initial_window {
             self.max_window = self.initial_window;
+        }
+        if self.max_window > MAX_ALLOWED_WINDOW {
+            self.max_window = MAX_ALLOWED_WINDOW;
         }
         if self.max_blocks_per_trigger == 0 {
             self.max_blocks_per_trigger = 1;
@@ -144,5 +163,20 @@ mod tests {
         }
         .normalize();
         assert!(cfg.max_window >= cfg.initial_window);
+    }
+
+    #[test]
+    fn normalize_caps_both_windows_at_2gib() {
+        // Round 4 finding #3: an initial_window above the 2 GiB
+        // ceiling must not drag max_window back over the cap.
+        let huge = 8 * 1024 * 1024 * 1024;
+        let cfg = EngineConfig {
+            initial_window: huge,
+            max_window: huge,
+            ..Default::default()
+        }
+        .normalize();
+        assert_eq!(cfg.initial_window, MAX_ALLOWED_WINDOW);
+        assert_eq!(cfg.max_window, MAX_ALLOWED_WINDOW);
     }
 }

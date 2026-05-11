@@ -55,6 +55,7 @@ impl PyPrefetchEngine {
         sequential_tolerance,
         min_sequential_count,
         detector="sequential",
+        shutdown_timeout_ms=2000,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -68,6 +69,7 @@ impl PyPrefetchEngine {
         sequential_tolerance: u64,
         min_sequential_count: u32,
         detector: &str,
+        shutdown_timeout_ms: u64,
     ) -> PyResult<Self> {
         let cfg = EngineConfig {
             block_size,
@@ -78,6 +80,7 @@ impl PyPrefetchEngine {
             max_blocks_per_trigger,
             sequential_tolerance,
             min_sequential_count,
+            shutdown_timeout_ms,
         };
         let detector_kind = match detector.to_ascii_lowercase().as_str() {
             "sequential" => DetectorKind::Sequential,

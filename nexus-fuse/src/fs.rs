@@ -238,6 +238,19 @@ macro_rules! resolve_path {
     };
 }
 
+/// Map a NexusClientError to a fuser Errno via the typed `to_errno()`
+/// helper, so HTTP 401/403, RPC -32003/-32004, -32001, -32002,
+/// -32005, -32006 each surface as their proper errno
+/// (EACCES/EPERM/EEXIST/EINVAL/EAGAIN) instead of getting flattened
+/// to EIO at the FUSE boundary (#4056 R4).
+///
+/// Callers should still log the error when it isn't NotFound or a
+/// permission error — those are routine, everything else means the
+/// backend is misbehaving and the operator wants to see it.
+fn errno_for(e: &crate::error::NexusClientError) -> Errno {
+    Errno::from_i32(e.to_errno())
+}
+
 /// Nexus FUSE filesystem.
 pub struct NexusFs {
     client: Arc<NexusClient>,
@@ -397,12 +410,10 @@ impl NexusFs {
                 Ok(attr)
             }
             Err(e) => {
-                if e.is_not_found() {
-                    Err(Errno::ENOENT)
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("get_attr error for {}: {}", path, e);
-                    Err(Errno::EIO)
                 }
+                Err(errno_for(&e))
             }
         }
     }
@@ -438,12 +449,10 @@ impl NexusFs {
 
     fn stat_gen(&self, path: &str) -> Result<u64, Errno> {
         self.client.stat(path).map(|meta| meta.gen).map_err(|e| {
-            if e.is_not_found() {
-                Errno::ENOENT
-            } else {
+            if !e.is_not_found() && !e.is_permission_denied() {
                 error!("stat error for {}: {}", path, e);
-                Errno::EIO
             }
+            errno_for(&e)
         })
     }
 
@@ -597,12 +606,10 @@ impl Filesystem for NexusFs {
                         entries
                     }
                     Err(e) => {
-                        if e.is_not_found() {
-                            reply.error(Errno::ENOENT);
-                        } else {
+                        if !e.is_not_found() && !e.is_permission_denied() {
                             error!("readdir error for {}: {}", path, e);
-                            reply.error(Errno::EIO);
                         }
+                        reply.error(errno_for(&e));
                         return;
                     }
                 }
@@ -706,11 +713,10 @@ impl Filesystem for NexusFs {
                 Ok(meta) => meta.gen,
                 Err(e) => {
                     metrics::record_read("error", 0, started_at.elapsed());
-                    if e.is_not_found() {
-                        reply.error(Errno::ENOENT);
-                    } else {
-                        reply.error(Errno::EIO);
+                    if !e.is_not_found() && !e.is_permission_denied() {
+                        error!("read stat error for {}: {}", path, e);
                     }
+                    reply.error(errno_for(&e));
                     return;
                 }
             }
@@ -735,14 +741,21 @@ impl Filesystem for NexusFs {
             Ok(result) => result,
             Err(e) => {
                 metrics::record_read("error", 0, started_at.elapsed());
-                if e.downcast_ref::<crate::error::NexusClientError>()
-                    .is_some_and(|ne| ne.is_not_found())
-                {
-                    reply.error(Errno::ENOENT);
-                } else {
+                // Recover the typed NexusClientError if present so the
+                // full to_errno() table applies (auth, conflict, etc.);
+                // otherwise default to EIO. (#4056 R4)
+                let errno = e
+                    .downcast_ref::<crate::error::NexusClientError>()
+                    .map(errno_for)
+                    .unwrap_or(Errno::EIO);
+                let is_noisy = e
+                    .downcast_ref::<crate::error::NexusClientError>()
+                    .map(|ne| !ne.is_not_found() && !ne.is_permission_denied())
+                    .unwrap_or(true);
+                if is_noisy {
                     error!("read error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno);
                 return;
             }
         };
@@ -826,8 +839,10 @@ impl Filesystem for NexusFs {
                     reply.written(data.len() as u32);
                 }
                 Err(e) => {
-                    error!("write error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
+                    if !e.is_not_found() && !e.is_permission_denied() {
+                        error!("write error for {}: {}", path, e);
+                    }
+                    reply.error(errno_for(&e));
                 }
             }
         } else {
@@ -841,8 +856,10 @@ impl Filesystem for NexusFs {
                     reply.written(data.len() as u32);
                 }
                 Err(e) => {
-                    error!("write error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
+                    if !e.is_not_found() && !e.is_permission_denied() {
+                        error!("write error for {}: {}", path, e);
+                    }
+                    reply.error(errno_for(&e));
                 }
             }
         }
@@ -882,8 +899,10 @@ impl Filesystem for NexusFs {
                 );
             }
             Err(e) => {
-                error!("create error for {}: {}", path, e);
-                reply.error(Errno::EIO);
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("create error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -913,8 +932,10 @@ impl Filesystem for NexusFs {
                 reply.entry(&ATTR_TTL, &attr, Generation(0));
             }
             Err(e) => {
-                error!("mkdir error for {}: {}", path, e);
-                reply.error(Errno::EIO);
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("mkdir error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -933,12 +954,10 @@ impl Filesystem for NexusFs {
                 reply.ok();
             }
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("unlink error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -958,12 +977,10 @@ impl Filesystem for NexusFs {
                 return;
             }
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("rmdir list error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
                 return;
             }
             _ => {}
@@ -975,8 +992,10 @@ impl Filesystem for NexusFs {
                 reply.ok();
             }
             Err(e) => {
-                error!("rmdir error for {}: {}", path, e);
-                reply.error(Errno::EIO);
+                if !e.is_not_found() && !e.is_permission_denied() {
+                    error!("rmdir error for {}: {}", path, e);
+                }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1028,12 +1047,10 @@ impl Filesystem for NexusFs {
                 reply.ok();
             }
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("rename error: {} -> {}: {}", old_path, new_path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1073,8 +1090,10 @@ impl Filesystem for NexusFs {
                         self.invalidate_path(&path);
                     }
                     Err(e) => {
-                        error!("truncate error for {}: {}", path, e);
-                        reply.error(Errno::EIO);
+                        if !e.is_not_found() && !e.is_permission_denied() {
+                            error!("truncate error for {}: {}", path, e);
+                        }
+                        reply.error(errno_for(&e));
                         return;
                     }
                 }
@@ -1094,8 +1113,10 @@ impl Filesystem for NexusFs {
                                 self.invalidate_path(&path);
                             }
                             Err(e) => {
-                                error!("truncate write error for {}: {}", path, e);
-                                reply.error(Errno::EIO);
+                                if !e.is_not_found() && !e.is_permission_denied() {
+                                    error!("truncate write error for {}: {}", path, e);
+                                }
+                                reply.error(errno_for(&e));
                                 return;
                             }
                         }
@@ -1144,12 +1165,10 @@ impl Filesystem for NexusFs {
                 Self::reply_xattr(reply, &names, size);
             }
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("listxattr stat error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
             }
         }
     }
@@ -1171,12 +1190,10 @@ impl Filesystem for NexusFs {
             Ok(_) if name == OsStr::new(XATTR_GEN) => reply.error(Errno::EROFS),
             Ok(_) => reply.error(Errno::NO_XATTR),
             Err(e) => {
-                if e.is_not_found() {
-                    reply.error(Errno::ENOENT);
-                } else {
+                if !e.is_not_found() && !e.is_permission_denied() {
                     error!("setxattr stat error for {}: {}", path, e);
-                    reply.error(Errno::EIO);
                 }
+                reply.error(errno_for(&e));
             }
         }
     }

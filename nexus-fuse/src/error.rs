@@ -30,6 +30,28 @@ pub enum NexusClientError {
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
 
+    /// Target already exists (JSON-RPC `-32001` `FILE_EXISTS`). Mapped
+    /// to `EEXIST` so FUSE `mkdir` / `create` surface the standard
+    /// errno rather than EPROTO (#4056 R4).
+    #[error("File exists: {0}")]
+    AlreadyExists(String),
+
+    /// Invalid path (JSON-RPC `-32002` `INVALID_PATH`). Mapped to
+    /// `EINVAL` (#4056 R4).
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
+
+    /// Validation failure on the request (JSON-RPC `-32005`
+    /// `VALIDATION_ERROR`). Mapped to `EINVAL` (#4056 R4).
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+
+    /// Optimistic-concurrency conflict (JSON-RPC `-32006` `CONFLICT`).
+    /// Mapped to `EAGAIN` — the caller can retry with a fresh
+    /// generation number (#4056 R4).
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     /// Network timeout occurred.
     #[error("Network timeout after {duration:?}")]
     Timeout {
@@ -86,6 +108,9 @@ impl NexusClientError {
             Self::NotFound(_) => libc::ENOENT,
             Self::AccessDenied(_) => libc::EACCES,
             Self::PermissionDenied(_) => libc::EPERM,
+            Self::AlreadyExists(_) => libc::EEXIST,
+            Self::InvalidPath(_) | Self::ValidationError(_) => libc::EINVAL,
+            Self::Conflict(_) => libc::EAGAIN,
             Self::Timeout { .. } => libc::ETIMEDOUT,
             Self::ConnectionRefused(_) => libc::ECONNREFUSED,
             Self::RateLimited => libc::EBUSY,
@@ -121,9 +146,13 @@ impl NexusClientError {
             Self::Timeout { .. } | Self::ConnectionRefused(_) | Self::RateLimited => true,
             Self::HttpError(e) => e.is_timeout() || e.is_connect(),
             Self::ServerError { status, .. } => (500..600).contains(status),
+            Self::Conflict(_) => true, // optimistic-concurrency retry
             Self::NotFound(_)
             | Self::AccessDenied(_)
             | Self::PermissionDenied(_)
+            | Self::AlreadyExists(_)
+            | Self::InvalidPath(_)
+            | Self::ValidationError(_)
             | Self::InvalidResponse(_)
             | Self::JsonError(_)
             | Self::Base64Error(_)

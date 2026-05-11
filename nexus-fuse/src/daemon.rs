@@ -445,7 +445,11 @@ fn handle_exists(params: &Value, client: &NexusClient) -> Result<Value, NexusCli
     }
     let p: P = extract_params(params)?;
 
-    let exists = client.exists(&p.path);
+    // #4056 R4: use the fallible variant so 401/403 / -32003 / -32004
+    // surface as proper EACCES/EPERM in the JSON-RPC error response
+    // instead of being silently folded into {"exists": false}, which
+    // would let auth failures masquerade as missing paths.
+    let exists = client.exists_result(&p.path)?;
     Ok(json!({ "exists": exists }))
 }
 

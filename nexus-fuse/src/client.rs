@@ -222,15 +222,31 @@ impl NexusClient {
     }
 
     /// Map a JSON-RPC error code from `rpc_types.py::RPCErrorCode` to
-    /// a typed `NexusClientError`. Server contract: -32000 FILE_NOT_FOUND,
-    /// -32003 ACCESS_DENIED, -32004 PERMISSION_ERROR. Everything else
-    /// goes into `InvalidResponse` with the structured code preserved
-    /// in the message so logs / triage retain the signal (#4056 R3).
+    /// a typed `NexusClientError`. Server contract (kept in sync with
+    /// `src/nexus/contracts/rpc_types.py::RPCErrorCode`):
+    ///
+    /// | Code  | Constant          | Variant            | errno    |
+    /// |-------|-------------------|--------------------|----------|
+    /// | -32000 | FILE_NOT_FOUND   | NotFound           | ENOENT   |
+    /// | -32001 | FILE_EXISTS      | AlreadyExists      | EEXIST   |
+    /// | -32002 | INVALID_PATH     | InvalidPath        | EINVAL   |
+    /// | -32003 | ACCESS_DENIED    | AccessDenied       | EACCES   |
+    /// | -32004 | PERMISSION_ERROR | PermissionDenied   | EPERM    |
+    /// | -32005 | VALIDATION_ERROR | ValidationError    | EINVAL   |
+    /// | -32006 | CONFLICT         | Conflict           | EAGAIN   |
+    ///
+    /// Unknown codes fall through to `InvalidResponse` with the
+    /// structured code preserved in the message so logs / triage
+    /// retain the signal (#4056 R3 / R4).
     fn rpc_error_to_client_error(code: i32, message: String) -> NexusClientError {
         match code {
             -32000 => NexusClientError::NotFound(message),
+            -32001 => NexusClientError::AlreadyExists(message),
+            -32002 => NexusClientError::InvalidPath(message),
             -32003 => NexusClientError::AccessDenied(message),
             -32004 => NexusClientError::PermissionDenied(message),
+            -32005 => NexusClientError::ValidationError(message),
+            -32006 => NexusClientError::Conflict(message),
             other => NexusClientError::InvalidResponse(format!(
                 "RPC error {}: {}",
                 other, message
@@ -629,23 +645,46 @@ impl NexusClient {
         self.block_on(self.rename_async(old_path, new_path))
     }
 
-    /// Async core: exists.
-    pub async fn exists_async(&self, path: &str) -> bool {
+    /// Async core: existence check returning the raw server result.
+    /// Preserves `AccessDenied`/`PermissionDenied` instead of folding
+    /// them into `false`, so callers that need to distinguish
+    /// "path is missing" from "you don't have permission to ask" can
+    /// see the auth signal (#4056 R4).
+    pub async fn exists_result_async(
+        &self,
+        path: &str,
+    ) -> Result<bool, NexusClientError> {
         #[derive(Deserialize)]
         struct ExistsResult {
             exists: bool,
         }
 
-        match self
-            .rpc_call_async::<ExistsResult>("exists", json!({"path": path}))
-            .await
-        {
-            Ok(result) => result.exists,
-            Err(_) => false,
-        }
+        let result: ExistsResult = self
+            .rpc_call_async("exists", json!({"path": path}))
+            .await?;
+        Ok(result.exists)
     }
 
-    /// Check if path exists.
+    /// Async core: best-effort exists. Treats *all* errors (including
+    /// auth denials and network failures) as "does not exist". Kept
+    /// because most callers really do want a boolean and don't care
+    /// to discriminate; new callers that *do* care should use
+    /// `exists_result_async`.
+    pub async fn exists_async(&self, path: &str) -> bool {
+        self.exists_result_async(path).await.unwrap_or(false)
+    }
+
+    /// Fallible existence check (#4056 R4). Use this from any path
+    /// where confusing `not authorized` with `does not exist` would
+    /// be wrong — e.g. daemon JSON-RPC responses that must carry the
+    /// real errno back to the Python client.
+    pub fn exists_result(&self, path: &str) -> Result<bool, NexusClientError> {
+        self.block_on(self.exists_result_async(path))
+    }
+
+    /// Best-effort existence check. See `exists_async` for the
+    /// error-swallowing caveat; `exists_result` is the fallible
+    /// variant.
     pub fn exists(&self, path: &str) -> bool {
         self.block_on(self.exists_async(path))
     }

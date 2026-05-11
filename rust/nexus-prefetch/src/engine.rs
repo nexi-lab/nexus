@@ -40,8 +40,14 @@ pub struct PrefetchEngine {
     tx: mpsc::Sender<PrefetchJob>,
     metrics: Arc<EngineMetrics>,
     workers: Mutex<Vec<JoinHandle<()>>>,
-    _runtime: Option<tokio::runtime::Runtime>,
+    runtime: Option<tokio::runtime::Runtime>,
     detector_factory: Box<dyn Fn() -> Box<dyn Detector> + Send + Sync>,
+    /// Engine-wide monotonic counter that mints session identities.
+    /// Issued on every `on_open` AND on every `invalidate_fh`/`clear`
+    /// path so two different fh lifetimes (or same-fh post-invalidate)
+    /// never share an id — workers compare this to reject stale
+    /// deposits (round 3 finding #1).
+    next_session_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl PrefetchEngine {
@@ -67,10 +73,15 @@ impl PrefetchEngine {
         runtime: Option<tokio::runtime::Runtime>,
         detector: DetectorKind,
     ) -> Self {
-        let cfg = cfg.clamp();
+        // Validate before clamping — clamp() only fixes max_window; the
+        // rest of these invariants would otherwise panic later (round 3
+        // finding #4).  We saturate-to-minimum rather than panic so
+        // Python callers can be lenient with config dicts.
+        let cfg = cfg.clamp().normalize();
         let metrics = Arc::new(EngineMetrics::default());
         let sessions = Arc::new(DashMap::new());
         let path_index = Arc::new(DashMap::new());
+        let next_session_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
         let (tx, rx) = mpsc::channel(cfg.queue_capacity);
         let detector_factory: Box<dyn Fn() -> Box<dyn Detector> + Send + Sync> = {
             let tol = cfg.sequential_tolerance;
@@ -117,9 +128,15 @@ impl PrefetchEngine {
             tx,
             metrics,
             workers: Mutex::new(workers),
-            _runtime: runtime,
+            runtime,
             detector_factory,
+            next_session_id,
         }
+    }
+
+    fn mint_session_id(&self) -> u64 {
+        self.next_session_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn on_open(&self, fh: u64, path: &str, file_size: Option<u64>) {
@@ -137,7 +154,14 @@ impl PrefetchEngine {
                 set.remove(&fh);
             }
         }
-        let sess = Session::new(path.to_string(), fh, file_size, det, &self.cfg);
+        let sess = Session::new(
+            path.to_string(),
+            fh,
+            file_size,
+            det,
+            &self.cfg,
+            self.mint_session_id(),
+        );
         self.sessions.insert(fh, Arc::new(Mutex::new(sess)));
         self.path_index
             .entry(path.to_string())
@@ -205,12 +229,15 @@ impl PrefetchEngine {
     /// Drop all prefetched data + pending work for one file handle.
     /// Intended for FUSE write/delete invalidation when the caller
     /// still wants the session alive (read pattern restarts cold).
+    /// Mints a fresh `session_id` so in-flight workers reject any
+    /// pre-invalidate deposits.
     pub fn invalidate_fh(&self, fh: u64) {
         if let Some(slot) = self.sessions.get(&fh) {
             let mut s = slot.lock();
             s.clear();
             s.detector.reset();
             s.window = self.cfg.initial_window;
+            s.session_id = self.mint_session_id();
         }
     }
 
@@ -232,13 +259,31 @@ impl PrefetchEngine {
         self.metrics.snapshot()
     }
 
-    pub fn shutdown(self) {
+    /// Tear down the engine.  Closes the work queue, aborts the
+    /// worker tasks, and (if the engine owns its runtime) hands the
+    /// runtime off to `shutdown_timeout` so a hung backend `read`
+    /// can't block unmount/remount indefinitely (round 3 finding #3).
+    pub fn shutdown(mut self) {
+        // Close the queue first so workers' `recv().await` returns
+        // None on the next iteration and they exit cleanly.
         drop(self.tx);
+        // Cancel any in-flight worker future.  `abort()` is best-effort
+        // — a worker that is currently awaiting `spawn_blocking().await`
+        // will only end after the OS-thread blocking task returns, which
+        // is exactly what `shutdown_timeout` below bounds.
         let mut workers = self.workers.lock();
         for h in workers.drain(..) {
             h.abort();
         }
-        // The owned runtime, if any, is dropped here — workers torn down.
+        drop(workers); // release before runtime teardown
+
+        // If we own a runtime, give blocking tasks a bounded window to
+        // finish (default 500ms is well above typical CAS-local reads
+        // but short enough not to hang FUSE unmount on degraded
+        // backends).  After the timeout the blocking pool is detached.
+        if let Some(rt) = self.runtime.take() {
+            rt.shutdown_timeout(std::time::Duration::from_millis(500));
+        }
     }
 
     fn enqueue_prefetch(
@@ -259,21 +304,31 @@ impl PrefetchEngine {
         // strides larger than a block actually fetch future stride
         // positions and negative strides walk backwards.
         let next_byte = current_offset.saturating_add(current_size as u64);
+        // Snap all prefetch offsets to block boundaries so the buffer
+        // index `(offset / block_size) * block_size` used by
+        // `Session::take_range` lines up with deposited keys (round 3
+        // finding #5).  For Stride/Trend we also raise the walk step
+        // to at least `block_size` so successive iterations land on
+        // distinct blocks instead of repeatedly hitting the same one.
+        let snap = |off: u64| (off / block_size) * block_size;
         let (first_offset, step): (u64, i64) = match pattern {
-            AccessPattern::Sequential => {
-                let first = (next_byte / block_size) * block_size;
-                (first, block_size as i64)
-            }
+            AccessPattern::Sequential => (snap(next_byte), block_size as i64),
             AccessPattern::Stride { stride } | AccessPattern::Trend { delta: stride } => {
                 if stride == 0 {
                     return;
                 }
-                let first = if stride > 0 {
-                    current_offset.saturating_add(stride as u64)
+                let raw_first = if stride > 0 {
+                    current_offset.saturating_add(stride.unsigned_abs())
                 } else {
-                    current_offset.saturating_sub((-stride) as u64)
+                    current_offset.saturating_sub(stride.unsigned_abs())
                 };
-                (first, stride)
+                let aligned_step = stride.unsigned_abs().max(block_size) as i64;
+                let signed_step = if stride > 0 {
+                    aligned_step
+                } else {
+                    -aligned_step
+                };
+                (snap(raw_first), signed_step)
             }
             _ => return,
         };
@@ -294,7 +349,7 @@ impl PrefetchEngine {
                     key: s.path.clone(),
                     block_offset: cur,
                     block_size: self.cfg.block_size,
-                    generation: s.generation(),
+                    session_id: s.session_id(),
                 };
                 if let Err(_e) = self.tx.try_send(job) {
                     self.metrics

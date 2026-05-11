@@ -21,12 +21,12 @@ pub struct PrefetchJob {
     pub key: String,
     pub block_offset: u64,
     pub block_size: u32,
-    /// Generation token snapshotted from the session at enqueue time.
-    /// The worker discards the read result if the session has since
-    /// been invalidated or fh-reused (generation bumped).  Prevents
-    /// stale bytes from landing in a live session after an
-    /// invalidate_path/on_release/on_open sequence.
-    pub generation: u64,
+    /// Globally unique session identity snapshotted from the session
+    /// at enqueue time (engine mints from `next_session_id`).  Workers
+    /// discard the read result if the current session for this fh has
+    /// a different id — covering both invalidate-in-flight AND fh-reuse
+    /// across distinct file lifetimes (round 3 finding #1).
+    pub session_id: u64,
 }
 
 /// Multi-consumer receiver — workers race for jobs under a brief async
@@ -54,7 +54,7 @@ pub async fn run_worker(
         // wrapper hops through `spawn_blocking` anyway.
         let fh = job.fh;
         let block_offset = job.block_offset;
-        let generation = job.generation;
+        let session_id = job.session_id;
         let reader_clone = reader.clone();
         let result = tokio::task::spawn_blocking(move || {
             reader_clone.read(&job.key, job.block_offset, job.block_size)
@@ -71,14 +71,14 @@ pub async fn run_worker(
                     // Dropping the bytes is correct — the live session
                     // either re-issued the prefetch on its own terms or
                     // is intentionally fresh.
-                    if s.generation != generation {
+                    if s.session_id != session_id {
                         s.pending.remove(&block_offset);
                         debug!(
                             fh,
                             offset = block_offset,
-                            job_gen = generation,
-                            cur_gen = s.generation,
-                            "prefetch generation mismatch; dropping bytes"
+                            job_sid = session_id,
+                            cur_sid = s.session_id,
+                            "prefetch session-id mismatch; dropping bytes"
                         );
                     } else {
                         s.deposit(block_offset, bytes);
@@ -98,7 +98,7 @@ pub async fn run_worker(
                 warn!(error = %e, fh, offset = block_offset, "prefetch read failed");
                 if let Some(slot) = sessions.get(&fh) {
                     let mut s = slot.lock();
-                    if s.generation == generation {
+                    if s.session_id == session_id {
                         s.pending.remove(&block_offset);
                     }
                 }
@@ -107,7 +107,7 @@ pub async fn run_worker(
                 warn!(error = %join_err, fh, offset = block_offset, "prefetch worker join failed");
                 if let Some(slot) = sessions.get(&fh) {
                     let mut s = slot.lock();
-                    if s.generation == generation {
+                    if s.session_id == session_id {
                         s.pending.remove(&block_offset);
                     }
                 }

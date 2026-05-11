@@ -48,6 +48,35 @@ impl EngineConfig {
         }
         self
     }
+
+    /// Normalize all invariants so downstream code can divide /
+    /// allocate without runtime panics (round 3 finding #4).  We
+    /// saturate-to-minimum rather than panic so Python callers can
+    /// pass slightly malformed config dicts.
+    pub fn normalize(mut self) -> Self {
+        if self.block_size == 0 {
+            self.block_size = 4 * 1024;
+        }
+        if self.max_workers == 0 {
+            self.max_workers = 1;
+        }
+        if self.queue_capacity == 0 {
+            self.queue_capacity = 1;
+        }
+        if self.initial_window == 0 {
+            self.initial_window = self.block_size as u64;
+        }
+        if self.max_window < self.initial_window {
+            self.max_window = self.initial_window;
+        }
+        if self.max_blocks_per_trigger == 0 {
+            self.max_blocks_per_trigger = 1;
+        }
+        if self.min_sequential_count == 0 {
+            self.min_sequential_count = 1;
+        }
+        self
+    }
 }
 
 #[cfg(test)]
@@ -80,5 +109,40 @@ mod tests {
     fn clamp_leaves_window_below_ceiling_unchanged() {
         let cfg = EngineConfig::default().clamp();
         assert_eq!(cfg.max_window, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn normalize_replaces_zero_block_size() {
+        // Round 3 finding #4: block_size=0 used to make enqueue_prefetch
+        // divide by zero on the first confirmed sequential read.
+        let cfg = EngineConfig {
+            block_size: 0,
+            ..Default::default()
+        }
+        .normalize();
+        assert!(cfg.block_size > 0);
+    }
+
+    #[test]
+    fn normalize_replaces_zero_workers_and_queue() {
+        let cfg = EngineConfig {
+            max_workers: 0,
+            queue_capacity: 0,
+            ..Default::default()
+        }
+        .normalize();
+        assert!(cfg.max_workers >= 1);
+        assert!(cfg.queue_capacity >= 1);
+    }
+
+    #[test]
+    fn normalize_lifts_max_window_when_below_initial() {
+        let cfg = EngineConfig {
+            initial_window: 64 * 1024,
+            max_window: 4 * 1024, // smaller than initial — nonsense
+            ..Default::default()
+        }
+        .normalize();
+        assert!(cfg.max_window >= cfg.initial_window);
     }
 }

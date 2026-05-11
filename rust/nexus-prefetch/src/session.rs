@@ -20,11 +20,20 @@ pub struct Session {
     pub buffer: BTreeMap<u64, Bytes>,
     pub hits: u64,
     pub misses: u64,
-    /// Monotonic epoch — bumps on `clear()` (invalidate / fh-reuse) so
-    /// in-flight prefetch jobs issued before the bump can be rejected
-    /// at deposit time.  Workers stamp the value at enqueue and check
-    /// it before mutating the buffer.
-    pub generation: u64,
+    /// Globally unique session identity — issued from the engine's
+    /// `next_session_id` AtomicU64 on every `on_open` AND on every
+    /// `clear()` (invalidate-while-open).  Workers stamp the snapshot
+    /// at enqueue and reject deposits whose token no longer matches.
+    /// Two different fh lifetimes therefore never collide (the previous
+    /// `generation: u64` started at 1 for every new Session and was
+    /// vulnerable to fh-reuse — codex round 3 finding #1).
+    pub session_id: u64,
+    /// High-water mark of consumed bytes — the largest `offset+size`
+    /// the caller has read so far.  Used by `take_range` to evict
+    /// blocks the read cursor has fully moved past, bounding the
+    /// per-fh buffer footprint under long sequential scans (round 3
+    /// finding #2).
+    pub consumed_end: u64,
 }
 
 impl Session {
@@ -34,6 +43,7 @@ impl Session {
         file_size: Option<u64>,
         detector: Box<dyn Detector>,
         cfg: &EngineConfig,
+        session_id: u64,
     ) -> Self {
         Self {
             path,
@@ -46,7 +56,8 @@ impl Session {
             buffer: BTreeMap::new(),
             hits: 0,
             misses: 0,
-            generation: 1,
+            session_id,
+            consumed_end: 0,
         }
     }
 
@@ -120,21 +131,26 @@ impl Session {
             out.extend_from_slice(&block[take_from as usize..take_to as usize]);
             cursor = block_end;
         }
-        // Second pass: only remove blocks that the requested range
-        // *fully* covers, i.e. `offset <= block_start && block_end <= end`.
-        // A block that extends past `end` keeps its trailing tail
-        // (e.g. successive 4 KiB reads through a 4 MiB prefetched
-        // block); a block whose start lies BEFORE the requested offset
-        // also keeps its leading prefix for an overlapping/backward
-        // read.  We materialise the keys before removal so we can
-        // mutate while iterating.
+        // Advance the consumed-bytes high-water mark first; we use
+        // it below to evict blocks the read cursor has moved past
+        // (round 3 finding #2 — without this the buffer grows
+        // unbounded under long sequential 4 KiB-read scans).
+        self.consumed_end = self.consumed_end.max(end);
+
+        // Second pass: remove blocks the read cursor has fully moved
+        // past.  A block is dead when its trailing edge is at or
+        // before `consumed_end` — every byte of it has been delivered
+        // through one or more `take_range` calls.  Both leading and
+        // trailing partial blocks are preserved for overlapping reads
+        // (round 2 finding #4).
+        let cursor = self.consumed_end;
         let to_remove: Vec<u64> = self
             .buffer
-            .range(first_block..end)
+            .iter()
             .filter_map(|(k, v)| {
                 let block_start = *k;
                 let block_end = block_start + v.len() as u64;
-                if offset <= block_start && block_end <= end {
+                if block_end <= cursor {
                     Some(block_start)
                 } else {
                     None
@@ -148,21 +164,19 @@ impl Session {
         Some(Bytes::from(out))
     }
 
-    /// Drop all pending and buffered state — invoked on invalidation
-    /// (file write/delete) and on detector-driven Random resets that
-    /// also need to discard stale prefetched bytes.  Bumps the
-    /// generation so any in-flight prefetch jobs issued before the
-    /// call are rejected at deposit time.
+    /// Drop all pending and buffered state.  The caller (engine) MUST
+    /// re-assign `session_id` from its global counter so in-flight
+    /// prefetch jobs are rejected at deposit time.
     pub fn clear(&mut self) {
         self.pending.clear();
         self.buffer.clear();
-        self.generation = self.generation.wrapping_add(1);
+        self.consumed_end = 0;
     }
 
-    /// Snapshot the current generation — workers stamp this onto the
-    /// job at enqueue and check it before mutating the buffer.
-    pub fn generation(&self) -> u64 {
-        self.generation
+    /// Snapshot the current session identity — workers stamp this onto
+    /// the job at enqueue and check it before mutating the buffer.
+    pub fn session_id(&self) -> u64 {
+        self.session_id
     }
 }
 
@@ -181,6 +195,7 @@ mod tests {
                 cfg.min_sequential_count,
             )),
             cfg,
+            42, // session_id, test-only
         )
     }
 
@@ -322,32 +337,78 @@ mod tests {
     }
 
     #[test]
-    fn clear_bumps_generation() {
+    fn clear_preserves_session_id_but_drops_state() {
+        // Round 3: session_id is engine-issued (globally unique).  The
+        // engine bumps it via a separate path after clear().  This test
+        // pins clear()'s direct contract: state is dropped, but the
+        // id stored on the session is left alone (the engine re-stamps).
         let cfg = EngineConfig::default();
         let mut s = sess(&cfg);
-        let before = s.generation();
+        let before = s.session_id();
+        s.mark_pending(0);
+        s.deposit(0, Bytes::from_static(b"abcd"));
+        s.consumed_end = 1024;
         s.clear();
-        assert_eq!(s.generation(), before + 1);
+        assert_eq!(s.session_id(), before);
+        assert!(s.pending.is_empty());
+        assert!(s.buffer.is_empty());
+        assert_eq!(s.consumed_end, 0);
     }
 
     #[test]
-    fn take_range_keeps_leading_partial_block() {
-        // Codex round 2 finding #4: a read that starts inside a block
-        // (offset > block_start) but covers the rest of the block must
-        // NOT evict that block — the leading prefix is still useful for
-        // a subsequent overlapping/backward read.
+    fn take_range_evicts_blocks_behind_cursor() {
+        // Round 3 finding #2: with consumed_end advancing past a
+        // block, that block must be evicted so the buffer footprint
+        // stays bounded under long sequential scans of small reads
+        // through large prefetched blocks.
         let cfg = EngineConfig {
             block_size: 8,
             ..Default::default()
         };
         let mut s = sess(&cfg);
+        // Block 0..8 prefetched.
         s.deposit(0, Bytes::from((0u8..8).collect::<Vec<_>>()));
-        // Read 4..8 — block covers 0..8, only 4..8 consumed.
-        let r = s.take_range(4, 4, 8).expect("hit");
+        // Two sub-reads sweep the block; second read pushes
+        // consumed_end past block_end, so it's evicted.
+        let _ = s.take_range(0, 4, 8).expect("hit 1");
+        assert!(
+            s.buffer.contains_key(&0),
+            "block evicted too early at consumed_end=4"
+        );
+        let _ = s.take_range(4, 4, 8).expect("hit 2");
+        assert!(
+            !s.buffer.contains_key(&0),
+            "block 0..8 not evicted after consumed_end=8 (round 3 regression)"
+        );
+    }
+
+    #[test]
+    fn take_range_keeps_block_until_cursor_passes_it() {
+        // Round 2 wanted "leading partial block preserved for overlapping
+        // reads".  Round 3 needed "evict once the read cursor has fully
+        // passed the block, else memory grows unbounded under sequential
+        // 4 KiB reads through 4 MiB blocks".  Resolved by tying eviction
+        // to `consumed_end`: a block stays in the buffer as long as the
+        // read cursor hasn't moved past `block_end`; once it has, the
+        // block is dead even if some leading bytes were never delivered.
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from((0u8..16).collect::<Vec<_>>()));
+        // Read 4..8 — block 0..16 end=16, consumed_end=8 < 16 → keep.
+        let r = s.take_range(4, 4, 16).expect("hit 1");
         assert_eq!(&r[..], &[4, 5, 6, 7]);
         assert!(
             s.buffer.contains_key(&0),
-            "leading partial block was evicted (round 2 regression)"
+            "block evicted before cursor reached block_end"
+        );
+        // Bumping the cursor past block_end now does evict.
+        let _ = s.take_range(12, 4, 16).expect("hit 2");
+        assert!(
+            !s.buffer.contains_key(&0),
+            "block not evicted after consumed_end >= block_end (round 3 regression)"
         );
     }
 }

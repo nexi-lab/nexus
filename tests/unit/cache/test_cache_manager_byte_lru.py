@@ -209,6 +209,43 @@ def test_inflight_clear_identity_does_not_delete_new_owner():
     assert mgr._inflight.get(("/p", "fp")) is None
 
 
+def test_admission_gen_bumps_on_invalidate_file():
+    """Owner's captured gen must invalidate after a fence."""
+    mgr = FUSECacheManager()
+    g0 = mgr.cache_admission_gen("/p")
+    assert mgr.is_admission_still_valid("/p", g0)
+    mgr.invalidate_file("/p")
+    assert not mgr.is_admission_still_valid("/p", g0)
+    # New owner captures the new gen and is valid.
+    g1 = mgr.cache_admission_gen("/p")
+    assert mgr.is_admission_still_valid("/p", g1)
+
+
+def test_admission_gen_bumps_on_invalidate_all():
+    """Global gen bump fences all paths."""
+    mgr = FUSECacheManager()
+    g_a = mgr.cache_admission_gen("/a")
+    g_b = mgr.cache_admission_gen("/b")
+    mgr.invalidate_all()
+    assert not mgr.is_admission_still_valid("/a", g_a)
+    assert not mgr.is_admission_still_valid("/b", g_b)
+
+
+def test_oversize_cache_content_does_not_fence_own_inflight():
+    """The owner finishing an oversize fetch must not split late waiters."""
+    mgr = FUSECacheManager(content_cache_bytes=1024, parsed_cache_bytes=0, max_drain_bytes=512)
+    fut, owner = mgr.inflight_future("/big", "fp")
+    assert owner
+    # Owner calls cache_content with oversize payload — must NOT clear the
+    # in-flight registry (no fence), otherwise late waiters fetch again.
+    mgr.cache_content("/big", b"x" * 4096, fingerprint="fp", ttl_seconds=60)
+    later, owner_late = mgr.inflight_future("/big", "fp")
+    assert later is fut, "late waiter must reuse the same future"
+    assert not owner_late
+    fut.set_result(b"x" * 4096)
+    mgr.inflight_clear("/big", "fp", owner=fut)
+
+
 def test_invalidate_file_fences_inflight_registry():
     """A write/invalidation between two reads must not let read B join read A's future."""
     mgr = FUSECacheManager()

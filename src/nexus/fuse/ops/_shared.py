@@ -169,6 +169,10 @@ class FUSECacheCoordinator(Protocol):
         owner: Any | None = None,
     ) -> None: ...
 
+    def cache_admission_gen(self, path: str) -> int: ...
+
+    def is_admission_still_valid(self, path: str, captured_gen: int) -> bool: ...
+
 
 # ============================================================
 # Shared context
@@ -516,6 +520,10 @@ async def get_file_content(
         shared = await _asyncio.shield(_asyncio.wrap_future(future))
         return _maybe_parse(ctx, path, view_type, shared)
 
+    # Capture admission generation so post-fetch L1/L2 writes are skipped if
+    # an invalidation lands between now and when we finish.
+    admission_gen = coordinator.cache_admission_gen(path)
+
     try:
         content = get_from_local_disk_cache(ctx, path, expected_fingerprint, namespace=namespace)
         if content is not None:
@@ -531,10 +539,12 @@ async def get_file_content(
             logger.info(
                 f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
             )
-        # Oversize content skips L2 + L1 admission but still flows to all
-        # current waiters via the shared future.
+        # Skip L1/L2 admission if an invalidation landed during the fetch;
+        # waiters still receive the bytes we just read via the shared future
+        # but persistent caches must not be repopulated with pre-write data.
+        admission_ok = coordinator.is_admission_still_valid(path, admission_gen)
         drain_cap = getattr(coordinator, "max_drain_bytes", None)
-        if drain_cap is None or len(content) <= drain_cap:
+        if admission_ok and (drain_cap is None or len(content) <= drain_cap):
             put_to_local_disk_cache(
                 ctx,
                 path,
@@ -543,7 +553,7 @@ async def get_file_content(
                 namespace=namespace,
                 priority=cache_priority,
             )
-        if has_lease:
+        if has_lease and admission_ok:
             coordinator.cache_content(path, content, fingerprint=expected_fingerprint)
         # Tolerate InvalidStateError: a waiter could have cancelled the
         # future before we got here. Our own read+cache still succeeded.

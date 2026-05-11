@@ -133,6 +133,12 @@ class FUSECacheManager:
         # metadata changes between two readers' fingerprint computations.
         self._inflight: dict[tuple[str, str | None], concurrent.futures.Future[bytes]] = {}
         self._inflight_lock = threading.Lock()
+        # Per-path generation; bumped on invalidate_file/invalidate_all. Owners
+        # capture the gen at fetch start and check it before admitting bytes
+        # to persistent L1/L2 — invalidations during a fetch make the owner
+        # complete its shared future for waiters but skip cache admission.
+        self._gen_global: int = 0
+        self._gen_by_path: dict[str, int] = {}
 
     @property
     def max_drain_bytes(self) -> int:
@@ -152,6 +158,19 @@ class FUSECacheManager:
         """
         del view_type
         return await self._file_cache.lock(_file_key(path, "raw"))
+
+    def cache_admission_gen(self, path: str) -> int:
+        """Current invalidation generation for ``path``.
+
+        Owners capture this at fetch start and compare against
+        :meth:`is_admission_still_valid` before writing to L1/L2 — prevents
+        stale owners from repopulating cache after a write fenced the path.
+        """
+        with self._inflight_lock:
+            return self._gen_global + self._gen_by_path.get(path, 0)
+
+    def is_admission_still_valid(self, path: str, captured_gen: int) -> bool:
+        return self.cache_admission_gen(path) == captured_gen
 
     def inflight_future(
         self, path: str, fingerprint: str | None = None
@@ -378,9 +397,13 @@ class FUSECacheManager:
             if self._enable_metrics:
                 with self._metrics_lock:
                     self._metrics["content_skipped_oversize"] += 1
-            # Don't leave stale bytes behind: drop any prior cached entry +
-            # parsed views for this path so callers fall back to origin.
-            self.invalidate_file(path)
+            # Drop stale file-cache entries for this path so callers fall
+            # back to origin. Do NOT touch the in-flight registry — the
+            # current caller is itself an in-flight owner about to set its
+            # future result, and fencing here would split late waiters into
+            # a second backend fetch.
+            with self._file_lock:
+                self._file_cache.invalidate_path_sync(path)
             return
         key = _file_key(path)
         if fingerprint is None and ttl_seconds is None:
@@ -492,12 +515,13 @@ class FUSECacheManager:
             else:
                 self._file_cache.invalidate_path_sync(path)
 
-        # Fence the in-flight registry: post-invalidation readers must not
-        # join a future that was started before the write. Drop the entry
-        # from the registry; existing waiters still receive the in-flight
-        # bytes (those reads were racing the write anyway) but the next
-        # `inflight_future` call for this path becomes a fresh owner.
+        # Fence the in-flight registry + bump per-path admission generation.
+        # Existing waiters still receive the in-flight bytes (their reads were
+        # racing the write anyway), but the next `inflight_future` call for
+        # this path becomes a fresh owner, and any stale owner currently
+        # fetching will see a generation mismatch and skip cache admission.
         with self._inflight_lock:
+            self._gen_by_path[path] = self._gen_by_path.get(path, 0) + 1
             stale_keys = [k for k in self._inflight if k[0] == path]
             for stale_key in stale_keys:
                 self._inflight.pop(stale_key, None)
@@ -518,6 +542,12 @@ class FUSECacheManager:
             self._file_cache = MemoryFileCache(
                 max_bytes=self._file_cache.max_bytes,
             )
+
+        # Bump the global generation and drop all in-flight entries so any
+        # owner currently fetching skips post-reset cache admission.
+        with self._inflight_lock:
+            self._gen_global += 1
+            self._inflight.clear()
 
         logger.info("All FUSE caches invalidated")
 

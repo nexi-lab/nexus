@@ -433,6 +433,12 @@ class FUSELeaseCoordinator:
     ) -> None:
         self._cache.inflight_clear(path, fingerprint, owner=owner)
 
+    def cache_admission_gen(self, path: str) -> int:
+        return self._cache.cache_admission_gen(path)
+
+    def is_admission_still_valid(self, path: str, captured_gen: int) -> bool:
+        return self._cache.is_admission_still_valid(path, captured_gen)
+
     def get_parsed(self, path: str, view_type: str) -> bytes | None:
         """Get cached parsed content (direct, no lease check)."""
         return self._cache.get_parsed(path, view_type)

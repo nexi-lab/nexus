@@ -140,6 +140,42 @@ def test_ttl_policy_default_for_path_s3_without_override():
     assert mgr.get_attr("/s3/file") is None
 
 
+def test_inflight_future_coalesces_oversize_readers():
+    """100 concurrent readers of oversize content share a single result.
+
+    Regression for round-5 finding: when content > max_drain_bytes, L1 doesn't
+    admit. The in-flight future must still coalesce waiters so only one backend
+    fetch happens.
+    """
+    import asyncio
+
+    mgr = FUSECacheManager(content_cache_bytes=4096, parsed_cache_bytes=0, max_drain_bytes=1024)
+
+    async def scenario() -> tuple[int, list[bytes]]:
+        fetches = 0
+        big_content = b"x" * 8192  # > max_drain_bytes 1024
+
+        async def reader() -> bytes:
+            nonlocal fetches
+            fut, is_owner = mgr.inflight_future("/big.bin")
+            if not is_owner:
+                return await fut
+            try:
+                fetches += 1
+                await asyncio.sleep(0.005)  # simulate backend latency
+                fut.set_result(big_content)
+                return big_content
+            finally:
+                mgr.inflight_clear("/big.bin")
+
+        results = await asyncio.gather(*[reader() for _ in range(50)])
+        return fetches, results
+
+    fetches, results = asyncio.run(scenario())
+    assert fetches == 1, f"expected 1 fetch (singleflight), got {fetches}"
+    assert all(r == b"x" * 8192 for r in results)
+
+
 def test_backend_id_for_path_resolver_fallback_chain():
     """backend_id_for_path tries backend_name → name → _backend_name."""
     from nexus.fuse.ops._shared import backend_id_for_path

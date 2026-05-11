@@ -158,6 +158,10 @@ class FUSECacheCoordinator(Protocol):
 
     async def content_lock(self, path: str, view_type: str | None = None) -> Any: ...
 
+    def inflight_future(self, path: str) -> tuple[Any, bool]: ...
+
+    def inflight_clear(self, path: str) -> None: ...
+
 
 # ============================================================
 # Shared context
@@ -489,16 +493,17 @@ async def get_file_content(
             return _maybe_parse(ctx, path, view_type, cached)
         has_lease = True  # no lease manager = always "has lease" for caching
 
-    # Step 3: L2/L3 fetch — guarded by per-path singleflight lock so 100
-    # concurrent cold readers cause exactly one backend fetch.
+    # Step 3: L2/L3 fetch with singleflight via shared in-flight future.
+    # The future is registered atomically before any lock so 100 concurrent
+    # cold readers all share the same result — including content too large to
+    # admit to persistent L1/L2 cache.
     namespace = view_type or "raw"
-    fill_lock = await coordinator.content_lock(path, view_type)
-    async with fill_lock:
-        # Re-check L1 inside the lock — another waiter may have filled it.
-        recheck = coordinator.get_content(path, expected_fingerprint=expected_fingerprint)
-        if recheck is not None:
-            logger.info(f"[FUSE-CONTENT] L1 FILLED BY OTHER WAITER: {path}")
-            return _maybe_parse(ctx, path, view_type, recheck)
+    future, is_owner = coordinator.inflight_future(path)
+    if not is_owner:
+        shared = await future
+        return _maybe_parse(ctx, path, view_type, shared)
+
+    try:
         content = get_from_local_disk_cache(ctx, path, expected_fingerprint, namespace=namespace)
         if content is not None:
             logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
@@ -513,8 +518,8 @@ async def get_file_content(
             logger.info(
                 f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
             )
-        # Apply max_drain_bytes cap from L1 cache before any L2 disk write too:
-        # oversize content shouldn't bloat either tier.
+        # Oversize content skips L2 + L1 admission but still flows to all
+        # current waiters via the shared future.
         drain_cap = getattr(coordinator, "max_drain_bytes", None)
         if drain_cap is None or len(content) <= drain_cap:
             put_to_local_disk_cache(
@@ -525,10 +530,15 @@ async def get_file_content(
                 namespace=namespace,
                 priority=cache_priority,
             )
-        # L1 fill happens inside the singleflight lock so a waiter's re-check
-        # observes the fill. Only cache if we hold a lease (Decision 11A).
         if has_lease:
             coordinator.cache_content(path, content, fingerprint=expected_fingerprint)
+        future.set_result(content)
+    except BaseException as exc:
+        if not future.done():
+            future.set_exception(exc)
+        raise
+    finally:
+        coordinator.inflight_clear(path)
 
     return _maybe_parse(ctx, path, view_type, content)
 

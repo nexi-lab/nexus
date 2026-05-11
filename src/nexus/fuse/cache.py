@@ -4,6 +4,7 @@ This module provides caching layers for file attributes, content, and parsed
 content to optimize FUSE filesystem operations and reduce latency.
 """
 
+import asyncio
 import logging
 import threading
 from collections.abc import Mapping
@@ -124,6 +125,11 @@ class FUSECacheManager:
         }
         self._metrics_lock = threading.Lock()
 
+        # In-flight result registry: shares backend fetch results across
+        # waiters even when content is too large to admit to persistent L1/L2.
+        self._inflight: dict[str, asyncio.Future[bytes]] = {}
+        self._inflight_lock = threading.Lock()
+
     @property
     def max_drain_bytes(self) -> int:
         return self._max_drain_bytes
@@ -134,11 +140,36 @@ class FUSECacheManager:
     async def content_lock(self, path: str, view_type: str | None = None) -> Any:
         """Per-path singleflight lock for content fetches.
 
-        Callers wrap the L2/L3 fill in ``async with await coordinator.content_lock(path):``
-        to ensure exactly one backend fetch under concurrent cold reads for the same path.
+        Both raw and parsed-view reads coalesce on the raw key because parsed
+        views derive from the same backend fetch — a separate parsed-only lock
+        would let raw + parsed reads of the same path each issue their own
+        sys_read. Parse work that depends on the fetched bytes can still
+        proceed serially per view inside this single lock.
         """
-        namespace = "raw" if view_type is None else f"parsed:{view_type}"
-        return await self._file_cache.lock(_file_key(path, namespace))
+        del view_type
+        return await self._file_cache.lock(_file_key(path, "raw"))
+
+    def inflight_future(self, path: str) -> tuple[asyncio.Future[bytes], bool]:
+        """Get the in-flight content future for a path, creating one if absent.
+
+        Returns ``(future, is_owner)`` where ``is_owner`` is True for the
+        first caller that registered the future (the fetcher). Subsequent
+        callers receive the existing future to await — sharing the single
+        backend fetch even for oversize content that bypasses persistent
+        cache admission.
+        """
+        with self._inflight_lock:
+            existing = self._inflight.get(path)
+            if existing is not None and not existing.done():
+                return existing, False
+            loop = asyncio.get_event_loop()
+            fut: asyncio.Future[bytes] = loop.create_future()
+            self._inflight[path] = fut
+            return fut, True
+
+    def inflight_clear(self, path: str) -> None:
+        with self._inflight_lock:
+            self._inflight.pop(path, None)
 
     def _resolve_index_ttl(self, backend_id: str | None, *, default: int) -> int:
         """Pick a TTL for a metadata write.

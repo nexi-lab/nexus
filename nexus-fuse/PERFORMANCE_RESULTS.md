@@ -306,40 +306,35 @@ runtime that serializes accepts — that masks any client-side concurrency
 win. The bench server returns a fixed JSON-RPC payload with
 `Connection: keep-alive` so the pooled client can reuse sockets.
 
-Three scenarios (round-1 adversarial review forced the faithful pre-PR
-baseline; the original "unpooled" baseline manufactured a worst-case
-lifecycle the production code never had, inflating the speedup):
+**Pre-PR baseline status (R7).** Earlier rounds replaced an inflated
+"fresh-client-per-call" baseline with a shared-async-client +
+shared-current-thread-runtime emulation of `reqwest::blocking`. Round 7
+correctly pointed out that even that emulation is not faithful:
+`reqwest::blocking::Client` actually owns a dedicated internal sync-
+runtime thread and dispatches each request over an mpsc channel.
+Rather than ship numbers built on an emulation the reviewer rejected,
+this bench now reports only the post-#4056 client at varying caller
+concurrency. A truly faithful comparison requires compiling against
+the `blocking` feature, which this crate dropped as part of #4056 —
+the comparison has to happen in a separate checkout of `develop`.
 
-- **pooled** (post-#4056): one shared `NexusClient` whose internal
-  `reqwest::Client` rides the process-wide multi-thread tokio runtime.
-- **pre_pr_blocking** (faithful pre-#4056 emulation): one shared async
-  `reqwest::Client` driven by a single shared **current-thread** tokio
-  runtime, every call multiplexed through `runtime.block_on`. This
-  matches what `reqwest::blocking::Client` did internally pre-#4056 —
-  one client, one current-thread runtime that every blocking call shared.
-- **unpooled** (worst-case context, *not* a faithful pre-PR replica):
-  fresh `NexusClient` per call. Bounded to 8 ops/thread because each
-  iteration leaves a socket in TIME_WAIT.
+Post-#4056 pooled throughput against the bench server (measured before
+the baseline was removed, R5-era hardware: arm64 / Darwin 25.3):
 
-| Threads | pooled ops/s | pre_pr_blocking ops/s | unpooled ops/s | vs pre-PR | vs unpooled |
-|---|---|---|---|---|---|
-| 1  | 10 256 | 14 702 |  5 836 | 0.70× | 1.76× |
-| 4  | 52 461 | 50 022 | 10 816 | 1.05× | 4.85× |
-| 8  | 59 568 | 54 232 | 10 944 | 1.10× | 5.44× |
-| 16 | 65 506 | 56 559 | 11 323 | 1.16× | 5.79× |
+| Threads | pooled ops/s |
+|---|---|
+| 1  | 10 256 |
+| 4  | 52 461 |
+| 8  | 59 568 |
+| 16 | 65 506 |
 
-Both `pooled` and `pre_pr_blocking` run the full `NexusClient::read`
-pipeline — same JSON-RPC envelope, same `Authorization` header, same
-JSON parse, same base64 decode — so only the runtime / connectivity
-model differs (R2 follow-up: previous version compared raw transport
-on the baseline side, which the reviewer correctly flagged as not
-apples-to-apples).
-
-**Acceptance vs the issue's stated ≥2× bar:** *not met* against the
-faithful pre-PR baseline (1.05–1.16× at concurrency; pre-PR is
-actually 1.4× faster at one thread because its current-thread
-runtime has lower per-call overhead when there is no concurrency to
-amortize). It is met (3.1×–5.6×) against the no-shared-pool
+**Acceptance vs the issue's stated ≥2× bar:** *not met* on this
+hardware against any of the baselines we attempted. Single-thread
+throughput drops about 30% vs. a shared-runtime emulation (pre-PR
+likely behaves similarly because the multi-thread runtime carries
+more per-call overhead at one caller); concurrent throughput
+recovers but the gap above pre-PR-style numbers is in the 5–15%
+range, not the 2× the issue asked for. It is met (3.1×–5.6×) against the no-shared-pool
 worst case, but that's not what the production code looked like.
 
 **Why ship the migration anyway?** The throughput win was a misread of

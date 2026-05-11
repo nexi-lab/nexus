@@ -542,6 +542,23 @@ impl NexusFs {
     fn read_cached(&self, path: &str, gen: u64) -> anyhow::Result<CachedReadResult> {
         read_with_cache(&self.client, self.file_cache.as_deref(), path, gen).map_err(Into::into)
     }
+
+    /// Read the authoritative current bytes for an RMW source.
+    ///
+    /// Used by partial-write (offset != 0) and non-zero truncate.
+    /// Deliberately bypasses `read_cached` / the FileCache so a stale
+    /// cache entry can't end up as the source for a full-file rewrite
+    /// (#4056 R6). The lost-update window between this read and the
+    /// follow-up `client.write` is still open — the server's `write`
+    /// RPC doesn't accept an `if_match` / generation guard yet; a
+    /// follow-up that adds conditional writes will close it.
+    ///
+    /// Extracted as a method so a regression test can exercise the
+    /// "no cache involvement" property: even with a primed FileCache,
+    /// this call must hit the backend `/api/nfs/read` endpoint.
+    fn rmw_read(&self, path: &str) -> Result<Vec<u8>, crate::error::NexusClientError> {
+        self.client.read(path)
+    }
 }
 
 impl Filesystem for NexusFs {
@@ -824,7 +841,7 @@ impl Filesystem for NexusFs {
             // yet). That's a server-side gap not addressed here;
             // documenting it so a follow-up that adds conditional
             // writes can close it. (#4056 R6 follow-up.)
-            let existing = match self.client.read(&path) {
+            let existing = match self.rmw_read(&path) {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     if !e.is_not_found() && !e.is_permission_denied() {
@@ -1125,7 +1142,7 @@ impl Filesystem for NexusFs {
                 // revalidation, so a stale-cache read followed by a
                 // full-file write would silently clobber concurrent
                 // updates.
-                match self.client.read(&path) {
+                match self.rmw_read(&path) {
                     Ok(bytes) => {
                         let mut data = bytes;
                         data.resize(new_size as usize, 0);
@@ -1611,5 +1628,59 @@ mod tests {
         assert!(cache.get(&1).is_none());
         assert!(cache.get(&2).is_some());
         assert_eq!(cache.total_bytes, 6);
+    }
+
+    /// #4056 R6/R7: `rmw_read` (the source-read for partial writes
+    /// and non-zero truncate) must always hit the backend, regardless
+    /// of FileCache state. A regression where someone routes RMW
+    /// reads back through `read_cached` / `read_with_cache` would
+    /// reopen the stale-cache → blind-write clobber that R6 fixed.
+    ///
+    /// We prime the FileCache with a `STALE-CACHED` body, then stand
+    /// up a mockito mock for `/api/nfs/read` that returns
+    /// `FRESH-BACKEND` and asserts it gets hit (so we know the
+    /// helper didn't short-circuit via the cache). `expect_at_least(1)`
+    /// is enforced when the `Mock` is dropped — if the cache short-
+    /// circuit returned and the backend mock was never called, the
+    /// drop-time assertion fails the test.
+    #[test]
+    fn rmw_read_bypasses_file_cache_even_when_warm() {
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine;
+
+        let mut server = Server::new();
+        // Backend response: encoded "FRESH-BACKEND" so the JSON-RPC
+        // base64 envelope round-trips cleanly.
+        let fresh = b"FRESH-BACKEND".to_vec();
+        let payload = STANDARD.encode(&fresh);
+        let read_body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"__type__":"bytes","data":"{}"}}}}"#,
+            payload
+        );
+        // Require the backend read to be hit AT LEAST ONCE — proves
+        // the helper did not take a cache short-circuit. Mockito's
+        // `expect_at_least` is verified when the `Mock` value drops
+        // at the end of the test scope.
+        let _backend_mock = server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(read_body)
+            .expect_at_least(1)
+            .create();
+
+        let client = NexusClient::new(&server.url(), "k", None).unwrap();
+        let cache = test_file_cache("rmw-bypasses-cache");
+        // Prime cache with stale, fully-warm bytes (NOT past TTL — so
+        // the cache lookup would normally return Hit if anyone routed
+        // through it).
+        cache.put("/rmw.txt", b"STALE-CACHED", Some("stale-etag"), 0);
+
+        let fs = NexusFs::new(client, Some(cache.clone()));
+        let bytes = fs.rmw_read("/rmw.txt").expect("rmw_read");
+        assert_eq!(
+            bytes, fresh,
+            "rmw_read must return fresh backend bytes, not stale FileCache content"
+        );
     }
 }

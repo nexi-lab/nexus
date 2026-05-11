@@ -103,10 +103,6 @@ python = ["dep:pyo3", "lib/python"]
 # Python hook/resolver adapters for the Python wheel runtime (POST hooks still
 # use PyInterceptHookAdapter). Pure Rust tests and consumers keep this disabled.
 py-hook-adapters = ["python"]
-# Exposes `Kernel::with_mem_backend()` and `kernel::kernel::tests::MemBackend`
-# for integration-test crates (`transport`, `services`) that need a
-# pre-wired in-memory kernel without shipping the helper in production builds.
-test-utils = []
 
 [build-dependencies]
 tonic-prost-build = "0.14"

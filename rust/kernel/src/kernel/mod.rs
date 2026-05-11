@@ -971,30 +971,6 @@ impl Kernel {
         }
     }
 
-    /// Test factory: `Kernel::new()` wired with an in-memory object-store
-    /// backend at `/` so `sys_write` / `sys_read` / `_read_batch` persist
-    /// bytes without requiring a real filesystem mount.
-    ///
-    /// Visibility: `pub` only under `test` cfg so integration-test crates
-    /// (e.g. `transport`) can call it without shipping the in-memory backend
-    /// in production binaries.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn with_mem_backend() -> Self {
-        let k = Self::new();
-        let backend: std::sync::Arc<dyn crate::abc::object_store::ObjectStore> =
-            std::sync::Arc::new(test_utils::MemBackend::default());
-        k.add_mount(
-            "/",
-            contracts::ROOT_ZONE_ID,
-            Some(backend),
-            None,
-            None,
-            false,
-        )
-        .expect("with_mem_backend: add_mount");
-        k
-    }
-
     /// Resolve metastore for a syscall: per-mount first, then global fallback.
     ///
     /// In federation mode each mount has its own state machine (Raft-backed
@@ -4454,98 +4430,6 @@ mod tests {
                 b"survives reopen",
                 "wal stream contents must survive a no-op reopen",
             );
-        }
-    }
-}
-
-// ── Test-utils public surface ─────────────────────────────────────────────
-// Exposed under `#[cfg(any(test, feature = "test-utils"))]` so integration-
-// test crates (e.g. `transport`) can create kernels pre-wired with an
-// in-memory backend without shipping the helper into production binaries.
-
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils {
-    use crate::abc::object_store::{ObjectStore, StorageError, WriteResult};
-    use contracts::OperationContext;
-    use parking_lot::Mutex;
-    use std::collections::HashMap;
-
-    /// Minimal in-memory `ObjectStore` — enough for write + read round-trips.
-    /// Mirrors the private `MemBackend` in `kernel::kernel::io::read_batch_tests`.
-    #[derive(Default)]
-    pub struct MemBackend {
-        blobs: Mutex<HashMap<String, Vec<u8>>>,
-    }
-
-    impl ObjectStore for MemBackend {
-        fn name(&self) -> &str {
-            "mem"
-        }
-
-        fn write_content(
-            &self,
-            content: &[u8],
-            content_id: &str,
-            _ctx: &OperationContext,
-            offset: u64,
-        ) -> Result<WriteResult, StorageError> {
-            let mut map = self.blobs.lock();
-            let entry = map.entry(content_id.to_string()).or_default();
-            let start = offset as usize;
-            if start > entry.len() {
-                entry.resize(start, 0);
-            }
-            let end = start + content.len();
-            if end > entry.len() {
-                entry.resize(end, 0);
-            }
-            entry[start..end].copy_from_slice(content);
-            let size = entry.len() as u64;
-            Ok(WriteResult {
-                content_id: content_id.to_string(),
-                version: content_id.to_string(),
-                size,
-            })
-        }
-
-        fn read_content(
-            &self,
-            content_id: &str,
-            _ctx: &OperationContext,
-        ) -> Result<Vec<u8>, StorageError> {
-            self.blobs
-                .lock()
-                .get(content_id)
-                .cloned()
-                .ok_or_else(|| StorageError::NotFound(content_id.into()))
-        }
-
-        fn delete_file(&self, path: &str) -> Result<(), StorageError> {
-            self.blobs.lock().remove(path);
-            Ok(())
-        }
-
-        fn get_content_size(&self, content_id: &str) -> Result<u64, StorageError> {
-            self.blobs
-                .lock()
-                .get(content_id)
-                .map(|d| d.len() as u64)
-                .ok_or_else(|| StorageError::NotFound(content_id.into()))
-        }
-
-        fn copy_file(&self, src: &str, dst: &str) -> Result<WriteResult, StorageError> {
-            let mut map = self.blobs.lock();
-            let data = map
-                .get(src)
-                .cloned()
-                .ok_or_else(|| StorageError::NotFound(src.into()))?;
-            let size = data.len() as u64;
-            map.insert(dst.to_string(), data);
-            Ok(WriteResult {
-                content_id: dst.to_string(),
-                version: dst.to_string(),
-                size,
-            })
         }
     }
 }

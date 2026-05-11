@@ -1034,15 +1034,109 @@ mod tests {
     }
 
     // ── BatchRead integration ──────────────────────────────────────────
+    //
+    // Wiring: rather than pulling `kernel`'s `test-utils` Cargo feature
+    // (which leaks `MemBackend` into production builds via feature
+    // unification), we define a minimal `MemBackend` here, implement
+    // `kernel::abc::object_store::ObjectStore` on it, and mount it via
+    // the public `Kernel::sys_setattr(DT_MOUNT=2)` path.  Only
+    // `write_content` and `read_content` are required; everything else
+    // has a default `NotSupported` impl in the trait.
 
+    use std::collections::HashMap;
+    use std::sync::Mutex as StdMutex;
+
+    use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
     use kernel::kernel::vfs_proto::{
         nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
     };
     use kernel::kernel::Kernel;
 
+    /// Minimal in-memory `ObjectStore` for transport integration tests.
+    /// Kept entirely inside `#[cfg(test)]` — never compiled into production.
+    #[derive(Default)]
+    struct MemBackend {
+        blobs: StdMutex<HashMap<String, Vec<u8>>>,
+    }
+
+    impl ObjectStore for MemBackend {
+        fn name(&self) -> &str {
+            "mem"
+        }
+
+        fn write_content(
+            &self,
+            content: &[u8],
+            content_id: &str,
+            _ctx: &kernel::kernel::OperationContext,
+            offset: u64,
+        ) -> Result<WriteResult, StorageError> {
+            let mut map = self.blobs.lock().unwrap();
+            let entry = map.entry(content_id.to_string()).or_default();
+            let start = offset as usize;
+            if start > entry.len() {
+                entry.resize(start, 0);
+            }
+            let end = start + content.len();
+            if end > entry.len() {
+                entry.resize(end, 0);
+            }
+            entry[start..end].copy_from_slice(content);
+            let size = entry.len() as u64;
+            Ok(WriteResult {
+                content_id: content_id.to_string(),
+                version: content_id.to_string(),
+                size,
+            })
+        }
+
+        fn read_content(
+            &self,
+            content_id: &str,
+            _ctx: &kernel::kernel::OperationContext,
+        ) -> Result<Vec<u8>, StorageError> {
+            self.blobs
+                .lock()
+                .unwrap()
+                .get(content_id)
+                .cloned()
+                .ok_or_else(|| StorageError::NotFound(content_id.into()))
+        }
+    }
+
+    /// Create a `Kernel` pre-wired with an in-memory backend at `/`.
+    /// Uses only the public `sys_setattr(DT_MOUNT)` API — no
+    /// cross-crate `test-utils` feature required.
+    fn kernel_with_mem_backend() -> Kernel {
+        let k = Kernel::new();
+        let backend: std::sync::Arc<dyn ObjectStore> =
+            std::sync::Arc::new(MemBackend::default());
+        k.sys_setattr(
+            "/",
+            2, // DT_MOUNT
+            "mem",
+            Some(backend),
+            None,
+            None,
+            "",
+            kernel::ROOT_ZONE_ID,
+            false,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("kernel_with_mem_backend: sys_setattr DT_MOUNT");
+        k
+    }
+
     #[tokio::test]
     async fn batch_read_returns_per_item_results_in_order() {
-        let kernel = std::sync::Arc::new(Kernel::with_mem_backend());
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
         let ctx = OperationContext::new("test", "root", true, None, true);
         kernel
             .sys_write("/x.txt", &ctx, b"hello", 0)
@@ -1094,7 +1188,7 @@ mod tests {
 
     #[tokio::test]
     async fn batch_read_empty_items_returns_empty_results() {
-        let kernel = std::sync::Arc::new(Kernel::with_mem_backend());
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
         let svc = VfsServiceImpl::for_test(kernel);
 
         let req = tonic::Request::new(BatchReadRequest {

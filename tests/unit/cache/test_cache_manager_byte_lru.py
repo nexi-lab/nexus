@@ -221,6 +221,24 @@ def test_admission_gen_bumps_on_invalidate_file():
     assert mgr.is_admission_still_valid("/p", g1)
 
 
+def test_cache_content_if_valid_skips_after_invalidation():
+    """Atomic admission helper must reject post-invalidation writes."""
+    mgr = FUSECacheManager()
+    captured = mgr.cache_admission_gen("/p")
+    mgr.invalidate_file("/p")
+    ok = mgr.cache_content_if_valid("/p", b"stale", captured, fingerprint=None, ttl_seconds=60)
+    assert ok is False
+    assert mgr.get_content("/p") is None
+
+
+def test_cache_content_if_valid_admits_when_gen_unchanged():
+    mgr = FUSECacheManager()
+    captured = mgr.cache_admission_gen("/p")
+    ok = mgr.cache_content_if_valid("/p", b"fresh", captured, fingerprint=None, ttl_seconds=60)
+    assert ok is True
+    assert mgr.get_content("/p") == b"fresh"
+
+
 def test_admission_gen_bumps_on_invalidate_all():
     """Global gen bump fences all paths."""
     mgr = FUSECacheManager()

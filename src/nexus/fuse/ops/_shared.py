@@ -173,6 +173,16 @@ class FUSECacheCoordinator(Protocol):
 
     def is_admission_still_valid(self, path: str, captured_gen: int) -> bool: ...
 
+    def cache_content_if_valid(
+        self,
+        path: str,
+        content: bytes,
+        captured_gen: int,
+        *,
+        fingerprint: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> bool: ...
+
 
 # ============================================================
 # Shared context
@@ -539,12 +549,14 @@ async def get_file_content(
             logger.info(
                 f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
             )
-        # Skip L1/L2 admission if an invalidation landed during the fetch;
-        # waiters still receive the bytes we just read via the shared future
-        # but persistent caches must not be repopulated with pre-write data.
-        admission_ok = coordinator.is_admission_still_valid(path, admission_gen)
+        # Atomic admission: a single helper checks gen and writes L1 under
+        # one lock so an invalidation can't slip between check and write.
+        # For L2, gate on the same gen check; the L2 path is best-effort,
+        # an invalidation racing the write will bump the gen so the next
+        # reader sees a stale-marked entry and refetches.
         drain_cap = getattr(coordinator, "max_drain_bytes", None)
-        if admission_ok and (drain_cap is None or len(content) <= drain_cap):
+        size_ok = drain_cap is None or len(content) <= drain_cap
+        if size_ok and coordinator.is_admission_still_valid(path, admission_gen):
             put_to_local_disk_cache(
                 ctx,
                 path,
@@ -553,8 +565,13 @@ async def get_file_content(
                 namespace=namespace,
                 priority=cache_priority,
             )
-        if has_lease and admission_ok:
-            coordinator.cache_content(path, content, fingerprint=expected_fingerprint)
+        if has_lease:
+            coordinator.cache_content_if_valid(
+                path,
+                content,
+                admission_gen,
+                fingerprint=expected_fingerprint,
+            )
         # Tolerate InvalidStateError: a waiter could have cancelled the
         # future before we got here. Our own read+cache still succeeded.
         import contextlib as _contextlib

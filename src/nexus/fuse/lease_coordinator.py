@@ -439,6 +439,19 @@ class FUSELeaseCoordinator:
     def is_admission_still_valid(self, path: str, captured_gen: int) -> bool:
         return self._cache.is_admission_still_valid(path, captured_gen)
 
+    def cache_content_if_valid(
+        self,
+        path: str,
+        content: bytes,
+        captured_gen: int,
+        *,
+        fingerprint: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        return self._cache.cache_content_if_valid(
+            path, content, captured_gen, fingerprint=fingerprint, ttl_seconds=ttl_seconds
+        )
+
     def get_parsed(self, path: str, view_type: str) -> bytes | None:
         """Get cached parsed content (direct, no lease check)."""
         return self._cache.get_parsed(path, view_type)

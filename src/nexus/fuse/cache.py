@@ -172,6 +172,34 @@ class FUSECacheManager:
     def is_admission_still_valid(self, path: str, captured_gen: int) -> bool:
         return self.cache_admission_gen(path) == captured_gen
 
+    def cache_content_if_valid(
+        self,
+        path: str,
+        content: bytes,
+        captured_gen: int,
+        *,
+        fingerprint: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Atomic admission-check + L1 cache_content.
+
+        Avoids the TOCTOU window where an invalidation lands between an
+        ``is_admission_still_valid`` check and the subsequent put. Acquires
+        ``_inflight_lock`` (also held by invalidate paths when bumping gen)
+        so the gen comparison and the put are observed atomically.
+
+        Returns True when the write succeeded, False when generation moved.
+        """
+        with self._inflight_lock:
+            current = self._gen_global + self._gen_by_path.get(path, 0)
+            if current != captured_gen:
+                return False
+            # cache_content's oversize branch already drops stale entries.
+            # The put happens under _file_lock, which is fine to nest under
+            # _inflight_lock (file_lock never re-enters inflight_lock).
+            self.cache_content(path, content, fingerprint=fingerprint, ttl_seconds=ttl_seconds)
+            return True
+
     def inflight_future(
         self, path: str, fingerprint: str | None = None
     ) -> tuple[concurrent.futures.Future[bytes], bool]:

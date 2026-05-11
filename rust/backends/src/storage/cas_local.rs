@@ -58,6 +58,60 @@ impl ObjectStore for CasLocalBackend {
         self.0.read_content(content_id).map_err(StorageError::from)
     }
 
+    /// Native range read.
+    ///
+    /// Default `ObjectStore::read_range` reads the whole content and slices —
+    /// fine for in-memory backends, wasteful for on-disk CAS where a 4 KiB
+    /// prefetch over a 100 MiB blob would otherwise pull 100 MiB into memory.
+    ///
+    /// Chunked manifests route through `CASEngine::read_chunked_range`, which
+    /// fetches + verifies only the chunks overlapping `[offset, offset+size)`.
+    ///
+    /// Single blobs open the on-disk file directly via the transport's
+    /// `blob_path()`, `seek` to `offset`, then `read` once. `read` (not
+    /// `read_exact`) gives POSIX-pread semantics: short reads at EOF return
+    /// the truncated tail; an offset past EOF returns an empty `Vec`.
+    fn read_range(
+        &self,
+        content_id: &str,
+        offset: u64,
+        size: u32,
+        _ctx: &kernel::kernel::OperationContext,
+    ) -> Result<Vec<u8>, StorageError> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        // Chunked manifest: delegate to CDC range reader (only fetches
+        // overlapping chunks, verifies each, and clamps to actual content
+        // size — same past-EOF / truncate semantics as the single-blob path).
+        if self.0.is_chunked(content_id) {
+            let end = offset.saturating_add(size as u64);
+            return self
+                .0
+                .read_chunked_range(content_id, offset, end)
+                .map_err(StorageError::from);
+        }
+
+        // Single-blob: open, seek, read once.
+        let path = self.0.transport().blob_path(content_id);
+        let mut f = std::fs::File::open(&path).map_err(|e| match e.kind() {
+            io::ErrorKind::NotFound => StorageError::NotFound(content_id.to_string()),
+            _ => StorageError::IOError(e),
+        })?;
+        // Past-EOF guard mirrors the default impl's empty-on-past-end behavior
+        // (POSIX pread would return 0 bytes; seek past end is fine but read
+        // would then also return 0 — explicit early-return is cheaper + clearer).
+        let file_size = f.metadata().map_err(StorageError::IOError)?.len();
+        if offset >= file_size {
+            return Ok(Vec::new());
+        }
+        f.seek(SeekFrom::Start(offset))
+            .map_err(StorageError::IOError)?;
+        let mut buf = vec![0u8; size as usize];
+        let n = f.read(&mut buf).map_err(StorageError::IOError)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
     fn write_content(
         &self,
         content: &[u8],
@@ -406,5 +460,57 @@ mod tests {
             .unwrap();
         let data = backend.read_content(&new_wr.content_id, &ctx).unwrap();
         assert_eq!(data, b"ab\x00\x00\x00xyz");
+    }
+
+    // ── read_range (native pread) ─────────────────────────────────────
+
+    #[test]
+    fn read_range_returns_offset_slice() {
+        let (_tmp, backend) = setup();
+        let ctx = test_ctx();
+        let written = backend
+            .write_content(b"hello world!", "", &ctx, 0)
+            .expect("write");
+        let got = backend
+            .read_range(&written.content_id, 6, 5, &ctx)
+            .expect("read_range");
+        assert_eq!(&got, b"world");
+    }
+
+    #[test]
+    fn read_range_past_eof_returns_empty() {
+        let (_tmp, backend) = setup();
+        let ctx = test_ctx();
+        let w = backend.write_content(b"short", "", &ctx, 0).expect("write");
+        let got = backend
+            .read_range(&w.content_id, 100, 4, &ctx)
+            .expect("read_range");
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn read_range_truncates_at_eof() {
+        let (_tmp, backend) = setup();
+        let ctx = test_ctx();
+        let w = backend.write_content(b"abc", "", &ctx, 0).expect("write");
+        let got = backend
+            .read_range(&w.content_id, 1, 10, &ctx)
+            .expect("read_range");
+        assert_eq!(&got, b"bc");
+    }
+
+    #[test]
+    fn read_range_missing_content_returns_not_found() {
+        let (_tmp, backend) = setup();
+        let ctx = test_ctx();
+        let err = backend
+            .read_range(
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                0,
+                4,
+                &ctx,
+            )
+            .unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
     }
 }

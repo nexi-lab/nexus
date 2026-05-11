@@ -557,6 +557,8 @@ class ReadaheadManager:
         local_disk_cache: "LocalDiskCache | None" = None,
         content_hash_func: Callable[[str], str | None] | None = None,
         zone_id: str | None = None,
+        *,
+        use_rust_engine: bool = False,
     ):
         """Initialize readahead manager.
 
@@ -566,6 +568,10 @@ class ReadaheadManager:
             local_disk_cache: Optional L2 cache for persistent prefetch
             content_hash_func: Function to get content hash for a path
             zone_id: Zone ID for multi-zone cache isolation
+            use_rust_engine: If True, route on_open/on_read/on_release to the
+                Rust ``nexus_runtime.PrefetchEngine`` when available.  Falls
+                back to the Python implementation on import or construction
+                failure.  Defaults to False (Python path) for safety.
         """
         self._config = config
         self._read_func = read_func
@@ -608,6 +614,37 @@ class ReadaheadManager:
             f"max_blocks={config.max_blocks_per_trigger}, prefetch_on_open={config.prefetch_on_open}"
         )
 
+        # Optionally route to the Rust PrefetchEngine.  The Python state
+        # above is still constructed so that fallback (e.g. engine build
+        # failure) remains a no-op switch.
+        self._rust_engine = None
+        if use_rust_engine:
+            try:
+                from nexus_runtime import PrefetchEngine as _RustEngine
+
+                self._rust_engine = _RustEngine(
+                    read_func,
+                    config.block_size,
+                    config.initial_window,
+                    config.max_window,
+                    config.prefetch_workers,
+                    1024,  # queue_capacity
+                    config.max_blocks_per_trigger,
+                    config.sequential_tolerance,
+                    config.min_sequential_count,
+                )
+                logger.info("[READAHEAD] Routing to Rust PrefetchEngine")
+            except ImportError:
+                logger.warning(
+                    "[READAHEAD] nexus_runtime.PrefetchEngine unavailable, falling back to Python"
+                )
+                self._rust_engine = None
+            except Exception as e:
+                logger.warning(
+                    f"[READAHEAD] Failed to build PrefetchEngine (falling back to Python): {e}"
+                )
+                self._rust_engine = None
+
     def on_open(
         self,
         fh: int,
@@ -625,6 +662,10 @@ class ReadaheadManager:
             path: File path
             file_size: Optional file size (for smarter prefetch decisions)
         """
+        if self._rust_engine is not None:
+            self._rust_engine.on_open(fh, path, file_size)
+            return
+
         if not self._config.enabled or not self._config.prefetch_on_open or self._shutdown:
             return
 
@@ -694,6 +735,9 @@ class ReadaheadManager:
         Returns:
             Prefetched data if available, None otherwise
         """
+        if self._rust_engine is not None:
+            return self._rust_engine.on_read(fh, offset, size)
+
         if not self._config.enabled or self._shutdown:
             return None
 
@@ -749,6 +793,10 @@ class ReadaheadManager:
         Args:
             fh: File handle being released
         """
+        if self._rust_engine is not None:
+            self._rust_engine.on_release(fh)
+            return
+
         with self._sessions_lock:
             session = self._sessions.pop(fh, None)
 

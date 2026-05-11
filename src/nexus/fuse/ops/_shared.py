@@ -326,7 +326,14 @@ def backend_id_for_path(ctx: FUSESharedContext, path: str) -> str | None:
         return None
     longest = max(candidates, key=len)
     backend = mounted.get(longest)
-    return getattr(backend, "backend_name", None)
+    # Backend identifier surfaces under several attribute names across
+    # path/CAS/connector backends: try the public names first, fall back to
+    # the private storage attribute that the connector registry sets.
+    for attr in ("backend_name", "name", "_backend_name"):
+        value = getattr(backend, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def invalidate_dir_cache(ctx: FUSESharedContext, path: str) -> None:
@@ -777,4 +784,9 @@ def cache_file_attrs_from_list(
             "st_gid": gid,
         }
 
-    ctx.cache.cache_attr(file_path, attrs, scope_id=scope_id)
+    ctx.cache.cache_attr(
+        file_path,
+        attrs,
+        scope_id=scope_id,
+        backend_id=backend_id_for_path(ctx, file_path),
+    )

@@ -110,3 +110,36 @@ def test_index_cache_entry_count_bound():
     assert len(cache._entries) == 3
     assert cache.get(IndexKey("b", "d", "/p0", "stat")) is None
     assert cache.get(IndexKey("b", "d", "/p9", "stat")) == {"i": 9}
+
+
+def test_backend_id_for_path_resolver_fallback_chain():
+    """backend_id_for_path tries backend_name → name → _backend_name."""
+    from nexus.fuse.ops._shared import backend_id_for_path
+
+    class _BackendNameAttr:
+        backend_name = "path_s3"
+
+    class _NameAttr:
+        name = "path_gcs"
+
+    class _PrivateAttr:
+        _backend_name = "github_connector"
+
+    class _FakeFS:
+        def __init__(self, mounts):
+            self._mounted_backend_instances = mounts
+
+    class _FakeCtx:
+        def __init__(self, mounts):
+            self.nexus_fs = _FakeFS(mounts)
+
+    mounts = {
+        "/s3": _BackendNameAttr(),
+        "/gcs": _NameAttr(),
+        "/gh": _PrivateAttr(),
+    }
+    ctx = _FakeCtx(mounts)
+    assert backend_id_for_path(ctx, "/s3/file.txt") == "path_s3"
+    assert backend_id_for_path(ctx, "/gcs/dir/x") == "path_gcs"
+    assert backend_id_for_path(ctx, "/gh/repo/x") == "github_connector"
+    assert backend_id_for_path(ctx, "/unmounted/x") is None

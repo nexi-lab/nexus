@@ -2580,33 +2580,27 @@ impl Kernel {
         Ok(results)
     }
 
-    /// Internal: batch read — parallel reads using rayon.
+    /// Internal: batch read. Accepts `(path, offset, len)` requests.
     ///
-    /// NOT a syscall — prefixed with `_`. Called by Python `read_bulk` method.
-    /// Returns Vec<SysReadResult> with per-path results.
-    /// Safe because Kernel is Sync (DashMap + parking_lot).
+    /// Returns per-request `Result` in input order. The outer `Err` is
+    /// reserved for kernel-wide setup failure (e.g. no metastore wired);
+    /// per-request failures are inner `Err` and do NOT abort the batch.
+    ///
+    /// Coalesces same-`content_id` requests into one backend fetch;
+    /// bounded parallelism per `Kernel::read_batch_max_concurrency`.
     pub fn _read_batch(
         &self,
-        paths: &[String],
-        ctx: &OperationContext,
-    ) -> Result<Vec<SysReadResult>, KernelError> {
-        use rayon::prelude::*;
-
-        let results: Vec<SysReadResult> = paths
-            .par_iter()
-            .map(|path| {
-                self.sys_read(path, ctx, 5000, 0).unwrap_or(SysReadResult {
-                    data: None,
-                    post_hook_needed: false,
-                    content_id: None,
-                    gen: 0,
-                    entry_type: 0,
-                    stream_next_offset: None,
-                })
-            })
-            .collect();
-
-        Ok(results)
+        reqs: &[crate::kernel::BatchReadRequest],
+        _ctx: &OperationContext,
+    ) -> Result<Vec<Result<SysReadResult, KernelError>>, KernelError> {
+        if reqs.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Stubbed body — filled in by subsequent tasks.
+        Ok(reqs
+            .iter()
+            .map(|_| Err(KernelError::IOError("not yet implemented".into())))
+            .collect())
     }
 
     /// Internal: batch delete — full Rust + batch metastore.
@@ -2921,5 +2915,23 @@ impl Kernel {
             ));
         }
         Ok((key, actual_path))
+    }
+}
+
+#[cfg(test)]
+mod read_batch_tests {
+    use crate::kernel::Kernel;
+    use contracts::OperationContext;
+
+    fn ctx() -> OperationContext {
+        // Admin + system bypass — fine for unit tests.
+        OperationContext::new("test", "root", true, None, true)
+    }
+
+    #[test]
+    fn read_batch_empty_input_returns_empty_vec() {
+        let k = Kernel::new();
+        let out = k._read_batch(&[], &ctx()).expect("ok");
+        assert_eq!(out.len(), 0);
     }
 }

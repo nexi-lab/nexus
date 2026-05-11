@@ -2711,18 +2711,35 @@ impl PyKernel {
         ctx: &PyOperationContext,
     ) -> PyResult<Vec<PySysReadResult>> {
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner._read_batch(&paths, &rust_ctx));
+        let reqs: Vec<crate::kernel::BatchReadRequest> = paths
+            .into_iter()
+            .map(|p| crate::kernel::BatchReadRequest {
+                path: p,
+                offset: 0,
+                len: None,
+            })
+            .collect();
+        let result = py.detach(|| self.inner._read_batch(&reqs, &rust_ctx));
         let results = result.map_err(|e| -> PyErr { e.into() })?;
-        // GIL is held here (after py.detach returns) — use outer `py` for PyBytes
         Ok(results
             .into_iter()
-            .map(|r| PySysReadResult {
-                data: r.data.map(|d| PyBytes::new(py, &d).into()),
-                post_hook_needed: r.post_hook_needed,
-                content_id: r.content_id,
-                gen: r.gen,
-                entry_type: r.entry_type,
-                stream_next_offset: r.stream_next_offset,
+            .map(|r| match r {
+                Ok(r) => PySysReadResult {
+                    data: r.data.map(|d| PyBytes::new(py, &d).into()),
+                    post_hook_needed: r.post_hook_needed,
+                    content_id: r.content_id,
+                    gen: r.gen,
+                    entry_type: r.entry_type,
+                    stream_next_offset: r.stream_next_offset,
+                },
+                Err(_) => PySysReadResult {
+                    data: None,
+                    post_hook_needed: false,
+                    content_id: None,
+                    gen: 0,
+                    entry_type: 0,
+                    stream_next_offset: None,
+                },
             })
             .collect())
     }

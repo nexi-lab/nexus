@@ -103,6 +103,22 @@ fn clone_read_result(
     }
 }
 
+fn slice_read_result(
+    r: Result<SysReadResult, KernelError>,
+    req: &crate::kernel::BatchReadRequest,
+) -> Result<SysReadResult, KernelError> {
+    let mut r = r?;
+    if let Some(bytes) = r.data.as_ref() {
+        let off = (req.offset as usize).min(bytes.len());
+        let end = match req.len {
+            Some(l) => off.saturating_add(l as usize).min(bytes.len()),
+            None => bytes.len(),
+        };
+        r.data = Some(bytes[off..end].to_vec());
+    }
+    Ok(r)
+}
+
 impl Kernel {
     pub fn sys_read(
         &self,
@@ -2778,8 +2794,11 @@ impl Kernel {
                         }
                         Unit::Singleton { idx } => {
                             let req = &reqs[*idx];
-                            let r = self.sys_read(&req.path, ctx, 5000, req.offset);
-                            local.push((*idx, r));
+                            // Always read from offset 0; slice per req.offset/req.len
+                            // in slice_read_result. (sys_read's offset param is for
+                            // DT_STREAM/DT_PIPE only; Task 7 rejects those here.)
+                            let r = self.sys_read(&req.path, ctx, 5000, 0);
+                            local.push((*idx, slice_read_result(r, req)));
                         }
                     }
                 }
@@ -3305,6 +3324,58 @@ mod read_batch_tests {
             let expected = format!("payload-{i}").into_bytes();
             assert_eq!(r.data.as_deref().unwrap(), expected.as_slice());
         }
+    }
+
+    #[test]
+    fn read_batch_range_slicing() {
+        let k = kernel_with_backend();
+        let c = ctx();
+        let payload = b"0123456789".to_vec(); // 10 bytes
+        k.sys_write("/r.txt", &c, &payload, 0).unwrap();
+
+        // Distinct paths so each request is a singleton (no coalescing).
+        // Need separate paths to force singletons; reuse same content via
+        // multiple writes.
+        for letter in ["a", "b", "c", "d"] {
+            k.sys_write(&format!("/r_{letter}.txt"), &c, &payload, 0)
+                .unwrap();
+        }
+
+        let reqs = vec![
+            // Whole file (coalesce-able with itself if duplicated, but
+            // single request → singleton path).
+            crate::kernel::BatchReadRequest {
+                path: "/r_a.txt".into(),
+                offset: 0,
+                len: None,
+            },
+            // Middle slice
+            crate::kernel::BatchReadRequest {
+                path: "/r_b.txt".into(),
+                offset: 3,
+                len: Some(4),
+            },
+            // Offset == size (empty)
+            crate::kernel::BatchReadRequest {
+                path: "/r_c.txt".into(),
+                offset: 10,
+                len: Some(5),
+            },
+            // Overshoot — truncated
+            crate::kernel::BatchReadRequest {
+                path: "/r_d.txt".into(),
+                offset: 8,
+                len: Some(50),
+            },
+        ];
+        let out = k._read_batch(&reqs, &c).expect("ok");
+        assert_eq!(
+            out[0].as_ref().unwrap().data.as_deref().unwrap(),
+            b"0123456789"
+        );
+        assert_eq!(out[1].as_ref().unwrap().data.as_deref().unwrap(), b"3456");
+        assert_eq!(out[2].as_ref().unwrap().data.as_deref().unwrap(), b"");
+        assert_eq!(out[3].as_ref().unwrap().data.as_deref().unwrap(), b"89");
     }
 
     #[test]

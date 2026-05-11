@@ -403,6 +403,21 @@ class NexusFUSEOperations(Operations):
     def release(self, path: str, fh: int) -> None:
         return self._io.release(path, fh)
 
+    def destroy(self, _path: str) -> None:
+        """FUSE unmount hook — tear down the readahead manager so the
+        Rust prefetcher's Tokio runtime + workers exit cleanly instead
+        of leaking past the mount.  Issue #4057 adversarial review
+        round 10 finding #2.
+        """
+        readahead = self._ctx.readahead
+        if readahead is None:
+            return
+        try:
+            readahead.shutdown()
+        except Exception as e:  # pragma: no cover — best-effort
+            logger.warning(f"[FUSE-DESTROY] readahead shutdown failed: {e}")
+        self._ctx.readahead = None
+
     @fuse_operation("CREATE")
     def create(self, path: str, mode: int, fi: Any = None) -> int:
         return asyncio.run(self._mut.create(path, mode, fi))

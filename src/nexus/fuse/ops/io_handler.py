@@ -159,6 +159,17 @@ class IOHandler:
             lock = _ctx_any._write_locks.setdefault(original_path, threading.Lock())
 
         with lock:
+            # Pre-invalidate readahead BEFORE the backend write commits
+            # so a concurrent read between commit and the post-write
+            # invalidation can't return a stale prefetched block (Issue
+            # #4057 adversarial review round 10 finding #1).  Bumping
+            # the session id atomically discards any in-flight prefetch
+            # jobs and dropped buffers; the post-write invalidation
+            # below stays as belt-and-suspenders for cache layers other
+            # than the Rust engine.
+            if ctx.readahead:
+                ctx.readahead.invalidate_path(original_path)
+
             # Read existing content
             existing_content = b""
             if ctx.nexus_fs.access(original_path):

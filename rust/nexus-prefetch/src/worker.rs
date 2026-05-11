@@ -34,12 +34,36 @@ pub struct PrefetchJob {
 /// in parallel.
 pub type SharedReceiver = Arc<AsyncMutex<mpsc::Receiver<PrefetchJob>>>;
 
+/// Apply a signed byte-delta to the engine's global buffered-bytes
+/// counter.  Saturating to avoid u64 underflow in the cleanup paths.
+fn apply_delta(counter: &std::sync::atomic::AtomicU64, delta: i64) {
+    use std::sync::atomic::Ordering;
+    if delta >= 0 {
+        counter.fetch_add(delta as u64, Ordering::Relaxed);
+    } else {
+        // saturating subtract
+        let mag = (-delta) as u64;
+        loop {
+            let cur = counter.load(Ordering::Relaxed);
+            let new = cur.saturating_sub(mag);
+            if counter
+                .compare_exchange_weak(cur, new, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                break;
+            }
+        }
+    }
+}
+
 pub async fn run_worker(
     rx: SharedReceiver,
     sessions: Arc<DashMap<u64, Arc<Mutex<Session>>>>,
     reader: SharedRangeReader,
     metrics: Arc<EngineMetrics>,
     shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+    global_bytes: Arc<std::sync::atomic::AtomicU64>,
+    max_buffer_bytes: u64,
 ) {
     loop {
         let job = {
@@ -93,7 +117,19 @@ pub async fn run_worker(
                             "prefetch session-id mismatch; dropping bytes"
                         );
                     } else {
-                        s.deposit(block_offset, bytes);
+                        // Engine-wide cap closure: returns true when
+                        // the current global counter (after this
+                        // session's bytes are factored in) is over
+                        // the configured ceiling.  Session::deposit
+                        // sheds blocks until both per-session and
+                        // global caps are honored.
+                        let gb = global_bytes.clone();
+                        let cap = max_buffer_bytes;
+                        let delta =
+                            s.deposit_with_global_cap(block_offset, bytes, |_per_session_total| {
+                                gb.load(std::sync::atomic::Ordering::Relaxed) > cap
+                            });
+                        apply_delta(&global_bytes, delta);
                         metrics
                             .prefetched_bytes
                             .fetch_add(size, std::sync::atomic::Ordering::Relaxed);

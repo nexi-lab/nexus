@@ -53,6 +53,10 @@ pub struct PrefetchEngine {
     /// #4).  Lets a hung in-flight `read_callable` finish in the
     /// background without holding up unmount.
     shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+    /// Global buffered-bytes counter — workers update via deposit's
+    /// returned delta so cross-session OOM is bounded by
+    /// `cfg.max_buffer_bytes` (round 7 finding #2).
+    global_bytes: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl PrefetchEngine {
@@ -88,6 +92,7 @@ impl PrefetchEngine {
         let path_index = Arc::new(DashMap::new());
         let next_session_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
         let shutdown_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let global_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let (tx, rx) = mpsc::channel(cfg.queue_capacity);
         let detector_factory: Box<dyn Fn() -> Box<dyn Detector> + Send + Sync> = {
             let tol = cfg.sequential_tolerance;
@@ -117,6 +122,8 @@ impl PrefetchEngine {
                     reader.clone(),
                     metrics.clone(),
                     shutdown_flag.clone(),
+                    global_bytes.clone(),
+                    cfg.max_buffer_bytes,
                 )),
                 None => tokio::spawn(run_worker(
                     shared_rx.clone(),
@@ -124,6 +131,8 @@ impl PrefetchEngine {
                     reader.clone(),
                     metrics.clone(),
                     shutdown_flag.clone(),
+                    global_bytes.clone(),
+                    cfg.max_buffer_bytes,
                 )),
             };
             workers.push(h);
@@ -140,6 +149,7 @@ impl PrefetchEngine {
             detector_factory,
             next_session_id,
             shutdown_flag,
+            global_bytes,
         }
     }
 
@@ -202,19 +212,25 @@ impl PrefetchEngine {
             AccessPattern::Cold => {}
         }
 
-        let hit = s.take_range(offset, size, self.cfg.block_size);
-        if hit.is_some() {
-            // Hit-path eviction is handled inside `take_range` — it
-            // advances `consumed_end` after the read completes.
+        let (hit, evicted_hit) = s.take_range_with_delta(offset, size, self.cfg.block_size);
+        let evicted_total = if hit.is_some() {
             self.metrics.hits.fetch_add(1, Ordering::Relaxed);
+            evicted_hit
         } else {
-            // Miss-path: tell the session what was just delivered by
-            // the backend so deposits can reject obsolete blocks and
-            // the buffer drains under miss-heavy/random workloads
-            // (round 4 finding #1, round 5 finding #3).
-            s.note_read(offset, size);
+            // Miss-path: forward note_read advances cursor + evicts
+            // forward blocks; backward note_read just records position
+            // (round 7 finding #4).
+            let evicted_miss = s.note_read(offset, size);
             self.metrics.misses.fetch_add(1, Ordering::Relaxed);
             s.misses += 1;
+            evicted_miss
+        };
+        if evicted_total > 0 {
+            // Subtract evicted bytes from global counter so future
+            // deposits aren't falsely throttled.
+            let cur = self.global_bytes.load(Ordering::Relaxed);
+            let new = cur.saturating_sub(evicted_total);
+            self.global_bytes.store(new, Ordering::Relaxed);
         }
         hit
     }
@@ -355,7 +371,11 @@ impl PrefetchEngine {
         };
         let mut logical = first_logical;
         let mut issued = 0u32;
-        let mut walked: u64 = 0;
+        // Initialise `walked` with the distance from the current read
+        // to the FIRST prefetch position.  Without this, a stride
+        // larger than the window would still emit one prefetch far
+        // outside the user's IO budget (round 7 finding #5).
+        let mut walked: u64 = first_logical.abs_diff(current_offset);
         let step_abs = step.unsigned_abs();
         // Independent iteration budget — covers the case where stride
         // is much smaller than block_size and many logical positions
@@ -502,6 +522,7 @@ mod tests {
             min_sequential_count: 2,
             max_workers: 1,
             shutdown_timeout_ms: 500,
+            max_buffer_bytes: 1024 * 1024,
         };
         let reader_data = vec![0u8; 1 << 20];
         // Throttle the reader so jobs back up.

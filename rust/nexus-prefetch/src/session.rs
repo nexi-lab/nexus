@@ -18,6 +18,16 @@ pub struct Session {
     pub detector: Box<dyn Detector>,
     pub pending: BTreeSet<u64>,
     pub buffer: BTreeMap<u64, Bytes>,
+    /// Incremental byte counter updated on every insert/remove so the
+    /// per-session cap check is O(1) instead of scanning the whole
+    /// BTreeMap (round 7 finding #3).  Must stay equal to
+    /// `buffer.values().map(|b| b.len()).sum()`.
+    pub buffered_bytes: u64,
+    /// Last observed read offset — used by `note_read` to detect
+    /// direction so backward-stride workloads aren't damaged by the
+    /// forward-only `consumed_end` eviction (round 7 finding #4).
+    pub last_read_offset: u64,
+    pub last_read_seen: bool,
     pub hits: u64,
     pub misses: u64,
     /// Globally unique session identity — issued from the engine's
@@ -54,6 +64,9 @@ impl Session {
             detector,
             pending: BTreeSet::new(),
             buffer: BTreeMap::new(),
+            buffered_bytes: 0,
+            last_read_offset: 0,
+            last_read_seen: false,
             hits: 0,
             misses: 0,
             session_id,
@@ -90,63 +103,105 @@ impl Session {
     /// blocks are dropped (would otherwise hang `take_range`'s cursor
     /// loop with no progress).  We do NOT reject blocks behind
     /// `consumed_end` here: backward-stride / random-access patterns
-    /// can legitimately enqueue offsets below the high-water mark,
-    /// and forward-only inflation is bounded by `evict_consumed_blocks`
-    /// running on every read and by the per-session buffer cap
-    /// enforced below (round 6 findings #2 + #3).
-    pub fn deposit(&mut self, block_offset: u64, bytes: Bytes) {
-        self.pending.remove(&block_offset);
-        if bytes.is_empty() {
-            return;
-        }
-        self.buffer.insert(block_offset, bytes);
-        // Enforce per-session buffer cap.  The cap is `max_window`
-        // bytes — the configured ceiling on read-ahead distance — so
-        // a session can never hold more data than the user opted into.
-        // Eviction prefers the block whose end is furthest behind the
-        // read cursor, which under forward-only access matches FIFO
-        // and under backward-stride is a reasonable heuristic.
-        self.enforce_buffer_cap();
+    /// can legitimately enqueue offsets below the high-water mark.
+    ///
+    /// Returns the net byte-delta the engine should apply to its
+    /// global buffer accounting (positive on net growth, negative on
+    /// net shrink after cap eviction).  Callers pass an
+    /// `over_global_cap` closure that returns true while the engine's
+    /// total buffered byte count exceeds the global limit; this lets
+    /// `enforce_buffer_cap` shed beyond the per-session cap when
+    /// other sessions are also full (round 7 finding #2).
+    /// Test-only deposit without a global-cap closure.  Engine code
+    /// should use `deposit_with_global_cap` so cross-session OOM is
+    /// bounded.
+    pub fn deposit(&mut self, block_offset: u64, bytes: Bytes) -> i64 {
+        self.deposit_with_global_cap(block_offset, bytes, |_| false)
     }
 
-    fn enforce_buffer_cap(&mut self) {
-        let cap = self.max_window;
-        let mut total: u64 = self.buffer.values().map(|b| b.len() as u64).sum();
-        while total > cap {
-            // Pop the lowest-offset block.  For forward-only access
-            // this collapses to FIFO (oldest first); for negative-
-            // stride access we'd ideally evict from the high end, but
-            // detecting direction here is more state than the marginal
-            // win is worth — the next backward prefetch will repopulate.
+    pub fn deposit_with_global_cap(
+        &mut self,
+        block_offset: u64,
+        bytes: Bytes,
+        global_cap_breached: impl Fn(u64) -> bool,
+    ) -> i64 {
+        self.pending.remove(&block_offset);
+        if bytes.is_empty() {
+            return 0;
+        }
+        let added = bytes.len() as u64;
+        let mut delta: i64 = 0;
+        if let Some(old) = self.buffer.insert(block_offset, bytes) {
+            // Replacing an existing block — net delta is the size diff.
+            let old_len = old.len() as u64;
+            self.buffered_bytes = self.buffered_bytes + added - old_len;
+            delta += added as i64 - old_len as i64;
+        } else {
+            self.buffered_bytes += added;
+            delta += added as i64;
+        }
+        // Per-session cap is `max_window`; on top of that, shed more
+        // while the engine's global counter is over its cap.
+        let evicted_bytes = self.enforce_buffer_cap(&global_cap_breached);
+        delta -= evicted_bytes as i64;
+        delta
+    }
+
+    /// Evict from this session until BOTH (a) per-session cap is
+    /// satisfied and (b) the engine's global cap is satisfied
+    /// (`global_cap_breached(self.buffered_bytes)` returns false).
+    /// Returns the total bytes evicted.
+    fn enforce_buffer_cap(&mut self, global_cap_breached: &dyn Fn(u64) -> bool) -> u64 {
+        let mut evicted: u64 = 0;
+        let per_session_cap = self.max_window;
+        loop {
+            let over_per_session = self.buffered_bytes > per_session_cap;
+            let over_global = global_cap_breached(self.buffered_bytes);
+            if !over_per_session && !over_global {
+                break;
+            }
             let Some((k, _)) = self.buffer.iter().next().map(|(k, _)| (*k, ())) else {
                 break;
             };
             if let Some(v) = self.buffer.remove(&k) {
-                total = total.saturating_sub(v.len() as u64);
+                let n = v.len() as u64;
+                self.buffered_bytes = self.buffered_bytes.saturating_sub(n);
+                evicted += n;
             }
         }
+        evicted
     }
 
-    /// Advance the consumed-bytes high-water mark AND evict buffered
-    /// blocks the cursor has fully passed.  Called by the engine on
-    /// the *miss* path so backend-served reads also retire stale
-    /// prefetched blocks (round 4 finding #1, round 5 finding #3).
-    /// The *hit* path advances the cursor inside `take_range` after
-    /// it has finished reading from the relevant blocks, so we do not
-    /// want callers to also invoke `note_read` for a hit — it'd evict
-    /// blocks the current read still needed.
-    pub fn note_read(&mut self, offset: u64, size: u32) {
-        let end = offset.saturating_add(size as u64);
+    /// Advance the consumed-bytes high-water mark AND (for
+    /// forward-moving reads only) evict buffered blocks the cursor
+    /// has fully passed.  Round 7 finding #4: backward-moving reads
+    /// must NOT trigger forward-only eviction or we'd discard the
+    /// very blocks the backward-stride detector just prefetched.
+    /// Round 7 finding #6: overflow-safe via `checked_add` — a
+    /// pathological offset near u64::MAX is rejected instead of
+    /// poisoning `consumed_end` to u64::MAX.
+    /// Returns net bytes evicted (for the engine's global counter).
+    pub fn note_read(&mut self, offset: u64, size: u32) -> u64 {
+        let Some(end) = offset.checked_add(size as u64) else {
+            return 0;
+        };
+        let is_backward = self.last_read_seen && offset < self.last_read_offset;
+        self.last_read_offset = offset;
+        self.last_read_seen = true;
         if end > self.consumed_end {
             self.consumed_end = end;
         }
-        self.evict_consumed_blocks();
+        if is_backward {
+            0
+        } else {
+            self.evict_consumed_blocks()
+        }
     }
 
     /// Remove every buffered block whose trailing edge is at or before
-    /// `consumed_end`.  Shared between `note_read` and the take_range
-    /// success path so eviction does not depend on hit success.
-    fn evict_consumed_blocks(&mut self) {
+    /// `consumed_end`.  Shared between `note_read` (forward only) and
+    /// the take_range success path.  Returns total bytes evicted.
+    fn evict_consumed_blocks(&mut self) -> u64 {
         let cursor = self.consumed_end;
         let to_remove: Vec<u64> = self
             .buffer
@@ -160,9 +215,15 @@ impl Session {
                 }
             })
             .collect();
+        let mut evicted: u64 = 0;
         for k in to_remove {
-            self.buffer.remove(&k);
+            if let Some(v) = self.buffer.remove(&k) {
+                let n = v.len() as u64;
+                self.buffered_bytes = self.buffered_bytes.saturating_sub(n);
+                evicted += n;
+            }
         }
+        evicted
     }
 
     /// Take a buffered range if it fully covers `[offset, offset+size)`.
@@ -170,14 +231,28 @@ impl Session {
     /// consumed by the read are removed from the buffer; the trailing
     /// block keeps any unconsumed bytes for a subsequent overlapping
     /// read.  Defends against zero-length blocks (cursor non-progression).
+    /// Also returns the byte-delta the engine should apply to its
+    /// global counter when called via the `take_range_with_delta`
+    /// helper used by the engine path.
     pub fn take_range(&mut self, offset: u64, size: u32, block_size: u32) -> Option<Bytes> {
+        self.take_range_with_delta(offset, size, block_size).0
+    }
+
+    pub fn take_range_with_delta(
+        &mut self,
+        offset: u64,
+        size: u32,
+        block_size: u32,
+    ) -> (Option<Bytes>, u64) {
         if size == 0 {
-            return Some(Bytes::new());
+            return (Some(Bytes::new()), 0);
         }
-        let end = offset.checked_add(size as u64)?;
+        let Some(end) = offset.checked_add(size as u64) else {
+            return (None, 0);
+        };
         let bs = block_size as u64;
         if bs == 0 {
-            return None;
+            return (None, 0);
         }
         let first_block = (offset / bs) * bs;
         let mut out = Vec::with_capacity(size as usize);
@@ -186,42 +261,35 @@ impl Session {
         // mutating the buffer.  Any miss returns None with the buffer
         // untouched.
         while cursor < end {
-            let block = self.buffer.get(&cursor)?;
+            let block = match self.buffer.get(&cursor) {
+                Some(b) => b,
+                None => return (None, 0),
+            };
             if block.is_empty() {
-                // Defensive — `deposit` guards against this, but a
-                // future code path might insert one.  Treat as miss
-                // so we don't loop forever.
-                return None;
+                return (None, 0);
             }
             let block_end = cursor + block.len() as u64;
-            // EOF-adjacent short blocks: a prefetched block can be
-            // shorter than block_size when the backend returns less
-            // than requested (e.g. file ends mid-block).  If the
-            // requested read starts past the actual block_end, we
-            // have a miss — return None for the backend to produce
-            // EOF instead of slicing with `take_from > take_to`
-            // (round 5 finding #2).
             if offset >= block_end {
-                return None;
+                return (None, 0);
             }
             let take_from = offset.max(cursor) - cursor;
             let take_to = end.min(block_end) - cursor;
             if take_from > take_to {
-                return None;
+                return (None, 0);
             }
             out.extend_from_slice(&block[take_from as usize..take_to as usize]);
             cursor = block_end;
         }
         // Successful read: advance the consumed-bytes high-water mark
-        // (this read is now fully delivered) and evict every block the
-        // cursor has fully passed.  The miss path is handled by the
-        // engine calling `note_read` separately.
+        // and evict fully-passed blocks (forward semantics — the hit
+        // path is by definition consuming bytes monotonically through
+        // this read).
         if end > self.consumed_end {
             self.consumed_end = end;
         }
-        self.evict_consumed_blocks();
+        let evicted = self.evict_consumed_blocks();
         self.hits += 1;
-        Some(Bytes::from(out))
+        (Some(Bytes::from(out)), evicted)
     }
 
     /// Drop all pending and buffered state.  The caller (engine) MUST
@@ -230,7 +298,10 @@ impl Session {
     pub fn clear(&mut self) {
         self.pending.clear();
         self.buffer.clear();
+        self.buffered_bytes = 0;
         self.consumed_end = 0;
+        self.last_read_seen = false;
+        self.last_read_offset = 0;
     }
 
     /// Snapshot the current session identity — workers stamp this onto

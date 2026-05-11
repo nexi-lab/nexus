@@ -56,6 +56,7 @@ impl PyPrefetchEngine {
         min_sequential_count,
         detector="sequential",
         shutdown_timeout_ms=2000,
+        max_buffer_bytes=128 * 1024 * 1024,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -70,6 +71,7 @@ impl PyPrefetchEngine {
         min_sequential_count: u32,
         detector: &str,
         shutdown_timeout_ms: u64,
+        max_buffer_bytes: u64,
     ) -> PyResult<Self> {
         // Normalize before building the tokio runtime — passing
         // worker_threads(0) panics (round 6 finding #1).  Clamp +
@@ -85,6 +87,7 @@ impl PyPrefetchEngine {
             sequential_tolerance,
             min_sequential_count,
             shutdown_timeout_ms,
+            max_buffer_bytes,
         }
         .clamp()
         .normalize();

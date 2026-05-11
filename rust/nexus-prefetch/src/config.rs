@@ -29,6 +29,12 @@ pub struct EngineConfig {
     /// finding #4 — was hardcoded 500ms which can be shorter than a
     /// real network range read.
     pub shutdown_timeout_ms: u64,
+    /// Process-wide ceiling on total bytes buffered across ALL open
+    /// fhs / sessions in this engine.  Round 7 finding #2 — without
+    /// this, many concurrent readers each up to `max_window` could
+    /// blow process memory.  Defaults to 128 MiB to match the Python
+    /// `ReadaheadConfig.buffer_pool_mb` advertised value.
+    pub max_buffer_bytes: u64,
 }
 
 impl Default for EngineConfig {
@@ -43,6 +49,7 @@ impl Default for EngineConfig {
             sequential_tolerance: 64 * 1024,
             min_sequential_count: 2,
             shutdown_timeout_ms: 2000,
+            max_buffer_bytes: 128 * 1024 * 1024,
         }
     }
 }

@@ -638,6 +638,8 @@ class ReadaheadManager:
                     config.sequential_tolerance,
                     config.min_sequential_count,
                     config.rust_detector,
+                    2000,  # shutdown_timeout_ms
+                    config.buffer_pool_mb * 1024 * 1024,
                 )
                 logger.info("[READAHEAD] Routing to Rust PrefetchEngine")
             except ImportError:

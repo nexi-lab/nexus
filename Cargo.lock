@@ -2302,6 +2302,7 @@ dependencies = [
  "backends",
  "kernel",
  "lib",
+ "nexus-prefetch",
  "pyo3",
  "raft 0.1.0",
  "runtime",

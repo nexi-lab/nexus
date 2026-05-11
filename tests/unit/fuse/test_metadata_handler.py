@@ -107,11 +107,10 @@ class TestReaddir:
 
 def test_parent_only_listing_invalidation_keeps_grandparent() -> None:
     cache = FUSECacheManager(
-        attr_cache_size=8,
-        listing_cache_size=8,
+        content_cache_bytes=8 * 1024,
+        parsed_cache_bytes=8 * 1024,
+        max_drain_bytes=4 * 1024,
         attr_cache_ttl=60,
-        content_cache_size=8,
-        parsed_cache_size=8,
     )
     cache.cache_listing("/a", [".", "..", "b"])
     cache.cache_listing("/a/b", [".", "..", "c.txt"])
@@ -156,24 +155,6 @@ def test_readdir_cache_hit_isolated_by_operation_context(
     assert scoped_attrs is not None
     assert scoped_attrs["st_size"] == 1
     mock_nexus_fs.sys_readdir.assert_called_once()
-
-
-def test_metadata_index_cache_is_bounded_by_configured_capacity() -> None:
-    cache = FUSECacheManager(
-        attr_cache_size=1,
-        listing_cache_size=1,
-        attr_cache_ttl=60,
-        content_cache_size=8,
-        parsed_cache_size=8,
-    )
-
-    cache.cache_attr("/a.txt", {"st_size": 1})
-    cache.cache_listing("/one", [".", "..", "a.txt"])
-    cache.cache_listing("/two", [".", "..", "b.txt"])
-
-    assert cache.get_attr("/a.txt") is None
-    assert cache.get_listing("/one") == [".", "..", "a.txt"]
-    assert cache.get_listing("/two") == [".", "..", "b.txt"]
 
 
 def test_metadata_cache_metrics_report_logical_index_sizes() -> None:

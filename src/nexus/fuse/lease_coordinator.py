@@ -387,9 +387,10 @@ class FUSELeaseCoordinator:
         path: str,
         attrs: dict[str, Any],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None:
         """Cache file attributes."""
-        self._cache.cache_attr(path, attrs, scope_id=scope_id)
+        self._cache.cache_attr(path, attrs, scope_id=scope_id, backend_id=backend_id)
 
     def get_content(self, path: str, expected_fingerprint: str | None = None) -> bytes | None:
         """Get cached file content (direct, no lease check)."""
@@ -409,6 +410,46 @@ class FUSELeaseCoordinator:
             content,
             fingerprint=fingerprint,
             ttl_seconds=ttl_seconds,
+        )
+
+    @property
+    def max_drain_bytes(self) -> int:
+        """Forward max_drain_bytes from the underlying cache for L2 callers."""
+        return self._cache.max_drain_bytes
+
+    async def content_lock(self, path: str, view_type: str | None = None) -> Any:
+        """Forward per-path singleflight lock for content fetches."""
+        return await self._cache.content_lock(path, view_type)
+
+    def inflight_future(self, path: str, fingerprint: str | None = None) -> tuple[Any, bool]:
+        return self._cache.inflight_future(path, fingerprint)
+
+    def inflight_clear(
+        self,
+        path: str,
+        fingerprint: str | None = None,
+        *,
+        owner: concurrent.futures.Future[bytes] | None = None,
+    ) -> None:
+        self._cache.inflight_clear(path, fingerprint, owner=owner)
+
+    def cache_admission_gen(self, path: str) -> int:
+        return self._cache.cache_admission_gen(path)
+
+    def is_admission_still_valid(self, path: str, captured_gen: int) -> bool:
+        return self._cache.is_admission_still_valid(path, captured_gen)
+
+    def cache_content_if_valid(
+        self,
+        path: str,
+        content: bytes,
+        captured_gen: int,
+        *,
+        fingerprint: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        return self._cache.cache_content_if_valid(
+            path, content, captured_gen, fingerprint=fingerprint, ttl_seconds=ttl_seconds
         )
 
     def get_parsed(self, path: str, view_type: str) -> bytes | None:
@@ -432,9 +473,10 @@ class FUSELeaseCoordinator:
         path: str,
         entries: list[str],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None:
         """Cache directory listing entries."""
-        self._cache.cache_listing(path, entries, scope_id=scope_id)
+        self._cache.cache_listing(path, entries, scope_id=scope_id, backend_id=backend_id)
 
     def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None:
         """Invalidate the immediate parent directory listing for a path."""

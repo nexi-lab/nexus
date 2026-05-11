@@ -7,6 +7,7 @@ This module contains:
 - Shared helper functions (standalone, taking ctx: FUSESharedContext)
 """
 
+import concurrent.futures
 import errno
 import functools
 import inspect
@@ -118,6 +119,7 @@ class FUSECacheCoordinator(Protocol):
         path: str,
         attrs: dict[str, Any],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None: ...
 
     def get_content(self, path: str, expected_fingerprint: str | None = None) -> bytes | None: ...
@@ -144,6 +146,7 @@ class FUSECacheCoordinator(Protocol):
         path: str,
         entries: list[str],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None: ...
 
     def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None: ...
@@ -153,6 +156,32 @@ class FUSECacheCoordinator(Protocol):
     def invalidate_path_all_scopes(self, path: str) -> None: ...
 
     def invalidate_and_revoke(self, paths: list[str]) -> None: ...
+
+    async def content_lock(self, path: str, view_type: str | None = None) -> Any: ...
+
+    def inflight_future(self, path: str, fingerprint: str | None = None) -> tuple[Any, bool]: ...
+
+    def inflight_clear(
+        self,
+        path: str,
+        fingerprint: str | None = None,
+        *,
+        owner: Any | None = None,
+    ) -> None: ...
+
+    def cache_admission_gen(self, path: str) -> int: ...
+
+    def is_admission_still_valid(self, path: str, captured_gen: int) -> bool: ...
+
+    def cache_content_if_valid(
+        self,
+        path: str,
+        content: bytes,
+        captured_gen: int,
+        *,
+        fingerprint: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> bool: ...
 
 
 # ============================================================
@@ -308,6 +337,44 @@ def index_cache_scope_id(ctx: FUSESharedContext) -> str:
     return f"{subj_type}:{subj_id}"
 
 
+def backend_id_for_path(ctx: FUSESharedContext, path: str) -> str | None:
+    """Resolve the backend identifier for a path, or None if unknown.
+
+    Best-effort lookup via the kernel's mounted-backend registry: walks the
+    longest matching mount prefix and reads ``backend_name`` off the bound
+    instance. Returns None when nothing matches so callers fall back to
+    default TTLs.
+    """
+    mounted = getattr(ctx.nexus_fs, "_mounted_backend_instances", None)
+    if not mounted:
+        return None
+    candidates = [mp for mp in mounted if path == mp or path.startswith(mp.rstrip("/") + "/")]
+    if not candidates:
+        return None
+    longest = max(candidates, key=len)
+    backend = mounted.get(longest)
+    # Backend identifier surfaces under several attribute names across
+    # path/CAS/connector backends: try the public names first, fall back to
+    # the private storage attribute that the connector registry sets.
+    for attr in ("backend_name", "name", "_backend_name"):
+        value = getattr(backend, attr, None)
+        if isinstance(value, str) and value:
+            return _normalize_backend_id(value)
+    return None
+
+
+# CLI-backed connectors expose their CLI tool as `name` (e.g. `cli:gh`) but the
+# cache policy table keys them by their `@register_connector` identifier
+# (`github_connector`). Map the known divergences so TTL overrides hit.
+_BACKEND_ID_ALIASES = {
+    "cli:gh": "github_connector",
+}
+
+
+def _normalize_backend_id(value: str) -> str:
+    return _BACKEND_ID_ALIASES.get(value, value)
+
+
 def invalidate_dir_cache(ctx: FUSESharedContext, path: str) -> None:
     """Invalidate readdir cache for the parent directory of a mutated path.
 
@@ -447,34 +514,79 @@ async def get_file_content(
             return _maybe_parse(ctx, path, view_type, cached)
         has_lease = True  # no lease manager = always "has lease" for caching
 
-    # Step 3: L2/L3 fetch
+    # Step 3: L2/L3 fetch with singleflight via shared in-flight future.
+    # The future is registered atomically before any lock so 100 concurrent
+    # cold readers all share the same result — including content too large to
+    # admit to persistent L1/L2 cache. Keyed by (path, expected_fingerprint)
+    # so a metadata change between two readers gives distinct futures.
     namespace = view_type or "raw"
-    content = get_from_local_disk_cache(ctx, path, expected_fingerprint, namespace=namespace)
-    if content is not None:
-        logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
-    else:
-        read_ctx = ctx.context
-        logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
-        fetch_start = time.time()
-        raw_content = ctx.nexus_fs.sys_read(path, context=read_ctx)
-        fetch_time = time.time() - fetch_start
-        assert isinstance(raw_content, bytes), "Expected bytes from read()"
-        content = raw_content
-        logger.info(
-            f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
-        )
-        put_to_local_disk_cache(
-            ctx,
-            path,
-            content,
-            expected_fingerprint,
-            namespace=namespace,
-            priority=cache_priority,
-        )
+    future, is_owner = coordinator.inflight_future(path, expected_fingerprint)
+    if not is_owner:
+        # Wrap the loop-neutral concurrent.futures.Future for this loop.
+        # Shield so a cancelled waiter doesn't cancel the shared underlying
+        # future and poison the owner's set_result.
+        import asyncio as _asyncio
 
-    # Only cache if we hold a lease (Decision 11A: no caching without lease)
-    if has_lease:
-        coordinator.cache_content(path, content, fingerprint=expected_fingerprint)
+        shared = await _asyncio.shield(_asyncio.wrap_future(future))
+        return _maybe_parse(ctx, path, view_type, shared)
+
+    # Capture admission generation so post-fetch L1/L2 writes are skipped if
+    # an invalidation lands between now and when we finish.
+    admission_gen = coordinator.cache_admission_gen(path)
+
+    try:
+        content = get_from_local_disk_cache(ctx, path, expected_fingerprint, namespace=namespace)
+        if content is not None:
+            logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
+        else:
+            read_ctx = ctx.context
+            logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
+            fetch_start = time.time()
+            raw_content = ctx.nexus_fs.sys_read(path, context=read_ctx)
+            fetch_time = time.time() - fetch_start
+            assert isinstance(raw_content, bytes), "Expected bytes from read()"
+            content = raw_content
+            logger.info(
+                f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
+            )
+        # Atomic admission: a single helper checks gen and writes L1 under
+        # one lock so an invalidation can't slip between check and write.
+        # For L2, gate on the same gen check; the L2 path is best-effort,
+        # an invalidation racing the write will bump the gen so the next
+        # reader sees a stale-marked entry and refetches.
+        drain_cap = getattr(coordinator, "max_drain_bytes", None)
+        size_ok = drain_cap is None or len(content) <= drain_cap
+        if size_ok and coordinator.is_admission_still_valid(path, admission_gen):
+            put_to_local_disk_cache(
+                ctx,
+                path,
+                content,
+                expected_fingerprint,
+                namespace=namespace,
+                priority=cache_priority,
+            )
+        if has_lease:
+            coordinator.cache_content_if_valid(
+                path,
+                content,
+                admission_gen,
+                fingerprint=expected_fingerprint,
+            )
+        # Tolerate InvalidStateError: a waiter could have cancelled the
+        # future before we got here. Our own read+cache still succeeded.
+        import contextlib as _contextlib
+
+        with _contextlib.suppress(concurrent.futures.InvalidStateError):
+            future.set_result(content)
+    except BaseException as exc:
+        import contextlib as _contextlib
+
+        if not future.done():
+            with _contextlib.suppress(concurrent.futures.InvalidStateError):
+                future.set_exception(exc)
+        raise
+    finally:
+        coordinator.inflight_clear(path, expected_fingerprint, owner=future)
 
     return _maybe_parse(ctx, path, view_type, content)
 
@@ -751,4 +863,9 @@ def cache_file_attrs_from_list(
             "st_gid": gid,
         }
 
-    ctx.cache.cache_attr(file_path, attrs, scope_id=scope_id)
+    ctx.cache.cache_attr(
+        file_path,
+        attrs,
+        scope_id=scope_id,
+        backend_id=backend_id_for_path(ctx, file_path),
+    )

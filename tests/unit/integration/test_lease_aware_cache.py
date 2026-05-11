@@ -49,7 +49,12 @@ def file_cache(tmp_path: Path) -> FileContentCache:
 
 @pytest.fixture()
 def fuse_cache() -> FUSECacheManager:
-    return FUSECacheManager(attr_cache_size=128, attr_cache_ttl=60, content_cache_size=128)
+    return FUSECacheManager(
+        content_cache_bytes=128 * 1024,
+        parsed_cache_bytes=0,
+        max_drain_bytes=64 * 1024,
+        attr_cache_ttl=60,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -136,10 +141,10 @@ class TestFUSECacheLeaseRevocation:
     def test_lease_revocation_clears_logical_file_and_listing_entries(self) -> None:
         """Lease revocation clears logical metadata and file caches together."""
         cache = FUSECacheManager(
-            attr_cache_size=8,
+            content_cache_bytes=8 * 1024,
+            parsed_cache_bytes=8 * 1024,
+            max_drain_bytes=4 * 1024,
             attr_cache_ttl=60,
-            content_cache_size=8,
-            parsed_cache_size=8,
         )
         cache.cache_attr(PATH, {"st_size": 11})
         cache.cache_listing("/mnt/gcs", [".", "..", "file.txt"])

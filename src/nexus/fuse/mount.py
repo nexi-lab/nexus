@@ -76,10 +76,12 @@ class NexusFUSE:
             mount_point: Local path to mount the filesystem
             mode: Mount mode (binary, text, or smart)
             cache_config: Optional cache configuration dict with keys:
-                         - attr_cache_size: int (default: 1024)
+                         - content_cache_bytes: int (default: 512*1024*1024)
+                         - parsed_cache_bytes: int (default: 64*1024*1024)
+                         - max_drain_bytes: int (default: 16*1024*1024)
                          - attr_cache_ttl: int (default: 60)
-                         - content_cache_size: int (default: 10000)
-                         - parsed_cache_size: int (default: 50)
+                         - dir_cache_ttl: int (default: 5)
+                         - index_ttl_overrides: dict[str, int] (default: {})
                          - enable_metrics: bool (default: False)
             warmup_depth: Directory depth for automatic warmup (default: 2)
             warmup_max_files: Maximum files to warm (default: 1000)
@@ -461,10 +463,12 @@ def mount_nexus(
         allow_other: Allow other users to access the mount
         debug: Enable FUSE debug output
         cache_config: Optional cache configuration dict with keys:
-                     - attr_cache_size: int (default: 1024)
+                     - content_cache_bytes: int (default: 512*1024*1024)
+                     - parsed_cache_bytes: int (default: 64*1024*1024)
+                     - max_drain_bytes: int (default: 16*1024*1024)
                      - attr_cache_ttl: int (default: 60)
-                     - content_cache_size: int (default: 10000)
-                     - parsed_cache_size: int (default: 50)
+                     - dir_cache_ttl: int (default: 5)
+                     - index_ttl_overrides: dict[str, int] (default: {})
                      - enable_metrics: bool (default: False)
         warmup_depth: Directory depth for automatic warmup (default: 2)
         warmup_max_files: Maximum files to warm (default: 1000)

@@ -833,7 +833,7 @@ class TestFUSELeaseBenchmarks:
         """Baseline: direct FUSECacheManager.get_attr() without lease."""
         from nexus.fuse.cache import FUSECacheManager
 
-        cache = FUSECacheManager(attr_cache_size=1024, attr_cache_ttl=60)
+        cache = FUSECacheManager(attr_cache_ttl=60)
         cache.cache_attr("/bench.txt", {"st_size": 1024, "st_mode": 0o644})
 
         result = benchmark(cache.get_attr, "/bench.txt")
@@ -846,7 +846,7 @@ class TestFUSELeaseBenchmarks:
         from nexus.fuse.cache import FUSECacheManager
         from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
 
-        cache = FUSECacheManager(attr_cache_size=1024, attr_cache_ttl=60)
+        cache = FUSECacheManager(attr_cache_ttl=60)
         coord = FUSELeaseCoordinator(cache=cache, holder_id="bench-mount")
 
         # Pre-populate cache + validity
@@ -871,7 +871,7 @@ class TestFUSELeaseBenchmarks:
         from nexus.fuse.cache import FUSECacheManager
         from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
 
-        cache = FUSECacheManager(attr_cache_size=1024, attr_cache_ttl=60)
+        cache = FUSECacheManager(attr_cache_ttl=60)
         coord = FUSELeaseCoordinator(cache=cache, holder_id="bench-mount")
         coord._set_validity("/bench.txt", time.monotonic() + 300.0)
 
@@ -883,7 +883,7 @@ class TestFUSELeaseBenchmarks:
         from nexus.fuse.cache import FUSECacheManager
         from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
 
-        cache = FUSECacheManager(attr_cache_size=1024, attr_cache_ttl=60)
+        cache = FUSECacheManager(attr_cache_ttl=60)
         coord = FUSELeaseCoordinator(cache=cache, holder_id="bench-mount")
         counter = [0]
 

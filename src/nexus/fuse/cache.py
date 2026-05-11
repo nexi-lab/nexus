@@ -4,13 +4,16 @@ This module provides caching layers for file attributes, content, and parsed
 content to optimize FUSE filesystem operations and reduce latency.
 """
 
+import concurrent.futures
 import logging
 import threading
+from collections.abc import Mapping
 from pathlib import PurePosixPath
 from typing import Any
 
 from nexus.cache.file_store import FileKey, MemoryFileCache
 from nexus.cache.index_store import IndexKey, MemoryIndexCache
+from nexus.cache.policy import index_ttl_for_backend as _policy_index_ttl_for_backend
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +50,10 @@ class FUSECacheManager:
 
     Example:
         >>> cache_mgr = FUSECacheManager(
-        ...     attr_cache_size=1024,
+        ...     content_cache_bytes=512 * 1024 * 1024,
+        ...     parsed_cache_bytes=64 * 1024 * 1024,
+        ...     max_drain_bytes=16 * 1024 * 1024,
         ...     attr_cache_ttl=60,
-        ...     content_cache_size=10000,
-        ...     parsed_cache_size=50
         ... )
         >>>
         >>> # Cache attribute lookup
@@ -63,34 +66,46 @@ class FUSECacheManager:
 
     def __init__(
         self,
-        attr_cache_size: int = 1024,
+        *,
+        content_cache_bytes: int = 512 * 1024 * 1024,
+        parsed_cache_bytes: int = 64 * 1024 * 1024,
+        max_drain_bytes: int = 16 * 1024 * 1024,
         attr_cache_ttl: int = 60,
-        listing_cache_size: int = 1024,
         listing_cache_ttl: int | None = None,
-        content_cache_size: int = 10000,
-        parsed_cache_size: int = 50,
+        index_ttl_overrides: Mapping[str, int] | None = None,
         enable_metrics: bool = False,
     ) -> None:
         """Initialize cache manager.
 
         Args:
-            attr_cache_size: Maximum number of attribute entries (default: 1024)
+            content_cache_bytes: Logical budget for raw content (default: 512 MiB).
+                Combined with ``parsed_cache_bytes`` to size the underlying
+                ``MemoryFileCache`` byte budget.
+            parsed_cache_bytes: Logical budget for parsed/derived content
+                (default: 64 MiB).
+            max_drain_bytes: Hard cap (per-call) on bytes that
+                :meth:`cache_content` will accept. Larger payloads are dropped
+                (logged + metric-counted) to bound a single drain.
             attr_cache_ttl: TTL for attribute cache in seconds (default: 60)
-            listing_cache_size: Maximum number of listing entries (default: 1024)
             listing_cache_ttl: TTL for directory listings in seconds (defaults to attr TTL)
-            content_cache_size: Maximum number of content entries (default: 10000)
-            parsed_cache_size: Maximum number of parsed content entries (default: 50)
+            index_ttl_overrides: Optional per-backend overrides for
+                index-cache TTLs (passed through to
+                :func:`nexus.cache.policy.index_ttl_for_backend`).
             enable_metrics: If True, track cache hit/miss metrics
         """
+        total_file_bytes = content_cache_bytes + parsed_cache_bytes
+        if max_drain_bytes > total_file_bytes:
+            raise ValueError(
+                f"max_drain_bytes ({max_drain_bytes}) must not exceed "
+                f"content_cache_bytes + parsed_cache_bytes ({total_file_bytes})"
+            )
         self._attr_ttl = attr_cache_ttl
         self._listing_ttl = attr_cache_ttl if listing_cache_ttl is None else listing_cache_ttl
-        self._index_cache = MemoryIndexCache()
-        self._max_index_entries = max(1, attr_cache_size + listing_cache_size)
-        self._index_order: dict[IndexKey, None] = {}
+        self._ttl_overrides: dict[str, int] = dict(index_ttl_overrides or {})
 
-        self._file_cache = MemoryFileCache()
-        self._max_file_entries = max(1, content_cache_size + parsed_cache_size)
-        self._file_order: dict[FileKey, None] = {}
+        self._index_cache = MemoryIndexCache()
+        self._file_cache = MemoryFileCache(max_bytes=total_file_bytes)
+        self._max_drain_bytes = max_drain_bytes
 
         # Thread safety
         self._index_lock = threading.RLock()
@@ -106,28 +121,154 @@ class FUSECacheManager:
             "parsed_hits": 0,
             "parsed_misses": 0,
             "invalidations": 0,
+            "content_skipped_oversize": 0,
         }
         self._metrics_lock = threading.Lock()
+
+        # In-flight result registry: shares backend fetch results across
+        # waiters even when content is too large to admit to persistent L1/L2.
+        # Loop-neutral concurrent.futures.Future so multiple FUSE event loops
+        # (one per worker thread under asyncio.run) can join the same fetch.
+        # Keyed by (path, fingerprint) to avoid serving stale bytes when
+        # metadata changes between two readers' fingerprint computations.
+        self._inflight: dict[tuple[str, str | None], concurrent.futures.Future[bytes]] = {}
+        self._inflight_lock = threading.Lock()
+        # Per-path generation; bumped on invalidate_file/invalidate_all. Owners
+        # capture the gen at fetch start and check it before admitting bytes
+        # to persistent L1/L2 — invalidations during a fetch make the owner
+        # complete its shared future for waiters but skip cache admission.
+        self._gen_global: int = 0
+        self._gen_by_path: dict[str, int] = {}
+
+    @property
+    def max_drain_bytes(self) -> int:
+        return self._max_drain_bytes
+
+    def index_ttl_for_backend(self, backend_id: str) -> int:
+        return _policy_index_ttl_for_backend(backend_id, self._ttl_overrides)
+
+    async def content_lock(self, path: str, view_type: str | None = None) -> Any:
+        """Per-path singleflight lock for content fetches.
+
+        Both raw and parsed-view reads coalesce on the raw key because parsed
+        views derive from the same backend fetch — a separate parsed-only lock
+        would let raw + parsed reads of the same path each issue their own
+        sys_read. Parse work that depends on the fetched bytes can still
+        proceed serially per view inside this single lock.
+        """
+        del view_type
+        return await self._file_cache.lock(_file_key(path, "raw"))
+
+    def cache_admission_gen(self, path: str) -> int:
+        """Current invalidation generation for ``path``.
+
+        Owners capture this at fetch start and compare against
+        :meth:`is_admission_still_valid` before writing to L1/L2 — prevents
+        stale owners from repopulating cache after a write fenced the path.
+        """
+        with self._inflight_lock:
+            return self._gen_global + self._gen_by_path.get(path, 0)
+
+    def is_admission_still_valid(self, path: str, captured_gen: int) -> bool:
+        return self.cache_admission_gen(path) == captured_gen
+
+    def cache_content_if_valid(
+        self,
+        path: str,
+        content: bytes,
+        captured_gen: int,
+        *,
+        fingerprint: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Atomic admission-check + L1 cache_content.
+
+        Avoids the TOCTOU window where an invalidation lands between an
+        ``is_admission_still_valid`` check and the subsequent put. Acquires
+        ``_inflight_lock`` (also held by invalidate paths when bumping gen)
+        so the gen comparison and the put are observed atomically.
+
+        Returns True when the write succeeded, False when generation moved.
+        """
+        with self._inflight_lock:
+            current = self._gen_global + self._gen_by_path.get(path, 0)
+            if current != captured_gen:
+                return False
+            # cache_content's oversize branch already drops stale entries.
+            # The put happens under _file_lock, which is fine to nest under
+            # _inflight_lock (file_lock never re-enters inflight_lock).
+            self.cache_content(path, content, fingerprint=fingerprint, ttl_seconds=ttl_seconds)
+            return True
+
+    def inflight_future(
+        self, path: str, fingerprint: str | None = None
+    ) -> tuple[concurrent.futures.Future[bytes], bool]:
+        """Get the in-flight content future for ``(path, fingerprint)``.
+
+        Returns ``(future, is_owner)`` where ``is_owner`` is True for the
+        first caller that registered the future (the fetcher). Subsequent
+        callers receive the existing future to await — sharing the single
+        backend fetch even for oversize content that bypasses persistent
+        cache admission.
+
+        Keying on ``fingerprint`` prevents serving stale bytes: if the file
+        changes between two readers' metadata reads, each sees a distinct
+        fingerprint and gets a distinct future.
+
+        Returns a ``concurrent.futures.Future`` so callers on different
+        asyncio event loops (FUSE drives one loop per syscall via
+        ``asyncio.run``) can share results via ``asyncio.wrap_future``.
+        """
+        key = (path, fingerprint)
+        with self._inflight_lock:
+            existing = self._inflight.get(key)
+            if existing is not None and not existing.done():
+                return existing, False
+            fut: concurrent.futures.Future[bytes] = concurrent.futures.Future()
+            self._inflight[key] = fut
+            return fut, True
+
+    def inflight_clear(
+        self,
+        path: str,
+        fingerprint: str | None = None,
+        *,
+        owner: concurrent.futures.Future[bytes] | None = None,
+    ) -> None:
+        """Remove the in-flight entry for ``(path, fingerprint)``.
+
+        When ``owner`` is provided, only remove the entry if it still holds
+        that exact Future object. Prevents an A-then-B replacement race where
+        A's late cleanup would delete B's newly-registered Future and let a
+        third caller fetch concurrently.
+        """
+        key = (path, fingerprint)
+        with self._inflight_lock:
+            current = self._inflight.get(key)
+            if owner is not None and current is not None and current is not owner:
+                return
+            self._inflight.pop(key, None)
+
+    def _resolve_index_ttl(self, backend_id: str | None, *, default: int) -> int:
+        """Pick a TTL for a metadata write.
+
+        When ``backend_id`` is known, defer to the policy table (which
+        consults ``index_ttl_overrides`` first, then per-backend defaults
+        from ``INDEX_TTL_BY_BACKEND``). When the backend cannot be resolved,
+        fall back to the caller's generic default.
+        """
+        if backend_id is None:
+            return default
+        return _policy_index_ttl_for_backend(backend_id, self._ttl_overrides)
 
     # ============================================================
     # Attribute Cache
     # ============================================================
 
-    def _remember_index_key(self, key: IndexKey) -> None:
-        self._index_order.pop(key, None)
-        self._index_order[key] = None
-        while len(self._index_order) > self._max_index_entries:
-            evicted_key = next(iter(self._index_order))
-            self._index_order.pop(evicted_key, None)
-            self._index_cache.invalidate_path(evicted_key)
-
-    def _forget_index_key(self, key: IndexKey) -> None:
-        self._index_order.pop(key, None)
-
     def _index_size(self, kind: str | None = None) -> int:
         if kind is None:
-            return len(self._index_order)
-        return sum(1 for key in self._index_order if key.kind == kind)
+            return len(self._index_cache._entries)
+        return sum(1 for key in self._index_cache._entries if key.kind == kind)
 
     def get_attr(self, path: str, scope_id: str = "default") -> dict[str, Any] | None:
         """Get cached file attributes.
@@ -141,10 +282,6 @@ class FUSECacheManager:
         key = _stat_key(path, scope_id)
         with self._index_lock:
             result = self._index_cache.get(key)
-            if result is not None:
-                self._remember_index_key(key)
-            else:
-                self._forget_index_key(key)
 
         if self._enable_metrics:
             with self._metrics_lock:
@@ -155,17 +292,25 @@ class FUSECacheManager:
 
         return result
 
-    def cache_attr(self, path: str, attrs: dict[str, Any], scope_id: str = "default") -> None:
+    def cache_attr(
+        self,
+        path: str,
+        attrs: dict[str, Any],
+        scope_id: str = "default",
+        backend_id: str | None = None,
+    ) -> None:
         """Cache file attributes.
 
         Args:
             path: File path
             attrs: Attributes dictionary to cache
+            backend_id: Optional backend id; when supplied, per-backend TTL
+                overrides from ``index_ttl_overrides`` apply.
         """
+        ttl = self._resolve_index_ttl(backend_id, default=self._attr_ttl)
         key = _stat_key(path, scope_id)
         with self._index_lock:
-            self._index_cache.put(key, attrs, ttl_seconds=self._attr_ttl)
-            self._remember_index_key(key)
+            self._index_cache.put(key, attrs, ttl_seconds=ttl)
 
     # ============================================================
     # Directory Listing Cache
@@ -183,10 +328,6 @@ class FUSECacheManager:
         key = _listing_key(path, scope_id)
         with self._index_lock:
             result = self._index_cache.get(key)
-            if result is not None:
-                self._remember_index_key(key)
-            else:
-                self._forget_index_key(key)
         if result is None:
             return None
         return list(result)
@@ -196,48 +337,41 @@ class FUSECacheManager:
         path: str,
         entries: list[str],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None:
         """Cache directory entries.
 
         Args:
             path: Directory path
             entries: Directory entry names to cache
+            backend_id: Optional backend id; when supplied, per-backend TTL
+                overrides from ``index_ttl_overrides`` apply.
         """
+        ttl = self._resolve_index_ttl(backend_id, default=self._listing_ttl)
         key = _listing_key(path, scope_id)
         with self._index_lock:
             self._index_cache.put(
                 key,
                 list(entries),
-                ttl_seconds=self._listing_ttl,
+                ttl_seconds=ttl,
             )
-            self._remember_index_key(key)
 
     def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None:
         """Invalidate only the immediate parent directory listing for a path."""
         key = _listing_key(_parent_path(path), scope_id)
         with self._index_lock:
             self._index_cache.invalidate_path(key)
-            self._forget_index_key(key)
 
     # ============================================================
     # Content Cache
     # ============================================================
 
-    def _remember_file_key(self, key: FileKey) -> None:
-        self._file_order.pop(key, None)
-        self._file_order[key] = None
-        while len(self._file_order) > self._max_file_entries:
-            evicted_key = next(iter(self._file_order))
-            self._file_order.pop(evicted_key, None)
-            self._file_cache.invalidate_sync(evicted_key)
-
-    def _forget_file_key(self, key: FileKey) -> None:
-        self._file_order.pop(key, None)
-
     def _file_size(self, namespace_prefix: str | None = None) -> int:
         if namespace_prefix is None:
-            return len(self._file_order)
-        return sum(1 for key in self._file_order if key.namespace.startswith(namespace_prefix))
+            return len(self._file_cache._entries)
+        return sum(
+            1 for key in self._file_cache._entries if key.namespace.startswith(namespace_prefix)
+        )
 
     def get_content(self, path: str, expected_fingerprint: str | None = None) -> bytes | None:
         """Get cached file content.
@@ -251,10 +385,6 @@ class FUSECacheManager:
         key = _file_key(path)
         with self._file_lock:
             result = self._file_cache.get_sync(key, expected_fingerprint)
-            if result is not None:
-                self._remember_file_key(key)
-            else:
-                self._forget_file_key(key)
 
         if self._enable_metrics:
             with self._metrics_lock:
@@ -278,13 +408,36 @@ class FUSECacheManager:
         Args:
             path: File path
             content: File content to cache
+            fingerprint: Optional content fingerprint for staleness checks.
+            ttl_seconds: Optional explicit TTL; defaults to ``attr_cache_ttl``
+                when no fingerprint is provided.
+
+        Payloads larger than ``max_drain_bytes`` are dropped (logged + metric
+        ``content_skipped_oversize``) to bound any single drain.
         """
+        if len(content) > self._max_drain_bytes:
+            logger.warning(
+                "FUSECacheManager skipping oversize content: path=%s size=%d max_drain=%d",
+                path,
+                len(content),
+                self._max_drain_bytes,
+            )
+            if self._enable_metrics:
+                with self._metrics_lock:
+                    self._metrics["content_skipped_oversize"] += 1
+            # Drop stale file-cache entries for this path so callers fall
+            # back to origin. Do NOT touch the in-flight registry — the
+            # current caller is itself an in-flight owner about to set its
+            # future result, and fencing here would split late waiters into
+            # a second backend fetch.
+            with self._file_lock:
+                self._file_cache.invalidate_path_sync(path)
+            return
         key = _file_key(path)
         if fingerprint is None and ttl_seconds is None:
             ttl_seconds = self._attr_ttl
         with self._file_lock:
             self._file_cache.put_sync(key, content, fingerprint, ttl_seconds)
-            self._remember_file_key(key)
 
     # ============================================================
     # Parsed Content Cache
@@ -303,10 +456,6 @@ class FUSECacheManager:
         key = _parsed_key(path, view_type)
         with self._file_lock:
             result = self._file_cache.get_sync(key, expected_fingerprint=None)
-            if result is not None:
-                self._remember_file_key(key)
-            else:
-                self._forget_file_key(key)
 
         if self._enable_metrics:
             with self._metrics_lock:
@@ -353,7 +502,6 @@ class FUSECacheManager:
                 fingerprint=None,
                 ttl_seconds=self._attr_ttl,
             )
-            self._remember_file_key(key)
 
     # ============================================================
     # Cache Invalidation
@@ -370,7 +518,6 @@ class FUSECacheManager:
         key = _stat_key(path, scope_id)
         with self._index_lock:
             self._index_cache.invalidate_path(key)
-            self._forget_index_key(key)
 
         self.invalidate_file(path)
 
@@ -379,12 +526,11 @@ class FUSECacheManager:
         with self._index_lock:
             keys = [
                 key
-                for key in self._index_order
+                for key in list(self._index_cache._entries)
                 if key.path == path and key.kind in {"stat", "negative"}
             ]
             for key in keys:
                 self._index_cache.invalidate_path(key)
-                self._forget_index_key(key)
 
         self.invalidate_file(path)
 
@@ -394,13 +540,19 @@ class FUSECacheManager:
             if namespace is not None:
                 key = _file_key(path, namespace)
                 self._file_cache.invalidate_sync(key)
-                self._forget_file_key(key)
-                return
+            else:
+                self._file_cache.invalidate_path_sync(path)
 
-            keys = [key for key in self._file_order if key.path == path]
-            self._file_cache.invalidate_path_sync(path)
-            for key in keys:
-                self._forget_file_key(key)
+        # Fence the in-flight registry + bump per-path admission generation.
+        # Existing waiters still receive the in-flight bytes (their reads were
+        # racing the write anyway), but the next `inflight_future` call for
+        # this path becomes a fresh owner, and any stale owner currently
+        # fetching will see a generation mismatch and skip cache admission.
+        with self._inflight_lock:
+            self._gen_by_path[path] = self._gen_by_path.get(path, 0) + 1
+            stale_keys = [k for k in self._inflight if k[0] == path]
+            for stale_key in stale_keys:
+                self._inflight.pop(stale_key, None)
 
         if self._enable_metrics:
             with self._metrics_lock:
@@ -413,11 +565,17 @@ class FUSECacheManager:
         """
         with self._index_lock:
             self._index_cache = MemoryIndexCache()
-            self._index_order.clear()
 
         with self._file_lock:
-            self._file_cache = MemoryFileCache()
-            self._file_order.clear()
+            self._file_cache = MemoryFileCache(
+                max_bytes=self._file_cache.max_bytes,
+            )
+
+        # Bump the global generation and drop all in-flight entries so any
+        # owner currently fetching skips post-reset cache admission.
+        with self._inflight_lock:
+            self._gen_global += 1
+            self._inflight.clear()
 
         logger.info("All FUSE caches invalidated")
 

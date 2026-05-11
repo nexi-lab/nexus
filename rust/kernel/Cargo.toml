@@ -19,6 +19,12 @@ contracts = { workspace = true }
 # connection pool, peer addressing, TOFU trust store, PeerBlobClient
 # trait). Kernel needs both.
 lib = { workspace = true, features = ["transport"] }
+# `nexus-prefetch` is the standalone adaptive prefetcher rlib (issue
+# #4057). Kernel depends on it for the `KernelRangeReader` adapter in
+# `crate::prefetch_adapter`, which lets `PrefetchEngine` issue range
+# reads through the `ObjectStore` pillar. The dep direction is one-way
+# `kernel -> nexus-prefetch`; the prefetch crate is kernel-agnostic.
+nexus-prefetch = { workspace = true }
 # Kernel depends on `contracts` and `shared/` only; the dep direction
 # is one-way `services -> kernel`. AgentRegistry is the kernel SSOT at
 # `crate::core::agents::registry`. Raft depends on kernel for
@@ -68,6 +74,10 @@ sha2 = { version = "0.11", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 base64 = "0.22"
+# `bytes` is consumed by `prefetch_adapter::KernelRangeReader` (the
+# `RangeReader` trait from `nexus-prefetch` returns `Bytes`). Major
+# version pinned to match nexus-prefetch and tonic transitive consumers.
+bytes = "1"
 mimalloc = { workspace = true, optional = true }
 
 [features]

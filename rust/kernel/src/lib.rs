@@ -119,6 +119,15 @@ pub mod agent_registry_py;
 // `kernel::hal::distributed_coordinator::DistributedCoordinator`
 // trait dispatch installed by the cdylib boot path.
 
+// Adapter that lets `nexus-prefetch::PrefetchEngine` issue range
+// reads through the kernel's `ObjectStore` pillar. Wraps an
+// `Arc<dyn ObjectStore>` plus an `OperationContext` and implements
+// `nexus_prefetch::RangeReader`. Sits at crate root next to the
+// other kernel-owned primitives because it bridges a §3.A pillar
+// (ObjectStore) to an external rlib (nexus-prefetch) without being
+// a kernel primitive itself.
+pub mod prefetch_adapter;
+
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that
 // proxies all syscalls over gRPC to a remote `nexusd`). The driver-

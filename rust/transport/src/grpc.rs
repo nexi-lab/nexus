@@ -1109,8 +1109,7 @@ mod tests {
     /// cross-crate `test-utils` feature required.
     fn kernel_with_mem_backend() -> Kernel {
         let k = Kernel::new();
-        let backend: std::sync::Arc<dyn ObjectStore> =
-            std::sync::Arc::new(MemBackend::default());
+        let backend: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(MemBackend::default());
         k.sys_setattr(
             "/",
             2, // DT_MOUNT

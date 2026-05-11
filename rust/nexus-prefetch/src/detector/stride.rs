@@ -15,12 +15,18 @@ pub struct StrideDetector {
 }
 
 impl Default for StrideDetector {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StrideDetector {
     pub fn new() -> Self {
-        Self { history: [None, None, None], confirmations: 0, last_stride: None }
+        Self {
+            history: [None, None, None],
+            confirmations: 0,
+            last_stride: None,
+        }
     }
 
     fn push(&mut self, offset: u64) {
@@ -80,10 +86,13 @@ mod tests {
         let mut d = StrideDetector::new();
         assert_eq!(d.observe(0, 4096), AccessPattern::Cold); // history: [_, _, 0]
         assert_eq!(d.observe(8192, 4096), AccessPattern::Cold); // [_, 0, 8192]
-        // Third observation: triple (0, 8192, 16384) → s1=s2=8192, confirmations=1
+                                                                // Third observation: triple (0, 8192, 16384) → s1=s2=8192, confirmations=1
         assert_eq!(d.observe(16384, 4096), AccessPattern::Cold);
         // Fourth: triple (8192, 16384, 24576) → s1=s2=8192, confirmations=2 → Stride
-        assert_eq!(d.observe(24576, 4096), AccessPattern::Stride { stride: 8192 });
+        assert_eq!(
+            d.observe(24576, 4096),
+            AccessPattern::Stride { stride: 8192 }
+        );
     }
 
     #[test]
@@ -92,7 +101,7 @@ mod tests {
         d.observe(0, 4096);
         d.observe(4096, 4096);
         d.observe(8192, 4096); // s1=s2=4096, conf=1, Cold
-        // Now break: jump by 16 KiB.
+                               // Now break: jump by 16 KiB.
         assert_eq!(d.observe(8192 + 16 * 1024, 4096), AccessPattern::Random);
     }
 
@@ -102,7 +111,10 @@ mod tests {
         d.observe(100_000, 4096);
         d.observe(90_000, 4096);
         d.observe(80_000, 4096); // s1=s2=-10000, conf=1
-        assert_eq!(d.observe(70_000, 4096), AccessPattern::Stride { stride: -10_000 });
+        assert_eq!(
+            d.observe(70_000, 4096),
+            AccessPattern::Stride { stride: -10_000 }
+        );
     }
 
     #[test]

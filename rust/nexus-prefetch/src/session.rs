@@ -4,10 +4,10 @@
 //! of pending block offsets (to dedupe in-flight prefetches), and the
 //! deposited buffer (block offset → bytes).
 
-use std::collections::{BTreeMap, BTreeSet};
-use bytes::Bytes;
-use crate::detector::Detector;
 use crate::config::EngineConfig;
+use crate::detector::Detector;
+use bytes::Bytes;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct Session {
     pub path: String,
@@ -114,14 +114,21 @@ mod tests {
             "/x".into(),
             1,
             Some(1024 * 1024),
-            Box::new(SequentialDetector::new(cfg.sequential_tolerance, cfg.min_sequential_count)),
+            Box::new(SequentialDetector::new(
+                cfg.sequential_tolerance,
+                cfg.min_sequential_count,
+            )),
             cfg,
         )
     }
 
     #[test]
     fn window_doubles_capped_at_max() {
-        let cfg = EngineConfig { initial_window: 1024, max_window: 4096, ..Default::default() };
+        let cfg = EngineConfig {
+            initial_window: 1024,
+            max_window: 4096,
+            ..Default::default()
+        };
         let mut s = sess(&cfg);
         assert_eq!(s.window, 1024);
         s.grow_window();
@@ -154,7 +161,10 @@ mod tests {
 
     #[test]
     fn take_range_hits_when_blocks_present() {
-        let cfg = EngineConfig { block_size: 16, ..Default::default() };
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
         let mut s = sess(&cfg);
         s.deposit(0, Bytes::from(vec![1u8; 16]));
         s.deposit(16, Bytes::from(vec![2u8; 16]));
@@ -167,7 +177,10 @@ mod tests {
 
     #[test]
     fn take_range_misses_when_block_absent() {
-        let cfg = EngineConfig { block_size: 16, ..Default::default() };
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
         let mut s = sess(&cfg);
         assert!(s.take_range(0, 16, 16).is_none());
     }

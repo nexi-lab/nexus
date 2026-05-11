@@ -3,14 +3,14 @@
 //! surface — `on_open`, `on_read`, `on_release`, `shutdown` — so the
 //! Python shim swaps with zero call-site changes.
 
-use std::sync::Arc;
 use bytes::Bytes;
 use dashmap::DashMap;
 use parking_lot::Mutex;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::debug;
-use std::sync::atomic::Ordering;
 
 use crate::config::EngineConfig;
 use crate::detector::{Detector, SequentialDetector};
@@ -99,7 +99,9 @@ impl PrefetchEngine {
         // Drive detector first so window decisions reflect current obs.
         let pattern = s.detector.observe(offset, size);
         match pattern {
-            AccessPattern::Sequential | AccessPattern::Stride { .. } | AccessPattern::Trend { .. } => {
+            AccessPattern::Sequential
+            | AccessPattern::Stride { .. }
+            | AccessPattern::Trend { .. } => {
                 s.grow_window();
                 self.enqueue_prefetch(&mut s, offset, pattern);
             }
@@ -141,9 +143,7 @@ impl PrefetchEngine {
         let block_size = self.cfg.block_size as u64;
         let first_block_offset = match pattern {
             AccessPattern::Sequential => ((current_offset / block_size) + 1) * block_size,
-            AccessPattern::Stride { stride } if stride > 0 => {
-                current_offset + stride as u64
-            }
+            AccessPattern::Stride { stride } if stride > 0 => current_offset + stride as u64,
             AccessPattern::Stride { stride } if stride < 0 => {
                 current_offset.saturating_sub((-stride) as u64)
             }
@@ -265,7 +265,12 @@ mod tests {
         // Throttle the reader so jobs back up.
         struct SlowReader(Bytes);
         impl crate::range_reader::RangeReader for SlowReader {
-            fn read(&self, _: &str, off: u64, sz: u32) -> Result<Bytes, crate::error::PrefetchError> {
+            fn read(
+                &self,
+                _: &str,
+                off: u64,
+                sz: u32,
+            ) -> Result<Bytes, crate::error::PrefetchError> {
                 std::thread::sleep(Duration::from_millis(50));
                 let end = (off + sz as u64) as usize;
                 Ok(self.0.slice(off as usize..end.min(self.0.len())))
@@ -282,9 +287,12 @@ mod tests {
         let _ = e.on_read(1, 0, 16);
         let _ = e.on_read(1, 16, 16);
         let _ = e.on_read(1, 32, 16); // triggers a big issue
-        // Sleep less than the reader latency so queue stays full.
+                                      // Sleep less than the reader latency so queue stays full.
         std::thread::sleep(Duration::from_millis(10));
         let snap = e.metrics();
-        assert!(snap.dropped_backpressure > 0, "expected drop counter > 0, got {snap:?}");
+        assert!(
+            snap.dropped_backpressure > 0,
+            "expected drop counter > 0, got {snap:?}"
+        );
     }
 }

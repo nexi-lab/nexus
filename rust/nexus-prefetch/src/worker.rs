@@ -4,14 +4,14 @@
 //! Spawned `max_workers` times by the engine.  Loops until the
 //! channel is closed by `PrefetchEngine::shutdown`.
 
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use dashmap::DashMap;
-use parking_lot::Mutex;
-use tracing::{debug, warn};
+use crate::metrics::EngineMetrics;
 use crate::range_reader::SharedRangeReader;
 use crate::session::Session;
-use crate::metrics::EngineMetrics;
+use dashmap::DashMap;
+use parking_lot::Mutex;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tracing::{debug, warn};
 
 pub struct PrefetchJob {
     pub fh: u64,

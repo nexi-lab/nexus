@@ -11,7 +11,11 @@ pub enum PrefetchError {
     #[error("engine shutting down")]
     Shutdown,
     #[error("offset {offset} + size {size} exceeds file bounds {file_size}")]
-    OutOfRange { offset: u64, size: u32, file_size: u64 },
+    OutOfRange {
+        offset: u64,
+        size: u32,
+        file_size: u64,
+    },
 }
 
 #[cfg(test)]
@@ -20,7 +24,11 @@ mod tests {
 
     #[test]
     fn display_includes_offset_for_out_of_range() {
-        let e = PrefetchError::OutOfRange { offset: 1024, size: 512, file_size: 1000 };
+        let e = PrefetchError::OutOfRange {
+            offset: 1024,
+            size: 512,
+            file_size: 1000,
+        };
         let s = format!("{e}");
         assert!(s.contains("1024"));
         assert!(s.contains("512"));

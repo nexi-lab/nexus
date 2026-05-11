@@ -1,11 +1,11 @@
 //! End-to-end: synthetic file → sequential read pattern → confirm
 //! hit-ratio rises above 50% after warm-up window.
 
+use bytes::Bytes;
+use nexus_prefetch::range_reader::SharedRangeReader;
+use nexus_prefetch::{EngineConfig, PrefetchEngine, RangeReader};
 use std::sync::Arc;
 use std::time::Duration;
-use bytes::Bytes;
-use nexus_prefetch::{EngineConfig, PrefetchEngine, RangeReader};
-use nexus_prefetch::range_reader::SharedRangeReader;
 
 struct VecReader(Bytes);
 

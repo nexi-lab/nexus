@@ -3,9 +3,9 @@
 //! some value `d`, emits `Trend { delta: d }`.  Tolerates jitter that
 //! a strict stride detector would reject.
 
-use std::collections::HashMap;
 use crate::detector::Detector;
 use crate::pattern::AccessPattern;
+use std::collections::HashMap;
 
 const WINDOW: usize = 8;
 
@@ -15,12 +15,17 @@ pub struct MajorityTrendDetector {
 }
 
 impl Default for MajorityTrendDetector {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MajorityTrendDetector {
     pub fn new() -> Self {
-        Self { last_offset: None, deltas: std::collections::VecDeque::with_capacity(WINDOW) }
+        Self {
+            last_offset: None,
+            deltas: std::collections::VecDeque::with_capacity(WINDOW),
+        }
     }
 }
 
@@ -94,14 +99,13 @@ mod tests {
     fn random_offsets_yield_random_pattern() {
         let mut d = MajorityTrendDetector::new();
         // Random offsets — no delta repeats.
-        for off in [0u64, 100, 1_000_000, 42, 999_999, 17, 314_159, 27_182, 99_991] {
+        for off in [
+            0u64, 100, 1_000_000, 42, 999_999, 17, 314_159, 27_182, 99_991,
+        ] {
             let _ = d.observe(off, 4096);
         }
         // Tenth observation: no delta has majority.
-        assert_eq!(
-            d.observe(424_242, 4096),
-            AccessPattern::Random
-        );
+        assert_eq!(d.observe(424_242, 4096), AccessPattern::Random);
     }
 
     #[test]

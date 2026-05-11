@@ -3,9 +3,9 @@
 //! (Rust kernel) or a Python callable (pyo3 bridge); tests use the
 //! `MockRangeReader` below.
 
-use std::sync::Arc;
-use bytes::Bytes;
 use crate::error::PrefetchError;
+use bytes::Bytes;
+use std::sync::Arc;
 
 pub trait RangeReader: Send + Sync + 'static {
     fn read(&self, key: &str, offset: u64, size: u32) -> Result<Bytes, PrefetchError>;
@@ -26,7 +26,10 @@ pub mod mock {
 
     impl MockRangeReader {
         pub fn new(data: Bytes) -> Self {
-            Self { data, call_log: Mutex::new(Vec::new()) }
+            Self {
+                data,
+                call_log: Mutex::new(Vec::new()),
+            }
         }
     }
 

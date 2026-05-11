@@ -2,11 +2,11 @@
 //! engine to measure overall wall time.  Used as the acceptance gate
 //! (sequential ≥1.5×, stride ≥1.3× vs no-prefetch baseline).
 
-use std::sync::Arc;
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use nexus_prefetch::{EngineConfig, PrefetchEngine};
 use nexus_prefetch::range_reader::{RangeReader, SharedRangeReader};
+use nexus_prefetch::{EngineConfig, PrefetchEngine};
+use std::sync::Arc;
 
 struct LatencyReader(Bytes, std::time::Duration);
 impl RangeReader for LatencyReader {
@@ -32,8 +32,10 @@ fn bench_sequential(c: &mut Criterion) {
 
     c.bench_function("sequential_1mb_with_5ms_backend", |b| {
         b.iter(|| {
-            let reader: SharedRangeReader =
-                Arc::new(LatencyReader(file.clone(), std::time::Duration::from_millis(5)));
+            let reader: SharedRangeReader = Arc::new(LatencyReader(
+                file.clone(),
+                std::time::Duration::from_millis(5),
+            ));
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(4)
                 .enable_all()

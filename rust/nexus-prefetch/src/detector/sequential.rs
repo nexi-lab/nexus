@@ -98,7 +98,7 @@ mod tests {
         let mut d = det();
         d.observe(0, 4096);
         d.observe(4096, 4096); // count=1
-        // Next read at 8192 + 32 KiB skip (< 64 KiB tolerance) — still seq.
+                               // Next read at 8192 + 32 KiB skip (< 64 KiB tolerance) — still seq.
         assert_eq!(d.observe(8192 + 32 * 1024, 4096), AccessPattern::Sequential);
     }
 

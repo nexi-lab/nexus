@@ -1,0 +1,737 @@
+//! Per-file-handle state — the unit of book-keeping for one open fh.
+//! Owns its own detector (boxed), the readahead window (doubles on
+//! every confirmed sequential hit, capped at `max_window`), the set
+//! of pending block offsets (to dedupe in-flight prefetches), and the
+//! deposited buffer (block offset → bytes).
+
+use crate::config::EngineConfig;
+use crate::detector::Detector;
+use bytes::Bytes;
+use std::collections::{BTreeMap, BTreeSet};
+
+pub struct Session {
+    pub path: String,
+    pub fh: u64,
+    pub file_size: Option<u64>,
+    pub window: u64,
+    pub max_window: u64,
+    pub detector: Box<dyn Detector>,
+    pub pending: BTreeSet<u64>,
+    pub buffer: BTreeMap<u64, Bytes>,
+    /// Incremental byte counter updated on every insert/remove so the
+    /// per-session cap check is O(1) instead of scanning the whole
+    /// BTreeMap (round 7 finding #3).  Must stay equal to
+    /// `buffer.values().map(|b| b.len()).sum()`.
+    pub buffered_bytes: u64,
+    /// Last observed read offset — used by `note_read` to detect
+    /// direction so backward-stride workloads aren't damaged by the
+    /// forward-only `consumed_end` eviction (round 7 finding #4).
+    pub last_read_offset: u64,
+    pub last_read_seen: bool,
+    pub hits: u64,
+    pub misses: u64,
+    /// Globally unique session identity — issued from the engine's
+    /// `next_session_id` AtomicU64 on every `on_open` AND on every
+    /// `clear()` (invalidate-while-open).  Workers stamp the snapshot
+    /// at enqueue and reject deposits whose token no longer matches.
+    /// Two different fh lifetimes therefore never collide (the previous
+    /// `generation: u64` started at 1 for every new Session and was
+    /// vulnerable to fh-reuse — codex round 3 finding #1).
+    pub session_id: u64,
+    /// High-water mark of consumed bytes — the largest `offset+size`
+    /// the caller has read so far.  Used by `take_range` to evict
+    /// blocks the read cursor has fully moved past, bounding the
+    /// per-fh buffer footprint under long sequential scans (round 3
+    /// finding #2).
+    pub consumed_end: u64,
+}
+
+impl Session {
+    pub fn new(
+        path: String,
+        fh: u64,
+        file_size: Option<u64>,
+        detector: Box<dyn Detector>,
+        cfg: &EngineConfig,
+        session_id: u64,
+    ) -> Self {
+        Self {
+            path,
+            fh,
+            file_size,
+            window: cfg.initial_window,
+            max_window: cfg.max_window,
+            detector,
+            pending: BTreeSet::new(),
+            buffer: BTreeMap::new(),
+            buffered_bytes: 0,
+            last_read_offset: 0,
+            last_read_seen: false,
+            hits: 0,
+            misses: 0,
+            session_id,
+            consumed_end: 0,
+        }
+    }
+
+    /// Double the window, capped at `max_window`.  Called after a
+    /// confirmed sequential observation.
+    pub fn grow_window(&mut self) {
+        let doubled = self.window.saturating_mul(2);
+        self.window = doubled.min(self.max_window);
+    }
+
+    /// Reset window to initial — invoked on `AccessPattern::Random`
+    /// from the detector.  Also clears pending so we stop awaiting
+    /// blocks the stream no longer cares about.
+    pub fn shrink_and_clear(&mut self, initial_window: u64) {
+        self.window = initial_window;
+        self.pending.clear();
+    }
+
+    /// Mark a block offset as pending prefetch.  Returns `false` if
+    /// already in flight or already buffered (caller should skip).
+    pub fn mark_pending(&mut self, block_offset: u64) -> bool {
+        if self.pending.contains(&block_offset) || self.buffer.contains_key(&block_offset) {
+            return false;
+        }
+        self.pending.insert(block_offset);
+        true
+    }
+
+    /// Deposit a completed block; remove from pending.  Zero-length
+    /// blocks are dropped (would otherwise hang `take_range`'s cursor
+    /// loop with no progress).  We do NOT reject blocks behind
+    /// `consumed_end` here: backward-stride / random-access patterns
+    /// can legitimately enqueue offsets below the high-water mark.
+    ///
+    /// Returns the net byte-delta the engine should apply to its
+    /// global buffer accounting (positive on net growth, negative on
+    /// net shrink after cap eviction).  Callers pass an
+    /// `over_global_cap` closure that returns true while the engine's
+    /// total buffered byte count exceeds the global limit; this lets
+    /// `enforce_buffer_cap` shed beyond the per-session cap when
+    /// other sessions are also full (round 7 finding #2).
+    /// Test-only deposit without a global-cap counter.  Engine code
+    /// should use `deposit_with_global_cap` so cross-session OOM is
+    /// bounded.  Auto-marks the block as pending so the pending-set
+    /// gate (round 9 finding #2) doesn't trip on direct-deposit
+    /// test usage that never went through `mark_pending` /
+    /// `enqueue_prefetch`.
+    pub fn deposit(&mut self, block_offset: u64, bytes: Bytes) -> i64 {
+        self.pending.insert(block_offset);
+        let dummy = std::sync::atomic::AtomicU64::new(0);
+        self.deposit_with_global_cap(block_offset, bytes, &dummy, u64::MAX)
+    }
+
+    /// Deposit a completed block while honoring both per-session
+    /// (`max_window`) and engine-wide (`global_cap`) byte caps.  All
+    /// reservations/refunds go through `global_counter` so concurrent
+    /// workers see consistent totals (round 8 finding #1: previously
+    /// the cap closure read a stale counter and could allow one
+    /// deposit to cross the ceiling).  Returns the signed net delta
+    /// the engine should apply to its global byte counter via the
+    /// same atomic — note: the function ITSELF updates the counter
+    /// (`fetch_add` of incoming, `fetch_sub` of any evicted), so the
+    /// caller should NOT also adjust the counter using the return
+    /// value.  The return value exists for metrics/tests.
+    pub fn deposit_with_global_cap(
+        &mut self,
+        block_offset: u64,
+        bytes: Bytes,
+        global_counter: &std::sync::atomic::AtomicU64,
+        global_cap: u64,
+    ) -> i64 {
+        use std::sync::atomic::Ordering;
+        // Drop deposits that aren't expected — i.e. blocks cleared by
+        // `shrink_and_clear` (Random reset) or `clear` (invalidate).
+        // Workers stamp jobs with `session_id`; we already reject id
+        // mismatches.  Pending-set membership is the second gate that
+        // catches in-flight jobs from the SAME session that the
+        // detector just decided to discard (round 9 finding #2).
+        let was_pending = self.pending.remove(&block_offset);
+        if !was_pending {
+            return 0;
+        }
+        if bytes.is_empty() {
+            return 0;
+        }
+        let added = bytes.len() as u64;
+        // Reserve upfront so concurrent workers see this allocation.
+        global_counter.fetch_add(added, Ordering::Relaxed);
+        let mut delta: i64 = added as i64;
+        if let Some(old) = self.buffer.insert(block_offset, bytes) {
+            let old_len = old.len() as u64;
+            self.buffered_bytes = self.buffered_bytes + added - old_len;
+            // Replaced bytes leave the buffer; refund their share.
+            global_counter.fetch_sub(old_len, Ordering::Relaxed);
+            delta -= old_len as i64;
+        } else {
+            self.buffered_bytes += added;
+        }
+        // Evict while EITHER cap is breached.  The closure reads the
+        // counter EVERY iteration so eviction stops as soon as the
+        // global total drops under the cap.  Eviction REFUNDS the
+        // global counter incrementally so the cap check sees the
+        // freed bytes (round 8 finding #1).
+        let evicted = self.enforce_buffer_cap_atomic(global_counter, global_cap);
+        delta -= evicted as i64;
+        delta
+    }
+
+    /// Evict from this session until both per-session and global caps
+    /// are satisfied.  Caller subtracts the returned byte count from
+    /// the global counter.
+    fn enforce_buffer_cap_atomic(
+        &mut self,
+        global_counter: &std::sync::atomic::AtomicU64,
+        global_cap: u64,
+    ) -> u64 {
+        use std::sync::atomic::Ordering;
+        let mut evicted: u64 = 0;
+        let per_session_cap = self.max_window;
+        loop {
+            let over_per_session = self.buffered_bytes > per_session_cap;
+            let over_global = global_counter.load(Ordering::Relaxed) > global_cap;
+            if !over_per_session && !over_global {
+                break;
+            }
+            let Some((_k, v)) = self.buffer.pop_first() else {
+                break;
+            };
+            let len = v.len() as u64;
+            self.buffered_bytes = self.buffered_bytes.saturating_sub(len);
+            // Apply refund immediately so the next iteration's check
+            // sees the freed bytes.
+            global_counter.fetch_sub(len, Ordering::Relaxed);
+            evicted += len;
+        }
+        evicted
+    }
+
+    /// Advance the consumed-bytes high-water mark AND (for
+    /// forward-moving reads only) evict buffered blocks the cursor
+    /// has fully passed.  Round 7 finding #4: backward-moving reads
+    /// must NOT trigger forward-only eviction or we'd discard the
+    /// very blocks the backward-stride detector just prefetched.
+    /// Round 7 finding #6: overflow-safe via `checked_add` — a
+    /// pathological offset near u64::MAX is rejected instead of
+    /// poisoning `consumed_end` to u64::MAX.
+    /// Returns net bytes evicted (for the engine's global counter).
+    pub fn note_read(&mut self, offset: u64, size: u32) -> u64 {
+        let Some(end) = offset.checked_add(size as u64) else {
+            return 0;
+        };
+        let is_backward = self.last_read_seen && offset < self.last_read_offset;
+        self.last_read_offset = offset;
+        self.last_read_seen = true;
+        if end > self.consumed_end {
+            self.consumed_end = end;
+        }
+        if is_backward {
+            0
+        } else {
+            self.evict_consumed_blocks()
+        }
+    }
+
+    /// Remove every buffered block whose trailing edge is at or before
+    /// `consumed_end`.  Shared between `note_read` (forward only) and
+    /// the take_range success path.  Returns total bytes evicted.
+    ///
+    /// Uses `BTreeMap::pop_first` to walk the buffer in ascending key
+    /// order, breaking out as soon as a block extends past the cursor
+    /// — O(evicted) rather than O(buffered) (round 8 finding #4).
+    /// Under sequential workloads with block_size much smaller than
+    /// max_buffer_bytes, the previous full-map scan ran tens of
+    /// thousands of times per read under the session lock.
+    fn evict_consumed_blocks(&mut self) -> u64 {
+        let cursor = self.consumed_end;
+        let mut evicted: u64 = 0;
+        loop {
+            let Some((k, v)) = self.buffer.pop_first() else {
+                break;
+            };
+            let block_end = k + v.len() as u64;
+            if block_end > cursor {
+                // Block extends past the cursor — put it back and stop.
+                self.buffer.insert(k, v);
+                break;
+            }
+            let len = v.len() as u64;
+            self.buffered_bytes = self.buffered_bytes.saturating_sub(len);
+            evicted += len;
+        }
+        evicted
+    }
+
+    /// Take a buffered range if it fully covers `[offset, offset+size)`.
+    /// Returns `None` on miss.  Only blocks whose contents are fully
+    /// consumed by the read are removed from the buffer; the trailing
+    /// block keeps any unconsumed bytes for a subsequent overlapping
+    /// read.  Defends against zero-length blocks (cursor non-progression).
+    /// Also returns the byte-delta the engine should apply to its
+    /// global counter when called via the `take_range_with_delta`
+    /// helper used by the engine path.
+    pub fn take_range(&mut self, offset: u64, size: u32, block_size: u32) -> Option<Bytes> {
+        self.take_range_with_delta(offset, size, block_size).0
+    }
+
+    pub fn take_range_with_delta(
+        &mut self,
+        offset: u64,
+        size: u32,
+        block_size: u32,
+    ) -> (Option<Bytes>, u64) {
+        if size == 0 {
+            return (Some(Bytes::new()), 0);
+        }
+        let Some(end) = offset.checked_add(size as u64) else {
+            return (None, 0);
+        };
+        let bs = block_size as u64;
+        if bs == 0 {
+            return (None, 0);
+        }
+        let first_block = (offset / bs) * bs;
+        let mut out = Vec::with_capacity(size as usize);
+        let mut cursor = first_block;
+        // First pass: copy bytes out of the buffered blocks WITHOUT
+        // mutating the buffer.  Any miss returns None with the buffer
+        // untouched.
+        while cursor < end {
+            let block = match self.buffer.get(&cursor) {
+                Some(b) => b,
+                None => return (None, 0),
+            };
+            if block.is_empty() {
+                return (None, 0);
+            }
+            let block_end = cursor + block.len() as u64;
+            if offset >= block_end {
+                return (None, 0);
+            }
+            let take_from = offset.max(cursor) - cursor;
+            let take_to = end.min(block_end) - cursor;
+            if take_from > take_to {
+                return (None, 0);
+            }
+            out.extend_from_slice(&block[take_from as usize..take_to as usize]);
+            cursor = block_end;
+        }
+        // Successful read: advance the consumed-bytes high-water mark
+        // and evict fully-passed blocks (forward semantics).  For a
+        // backward-moving read (offset below `last_read_offset`) we
+        // skip the eviction so a negative-stride workload doesn't
+        // discard its own freshly-prefetched lower blocks on the very
+        // first hit (round 8 finding #3).
+        let is_backward = self.last_read_seen && offset < self.last_read_offset;
+        self.last_read_offset = offset;
+        self.last_read_seen = true;
+        if end > self.consumed_end {
+            self.consumed_end = end;
+        }
+        let evicted = if is_backward {
+            0
+        } else {
+            self.evict_consumed_blocks()
+        };
+        self.hits += 1;
+        (Some(Bytes::from(out)), evicted)
+    }
+
+    /// Drop all pending and buffered state.  The caller (engine) MUST
+    /// re-assign `session_id` from its global counter so in-flight
+    /// prefetch jobs are rejected at deposit time.
+    pub fn clear(&mut self) {
+        let _ = self.clear_returning_bytes();
+    }
+
+    /// Same as `clear` but returns the byte count that was in the
+    /// buffer before the drop, so the engine can refund the global
+    /// counter (round 8 finding #2).
+    pub fn clear_returning_bytes(&mut self) -> u64 {
+        let drained = self.buffered_bytes;
+        self.pending.clear();
+        self.buffer.clear();
+        self.buffered_bytes = 0;
+        self.consumed_end = 0;
+        self.last_read_seen = false;
+        self.last_read_offset = 0;
+        drained
+    }
+
+    /// Snapshot the current session identity — workers stamp this onto
+    /// the job at enqueue and check it before mutating the buffer.
+    pub fn session_id(&self) -> u64 {
+        self.session_id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detector::SequentialDetector;
+
+    fn sess(cfg: &EngineConfig) -> Session {
+        Session::new(
+            "/x".into(),
+            1,
+            Some(1024 * 1024),
+            Box::new(SequentialDetector::new(
+                cfg.sequential_tolerance,
+                cfg.min_sequential_count,
+            )),
+            cfg,
+            42, // session_id, test-only
+        )
+    }
+
+    #[test]
+    fn window_doubles_capped_at_max() {
+        let cfg = EngineConfig {
+            initial_window: 1024,
+            max_window: 4096,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        assert_eq!(s.window, 1024);
+        s.grow_window();
+        assert_eq!(s.window, 2048);
+        s.grow_window();
+        assert_eq!(s.window, 4096);
+        s.grow_window();
+        assert_eq!(s.window, 4096); // capped
+    }
+
+    #[test]
+    fn shrink_resets_window_and_pending() {
+        let cfg = EngineConfig::default();
+        let mut s = sess(&cfg);
+        s.window = 1024 * 1024;
+        s.mark_pending(0);
+        s.mark_pending(4096);
+        s.shrink_and_clear(cfg.initial_window);
+        assert_eq!(s.window, cfg.initial_window);
+        assert!(s.pending.is_empty());
+    }
+
+    #[test]
+    fn mark_pending_dedupes() {
+        let cfg = EngineConfig::default();
+        let mut s = sess(&cfg);
+        assert!(s.mark_pending(0));
+        assert!(!s.mark_pending(0));
+    }
+
+    #[test]
+    fn take_range_hits_when_blocks_present() {
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from(vec![1u8; 16]));
+        s.deposit(16, Bytes::from(vec![2u8; 16]));
+        let out = s.take_range(8, 16, 16).expect("hit");
+        assert_eq!(out.len(), 16);
+        assert_eq!(out[0], 1);
+        assert_eq!(out[7], 1);
+        assert_eq!(out[8], 2);
+    }
+
+    #[test]
+    fn take_range_misses_when_block_absent() {
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        assert!(s.take_range(0, 16, 16).is_none());
+    }
+
+    #[test]
+    fn take_range_keeps_partial_end_block() {
+        // 4 MiB-style block holding multiple 4 KiB-style sub-reads: the
+        // first read consumes only a slice; the block must remain in
+        // the buffer so the next read still hits.
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from((0u8..16).collect::<Vec<_>>()));
+        // First 4-byte sub-read at offset 0..4 → block 0 must stay.
+        let r1 = s.take_range(0, 4, 16).expect("sub-read 1 hits");
+        assert_eq!(&r1[..], &[0, 1, 2, 3]);
+        assert!(s.buffer.contains_key(&0), "partial-end block was removed");
+        // Second 4-byte sub-read at offset 4..8 → still a hit.
+        let r2 = s.take_range(4, 4, 16).expect("sub-read 2 hits");
+        assert_eq!(&r2[..], &[4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn take_range_removes_only_fully_consumed_blocks() {
+        let cfg = EngineConfig {
+            block_size: 8,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from(vec![1u8; 8]));
+        s.deposit(8, Bytes::from(vec![2u8; 8]));
+        s.deposit(16, Bytes::from(vec![3u8; 8]));
+        // Consume blocks 0 and 8 fully (offsets 0..16) plus 4 bytes of
+        // block 16.  Round 5: `take_range` advances `consumed_end`
+        // internally on success.  Blocks 0 and 8 should be removed;
+        // block 16 must stay because 4 of its 8 bytes are unconsumed.
+        let out = s.take_range(0, 20, 8).expect("hit");
+        assert_eq!(out.len(), 20);
+        assert!(!s.buffer.contains_key(&0));
+        assert!(!s.buffer.contains_key(&8));
+        assert!(s.buffer.contains_key(&16));
+    }
+
+    #[test]
+    fn deposit_drops_empty_block_to_avoid_hang() {
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.mark_pending(0);
+        s.deposit(0, Bytes::new());
+        assert!(!s.buffer.contains_key(&0));
+        assert!(!s.pending.contains(&0)); // pending still cleared
+    }
+
+    #[test]
+    fn take_range_size_zero_returns_empty_bytes() {
+        let cfg = EngineConfig::default();
+        let mut s = sess(&cfg);
+        // No blocks deposited; size==0 is a special case that returns
+        // empty bytes (the caller already has nothing to read).
+        let r = s.take_range(0, 0, 4096).expect("zero-size hit");
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn clear_drops_pending_and_buffer() {
+        let cfg = EngineConfig::default();
+        let mut s = sess(&cfg);
+        s.mark_pending(0);
+        s.deposit(0, Bytes::from_static(b"abcd"));
+        s.clear();
+        assert!(s.pending.is_empty());
+        assert!(s.buffer.is_empty());
+    }
+
+    #[test]
+    fn clear_preserves_session_id_but_drops_state() {
+        // Round 3: session_id is engine-issued (globally unique).  The
+        // engine bumps it via a separate path after clear().  This test
+        // pins clear()'s direct contract: state is dropped, but the
+        // id stored on the session is left alone (the engine re-stamps).
+        let cfg = EngineConfig::default();
+        let mut s = sess(&cfg);
+        let before = s.session_id();
+        s.mark_pending(0);
+        s.deposit(0, Bytes::from_static(b"abcd"));
+        s.consumed_end = 1024;
+        s.clear();
+        assert_eq!(s.session_id(), before);
+        assert!(s.pending.is_empty());
+        assert!(s.buffer.is_empty());
+        assert_eq!(s.consumed_end, 0);
+    }
+
+    #[test]
+    fn take_range_evicts_blocks_behind_cursor() {
+        // Round 3 finding #2: with consumed_end advancing past a
+        // block, that block must be evicted so the buffer footprint
+        // stays bounded under long sequential scans of small reads
+        // through large prefetched blocks.
+        let cfg = EngineConfig {
+            block_size: 8,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        // Block 0..8 prefetched.
+        s.deposit(0, Bytes::from((0u8..8).collect::<Vec<_>>()));
+        // Two sub-reads sweep the block; second read pushes
+        // consumed_end past block_end so it's evicted on the second
+        // take_range success path.
+        let _ = s.take_range(0, 4, 8).expect("hit 1");
+        assert!(
+            s.buffer.contains_key(&0),
+            "block evicted too early at consumed_end=4"
+        );
+        let _ = s.take_range(4, 4, 8).expect("hit 2");
+        assert!(
+            !s.buffer.contains_key(&0),
+            "block 0..8 not evicted after consumed_end=8 (round 3 regression)"
+        );
+    }
+
+    #[test]
+    fn take_range_keeps_block_until_cursor_passes_it() {
+        // Round 2 wanted "leading partial block preserved for overlapping
+        // reads".  Round 3 needed "evict once the read cursor has fully
+        // passed the block, else memory grows unbounded under sequential
+        // 4 KiB reads through 4 MiB blocks".  Resolved by tying eviction
+        // to `consumed_end`: a block stays in the buffer as long as the
+        // read cursor hasn't moved past `block_end`; once it has, the
+        // block is dead even if some leading bytes were never delivered.
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from((0u8..16).collect::<Vec<_>>()));
+        // Read 4..8 — block 0..16 end=16, consumed_end after = 8 < 16 → keep.
+        let r = s.take_range(4, 4, 16).expect("hit 1");
+        assert_eq!(&r[..], &[4, 5, 6, 7]);
+        assert!(
+            s.buffer.contains_key(&0),
+            "block evicted before cursor reached block_end"
+        );
+        // Bumping the cursor past block_end now does evict.
+        let _ = s.take_range(12, 4, 16).expect("hit 2");
+        assert!(
+            !s.buffer.contains_key(&0),
+            "block not evicted after consumed_end >= block_end (round 3 regression)"
+        );
+    }
+
+    #[test]
+    fn note_read_drops_block_behind_cursor() {
+        // Round 4 finding #1 / round 6 finding #3: the eviction model
+        // is cursor-driven, not deposit-driven.  A slow worker can
+        // deposit a block that's already behind `consumed_end` (e.g.
+        // the read cursor advanced via a miss path while the prefetch
+        // was in flight) — the block enters the buffer, but the next
+        // forward `note_read` evicts it.  This preserves the backward-
+        // stride deposit path while still bounding forward-only growth.
+        let cfg = EngineConfig {
+            block_size: 8,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.mark_pending(0);
+        s.note_read(0, 16); // consumed_end = 16
+        s.deposit(0, Bytes::from(vec![1u8; 8])); // block 0..8, end=8 <= 16
+                                                 // Deposit succeeded (backward-friendly), so the block IS in
+                                                 // the buffer.
+        assert!(s.buffer.contains_key(&0));
+        // But a forward `note_read` evicts it before the next read.
+        s.note_read(16, 4);
+        assert!(
+            !s.buffer.contains_key(&0),
+            "stale forward block not evicted by next note_read"
+        );
+        assert!(!s.pending.contains(&0));
+    }
+
+    #[test]
+    fn note_read_advances_consumed_end_on_miss() {
+        // Round 4 finding #1: cursor must advance for every observed
+        // read (hit or miss), so even backend-served reads retire
+        // stale prefetched blocks.
+        let cfg = EngineConfig::default();
+        let mut s = sess(&cfg);
+        assert_eq!(s.consumed_end, 0);
+        s.note_read(100, 200);
+        assert_eq!(s.consumed_end, 300);
+        // Smaller reads don't reduce the high-water.
+        s.note_read(50, 10);
+        assert_eq!(s.consumed_end, 300);
+    }
+
+    #[test]
+    fn note_read_evicts_blocks_behind_cursor_on_miss() {
+        // Round 5 finding #3: misses skip take_range's eviction pass,
+        // so the helper must run from note_read too.  Otherwise a
+        // stale block deposited just before a miss-heavy scan stays
+        // in the buffer.
+        let cfg = EngineConfig {
+            block_size: 8,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from(vec![1u8; 8]));
+        // Cursor advances past the block via a miss path (no take_range).
+        s.note_read(0, 16);
+        assert!(
+            !s.buffer.contains_key(&0),
+            "stale block kept across miss-path note_read (round 5 regression)"
+        );
+    }
+
+    #[test]
+    fn deposit_enforces_per_session_buffer_cap() {
+        // Round 6 finding #2: total buffered bytes per session must
+        // not exceed max_window.  Otherwise long sequential streams
+        // through many open fhs can blow process memory.
+        let cfg = EngineConfig {
+            block_size: 16,
+            initial_window: 16,
+            max_window: 32, // only 2 blocks worth
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from(vec![1u8; 16]));
+        s.deposit(16, Bytes::from(vec![2u8; 16]));
+        let total: usize = s.buffer.values().map(|b| b.len()).sum();
+        assert_eq!(total, 32);
+        // Adding a third block should evict the oldest (block 0).
+        s.deposit(32, Bytes::from(vec![3u8; 16]));
+        let total: usize = s.buffer.values().map(|b| b.len()).sum();
+        assert!(total <= 32, "buffer exceeded cap: total={total}");
+        assert!(
+            !s.buffer.contains_key(&0),
+            "oldest block not evicted to honor cap"
+        );
+    }
+
+    #[test]
+    fn deposit_accepts_blocks_behind_consumed_end_for_backward_stride() {
+        // Round 6 finding #3: backward-stride detector emits offsets
+        // below the cursor; deposits there must NOT be rejected as
+        // obsolete.  The cap + evict_consumed_blocks combo handles
+        // forward-only inflation without this guard.
+        let cfg = EngineConfig {
+            block_size: 16,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        // Advance cursor past the would-be deposit offset.
+        s.note_read(0, 32);
+        assert_eq!(s.consumed_end, 32);
+        // Backward-stride deposit at offset 0..16 — below cursor.
+        s.deposit(0, Bytes::from(vec![7u8; 16]));
+        // Cursor's beyond it, so evict_consumed_blocks (called from
+        // note_read earlier) won't see it — but the deposit itself
+        // should NOT have rejected; the block IS in the buffer until
+        // the next note_read evicts.  Verify it's present.
+        //
+        // Note: a follow-up `note_read` call would evict via the
+        // forward-only `consumed_end` model; for backward-access
+        // hot paths the engine restarts the session (Random -> reset)
+        // which resets consumed_end to 0.
+        assert!(s.buffer.contains_key(&0));
+    }
+
+    #[test]
+    fn take_range_returns_none_when_eof_block_too_short() {
+        // Round 5 finding #2: a short EOF block (e.g. last 100 bytes of
+        // a small file deposited under an 8 KiB block key) must not
+        // panic when the caller reads past the actual block_end.
+        let cfg = EngineConfig {
+            block_size: 8192,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from(vec![7u8; 100])); // file truncates at 100
+                                                   // Read at offset 128 within block 0 but past the short block_end.
+        assert!(s.take_range(128, 32, 8192).is_none());
+    }
+}

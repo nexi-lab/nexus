@@ -99,13 +99,13 @@ class IOHandler:
         original_path = file_info["path"]
         view_type = file_info["view_type"]
 
-        # Rust delegation for raw reads
-        if view_type is None:
-            ok, content = try_rust(ctx, "READ", "sys_read", original_path)
-            if ok:
-                return bytes(content)[offset : offset + size]
-
-        # Readahead buffer check
+        # Readahead buffer check FIRST — the Rust prefetcher must
+        # observe every read to detect access patterns and serve
+        # subsequent hits.  Doing this before `try_rust(sys_read)`
+        # ensures the engine sees the read stream even when Rust
+        # delegation handles the miss path; doing it after would
+        # short-circuit the observation entirely (Issue #4057
+        # adversarial review round 7 finding #1).
         if ctx.readahead and view_type is None:
             prefetched = ctx.readahead.on_read(fh, original_path, offset, size)
             if prefetched is not None:
@@ -113,6 +113,12 @@ class IOHandler:
                     f"[FUSE-READ] READAHEAD HIT: {original_path}[{offset}:{offset + size}]"
                 )
                 return cast("bytes", prefetched)
+
+        # Rust delegation for raw reads (miss path or no readahead)
+        if view_type is None:
+            ok, content = try_rust(ctx, "READ", "sys_read", original_path)
+            if ok:
+                return bytes(content)[offset : offset + size]
 
         content = await get_file_content(ctx, original_path, view_type, cache_priority=0)
 
@@ -153,6 +159,17 @@ class IOHandler:
             lock = _ctx_any._write_locks.setdefault(original_path, threading.Lock())
 
         with lock:
+            # Pre-invalidate readahead BEFORE the backend write commits
+            # so a concurrent read between commit and the post-write
+            # invalidation can't return a stale prefetched block (Issue
+            # #4057 adversarial review round 10 finding #1).  Bumping
+            # the session id atomically discards any in-flight prefetch
+            # jobs and dropped buffers; the post-write invalidation
+            # below stays as belt-and-suspenders for cache layers other
+            # than the Rust engine.
+            if ctx.readahead:
+                ctx.readahead.invalidate_path(original_path)
+
             # Read existing content
             existing_content = b""
             if ctx.nexus_fs.access(original_path):

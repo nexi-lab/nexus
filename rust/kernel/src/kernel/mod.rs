@@ -724,6 +724,14 @@ pub struct Kernel {
     /// registered. AtomicBool so the hot path is a single relaxed load
     /// (~1ns) — not even a pointer dereference.
     has_permission_provider: AtomicBool,
+    /// §4057: prefetch hint sink. Default is a `NullSink` no-op; the
+    /// cdylib installs a real engine-backed sink via
+    /// [`Self::set_prefetch_sink`] once the `nexus-prefetch` engine is
+    /// constructed. Wrapped in a `parking_lot::RwLock<Arc<...>>` so
+    /// the hot read path lifts the `Arc` under a read guard without
+    /// blocking installer-side swaps.
+    pub(crate) prefetch_sink:
+        parking_lot::RwLock<std::sync::Arc<dyn crate::prefetch_hint::PrefetchHintSink>>,
 }
 
 impl Kernel {
@@ -814,6 +822,9 @@ impl Kernel {
             ),
             permission_admin_bypass: AtomicBool::new(true),
             has_permission_provider: AtomicBool::new(false),
+            prefetch_sink: parking_lot::RwLock::new(std::sync::Arc::new(
+                crate::prefetch_hint::NullSink,
+            )),
         };
         // Distributed-coordinator bootstrap is driven by
         // `nexus_raft::distributed_coordinator::install`. The cdylib boot
@@ -2174,6 +2185,15 @@ impl Kernel {
     /// Borrow the kernel's `peer_client` slot for federation reads.
     pub fn peer_client_slot(&self) -> Arc<dyn crate::hal::peer::PeerBlobClient> {
         self.peer_client_arc()
+    }
+
+    /// §4057: replace the kernel's `prefetch_sink` slot with a concrete
+    /// implementation. Kernel boots with `NullSink` (a no-op); the
+    /// cdylib boot path calls this with the engine-backed sink once
+    /// the `nexus-prefetch` engine has been constructed. Idempotent
+    /// — later calls swap the sink atomically under the RwLock.
+    pub fn set_prefetch_sink(&self, sink: Arc<dyn crate::prefetch_hint::PrefetchHintSink>) {
+        *self.prefetch_sink.write() = sink;
     }
 
     /// Clone the VFSRouter `Arc` — used by federation / transport

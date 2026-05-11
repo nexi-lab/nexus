@@ -41,6 +41,10 @@ backends = { workspace = true, default-features = true, features = ["python"] }
 # and the `install_transport_wiring(kernel)` peer-blob-client install
 # entry point.
 transport = { workspace = true, features = ["python"] }
+# Adaptive prefetcher (issue #4057) — exposes `PrefetchEngine` pyclass
+# composed into `nexus_runtime.so` so the Python shim can drive
+# per-fh read-ahead without round-tripping through Rust backend dispatch.
+nexus-prefetch = { workspace = true, features = ["python"] }
 # Sole crate that enables `extension-module`. Cargo unifies pyo3
 # features across the workspace, so every transitive pyo3 user
 # (kernel, lib, raft, backends, …) sees the cdylib-correct

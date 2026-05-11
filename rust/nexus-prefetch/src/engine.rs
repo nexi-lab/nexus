@@ -260,7 +260,6 @@ mod tests {
             sequential_tolerance: 0,
             min_sequential_count: 2,
             max_workers: 1,
-            ..Default::default()
         };
         let reader_data = vec![0u8; 1 << 20];
         // Throttle the reader so jobs back up.

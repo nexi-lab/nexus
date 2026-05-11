@@ -185,6 +185,15 @@ pub struct SysReadResult {
     pub stream_next_offset: Option<usize>,
 }
 
+/// Per-request entry for `Kernel::_read_batch`.
+///
+/// `offset` = byte offset into the file; `len = None` means "to EOF".
+pub struct BatchReadRequest {
+    pub path: String,
+    pub offset: u64,
+    pub len: Option<u64>,
+}
+
 pub struct SysCatResult {
     pub data: Vec<u8>,
     pub handler: String,
@@ -598,6 +607,8 @@ pub struct Kernel {
     // VFS lock timeout for blocking acquire (ms) — ``AtomicU64`` so
     // ``set_vfs_lock_timeout`` stays ``&self``; reads are lock-free.
     vfs_lock_timeout_ms: AtomicU64,
+    // Max in-flight backend fetches inside `_read_batch`. Default 16.
+    read_batch_max_concurrency: std::sync::atomic::AtomicUsize,
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
@@ -787,6 +798,7 @@ impl Kernel {
             metastore: parking_lot::RwLock::new(Some(Box::new(boot_metastore))),
             boot_metastore_tempdir: parking_lot::RwLock::new(Some(boot_tempdir)),
             vfs_lock_timeout_ms: AtomicU64::new(5000),
+            read_batch_max_concurrency: std::sync::atomic::AtomicUsize::new(16),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
             stat_hook_count: AtomicU64::new(0),
@@ -896,6 +908,16 @@ impl Kernel {
     #[inline]
     fn vfs_lock_timeout_ms(&self) -> u64 {
         self.vfs_lock_timeout_ms.load(Ordering::Relaxed)
+    }
+
+    pub fn read_batch_max_concurrency(&self) -> usize {
+        self.read_batch_max_concurrency
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .max(1)
+    }
+    pub fn set_read_batch_max_concurrency(&self, n: usize) {
+        self.read_batch_max_concurrency
+            .store(n.max(1), std::sync::atomic::Ordering::Relaxed);
     }
 
     // ── Node identity (federation content origin) ─────────────────────

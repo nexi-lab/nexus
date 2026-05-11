@@ -1,0 +1,2 @@
+//! Stub.
+pub enum AccessPattern {}

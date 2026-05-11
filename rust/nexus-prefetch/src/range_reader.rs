@@ -1,0 +1,2 @@
+//! Stub.
+pub trait RangeReader {}

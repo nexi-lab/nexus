@@ -21,14 +21,15 @@ def hook(mock_svc: MagicMock) -> SnapshotWriteHook:
     return SnapshotWriteHook(mock_svc)
 
 
-def _make_meta(**overrides: object) -> MagicMock:
-    meta = MagicMock()
-    meta.content_id = overrides.get("content_id", "old-etag")
-    meta.size = overrides.get("size", 1024)
-    meta.version = overrides.get("version", 3)
-    meta.modified_at = overrides.get("modified_at", datetime(2026, 1, 1, tzinfo=UTC))
-    meta.last_writer_address = overrides.get("last_writer_address")
-    return meta
+def _make_meta(**overrides: object) -> dict:
+    """Build a metadata dict matching the sys_stat return shape."""
+    return {
+        "content_id": overrides.get("content_id", "old-etag"),
+        "size": overrides.get("size", 1024),
+        "version": overrides.get("version", 3),
+        "modified_at": overrides.get("modified_at", datetime(2026, 1, 1, tzinfo=UTC)),
+        "last_writer_address": overrides.get("last_writer_address"),
+    }
 
 
 # ── HookSpec protocol ────────────────────────────────────────────────
@@ -149,7 +150,7 @@ class TestOnPostDelete:
             {
                 "size": 1024,
                 "version": 3,
-                "modified_at": "2026-01-01T00:00:00+00:00",
+                "modified_at": datetime(2026, 1, 1, tzinfo=UTC),
                 "last_writer_address": None,
             },
         )

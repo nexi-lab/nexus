@@ -33,7 +33,7 @@ use crate::vfs_router::{
 };
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Extension trait giving parking_lot's two read-lock methods names that
@@ -608,7 +608,7 @@ pub struct Kernel {
     // ``set_vfs_lock_timeout`` stays ``&self``; reads are lock-free.
     vfs_lock_timeout_ms: AtomicU64,
     // Max in-flight backend fetches inside `_read_batch`. Default 16.
-    read_batch_max_concurrency: std::sync::atomic::AtomicUsize,
+    read_batch_max_concurrency: AtomicUsize,
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
@@ -798,7 +798,7 @@ impl Kernel {
             metastore: parking_lot::RwLock::new(Some(Box::new(boot_metastore))),
             boot_metastore_tempdir: parking_lot::RwLock::new(Some(boot_tempdir)),
             vfs_lock_timeout_ms: AtomicU64::new(5000),
-            read_batch_max_concurrency: std::sync::atomic::AtomicUsize::new(16),
+            read_batch_max_concurrency: AtomicUsize::new(16),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
             stat_hook_count: AtomicU64::new(0),
@@ -910,14 +910,18 @@ impl Kernel {
         self.vfs_lock_timeout_ms.load(Ordering::Relaxed)
     }
 
+    /// Max in-flight backend fetches inside `_read_batch` (clamped to ≥1).
+    #[inline]
     pub fn read_batch_max_concurrency(&self) -> usize {
         self.read_batch_max_concurrency
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(Ordering::Relaxed)
             .max(1)
     }
+
+    /// Override the read-batch concurrency cap; clamped to ≥1.
     pub fn set_read_batch_max_concurrency(&self, n: usize) {
         self.read_batch_max_concurrency
-            .store(n.max(1), std::sync::atomic::Ordering::Relaxed);
+            .store(n.max(1), Ordering::Relaxed);
     }
 
     // ── Node identity (federation content origin) ─────────────────────

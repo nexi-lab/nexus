@@ -158,9 +158,9 @@ class FUSECacheCoordinator(Protocol):
 
     async def content_lock(self, path: str, view_type: str | None = None) -> Any: ...
 
-    def inflight_future(self, path: str) -> tuple[Any, bool]: ...
+    def inflight_future(self, path: str, fingerprint: str | None = None) -> tuple[Any, bool]: ...
 
-    def inflight_clear(self, path: str) -> None: ...
+    def inflight_clear(self, path: str, fingerprint: str | None = None) -> None: ...
 
 
 # ============================================================
@@ -496,11 +496,15 @@ async def get_file_content(
     # Step 3: L2/L3 fetch with singleflight via shared in-flight future.
     # The future is registered atomically before any lock so 100 concurrent
     # cold readers all share the same result — including content too large to
-    # admit to persistent L1/L2 cache.
+    # admit to persistent L1/L2 cache. Keyed by (path, expected_fingerprint)
+    # so a metadata change between two readers gives distinct futures.
     namespace = view_type or "raw"
-    future, is_owner = coordinator.inflight_future(path)
+    future, is_owner = coordinator.inflight_future(path, expected_fingerprint)
     if not is_owner:
-        shared = await future
+        # Wrap the loop-neutral concurrent.futures.Future for this loop.
+        import asyncio as _asyncio
+
+        shared = await _asyncio.wrap_future(future)
         return _maybe_parse(ctx, path, view_type, shared)
 
     try:
@@ -538,7 +542,7 @@ async def get_file_content(
             future.set_exception(exc)
         raise
     finally:
-        coordinator.inflight_clear(path)
+        coordinator.inflight_clear(path, expected_fingerprint)
 
     return _maybe_parse(ctx, path, view_type, content)
 

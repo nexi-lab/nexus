@@ -141,32 +141,27 @@ def test_ttl_policy_default_for_path_s3_without_override():
 
 
 def test_inflight_future_coalesces_oversize_readers():
-    """100 concurrent readers of oversize content share a single result.
-
-    Regression for round-5 finding: when content > max_drain_bytes, L1 doesn't
-    admit. The in-flight future must still coalesce waiters so only one backend
-    fetch happens.
-    """
+    """100 concurrent readers of oversize content share a single result."""
     import asyncio
 
     mgr = FUSECacheManager(content_cache_bytes=4096, parsed_cache_bytes=0, max_drain_bytes=1024)
 
     async def scenario() -> tuple[int, list[bytes]]:
         fetches = 0
-        big_content = b"x" * 8192  # > max_drain_bytes 1024
+        big_content = b"x" * 8192
 
         async def reader() -> bytes:
             nonlocal fetches
-            fut, is_owner = mgr.inflight_future("/big.bin")
+            fut, is_owner = mgr.inflight_future("/big.bin", "fp:v1")
             if not is_owner:
-                return await fut
+                return await asyncio.wrap_future(fut)
             try:
                 fetches += 1
-                await asyncio.sleep(0.005)  # simulate backend latency
+                await asyncio.sleep(0.005)
                 fut.set_result(big_content)
                 return big_content
             finally:
-                mgr.inflight_clear("/big.bin")
+                mgr.inflight_clear("/big.bin", "fp:v1")
 
         results = await asyncio.gather(*[reader() for _ in range(50)])
         return fetches, results
@@ -174,6 +169,66 @@ def test_inflight_future_coalesces_oversize_readers():
     fetches, results = asyncio.run(scenario())
     assert fetches == 1, f"expected 1 fetch (singleflight), got {fetches}"
     assert all(r == b"x" * 8192 for r in results)
+
+
+def test_inflight_future_distinct_for_changed_fingerprint():
+    """A fingerprint change in flight must NOT serve stale bytes to the new reader."""
+
+    mgr = FUSECacheManager()
+    f1, owner1 = mgr.inflight_future("/p", "fp:v1")
+    f2, owner2 = mgr.inflight_future("/p", "fp:v2")
+    assert owner1 is True and owner2 is True
+    assert f1 is not f2
+    f1.set_result(b"v1-bytes")
+    f2.set_result(b"v2-bytes")
+    assert f1.result() == b"v1-bytes"
+    assert f2.result() == b"v2-bytes"
+    mgr.inflight_clear("/p", "fp:v1")
+    mgr.inflight_clear("/p", "fp:v2")
+
+
+def test_inflight_future_cross_event_loop():
+    """Two FUSE syscalls (each driving their own asyncio.run) must share the future."""
+    import asyncio
+    import threading
+
+    mgr = FUSECacheManager()
+    results: list[bytes | Exception] = []
+    barrier = threading.Barrier(2)
+
+    def owner_thread() -> None:
+        async def owner() -> None:
+            fut, is_owner = mgr.inflight_future("/x", "fp")
+            assert is_owner
+            barrier.wait()  # let waiter register
+            await asyncio.sleep(0.02)
+            fut.set_result(b"shared")
+
+        asyncio.run(owner())
+
+    def waiter_thread() -> None:
+        async def waiter() -> None:
+            barrier.wait()
+            # Second call sees the owner's future
+            fut, is_owner = mgr.inflight_future("/x", "fp")
+            assert not is_owner
+            data = await asyncio.wrap_future(fut)
+            results.append(data)
+
+        try:
+            asyncio.run(waiter())
+        except Exception as e:
+            results.append(e)
+
+    t1 = threading.Thread(target=owner_thread)
+    t2 = threading.Thread(target=waiter_thread)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    mgr.inflight_clear("/x", "fp")
+
+    assert results == [b"shared"], f"unexpected results: {results}"
 
 
 def test_backend_id_for_path_resolver_fallback_chain():

@@ -4,7 +4,7 @@ This module provides caching layers for file attributes, content, and parsed
 content to optimize FUSE filesystem operations and reduce latency.
 """
 
-import asyncio
+import concurrent.futures
 import logging
 import threading
 from collections.abc import Mapping
@@ -127,7 +127,11 @@ class FUSECacheManager:
 
         # In-flight result registry: shares backend fetch results across
         # waiters even when content is too large to admit to persistent L1/L2.
-        self._inflight: dict[str, asyncio.Future[bytes]] = {}
+        # Loop-neutral concurrent.futures.Future so multiple FUSE event loops
+        # (one per worker thread under asyncio.run) can join the same fetch.
+        # Keyed by (path, fingerprint) to avoid serving stale bytes when
+        # metadata changes between two readers' fingerprint computations.
+        self._inflight: dict[tuple[str, str | None], concurrent.futures.Future[bytes]] = {}
         self._inflight_lock = threading.Lock()
 
     @property
@@ -149,27 +153,37 @@ class FUSECacheManager:
         del view_type
         return await self._file_cache.lock(_file_key(path, "raw"))
 
-    def inflight_future(self, path: str) -> tuple[asyncio.Future[bytes], bool]:
-        """Get the in-flight content future for a path, creating one if absent.
+    def inflight_future(
+        self, path: str, fingerprint: str | None = None
+    ) -> tuple[concurrent.futures.Future[bytes], bool]:
+        """Get the in-flight content future for ``(path, fingerprint)``.
 
         Returns ``(future, is_owner)`` where ``is_owner`` is True for the
         first caller that registered the future (the fetcher). Subsequent
         callers receive the existing future to await — sharing the single
         backend fetch even for oversize content that bypasses persistent
         cache admission.
+
+        Keying on ``fingerprint`` prevents serving stale bytes: if the file
+        changes between two readers' metadata reads, each sees a distinct
+        fingerprint and gets a distinct future.
+
+        Returns a ``concurrent.futures.Future`` so callers on different
+        asyncio event loops (FUSE drives one loop per syscall via
+        ``asyncio.run``) can share results via ``asyncio.wrap_future``.
         """
+        key = (path, fingerprint)
         with self._inflight_lock:
-            existing = self._inflight.get(path)
+            existing = self._inflight.get(key)
             if existing is not None and not existing.done():
                 return existing, False
-            loop = asyncio.get_event_loop()
-            fut: asyncio.Future[bytes] = loop.create_future()
-            self._inflight[path] = fut
+            fut: concurrent.futures.Future[bytes] = concurrent.futures.Future()
+            self._inflight[key] = fut
             return fut, True
 
-    def inflight_clear(self, path: str) -> None:
+    def inflight_clear(self, path: str, fingerprint: str | None = None) -> None:
         with self._inflight_lock:
-            self._inflight.pop(path, None)
+            self._inflight.pop((path, fingerprint), None)
 
     def _resolve_index_ttl(self, backend_id: str | None, *, default: int) -> int:
         """Pick a TTL for a metadata write.

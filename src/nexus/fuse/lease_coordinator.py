@@ -421,11 +421,11 @@ class FUSELeaseCoordinator:
         """Forward per-path singleflight lock for content fetches."""
         return await self._cache.content_lock(path, view_type)
 
-    def inflight_future(self, path: str) -> tuple[asyncio.Future[bytes], bool]:
-        return self._cache.inflight_future(path)
+    def inflight_future(self, path: str, fingerprint: str | None = None) -> tuple[Any, bool]:
+        return self._cache.inflight_future(path, fingerprint)
 
-    def inflight_clear(self, path: str) -> None:
-        self._cache.inflight_clear(path)
+    def inflight_clear(self, path: str, fingerprint: str | None = None) -> None:
+        self._cache.inflight_clear(path, fingerprint)
 
     def get_parsed(self, path: str, view_type: str) -> bytes | None:
         """Get cached parsed content (direct, no lease check)."""

@@ -128,6 +128,12 @@ pub mod agent_registry_py;
 // a kernel primitive itself.
 pub mod prefetch_adapter;
 
+// Kernel-side prefetch hint emission trait. The kernel does not own
+// the `nexus-prefetch` engine (the cdylib does); this trait is the
+// cut between `sys_read` and the engine. The cdylib installs a real
+// sink at boot; absent that, kernel uses `NullSink`.
+pub mod prefetch_hint;
+
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that
 // proxies all syscalls over gRPC to a remote `nexusd`). The driver-

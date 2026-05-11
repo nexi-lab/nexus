@@ -822,25 +822,29 @@ impl Filesystem for NexusFs {
 
         let path = resolve_path!(self, ino.0, reply);
 
-        // For simplicity, we only support full file writes (offset 0)
-        // For partial writes, we'd need to read-modify-write
+        // For simplicity, we only support full file writes (offset 0).
+        // Partial writes are implemented as read-modify-write.
+        //
+        // #4056 R8 — Pre-existing lost-update window, not addressed here.
+        //   `git blame` traces this RMW pattern to the initial commit
+        //   (fd152335e, 2025-12-19); the server's `write` RPC has never
+        //   accepted an `if_match` / generation guard. Closing the
+        //   window requires a server-protocol change (conditional
+        //   writes that map server-side conflicts to RPC -32006 —
+        //   which we already map to `Conflict`/`EAGAIN` on this side).
+        //   That is a separate, server-tier scope item. Adding it
+        //   under the banner of "migrate to async hyper" would be
+        //   well outside #4056's stated charter.
+        //
+        // #4056 R6 — In-scope mitigation that *did* land:
+        //   The source read used to go through `read_cached`, which
+        //   on a transient revalidation failure could serve stale
+        //   FileCache bytes that then got blind-written back. The
+        //   `rmw_read` helper goes straight to `client.read` so the
+        //   source is always the backend's current view (no cache
+        //   staleness in the read). `tests::rmw_read_bypasses_file_cache_even_when_warm`
+        //   locks that property in.
         if offset != 0 {
-            // #4056 R6: read-modify-write must NOT pull its source
-            // from the read-through cache. The cache can serve stale
-            // bytes on transient revalidation failures (timeout, 503
-            // — anything that's_transient and isn't Conflict; see
-            // cached_read.rs), so using it as the source for a full-
-            // file rewrite would silently clobber concurrent writes
-            // with stale content. Hit the backend directly with
-            // `client.read` instead; the cache is repopulated on the
-            // next read() after invalidate_path below.
-            //
-            // This still leaves a small lost-update window between
-            // the direct read and the final write (no if_match /
-            // generation guard exists in the server's `write` RPC
-            // yet). That's a server-side gap not addressed here;
-            // documenting it so a follow-up that adds conditional
-            // writes can close it. (#4056 R6 follow-up.)
             let existing = match self.rmw_read(&path) {
                 Ok(bytes) => bytes,
                 Err(e) => {
@@ -1136,12 +1140,18 @@ impl Filesystem for NexusFs {
                 }
             } else {
                 // Truncate to specific size - read and rewrite.
-                // #4056 R6: bypass the read-through cache for the
-                // source read, same rationale as partial-write above
-                // — the cache can serve stale bytes on transient
-                // revalidation, so a stale-cache read followed by a
-                // full-file write would silently clobber concurrent
-                // updates.
+                //
+                // #4056 R6 mitigation: bypass the read-through cache
+                // for the source read (rmw_read goes straight to the
+                // backend) so a stale-cache revalidation cannot feed
+                // a blind full-file rewrite.
+                //
+                // #4056 R8: same pre-existing lost-update window as
+                // the partial-write path above — between rmw_read and
+                // the follow-up `client.write` a concurrent writer can
+                // commit and be silently overwritten. Closing it
+                // requires a conditional-write RPC on the server.
+                // Out of scope for this PR (transport migration).
                 match self.rmw_read(&path) {
                     Ok(bytes) => {
                         let mut data = bytes;

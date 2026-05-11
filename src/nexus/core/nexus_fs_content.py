@@ -1705,7 +1705,14 @@ class ContentMixin:
                 )
 
         # KERNEL: parallel Rust read for all allowed paths.
-        rust_results = self._kernel._read_batch(allowed_paths, _rust_ctx) if allowed_paths else []
+        # Task 10 — pass new tuple shape (path, offset=0, length=None) so the
+        # Rust kernel surfaces per-item error_kind instead of collapsing all
+        # failures to data=None (legacy behaviour).
+        rust_results = (
+            self._kernel._read_batch([(p, 0, None) for p in allowed_paths], _rust_ctx)
+            if allowed_paths
+            else []
+        )
 
         results: list[dict[str, Any]] = []
         hit_items: list[tuple[str, "FileMetadata | None"]] = []  # for post-hooks
@@ -1731,6 +1738,32 @@ class ContentMixin:
 
             r = next(allowed_iter)
             meta = batch_meta.get(path)
+
+            # Task 10 — explicit per-item error_kind from new kernel ABI.
+            # The new _read_batch (tuple-shape) surfaces "not_found",
+            # "permission_denied", "invalid_path", "io_error" directly instead
+            # of collapsing them to data=None.  Handle before the legacy
+            # data=None fallback so the correct exception / error key is used.
+            if r.error_kind:
+                if not partial:
+                    if r.error_kind == "not_found":
+                        raise NexusFileNotFoundError(path)
+                    if r.error_kind == "permission_denied":
+                        from nexus.contracts.exceptions import NexusPermissionError
+
+                        raise NexusPermissionError(r.error_message or path)
+                    if r.error_kind == "invalid_path":
+                        from nexus.contracts.exceptions import InvalidPathError
+
+                        raise InvalidPathError(r.error_message or path)
+                    # io_error or unknown kind
+                    raise OSError(f"read_batch({path}): {r.error_message}")
+                # partial mode — per-item error dict
+                _err: dict[str, Any] = {"path": path, "error": r.error_kind}
+                if r.error_kind == "io_error" and r.error_message:
+                    _err["message"] = r.error_message
+                results.append(_err)
+                continue
 
             if r.data is None:
                 # Finding #2 — _read_batch returns data=None not only for missing CAS

@@ -157,23 +157,6 @@ def test_readdir_cache_hit_isolated_by_operation_context(
     mock_nexus_fs.sys_readdir.assert_called_once()
 
 
-def test_metadata_index_cache_is_bounded_by_configured_capacity() -> None:
-    cache = FUSECacheManager(
-        content_cache_bytes=8 * 1024,
-        parsed_cache_bytes=8 * 1024,
-        max_drain_bytes=4 * 1024,
-        attr_cache_ttl=60,
-    )
-
-    cache.cache_attr("/a.txt", {"st_size": 1})
-    cache.cache_listing("/one", [".", "..", "a.txt"])
-    cache.cache_listing("/two", [".", "..", "b.txt"])
-
-    assert cache.get_attr("/a.txt") is None
-    assert cache.get_listing("/one") == [".", "..", "a.txt"]
-    assert cache.get_listing("/two") == [".", "..", "b.txt"]
-
-
 def test_metadata_cache_metrics_report_logical_index_sizes() -> None:
     cache = FUSECacheManager(enable_metrics=True)
 

@@ -107,6 +107,10 @@ impl FileCache {
                 max = self.max_bytes,
                 "rejecting oversize entry",
             );
+            let mut inner = self.inner.write();
+            if let Some(existing) = inner.entries.remove(&key) {
+                inner.total_bytes -= existing.content.len();
+            }
             return;
         }
         let expires_at = ttl.map(|ttl| Instant::now() + ttl);
@@ -288,6 +292,29 @@ mod tests {
             None,
         );
         cache.invalidate_path("root", "/a", "raw");
+        assert_eq!(cache.total_bytes(), 0);
+    }
+
+    #[test]
+    fn oversize_replacement_drops_prior_entry() {
+        // A rejected oversized put must not leave stale bytes behind.
+        let cache = FileCache::with_max_bytes(100);
+        let key = FileCacheKey::new("root", "/x", "raw");
+        cache.put(
+            key.clone(),
+            b"old".to_vec(),
+            Some("fp:old".into()),
+            Some(Duration::from_secs(60)),
+        );
+        assert_eq!(cache.get(&key, Some("fp:old")), Some(b"old".to_vec()));
+        cache.put(
+            key.clone(),
+            vec![0u8; 500],
+            Some("fp:new".into()),
+            Some(Duration::from_secs(60)),
+        );
+        assert_eq!(cache.get(&key, Some("fp:old")), None);
+        assert_eq!(cache.get(&key, Some("fp:new")), None);
         assert_eq!(cache.total_bytes(), 0);
     }
 }

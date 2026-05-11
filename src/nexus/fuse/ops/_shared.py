@@ -463,16 +463,21 @@ async def get_file_content(
         logger.info(
             f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
         )
-        put_to_local_disk_cache(
-            ctx,
-            path,
-            content,
-            expected_fingerprint,
-            namespace=namespace,
-            priority=cache_priority,
-        )
+        # Apply max_drain_bytes cap from L1 cache before any L2 disk write too:
+        # oversize content shouldn't bloat either tier.
+        drain_cap = getattr(coordinator, "max_drain_bytes", None)
+        if drain_cap is None or len(content) <= drain_cap:
+            put_to_local_disk_cache(
+                ctx,
+                path,
+                content,
+                expected_fingerprint,
+                namespace=namespace,
+                priority=cache_priority,
+            )
 
-    # Only cache if we hold a lease (Decision 11A: no caching without lease)
+    # Only cache if we hold a lease (Decision 11A: no caching without lease).
+    # cache_content internally honors max_drain_bytes; this also skips L2 above.
     if has_lease:
         coordinator.cache_content(path, content, fingerprint=expected_fingerprint)
 

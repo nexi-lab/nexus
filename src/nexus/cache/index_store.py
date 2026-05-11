@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -23,9 +24,21 @@ class _IndexEntry:
 
 
 class MemoryIndexCache:
-    def __init__(self, now_fn: Callable[[], float] | None = None) -> None:
+    DEFAULT_MAX_ENTRIES = 16384
+
+    def __init__(
+        self,
+        now_fn: Callable[[], float] | None = None,
+        *,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
+    ) -> None:
         self._now_fn = now_fn or time.monotonic
-        self._entries: dict[IndexKey, _IndexEntry] = {}
+        # OrderedDict gives both TTL freshness on read and LRU eviction when
+        # the bound is hit. The bound is a safety net for workloads that scan
+        # many unique paths between TTL expiries; positive-path correctness
+        # remains driven by TTL freshness, not eviction.
+        self._entries: OrderedDict[IndexKey, _IndexEntry] = OrderedDict()
+        self._max_entries = max_entries
         self._lock = RLock()
 
     def get(self, key: IndexKey) -> Any | None:
@@ -36,6 +49,7 @@ class MemoryIndexCache:
             if entry.expires_at <= self._now_fn():
                 self._entries.pop(key, None)
                 return None
+            self._entries.move_to_end(key)
             return entry.value
 
     def put(self, key: IndexKey, value: Any, ttl_seconds: int) -> None:
@@ -44,6 +58,9 @@ class MemoryIndexCache:
                 value=value,
                 expires_at=self._now_fn() + max(ttl_seconds, 0),
             )
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
 
     def invalidate_path(self, key: IndexKey) -> None:
         with self._lock:

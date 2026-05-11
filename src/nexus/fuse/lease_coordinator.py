@@ -411,6 +411,11 @@ class FUSELeaseCoordinator:
             ttl_seconds=ttl_seconds,
         )
 
+    @property
+    def max_drain_bytes(self) -> int:
+        """Forward max_drain_bytes from the underlying cache for L2 callers."""
+        return self._cache.max_drain_bytes
+
     def get_parsed(self, path: str, view_type: str) -> bytes | None:
         """Get cached parsed content (direct, no lease check)."""
         return self._cache.get_parsed(path, view_type)

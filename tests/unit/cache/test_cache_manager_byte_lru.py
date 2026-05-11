@@ -60,3 +60,53 @@ def test_ttl_overrides_threaded_through():
     )
     assert mgr.index_ttl_for_backend("path_s3") == 30
     assert mgr.index_ttl_for_backend("path_gcs") == 600
+
+
+def test_oversize_content_invalidates_prior_entry():
+    """A rejected oversized replacement must not leave stale bytes cached."""
+    mgr = FUSECacheManager(
+        content_cache_bytes=4 * 1024,
+        parsed_cache_bytes=0,
+        max_drain_bytes=1024,
+    )
+    mgr.cache_content("/x", b"old" * 50, fingerprint=None, ttl_seconds=60)
+    assert mgr.get_content("/x") == b"old" * 50
+    mgr.cache_content("/x", b"new" * 2000, fingerprint=None, ttl_seconds=60)
+    assert mgr.get_content("/x") is None
+
+
+def test_ttl_override_applies_to_cache_attr():
+    """index_ttl_overrides must affect actual metadata cache TTL."""
+    fake_now = [1000.0]
+    mgr = FUSECacheManager(index_ttl_overrides={"path_s3": 5})
+    mgr._index_cache._now_fn = lambda: fake_now[0]
+
+    mgr.cache_attr("/s3/file", {"st_size": 1}, backend_id="path_s3")
+    fake_now[0] = 1004.0
+    assert mgr.get_attr("/s3/file") == {"st_size": 1}
+    fake_now[0] = 1006.0
+    assert mgr.get_attr("/s3/file") is None
+
+
+def test_ttl_override_applies_to_cache_listing():
+    fake_now = [1000.0]
+    mgr = FUSECacheManager(index_ttl_overrides={"path_s3": 5})
+    mgr._index_cache._now_fn = lambda: fake_now[0]
+
+    mgr.cache_listing("/s3/dir", ["a"], backend_id="path_s3")
+    fake_now[0] = 1004.0
+    assert mgr.get_listing("/s3/dir") == ["a"]
+    fake_now[0] = 1006.0
+    assert mgr.get_listing("/s3/dir") is None
+
+
+def test_index_cache_entry_count_bound():
+    """Safety net: many distinct paths under TTL don't grow without bound."""
+    from nexus.cache.index_store import IndexKey, MemoryIndexCache
+
+    cache = MemoryIndexCache(max_entries=3)
+    for i in range(10):
+        cache.put(IndexKey("b", "d", f"/p{i}", "stat"), {"i": i}, ttl_seconds=600)
+    assert len(cache._entries) == 3
+    assert cache.get(IndexKey("b", "d", "/p0", "stat")) is None
+    assert cache.get(IndexKey("b", "d", "/p9", "stat")) == {"i": 9}

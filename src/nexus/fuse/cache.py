@@ -131,6 +131,12 @@ class FUSECacheManager:
     def index_ttl_for_backend(self, backend_id: str) -> int:
         return _policy_index_ttl_for_backend(backend_id, self._ttl_overrides)
 
+    def _resolve_index_ttl(self, backend_id: str | None, *, default: int) -> int:
+        """Pick a TTL for a metadata write: per-backend override or default."""
+        if backend_id is None or backend_id not in self._ttl_overrides:
+            return default
+        return self._ttl_overrides[backend_id]
+
     # ============================================================
     # Attribute Cache
     # ============================================================
@@ -162,16 +168,25 @@ class FUSECacheManager:
 
         return result
 
-    def cache_attr(self, path: str, attrs: dict[str, Any], scope_id: str = "default") -> None:
+    def cache_attr(
+        self,
+        path: str,
+        attrs: dict[str, Any],
+        scope_id: str = "default",
+        backend_id: str | None = None,
+    ) -> None:
         """Cache file attributes.
 
         Args:
             path: File path
             attrs: Attributes dictionary to cache
+            backend_id: Optional backend id; when supplied, per-backend TTL
+                overrides from ``index_ttl_overrides`` apply.
         """
+        ttl = self._resolve_index_ttl(backend_id, default=self._attr_ttl)
         key = _stat_key(path, scope_id)
         with self._index_lock:
-            self._index_cache.put(key, attrs, ttl_seconds=self._attr_ttl)
+            self._index_cache.put(key, attrs, ttl_seconds=ttl)
 
     # ============================================================
     # Directory Listing Cache
@@ -198,19 +213,23 @@ class FUSECacheManager:
         path: str,
         entries: list[str],
         scope_id: str = "default",
+        backend_id: str | None = None,
     ) -> None:
         """Cache directory entries.
 
         Args:
             path: Directory path
             entries: Directory entry names to cache
+            backend_id: Optional backend id; when supplied, per-backend TTL
+                overrides from ``index_ttl_overrides`` apply.
         """
+        ttl = self._resolve_index_ttl(backend_id, default=self._listing_ttl)
         key = _listing_key(path, scope_id)
         with self._index_lock:
             self._index_cache.put(
                 key,
                 list(entries),
-                ttl_seconds=self._listing_ttl,
+                ttl_seconds=ttl,
             )
 
     def invalidate_parent_listing(self, path: str, scope_id: str = "default") -> None:
@@ -282,6 +301,9 @@ class FUSECacheManager:
             if self._enable_metrics:
                 with self._metrics_lock:
                     self._metrics["content_skipped_oversize"] += 1
+            # Don't leave stale bytes behind: drop any prior cached entry +
+            # parsed views for this path so callers fall back to origin.
+            self.invalidate_file(path)
             return
         key = _file_key(path)
         if fingerprint is None and ttl_seconds is None:

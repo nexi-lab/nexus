@@ -33,6 +33,7 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<generated_kernel_abi_pyo3::PyOperationContext>()?;
     m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
+    m.add_class::<generated_kernel_abi_pyo3::PyBatchReadItem>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
     // AgentRegistry handle reachable via `kernel.agent_registry`. Wraps
     // the kernel's `Arc<AgentRegistry>` so Python callers reach the SSOT

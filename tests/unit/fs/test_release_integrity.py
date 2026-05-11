@@ -175,7 +175,7 @@ class TestConcurrentMetastore:
                 for i in range(n_ops):
                     path = f"/thread{thread_id}/file{i}.txt"
                     try:
-                        ms.sys_setattr(path, 1)
+                        ms.sys_setattr(path, 0)  # DT_REG (entry_type=0)
                         result = ms.sys_stat(path, "root")
                         if result is None:
                             errors.append(
@@ -288,7 +288,7 @@ class TestFsspecErrorPaths:
             wf = NexusWriteFile(
                 fs=MagicMock(),
                 path="/big.bin",
-                nexus_fs=mock_nexus_fs,
+                kernel=mock_nexus_fs,
             )
             chunk = b"x" * (1024 * 1024)  # 1 MB
             with pytest.raises(ValueError, match="Write buffer exceeded"):
@@ -307,7 +307,7 @@ class TestFsspecErrorPaths:
             wf = NexusWriteFile(
                 fs=MagicMock(),
                 path="/closed.txt",
-                nexus_fs=mock_nexus_fs,
+                kernel=mock_nexus_fs,
             )
             wf.close()
             with pytest.raises(ValueError, match="closed file"):

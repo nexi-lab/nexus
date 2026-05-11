@@ -76,9 +76,16 @@ fn clone_kernel_err(e: &KernelError) -> KernelError {
 /// On success the caller's `offset` + `len` window is sliced out of the
 /// lead's full-file bytes, so every consumer in a coalesced group gets
 /// exactly the range it asked for without an extra backend round-trip.
+///
+/// `consumer_meta` is the consumer path's own `FileMetadata` snapshot.
+/// We use it for the per-path `content_id`, `gen`, and `entry_type` so
+/// CAS-deduplicated or metadata-only-copied paths sharing a content hash
+/// still receive their *own* generation/content_id rather than the
+/// lead's. The shared payload is the only thing borrowed from the lead.
 fn clone_read_result(
     shared: &Result<SysReadResult, KernelError>,
     req: &crate::kernel::BatchReadRequest,
+    consumer_meta: Option<&FileMetadata>,
 ) -> Result<SysReadResult, KernelError> {
     match shared {
         Err(e) => Err(clone_kernel_err(e)),
@@ -91,12 +98,27 @@ fn clone_read_result(
                 };
                 bytes[off..end].to_vec()
             });
+            // Per-consumer metadata when available; fall back to lead's
+            // values only when the consumer's metadata is missing (cold
+            // PAS-mount path read).
+            let (content_id, gen, entry_type) = match consumer_meta {
+                Some(m) => (
+                    m.content_id.clone(),
+                    m.gen,
+                    if m.entry_type == 0 {
+                        src.entry_type
+                    } else {
+                        m.entry_type
+                    },
+                ),
+                None => (src.content_id.clone(), src.gen, src.entry_type),
+            };
             Ok(SysReadResult {
                 data,
                 post_hook_needed: src.post_hook_needed,
-                content_id: src.content_id.clone(),
-                gen: src.gen,
-                entry_type: src.entry_type,
+                content_id,
+                gen,
+                entry_type,
                 stream_next_offset: src.stream_next_offset,
             })
         }
@@ -2735,6 +2757,29 @@ impl Kernel {
                     continue;
                 }
             }
+            // Native INTERCEPT PRE hooks (§11 native hooks) — must fire
+            // PER PATH before coalescing so ReBAC permission_hook and
+            // audit hooks see every request's identity, not just the
+            // lead's. (Coalescing in Phase B would otherwise let a
+            // CAS-deduplicated path share bytes with a path the hook
+            // would have denied.) The lead path's sys_read will dispatch
+            // this hook again — minor double-firing tax, but the hook
+            // chain is required to be idempotent.
+            let hook_id = HookIdentity {
+                user_id: ctx.user_id.clone(),
+                zone_id: ctx.zone_id.clone(),
+                agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                is_admin: ctx.is_admin,
+            };
+            if let Err(e) = self.dispatch_native_pre(&HookContext::Read(ReadHookCtx {
+                path: req.path.clone(),
+                identity: hook_id,
+                content: None,
+                content_id: None,
+            })) {
+                results[i] = Some(Err(e));
+                continue;
+            }
             resolved[i] = Some(ResolvedRead { route, entry });
         }
 
@@ -2803,7 +2848,12 @@ impl Kernel {
                             let req = &reqs[lead];
                             let shared = self.sys_read(&req.path, ctx, 5000, 0);
                             for &i in indices.iter() {
-                                local.push((i, clone_read_result(&shared, &reqs[i])));
+                                let consumer_meta = resolved
+                                    .get(i)
+                                    .and_then(|o| o.as_ref())
+                                    .and_then(|r| r.entry.as_ref());
+                                local
+                                    .push((i, clone_read_result(&shared, &reqs[i], consumer_meta)));
                             }
                         }
                         Unit::Singleton { idx } => {

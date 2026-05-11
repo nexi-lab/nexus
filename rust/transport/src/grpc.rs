@@ -364,20 +364,54 @@ impl NexusVfsService for VfsServiceImpl {
             })
             .collect();
 
+        // Aggregate-size cap — preflight using metastore sizes BEFORE the
+        // kernel performs any backend I/O. A handler that enforces the cap
+        // post-read has already allocated the oversized payload by the
+        // time it rejects, defeating the purpose. We iterate over every
+        // request (not unique paths), so repeating one large file N times
+        // sums to N × size as expected. Paths without metadata (cold PAS
+        // mount, virtual resolver) contribute 0 to this estimate; their
+        // actual byte cost falls through to the request-time tonic message
+        // size limit at the transport layer.
+        const MAX_AGG: usize = 100 * 1024 * 1024;
+        let mut declared_total: usize = 0;
+        for r in &rust_reqs {
+            if let Some(meta) = self.kernel.metastore_get(&r.path).ok().flatten() {
+                let file_size = meta.size as usize;
+                // Respect the per-request offset/len window: a 100 GB file
+                // read as (offset=0, len=4096) only costs 4 KB.
+                let off = (r.offset as usize).min(file_size);
+                let window = match r.len {
+                    Some(l) => (l as usize).min(file_size.saturating_sub(off)),
+                    None => file_size.saturating_sub(off),
+                };
+                declared_total = declared_total.saturating_add(window);
+                if declared_total > MAX_AGG {
+                    return Err(Status::resource_exhausted(format!(
+                        "batch read declared aggregate {} bytes exceeds {} MB",
+                        declared_total,
+                        MAX_AGG / (1024 * 1024)
+                    )));
+                }
+            }
+        }
+
         let outcome = self.kernel._read_batch(&rust_reqs, &ctx);
         let results = match outcome {
             Ok(v) => v,
             Err(e) => return Err(Status::internal(format!("{:?}", e))),
         };
 
-        // Aggregate-size cap — same 100 MB as the Python wrapper enforces.
-        const MAX_AGG: usize = 100 * 1024 * 1024;
+        // Post-read defense-in-depth — catches paths whose metadata wasn't
+        // present in the upfront estimate (cold PAS, virtual resolver,
+        // external connector). Reads have already completed; we still
+        // refuse to serialize the response over the wire.
         let mut total = 0usize;
         for r in results.iter().filter_map(|r| r.as_ref().ok()) {
             total = total.saturating_add(r.data.as_ref().map(|b| b.len()).unwrap_or(0));
             if total > MAX_AGG {
                 return Err(Status::resource_exhausted(format!(
-                    "batch read aggregate {} bytes exceeds {} MB",
+                    "batch read response {} bytes exceeds {} MB",
                     total,
                     MAX_AGG / (1024 * 1024)
                 )));

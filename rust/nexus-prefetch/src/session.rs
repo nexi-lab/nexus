@@ -105,13 +105,41 @@ impl Session {
         self.buffer.insert(block_offset, bytes);
     }
 
-    /// Advance the consumed-bytes high-water mark for any observed
-    /// read (hit OR miss).  Called from `PrefetchEngine::on_read`
-    /// before `take_range`.  Round 4 finding #1.
+    /// Advance the consumed-bytes high-water mark AND evict buffered
+    /// blocks the cursor has fully passed.  Called by the engine on
+    /// the *miss* path so backend-served reads also retire stale
+    /// prefetched blocks (round 4 finding #1, round 5 finding #3).
+    /// The *hit* path advances the cursor inside `take_range` after
+    /// it has finished reading from the relevant blocks, so we do not
+    /// want callers to also invoke `note_read` for a hit — it'd evict
+    /// blocks the current read still needed.
     pub fn note_read(&mut self, offset: u64, size: u32) {
         let end = offset.saturating_add(size as u64);
         if end > self.consumed_end {
             self.consumed_end = end;
+        }
+        self.evict_consumed_blocks();
+    }
+
+    /// Remove every buffered block whose trailing edge is at or before
+    /// `consumed_end`.  Shared between `note_read` and the take_range
+    /// success path so eviction does not depend on hit success.
+    fn evict_consumed_blocks(&mut self) {
+        let cursor = self.consumed_end;
+        let to_remove: Vec<u64> = self
+            .buffer
+            .iter()
+            .filter_map(|(k, v)| {
+                let block_end = k + v.len() as u64;
+                if block_end <= cursor {
+                    Some(*k)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for k in to_remove {
+            self.buffer.remove(&k);
         }
     }
 
@@ -144,34 +172,32 @@ impl Session {
                 return None;
             }
             let block_end = cursor + block.len() as u64;
+            // EOF-adjacent short blocks: a prefetched block can be
+            // shorter than block_size when the backend returns less
+            // than requested (e.g. file ends mid-block).  If the
+            // requested read starts past the actual block_end, we
+            // have a miss — return None for the backend to produce
+            // EOF instead of slicing with `take_from > take_to`
+            // (round 5 finding #2).
+            if offset >= block_end {
+                return None;
+            }
             let take_from = offset.max(cursor) - cursor;
             let take_to = end.min(block_end) - cursor;
+            if take_from > take_to {
+                return None;
+            }
             out.extend_from_slice(&block[take_from as usize..take_to as usize]);
             cursor = block_end;
         }
-        // Second pass: remove blocks the read cursor has fully moved
-        // past.  `consumed_end` is set by `PrefetchEngine::on_read`
-        // before this call (round 4 finding #1 — advances on miss too,
-        // so backend-served reads also retire stale prefetched blocks).
-        // A block is dead when its trailing edge is at or before
-        // `consumed_end`; partial overlaps are preserved.
-        let cursor = self.consumed_end;
-        let to_remove: Vec<u64> = self
-            .buffer
-            .iter()
-            .filter_map(|(k, v)| {
-                let block_start = *k;
-                let block_end = block_start + v.len() as u64;
-                if block_end <= cursor {
-                    Some(block_start)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        for k in to_remove {
-            self.buffer.remove(&k);
+        // Successful read: advance the consumed-bytes high-water mark
+        // (this read is now fully delivered) and evict every block the
+        // cursor has fully passed.  The miss path is handled by the
+        // engine calling `note_read` separately.
+        if end > self.consumed_end {
+            self.consumed_end = end;
         }
+        self.evict_consumed_blocks();
         self.hits += 1;
         Some(Bytes::from(out))
     }
@@ -305,11 +331,9 @@ mod tests {
         s.deposit(8, Bytes::from(vec![2u8; 8]));
         s.deposit(16, Bytes::from(vec![3u8; 8]));
         // Consume blocks 0 and 8 fully (offsets 0..16) plus 4 bytes of
-        // block 16.  Round 4: the engine advances `consumed_end` via
-        // `note_read` before calling `take_range`, so we mirror that
-        // here.  Blocks 0 and 8 should be removed; block 16 must stay
-        // because 4 of its 8 bytes are unconsumed.
-        s.note_read(0, 20);
+        // block 16.  Round 5: `take_range` advances `consumed_end`
+        // internally on success.  Blocks 0 and 8 should be removed;
+        // block 16 must stay because 4 of its 8 bytes are unconsumed.
         let out = s.take_range(0, 20, 8).expect("hit");
         assert_eq!(out.len(), 20);
         assert!(!s.buffer.contains_key(&0));
@@ -384,14 +408,13 @@ mod tests {
         // Block 0..8 prefetched.
         s.deposit(0, Bytes::from((0u8..8).collect::<Vec<_>>()));
         // Two sub-reads sweep the block; second read pushes
-        // consumed_end past block_end, so it's evicted.
-        s.note_read(0, 4);
+        // consumed_end past block_end so it's evicted on the second
+        // take_range success path.
         let _ = s.take_range(0, 4, 8).expect("hit 1");
         assert!(
             s.buffer.contains_key(&0),
             "block evicted too early at consumed_end=4"
         );
-        s.note_read(4, 4);
         let _ = s.take_range(4, 4, 8).expect("hit 2");
         assert!(
             !s.buffer.contains_key(&0),
@@ -414,8 +437,7 @@ mod tests {
         };
         let mut s = sess(&cfg);
         s.deposit(0, Bytes::from((0u8..16).collect::<Vec<_>>()));
-        // Read 4..8 — block 0..16 end=16, consumed_end=8 < 16 → keep.
-        s.note_read(4, 4);
+        // Read 4..8 — block 0..16 end=16, consumed_end after = 8 < 16 → keep.
         let r = s.take_range(4, 4, 16).expect("hit 1");
         assert_eq!(&r[..], &[4, 5, 6, 7]);
         assert!(
@@ -423,7 +445,6 @@ mod tests {
             "block evicted before cursor reached block_end"
         );
         // Bumping the cursor past block_end now does evict.
-        s.note_read(12, 4);
         let _ = s.take_range(12, 4, 16).expect("hit 2");
         assert!(
             !s.buffer.contains_key(&0),
@@ -465,5 +486,40 @@ mod tests {
         // Smaller reads don't reduce the high-water.
         s.note_read(50, 10);
         assert_eq!(s.consumed_end, 300);
+    }
+
+    #[test]
+    fn note_read_evicts_blocks_behind_cursor_on_miss() {
+        // Round 5 finding #3: misses skip take_range's eviction pass,
+        // so the helper must run from note_read too.  Otherwise a
+        // stale block deposited just before a miss-heavy scan stays
+        // in the buffer.
+        let cfg = EngineConfig {
+            block_size: 8,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from(vec![1u8; 8]));
+        // Cursor advances past the block via a miss path (no take_range).
+        s.note_read(0, 16);
+        assert!(
+            !s.buffer.contains_key(&0),
+            "stale block kept across miss-path note_read (round 5 regression)"
+        );
+    }
+
+    #[test]
+    fn take_range_returns_none_when_eof_block_too_short() {
+        // Round 5 finding #2: a short EOF block (e.g. last 100 bytes of
+        // a small file deposited under an 8 KiB block key) must not
+        // panic when the caller reads past the actual block_end.
+        let cfg = EngineConfig {
+            block_size: 8192,
+            ..Default::default()
+        };
+        let mut s = sess(&cfg);
+        s.deposit(0, Bytes::from(vec![7u8; 100])); // file truncates at 100
+                                                   // Read at offset 128 within block 0 but past the short block_end.
+        assert!(s.take_range(128, 32, 8192).is_none());
     }
 }

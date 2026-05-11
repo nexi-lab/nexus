@@ -186,12 +186,6 @@ impl PrefetchEngine {
         let slot = self.sessions.get(&fh)?;
         let mut s = slot.lock();
 
-        // Advance the consumed-bytes high-water FIRST so subsequent
-        // worker deposits can reject blocks already behind the cursor,
-        // and so subsequent `take_range` eviction sees the current
-        // read in its bound (round 4 finding #1).
-        s.note_read(offset, size);
-
         // Drive detector first so window decisions reflect current obs.
         let pattern = s.detector.observe(offset, size);
         match pattern {
@@ -210,8 +204,15 @@ impl PrefetchEngine {
 
         let hit = s.take_range(offset, size, self.cfg.block_size);
         if hit.is_some() {
+            // Hit-path eviction is handled inside `take_range` — it
+            // advances `consumed_end` after the read completes.
             self.metrics.hits.fetch_add(1, Ordering::Relaxed);
         } else {
+            // Miss-path: tell the session what was just delivered by
+            // the backend so deposits can reject obsolete blocks and
+            // the buffer drains under miss-heavy/random workloads
+            // (round 4 finding #1, round 5 finding #3).
+            s.note_read(offset, size);
             self.metrics.misses.fetch_add(1, Ordering::Relaxed);
             s.misses += 1;
         }
@@ -356,7 +357,17 @@ impl PrefetchEngine {
         let mut issued = 0u32;
         let mut walked: u64 = 0;
         let step_abs = step.unsigned_abs();
-        while walked < s.window && issued < self.cfg.max_blocks_per_trigger {
+        // Independent iteration budget — covers the case where stride
+        // is much smaller than block_size and many logical positions
+        // collapse onto a single block.  Without this, a 1-byte stride
+        // with a 1 MiB window would spin millions of iterations holding
+        // the session mutex (round 5 finding #1).  4× max_blocks_per_trigger
+        // is enough slack for moderate snap collisions; pathological
+        // configs still exit instead of stalling.
+        let iter_budget = self.cfg.max_blocks_per_trigger.saturating_mul(4).max(8) as u64;
+        let mut iters: u64 = 0;
+        while walked < s.window && issued < self.cfg.max_blocks_per_trigger && iters < iter_budget {
+            iters += 1;
             let key = snap(logical);
             if let Some(fs) = s.file_size {
                 if key >= fs {
@@ -388,20 +399,26 @@ impl PrefetchEngine {
             } else {
                 false
             };
-            // Advance the logical cursor by signed step.  Saturating
-            // prevents wraparound when a negative stride walks below 0
-            // or a positive stride approaches u64::MAX — either case
-            // ends the loop because the next iteration won't progress.
-            let next = if step > 0 {
-                logical.saturating_add(step_abs)
+            // Advance the logical cursor.  When `step_abs < block_size`
+            // many successive iterations would snap to the same block;
+            // jump straight to the next block boundary after issuance
+            // so the loop terminates in O(max_blocks_per_trigger) steps
+            // even with sub-block strides (round 5 finding #1).
+            let advance_by = if did_issue {
+                step_abs.max(block_size)
             } else {
-                logical.saturating_sub(step_abs)
+                step_abs
+            };
+            let next = if step > 0 {
+                logical.saturating_add(advance_by)
+            } else {
+                logical.saturating_sub(advance_by)
             };
             if next == logical {
                 break; // saturated; stop issuing
             }
             logical = next;
-            walked = walked.saturating_add(step_abs);
+            walked = walked.saturating_add(advance_by);
             if did_issue {
                 issued += 1;
             }

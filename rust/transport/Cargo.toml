@@ -13,7 +13,7 @@ default = []
 # `python` aggregates the PyO3 entry points (`PyVfsGrpcServerHandle`,
 # `start_vfs_grpc_server`, `PyFederationClient`, `install_transport_wiring`)
 # into `transport::python::register(m)`.
-python = ["dep:pyo3"]
+python = ["dep:pyo3", "kernel/python"]
 
 [dependencies]
 contracts = { workspace = true }
@@ -51,3 +51,5 @@ pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
 [dev-dependencies]
 tempfile = "3"
 rcgen = { version = "0.14", features = ["pem", "x509-parser"] }
+# `test-utils` exposes `Kernel::with_mem_backend()` for grpc integration tests.
+kernel = { workspace = true, features = ["test-utils"] }

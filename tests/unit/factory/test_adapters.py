@@ -51,6 +51,22 @@ class TestNexusFSFileReader:
         assert await task == b"hello"
 
     @pytest.mark.asyncio
+    async def test_list_files_does_not_block_event_loop_during_sys_readdir(self) -> None:
+        class BlockingNx:
+            def sys_readdir(self, _path: str, **_kwargs: object) -> list[str]:
+                time.sleep(0.2)
+                return ["/a.txt", "/b.txt"]
+
+        reader = _NexusFSFileReader(BlockingNx())
+
+        task = asyncio.create_task(reader.list_files("/"))
+        start = time.perf_counter()
+        await asyncio.sleep(0.02)
+
+        assert time.perf_counter() - start < 0.12
+        assert await task == ["/a.txt", "/b.txt"]
+
+    @pytest.mark.asyncio
     async def test_read_text_bytes_decoded(self) -> None:
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"hello world")

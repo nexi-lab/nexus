@@ -93,6 +93,14 @@ class _FakeTaskService:
         return list(self.comments)
 
 
+class _FakeDispatchableTaskService:
+    def __init__(self, task_ids: list[str]) -> None:
+        self.task_ids = task_ids
+
+    async def list_dispatchable_tasks(self) -> list[dict[str, str]]:
+        return [{"id": task_id} for task_id in self.task_ids]
+
+
 class _FakeAcpService:
     def __init__(self, *results: AcpCallResult) -> None:
         self._results = list(results)
@@ -196,6 +204,57 @@ async def test_copilot_review_records_feedback_and_rejects_in_process() -> None:
     assert task_service.task["status"] == "failed"
     assert "curl -X" not in acp_service.calls[0]["prompt"]
     assert "Authorization:" not in acp_service.calls[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_unblocked_tasks_tracks_worker_tasks_until_completion() -> None:
+    release = asyncio.Event()
+    started: list[str] = []
+
+    consumer = TaskDispatchPipeConsumer()
+    consumer.set_task_service(cast(Any, _FakeDispatchableTaskService(["task-a", "task-b"])))
+
+    async def _start_worker(task_id: str) -> None:
+        started.append(task_id)
+        await release.wait()
+
+    consumer._start_worker = _start_worker
+
+    await consumer._dispatch_unblocked_tasks()
+    await asyncio.sleep(0)
+
+    try:
+        assert set(started) == {"task-a", "task-b"}
+        assert len(consumer._worker_tasks) == 2
+    finally:
+        release.set()
+        await asyncio.sleep(0)
+
+    assert not consumer._worker_tasks
+
+
+@pytest.mark.asyncio
+async def test_dispatch_unblocked_tasks_bounds_concurrent_worker_starts() -> None:
+    consumer = TaskDispatchPipeConsumer(max_worker_starts=1)
+    consumer.set_task_service(cast(Any, _FakeDispatchableTaskService(["task-a", "task-b"])))
+
+    active = 0
+    max_active = 0
+
+    async def _start_worker(task_id: str) -> None:  # noqa: ARG001
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+
+    consumer._start_worker = _start_worker
+
+    await consumer._dispatch_unblocked_tasks()
+    while consumer._worker_tasks:
+        await asyncio.sleep(0.001)
+
+    assert max_active == 1
 
 
 def test_bricks_module_aliases_live_dispatch_consumer() -> None:

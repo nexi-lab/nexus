@@ -245,6 +245,15 @@ class _NexusFSFileReader:
             return await result
         return result
 
+    async def _sys_readdir(self, path: str, **kwargs: Any) -> Any:
+        readdir_fn = self._nx.sys_readdir
+        if inspect.iscoroutinefunction(readdir_fn):
+            return await readdir_fn(path, **kwargs)
+        result = await asyncio.to_thread(readdir_fn, path, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
     async def read_text(self, path: str) -> str:
         # Read with admin context so the search daemon can index all files
         # regardless of per-user ReBAC permissions.
@@ -356,7 +365,7 @@ class _NexusFSFileReader:
             is_admin=True,
             is_system=True,
         )
-        result = self._nx.sys_readdir(path, recursive=recursive, context=admin_ctx)
+        result = await self._sys_readdir(path, recursive=recursive, context=admin_ctx)
         items: list[Any] = result.items if hasattr(result, "items") else result
         return items
 

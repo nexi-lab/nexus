@@ -80,6 +80,7 @@ class TaskDispatchPipeConsumer:
         acp_service: Any | None = None,
         agent_registry: Any | None = None,
         llm_fn: LLMCallable | None = None,
+        max_worker_starts: int = 16,
     ) -> None:
         self._nx: NexusFS | None = None
         self._task_svc: TaskManagerService | None = None
@@ -88,6 +89,10 @@ class TaskDispatchPipeConsumer:
         self._llm_fn: LLMCallable = llm_fn or _no_llm  # used by copilot review
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
+        self._max_worker_starts = max(1, max_worker_starts)
+        self._worker_start_semaphore: asyncio.Semaphore | None = None
+        self._worker_tasks: set[asyncio.Task[None]] = set()
+        self._worker_task_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Deferred injection
@@ -163,6 +168,13 @@ class TaskDispatchPipeConsumer:
                 await self._consumer_task
 
             self._consumer_task = None
+
+        if self._worker_tasks:
+            for task in list(self._worker_tasks):
+                task.cancel()
+            await asyncio.gather(*self._worker_tasks, return_exceptions=True)
+            self._worker_tasks.clear()
+            self._worker_task_ids.clear()
 
         self._pipe_ready = False
         logger.info("[TASK-DISPATCH] pipe consumer stopped")
@@ -472,5 +484,47 @@ and apply the final task status from your DECISION line.
         for task in dispatchable:
             tid = task.get("id", "?")
             logger.info("[TASK-DISPATCH] unblocked: dispatching task %s", tid)
-            # Schedule worker start as a separate task to avoid blocking the consumer
-            asyncio.create_task(self._start_worker(tid))
+            self._schedule_worker_start(tid)
+
+    def _get_worker_start_semaphore(self) -> asyncio.Semaphore:
+        if self._worker_start_semaphore is None:
+            self._worker_start_semaphore = asyncio.Semaphore(self._max_worker_starts)
+        return self._worker_start_semaphore
+
+    def _schedule_worker_start(self, task_id: str) -> None:
+        if task_id in self._worker_task_ids:
+            logger.debug("[TASK-DISPATCH] worker start already scheduled for task %s", task_id)
+            return
+
+        self._worker_task_ids.add(task_id)
+        task = asyncio.create_task(self._run_scheduled_worker(task_id))
+        self._worker_tasks.add(task)
+
+        def _discard_done(done: asyncio.Task[None]) -> None:
+            self._on_worker_task_done(task_id, done)
+
+        task.add_done_callback(_discard_done)
+
+    async def _run_scheduled_worker(self, task_id: str) -> None:
+        try:
+            async with self._get_worker_start_semaphore():
+                await self._start_worker(task_id)
+        finally:
+            current = asyncio.current_task()
+            if current is not None:
+                self._worker_tasks.discard(current)
+            self._worker_task_ids.discard(task_id)
+
+    def _on_worker_task_done(self, task_id: str, task: asyncio.Task[None]) -> None:
+        self._worker_tasks.discard(task)
+        self._worker_task_ids.discard(task_id)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "[TASK-DISPATCH] scheduled worker task failed for %s: %s",
+                task_id,
+                exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )

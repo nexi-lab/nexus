@@ -52,6 +52,9 @@ def _mock_session(
     scalar_result = MagicMock()
     scalar_result.scalar_one_or_none.return_value = file_model
     scalar_result.scalar.return_value = chunk_count
+    scalar_result.scalars.return_value.all.return_value = (
+        [file_model] if file_model is not None else []
+    )
     session.execute.return_value = scalar_result
 
     # session.get() used in step 5 to retrieve updated file_model
@@ -88,6 +91,7 @@ def _mock_file_reader(
     reader.read_text = AsyncMock(return_value=content)
     reader.get_searchable_text.return_value = searchable_text
     reader.list_files = AsyncMock(return_value=file_list or [])
+    reader.has_successful_parse = None
 
     return reader
 
@@ -523,7 +527,13 @@ class TestIndexDirectory:
     @pytest.mark.asyncio
     async def test_index_directory_builds_doc_list_and_delegates(self) -> None:
         """list_files returns 3 files; pipeline.index_documents receives 3 tuples."""
-        file_model = _mock_file_model(path_id="pid-x")
+        file_models = [
+            _mock_file_model(path_id="pid-a", virtual_path="a.py"),
+            _mock_file_model(path_id="pid-b", virtual_path="b.py"),
+            _mock_file_model(path_id="pid-c", virtual_path="c.py"),
+        ]
+        session = _mock_session(file_model=file_models[0])
+        session.execute.return_value.scalars.return_value.all.return_value = file_models
         pipeline = _mock_pipeline()
         pipeline.index_documents.return_value = [
             IndexResult(path="a.py", chunks_indexed=2),
@@ -533,7 +543,7 @@ class TestIndexDirectory:
 
         service, _, session, _ = _build_service(
             pipeline=pipeline,
-            file_model=file_model,
+            session=session,
             file_list=["a.py", "b.py", "c.py"],
             content="some content",
             searchable_text=None,
@@ -550,10 +560,63 @@ class TestIndexDirectory:
         pipeline.index_documents.assert_awaited_once()
         docs_arg = pipeline.index_documents.call_args[0][0]
         assert len(docs_arg) == 3
-        # Each tuple is (path, content, path_id)
-        for _path, content, path_id in docs_arg:
+        assert session.execute.call_count == 1
+        expected_path_ids = {"a.py": "pid-a", "b.py": "pid-b", "c.py": "pid-c"}
+        for path, content, path_id in docs_arg:
             assert content == "some content"
-            assert path_id == "pid-x"
+            assert path_id == expected_path_ids[path]
+
+    @pytest.mark.asyncio
+    async def test_index_directory_reads_file_content_with_bounded_concurrency(self) -> None:
+        file_models = [
+            _mock_file_model(path_id=f"pid-{idx}", virtual_path=f"file{idx}.py") for idx in range(4)
+        ]
+        session = _mock_session(file_model=file_models[0])
+        session.execute.return_value.scalars.return_value.all.return_value = file_models
+        pipeline = _mock_pipeline()
+        pipeline._max_concurrency = 2
+        pipeline.index_documents.return_value = [
+            IndexResult(path=model.virtual_path, chunks_indexed=1) for model in file_models
+        ]
+        file_reader = _mock_file_reader(
+            session,
+            file_list=[model.virtual_path for model in file_models],
+            searchable_text=None,
+        )
+
+        active_reads = 0
+        max_active_reads = 0
+
+        async def _read_text(path: str) -> str:
+            nonlocal active_reads, max_active_reads
+            active_reads += 1
+            max_active_reads = max(max_active_reads, active_reads)
+            await asyncio.sleep(0.01)
+            active_reads -= 1
+            return f"content for {path}"
+
+        file_reader.read_text = AsyncMock(side_effect=_read_text)
+        service, _, _, _ = _build_service(
+            pipeline=pipeline,
+            file_reader=file_reader,
+            session=session,
+        )
+
+        await service.index_directory("/")
+
+        assert max_active_reads == 2
+        assert session.execute.call_count == 1
+
+    def test_query_file_models_chunks_large_path_sets(self) -> None:
+        session = MagicMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        session.execute.return_value = result
+
+        paths = [f"/file-{idx}.txt" for idx in range(1001)]
+
+        assert IndexingService._query_file_models(session, paths) == {}
+        assert session.execute.call_count == 3
 
 
 class TestVirtualReadmeIndexing:

@@ -12,6 +12,7 @@ Key design decisions:
   - Comprehensive error handling with structured logging
 """
 
+import asyncio
 import hashlib
 import logging
 import posixpath
@@ -42,6 +43,9 @@ from nexus.bricks.search.models import DocumentChunkModel, FilePathModel
 from nexus.bricks.search.protocols import FileReaderProtocol
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_DIRECTORY_READ_CONCURRENCY = 10
+_QUERY_FILE_MODELS_BATCH_SIZE = 500
 
 
 def _looks_like_virtual_readme(path: str) -> bool:
@@ -390,48 +394,83 @@ class IndexingService:
         files_result = await self._file_reader.list_files(path, recursive=True)
         files = files_result.items if hasattr(files_result, "items") else files_result
 
-        # Build (path, content, path_id) tuples, skipping binary files.
-        documents: list[tuple[str, str, str]] = []
+        candidate_paths: list[str] = []
+        for entry in files:
+            file_path = entry if isinstance(entry, str) else entry.get("name", "")
+            if not file_path or file_path.endswith("/"):
+                continue
+            if file_path.endswith(_BINARY_EXTENSIONS):
+                continue
+            candidate_paths.append(file_path)
+
+        if not candidate_paths:
+            return {}
 
         with self._get_session() as session:
-            for entry in files:
-                file_path = entry if isinstance(entry, str) else entry.get("name", "")
-                if not file_path or file_path.endswith("/"):
-                    continue
-                if file_path.endswith(_BINARY_EXTENSIONS):
-                    continue
+            file_models_by_path = self._query_file_models(session, candidate_paths)
 
-                try:
-                    content = await self._read_content(file_path)
-                    file_model = self._query_file_model(session, file_path)
-                    if file_model is not None:
-                        documents.append(
-                            (file_path, content, file_model.path_id),
-                        )
-                    elif _looks_like_virtual_readme(file_path):
-                        # Issue #3728: virtual ``.readme/`` overlay paths
-                        # are served from class metadata at read time.  The
-                        # chunk tables still enforce a FK to file_paths, so
-                        # persist a minimal deterministic row before handing
-                        # the document to the indexing pipeline.
-                        #
-                        # Known limitation: when the connector class
-                        # metadata changes (e.g. a nexus upgrade), the
-                        # synthetic path_id stays the same but the
-                        # embeddings become stale.  Users need to
-                        # re-trigger indexing (remount) to refresh.
+        paths_to_read = [
+            file_path
+            for file_path in candidate_paths
+            if file_path in file_models_by_path or _looks_like_virtual_readme(file_path)
+        ]
+        if not paths_to_read:
+            return {}
+
+        read_concurrency = self._directory_read_concurrency()
+        semaphore = asyncio.Semaphore(read_concurrency)
+
+        async def _read_one(file_path: str) -> tuple[str, str] | None:
+            try:
+                async with semaphore:
+                    return file_path, await self._read_content(file_path)
+            except Exception:
+                logger.warning(
+                    "[INDEXING-SVC] Skipping %s: failed to read or resolve",
+                    file_path,
+                    exc_info=True,
+                )
+                return None
+
+        read_results = await asyncio.gather(*(_read_one(file_path) for file_path in paths_to_read))
+        content_by_path = {
+            file_path: content
+            for result in read_results
+            if result is not None
+            for file_path, content in [result]
+        }
+
+        documents: list[tuple[str, str, str]] = []
+        virtual_readmes: list[tuple[str, str]] = []
+        for file_path in candidate_paths:
+            if file_path not in content_by_path:
+                continue
+            content = content_by_path[file_path]
+            file_model = file_models_by_path.get(file_path)
+            if file_model is not None:
+                documents.append((file_path, content, file_model.path_id))
+            elif _looks_like_virtual_readme(file_path):
+                virtual_readmes.append((file_path, content))
+
+        if virtual_readmes:
+            with self._get_session() as session:
+                for file_path, content in virtual_readmes:
+                    try:
+                        # Issue #3728: virtual ``.readme/`` overlay paths are served
+                        # from class metadata at read time, so synthesize the FK row
+                        # before handing the document to the indexing pipeline.
                         virtual_model = self._ensure_virtual_readme_file_model(
                             session,
                             file_path,
                             content,
                         )
                         documents.append((file_path, content, virtual_model.path_id))
-                except Exception:
-                    logger.warning(
-                        "[INDEXING-SVC] Skipping %s: failed to read or resolve",
-                        file_path,
-                        exc_info=True,
-                    )
+                    except Exception:
+                        logger.warning(
+                            "[INDEXING-SVC] Skipping %s: failed to read or resolve",
+                            file_path,
+                            exc_info=True,
+                        )
 
         if not documents:
             return {}
@@ -520,6 +559,31 @@ class IndexingService:
             FilePathModel.deleted_at.is_(None),
         )
         return session.execute(stmt).scalar_one_or_none()
+
+    @staticmethod
+    def _query_file_models(
+        session: Any,
+        paths: list[str],
+    ) -> dict[str, Any]:
+        """Query file rows for many virtual paths in one round trip."""
+        if not paths:
+            return {}
+        unique_paths = list(dict.fromkeys(paths))
+        rows: list[Any] = []
+        for start in range(0, len(unique_paths), _QUERY_FILE_MODELS_BATCH_SIZE):
+            batch = unique_paths[start : start + _QUERY_FILE_MODELS_BATCH_SIZE]
+            stmt = select(FilePathModel).where(
+                FilePathModel.virtual_path.in_(batch),
+                FilePathModel.deleted_at.is_(None),
+            )
+            rows.extend(session.execute(stmt).scalars().all())
+        return {str(row.virtual_path): row for row in rows}
+
+    def _directory_read_concurrency(self) -> int:
+        configured = getattr(self._pipeline, "_max_concurrency", None)
+        if isinstance(configured, int) and configured > 0:
+            return configured
+        return _DEFAULT_DIRECTORY_READ_CONCURRENCY
 
     @staticmethod
     def _count_chunks(session: Any, path_id: str) -> int:

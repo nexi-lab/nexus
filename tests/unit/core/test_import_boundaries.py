@@ -182,6 +182,19 @@ class TestImportLinterPackageCoverage:
         }
         assert expected <= covered
 
+    def test_four_tier_layers_baseline_does_not_keep_removed_imports(self):
+        pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        contracts = pyproject["tool"]["importlinter"]["contracts"]
+        contract = next((c for c in contracts if c.get("id") == "four-tier-layers"), None)
+        assert contract is not None
+
+        stale_ignores = {
+            "nexus.contracts.agent_utils -> nexus.storage.models",
+            "nexus.lib.permission_utils -> nexus.services.gateway",
+            "nexus.core.config -> nexus.bricks.workflows.protocol",
+        }
+        assert stale_ignores.isdisjoint(set(contract.get("ignore_imports", [])))
+
 
 class TestTypingPackageMarker:
     """Packaging metadata must match PEP 561 typed-package marker requirements."""

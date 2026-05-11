@@ -2737,23 +2737,57 @@ impl Kernel {
             }
         }
 
-        // Sequential fan-out — coalesce each group into a single sys_read
-        // and scatter sliced copies back. Parallelism arrives in Task 5.
+        // Phase B fan-out — bounded parallelism over distinct work units.
+        // Each unit is either a coalesced group (one sys_read + N slices)
+        // or a singleton. Cap in-flight units at `read_batch_max_concurrency`
+        // via rayon::par_chunks so we never spin up more than the configured
+        // number of concurrent backend fetches.
+        use rayon::prelude::*;
+
+        enum Unit {
+            Group { indices: Vec<usize> },
+            Singleton { idx: usize },
+        }
+
         let group_vec: Vec<((String, String), Vec<usize>)> = groups.into_iter().collect();
-        for (_key, indices) in &group_vec {
-            let lead = indices[0];
-            let req = &reqs[lead];
-            // Lead always reads from offset 0; per-consumer offset/len is
-            // applied during clone_read_result so groups with mismatched
-            // ranges still benefit from a single backend fetch.
-            let shared = self.sys_read(&req.path, ctx, 5000, 0);
-            for &i in indices {
-                results[i] = Some(clone_read_result(&shared, &reqs[i]));
-            }
+        let mut units: Vec<Unit> = Vec::with_capacity(group_vec.len() + singletons.len());
+        for (_key, indices) in group_vec {
+            units.push(Unit::Group { indices });
         }
         for i in singletons {
-            let req = &reqs[i];
-            let r = self.sys_read(&req.path, ctx, 5000, req.offset);
+            units.push(Unit::Singleton { idx: i });
+        }
+
+        let max_conc = self.read_batch_max_concurrency().max(1);
+        let chunk_size = units.len().div_ceil(max_conc).max(1);
+
+        let scattered: Vec<(usize, Result<SysReadResult, KernelError>)> = units
+            .par_chunks(chunk_size)
+            .flat_map_iter(|chunk| {
+                let mut local: Vec<(usize, Result<SysReadResult, KernelError>)> =
+                    Vec::with_capacity(chunk.len() * 2);
+                for unit in chunk {
+                    match unit {
+                        Unit::Group { indices } => {
+                            let lead = indices[0];
+                            let req = &reqs[lead];
+                            let shared = self.sys_read(&req.path, ctx, 5000, 0);
+                            for &i in indices.iter() {
+                                local.push((i, clone_read_result(&shared, &reqs[i])));
+                            }
+                        }
+                        Unit::Singleton { idx } => {
+                            let req = &reqs[*idx];
+                            let r = self.sys_read(&req.path, ctx, 5000, req.offset);
+                            local.push((*idx, r));
+                        }
+                    }
+                }
+                local.into_iter()
+            })
+            .collect();
+
+        for (i, r) in scattered {
             results[i] = Some(r);
         }
 
@@ -3246,6 +3280,55 @@ mod read_batch_tests {
         for r in &out {
             let r = r.as_ref().expect("ok");
             assert_eq!(r.data.as_deref().unwrap(), payload.as_slice());
+        }
+    }
+
+    #[test]
+    fn read_batch_100_distinct_paths_parallel() {
+        let k = kernel_with_backend();
+        let c = ctx();
+        let mut reqs = Vec::with_capacity(100);
+        for i in 0..100u32 {
+            let path = format!("/p{i:03}.txt");
+            let payload = format!("payload-{i}").into_bytes();
+            k.sys_write(&path, &c, &payload, 0).expect("write");
+            reqs.push(crate::kernel::BatchReadRequest {
+                path,
+                offset: 0,
+                len: None,
+            });
+        }
+        let out = k._read_batch(&reqs, &c).expect("outer ok");
+        assert_eq!(out.len(), 100);
+        for (i, r) in out.iter().enumerate() {
+            let r = r.as_ref().expect("ok");
+            let expected = format!("payload-{i}").into_bytes();
+            assert_eq!(r.data.as_deref().unwrap(), expected.as_slice());
+        }
+    }
+
+    #[test]
+    fn read_batch_respects_max_concurrency_one() {
+        let k = kernel_with_backend();
+        k.set_read_batch_max_concurrency(1);
+        let c = ctx();
+        for i in 0..10 {
+            k.sys_write(&format!("/x{i}.txt"), &c, &format!("v{i}").into_bytes(), 0)
+                .unwrap();
+        }
+        let reqs: Vec<_> = (0..10)
+            .map(|i| crate::kernel::BatchReadRequest {
+                path: format!("/x{i}.txt"),
+                offset: 0,
+                len: None,
+            })
+            .collect();
+        let out = k._read_batch(&reqs, &c).expect("ok");
+        for (i, r) in out.iter().enumerate() {
+            assert_eq!(
+                r.as_ref().unwrap().data.as_deref().unwrap(),
+                format!("v{i}").as_bytes()
+            );
         }
     }
 }

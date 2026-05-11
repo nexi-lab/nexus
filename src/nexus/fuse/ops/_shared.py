@@ -7,6 +7,7 @@ This module contains:
 - Shared helper functions (standalone, taking ctx: FUSESharedContext)
 """
 
+import concurrent.futures
 import errno
 import functools
 import inspect
@@ -160,7 +161,13 @@ class FUSECacheCoordinator(Protocol):
 
     def inflight_future(self, path: str, fingerprint: str | None = None) -> tuple[Any, bool]: ...
 
-    def inflight_clear(self, path: str, fingerprint: str | None = None) -> None: ...
+    def inflight_clear(
+        self,
+        path: str,
+        fingerprint: str | None = None,
+        *,
+        owner: Any | None = None,
+    ) -> None: ...
 
 
 # ============================================================
@@ -502,9 +509,11 @@ async def get_file_content(
     future, is_owner = coordinator.inflight_future(path, expected_fingerprint)
     if not is_owner:
         # Wrap the loop-neutral concurrent.futures.Future for this loop.
+        # Shield so a cancelled waiter doesn't cancel the shared underlying
+        # future and poison the owner's set_result.
         import asyncio as _asyncio
 
-        shared = await _asyncio.wrap_future(future)
+        shared = await _asyncio.shield(_asyncio.wrap_future(future))
         return _maybe_parse(ctx, path, view_type, shared)
 
     try:
@@ -536,13 +545,21 @@ async def get_file_content(
             )
         if has_lease:
             coordinator.cache_content(path, content, fingerprint=expected_fingerprint)
-        future.set_result(content)
+        # Tolerate InvalidStateError: a waiter could have cancelled the
+        # future before we got here. Our own read+cache still succeeded.
+        import contextlib as _contextlib
+
+        with _contextlib.suppress(concurrent.futures.InvalidStateError):
+            future.set_result(content)
     except BaseException as exc:
+        import contextlib as _contextlib
+
         if not future.done():
-            future.set_exception(exc)
+            with _contextlib.suppress(concurrent.futures.InvalidStateError):
+                future.set_exception(exc)
         raise
     finally:
-        coordinator.inflight_clear(path, expected_fingerprint)
+        coordinator.inflight_clear(path, expected_fingerprint, owner=future)
 
     return _maybe_parse(ctx, path, view_type, content)
 

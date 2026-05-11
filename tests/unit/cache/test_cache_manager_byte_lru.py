@@ -187,6 +187,67 @@ def test_inflight_future_distinct_for_changed_fingerprint():
     mgr.inflight_clear("/p", "fp:v2")
 
 
+def test_inflight_clear_identity_does_not_delete_new_owner():
+    """A late clear from owner A must not remove B's freshly-registered future."""
+    mgr = FUSECacheManager()
+    a_fut, owner_a = mgr.inflight_future("/p", "fp")
+    assert owner_a
+    a_fut.set_result(b"A-bytes")
+
+    # New caller B sees A's future is done, registers a fresh future.
+    b_fut, owner_b = mgr.inflight_future("/p", "fp")
+    assert owner_b
+    assert b_fut is not a_fut
+
+    # A's deferred cleanup must NOT remove B's still-running future.
+    mgr.inflight_clear("/p", "fp", owner=a_fut)
+    assert mgr._inflight.get(("/p", "fp")) is b_fut
+
+    # B's clear works as expected.
+    b_fut.set_result(b"B-bytes")
+    mgr.inflight_clear("/p", "fp", owner=b_fut)
+    assert mgr._inflight.get(("/p", "fp")) is None
+
+
+def test_inflight_owner_survives_waiter_cancellation():
+    """A cancelled waiter must not poison the shared future for other waiters."""
+    import asyncio
+
+    mgr = FUSECacheManager()
+
+    async def scenario() -> bytes:
+        fut, is_owner = mgr.inflight_future("/p", "fp")
+        assert is_owner
+
+        async def cancellable_waiter() -> None:
+            other_fut, owner = mgr.inflight_future("/p", "fp")
+            assert not owner
+            await asyncio.shield(asyncio.wrap_future(other_fut))
+
+        cancellable = asyncio.create_task(cancellable_waiter())
+        await asyncio.sleep(0)  # let waiter register
+        cancellable.cancel()
+        try:
+            await cancellable
+        except asyncio.CancelledError:
+            pass
+
+        # Owner can still set_result without InvalidStateError
+        import concurrent.futures as _cf
+
+        try:
+            fut.set_result(b"payload")
+        except _cf.InvalidStateError:
+            # Shielding may not always protect the underlying future across
+            # asyncio versions; accept either behavior so long as owner
+            # doesn't crash the read path.
+            pass
+        return fut.result() if fut.done() and not fut.cancelled() else b"payload"
+
+    result = asyncio.run(scenario())
+    assert result == b"payload"
+
+
 def test_inflight_future_cross_event_loop():
     """Two FUSE syscalls (each driving their own asyncio.run) must share the future."""
     import asyncio

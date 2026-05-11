@@ -424,8 +424,14 @@ class FUSELeaseCoordinator:
     def inflight_future(self, path: str, fingerprint: str | None = None) -> tuple[Any, bool]:
         return self._cache.inflight_future(path, fingerprint)
 
-    def inflight_clear(self, path: str, fingerprint: str | None = None) -> None:
-        self._cache.inflight_clear(path, fingerprint)
+    def inflight_clear(
+        self,
+        path: str,
+        fingerprint: str | None = None,
+        *,
+        owner: concurrent.futures.Future[bytes] | None = None,
+    ) -> None:
+        self._cache.inflight_clear(path, fingerprint, owner=owner)
 
     def get_parsed(self, path: str, view_type: str) -> bytes | None:
         """Get cached parsed content (direct, no lease check)."""

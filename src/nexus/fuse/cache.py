@@ -181,9 +181,26 @@ class FUSECacheManager:
             self._inflight[key] = fut
             return fut, True
 
-    def inflight_clear(self, path: str, fingerprint: str | None = None) -> None:
+    def inflight_clear(
+        self,
+        path: str,
+        fingerprint: str | None = None,
+        *,
+        owner: concurrent.futures.Future[bytes] | None = None,
+    ) -> None:
+        """Remove the in-flight entry for ``(path, fingerprint)``.
+
+        When ``owner`` is provided, only remove the entry if it still holds
+        that exact Future object. Prevents an A-then-B replacement race where
+        A's late cleanup would delete B's newly-registered Future and let a
+        third caller fetch concurrently.
+        """
+        key = (path, fingerprint)
         with self._inflight_lock:
-            self._inflight.pop((path, fingerprint), None)
+            current = self._inflight.get(key)
+            if owner is not None and current is not None and current is not owner:
+                return
+            self._inflight.pop(key, None)
 
     def _resolve_index_ttl(self, backend_id: str | None, *, default: int) -> int:
         """Pick a TTL for a metadata write.

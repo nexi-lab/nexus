@@ -808,37 +808,29 @@ impl Filesystem for NexusFs {
         // For simplicity, we only support full file writes (offset 0)
         // For partial writes, we'd need to read-modify-write
         if offset != 0 {
-            // #4056 R5: surface stat errors as their typed errno
-            // (EACCES/EPERM/EAGAIN/ENOENT/…) instead of silently
-            // substituting gen=0, which would let auth failures masquerade
-            // as a regular read-modify-write that then hits the same
-            // wall on the read call.
-            let gen = match self.client.stat(&path) {
-                Ok(meta) => meta.gen,
+            // #4056 R6: read-modify-write must NOT pull its source
+            // from the read-through cache. The cache can serve stale
+            // bytes on transient revalidation failures (timeout, 503
+            // — anything that's_transient and isn't Conflict; see
+            // cached_read.rs), so using it as the source for a full-
+            // file rewrite would silently clobber concurrent writes
+            // with stale content. Hit the backend directly with
+            // `client.read` instead; the cache is repopulated on the
+            // next read() after invalidate_path below.
+            //
+            // This still leaves a small lost-update window between
+            // the direct read and the final write (no if_match /
+            // generation guard exists in the server's `write` RPC
+            // yet). That's a server-side gap not addressed here;
+            // documenting it so a follow-up that adds conditional
+            // writes can close it. (#4056 R6 follow-up.)
+            let existing = match self.client.read(&path) {
+                Ok(bytes) => bytes,
                 Err(e) => {
                     if !e.is_not_found() && !e.is_permission_denied() {
-                        error!("partial write: stat failed for {}: {}", path, e);
-                    }
-                    reply.error(errno_for(&e));
-                    return;
-                }
-            };
-            // Read existing content first (use cache if available).
-            // read_cached returns anyhow::Error; recover the typed
-            // NexusClientError when possible so the FUSE caller still
-            // sees the right errno.
-            let existing = match self.read_cached(&path, gen) {
-                Ok(result) => result.content,
-                Err(e) => {
-                    let typed = e.downcast_ref::<crate::error::NexusClientError>();
-                    let errno = typed.map(errno_for).unwrap_or(Errno::EIO);
-                    let is_noisy = typed
-                        .map(|ne| !ne.is_not_found() && !ne.is_permission_denied())
-                        .unwrap_or(true);
-                    if is_noisy {
                         error!("partial write: read failed for {}: {}", path, e);
                     }
-                    reply.error(errno);
+                    reply.error(errno_for(&e));
                     return;
                 }
             };
@@ -1126,23 +1118,16 @@ impl Filesystem for NexusFs {
                     }
                 }
             } else {
-                // Truncate to specific size - read and rewrite (use cache if available)
-                // #4056 R5: same change as the partial-write path —
-                // propagate typed stat errors instead of substituting
-                // gen=0.
-                let gen = match self.client.stat(&path) {
-                    Ok(meta) => meta.gen,
-                    Err(e) => {
-                        if !e.is_not_found() && !e.is_permission_denied() {
-                            error!("truncate stat error for {}: {}", path, e);
-                        }
-                        reply.error(errno_for(&e));
-                        return;
-                    }
-                };
-                match self.read_cached(&path, gen) {
-                    Ok(result) => {
-                        let mut data = result.content;
+                // Truncate to specific size - read and rewrite.
+                // #4056 R6: bypass the read-through cache for the
+                // source read, same rationale as partial-write above
+                // — the cache can serve stale bytes on transient
+                // revalidation, so a stale-cache read followed by a
+                // full-file write would silently clobber concurrent
+                // updates.
+                match self.client.read(&path) {
+                    Ok(bytes) => {
+                        let mut data = bytes;
                         data.resize(new_size as usize, 0);
                         match self.client.write(&path, &data) {
                             Ok(_) => {
@@ -1162,19 +1147,12 @@ impl Filesystem for NexusFs {
                         }
                     }
                     Err(e) => {
-                        // read_cached returns anyhow::Error; recover the
-                        // typed NexusClientError when present so the
-                        // FUSE caller sees EACCES/EPERM/EAGAIN/ENOENT
-                        // instead of a flat EIO (#4056 R5).
-                        let typed = e.downcast_ref::<crate::error::NexusClientError>();
-                        let errno = typed.map(errno_for).unwrap_or(Errno::EIO);
-                        let is_noisy = typed
-                            .map(|ne| !ne.is_not_found() && !ne.is_permission_denied())
-                            .unwrap_or(true);
-                        if is_noisy {
+                        // Direct backend read (no cache) — typed error
+                        // already in scope, just map it. (#4056 R6)
+                        if !e.is_not_found() && !e.is_permission_denied() {
                             error!("truncate read error for {}: {}", path, e);
                         }
-                        reply.error(errno);
+                        reply.error(errno_for(&e));
                         return;
                     }
                 }

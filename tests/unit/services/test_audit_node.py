@@ -66,6 +66,12 @@ class _MockKernel:
     def sys_read(self, path: str) -> bytes | None:
         return self._files.get(path)
 
+    def sys_setattr(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        # Ensure file exists (DT_REG creation) so sys_write succeeds.
+        if path not in self._files:
+            self._files[path] = b""
+        return {"path": path}
+
     def sys_write(self, path: str, data: bytes) -> int:
         self._files[path] = data
         return len(data)

@@ -157,7 +157,7 @@ class TestSysReaddir:
 
         mock_fs.sys_readdir(path="/", context=context)
 
-        mock_fs._kernel.metastore_list_paginated.assert_called_once_with("", False, 1000, None)
+        mock_fs._kernel.metastore_list_paginated.assert_called_once_with("", True, 1000, None)
 
 
 # =============================================================================

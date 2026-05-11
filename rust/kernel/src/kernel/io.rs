@@ -38,6 +38,71 @@ struct ResolvedRead {
     entry: Option<FileMetadata>,
 }
 
+/// Produce a cheap structural clone of a `KernelError` for fan-out in
+/// `_read_batch`.  `KernelError` is `!Clone` (its `Route` variant holds a
+/// non-Clone `RouteError`), so we collapse that variant to its `Debug` repr.
+fn clone_kernel_err(e: &KernelError) -> KernelError {
+    match e {
+        KernelError::InvalidPath(s) => KernelError::InvalidPath(s.clone()),
+        KernelError::FileNotFound(s) => KernelError::FileNotFound(s.clone()),
+        KernelError::FileExists(s) => KernelError::FileExists(s.clone()),
+        KernelError::IOError(s) => KernelError::IOError(s.clone()),
+        KernelError::TrieError(s) => KernelError::TrieError(s.clone()),
+        KernelError::PipeFull(s) => KernelError::PipeFull(s.clone()),
+        KernelError::PipeEmpty(s) => KernelError::PipeEmpty(s.clone()),
+        KernelError::PipeClosed(s) => KernelError::PipeClosed(s.clone()),
+        KernelError::PipeExists(s) => KernelError::PipeExists(s.clone()),
+        KernelError::PipeNotFound(s) => KernelError::PipeNotFound(s.clone()),
+        KernelError::StreamFull(s) => KernelError::StreamFull(s.clone()),
+        KernelError::StreamEmpty(s) => KernelError::StreamEmpty(s.clone()),
+        KernelError::StreamClosed(s) => KernelError::StreamClosed(s.clone()),
+        KernelError::StreamExists(s) => KernelError::StreamExists(s.clone()),
+        KernelError::StreamNotFound(s) => KernelError::StreamNotFound(s.clone()),
+        KernelError::WouldBlock(s) => KernelError::WouldBlock(s.clone()),
+        KernelError::PermissionDenied(s) => KernelError::PermissionDenied(s.clone()),
+        KernelError::BackendError(s) => KernelError::BackendError(s.clone()),
+        KernelError::Federation(s) => KernelError::Federation(s.clone()),
+        KernelError::Route(_) => {
+            // RouteError isn't trivially cloneable. Collapse to a string form —
+            // batch path only needs the per-item error visible downstream; the
+            // structural detail is preserved in the Debug repr.
+            KernelError::IOError(format!("{:?}", e))
+        }
+    }
+}
+
+/// Build a per-consumer `SysReadResult` from the lead request's shared result.
+///
+/// On success the caller's `offset` + `len` window is sliced out of the
+/// lead's full-file bytes, so every consumer in a coalesced group gets
+/// exactly the range it asked for without an extra backend round-trip.
+fn clone_read_result(
+    shared: &Result<SysReadResult, KernelError>,
+    req: &crate::kernel::BatchReadRequest,
+) -> Result<SysReadResult, KernelError> {
+    match shared {
+        Err(e) => Err(clone_kernel_err(e)),
+        Ok(src) => {
+            let data = src.data.as_ref().map(|bytes| {
+                let off = (req.offset as usize).min(bytes.len());
+                let end = match req.len {
+                    Some(l) => off.saturating_add(l as usize).min(bytes.len()),
+                    None => bytes.len(),
+                };
+                bytes[off..end].to_vec()
+            });
+            Ok(SysReadResult {
+                data,
+                post_hook_needed: src.post_hook_needed,
+                content_id: src.content_id.clone(),
+                gen: src.gen,
+                entry_type: src.entry_type,
+                stream_next_offset: src.stream_next_offset,
+            })
+        }
+    }
+}
+
 impl Kernel {
     pub fn sys_read(
         &self,
@@ -2643,15 +2708,51 @@ impl Kernel {
             resolved[i] = Some(ResolvedRead { route, entry });
         }
 
-        // Phase B — leaf work (fallback to sys_read for every still-resolved
-        // request). Coalescing arrives in Task 4; parallelism in Task 5.
-        for (i, req) in reqs.iter().enumerate() {
+        // Phase B — group surviving requests by (mount_point, content_id).
+        // Requests whose `entry.content_id` is None or empty become
+        // singleton groups (no coalescing benefit).
+        use std::collections::HashMap;
+        let mut groups: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        let mut singletons: Vec<usize> = Vec::new();
+        for (i, slot) in resolved.iter().enumerate() {
             if results[i].is_some() {
                 continue;
             }
-            if resolved[i].is_none() {
-                continue;
+            let r = match slot {
+                Some(r) => r,
+                None => continue,
+            };
+            let cid = r
+                .entry
+                .as_ref()
+                .and_then(|e| e.content_id.as_deref())
+                .unwrap_or("");
+            if cid.is_empty() {
+                singletons.push(i);
+            } else {
+                groups
+                    .entry((r.route.mount_point.clone(), cid.to_string()))
+                    .or_default()
+                    .push(i);
             }
+        }
+
+        // Sequential fan-out — coalesce each group into a single sys_read
+        // and scatter sliced copies back. Parallelism arrives in Task 5.
+        let group_vec: Vec<((String, String), Vec<usize>)> = groups.into_iter().collect();
+        for (_key, indices) in &group_vec {
+            let lead = indices[0];
+            let req = &reqs[lead];
+            // Lead always reads from offset 0; per-consumer offset/len is
+            // applied during clone_read_result so groups with mismatched
+            // ranges still benefit from a single backend fetch.
+            let shared = self.sys_read(&req.path, ctx, 5000, 0);
+            for &i in indices {
+                results[i] = Some(clone_read_result(&shared, &reqs[i]));
+            }
+        }
+        for i in singletons {
+            let req = &reqs[i];
             let r = self.sys_read(&req.path, ctx, 5000, req.offset);
             results[i] = Some(r);
         }
@@ -3124,5 +3225,27 @@ mod read_batch_tests {
         assert_eq!(out.len(), 1);
         let r = out[0].as_ref().expect("inner ok");
         assert_eq!(r.data.as_deref().unwrap(), b"hi there");
+    }
+
+    #[test]
+    fn read_batch_coalesces_same_content_id() {
+        let k = kernel_with_backend();
+        let c = ctx();
+        let payload = b"hello vectored world".to_vec();
+        k.sys_write("/coalesce.txt", &c, &payload, 0)
+            .expect("write");
+        let reqs: Vec<_> = (0..5)
+            .map(|_| crate::kernel::BatchReadRequest {
+                path: "/coalesce.txt".into(),
+                offset: 0,
+                len: None,
+            })
+            .collect();
+        let out = k._read_batch(&reqs, &c).expect("outer ok");
+        assert_eq!(out.len(), 5);
+        for r in &out {
+            let r = r.as_ref().expect("ok");
+            assert_eq!(r.data.as_deref().unwrap(), payload.as_slice());
+        }
     }
 }

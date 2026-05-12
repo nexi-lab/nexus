@@ -365,17 +365,22 @@ impl NexusVfsService for VfsServiceImpl {
             .collect();
 
         // Aggregate-size cap — preflight using metastore sizes BEFORE the
-        // kernel performs any backend I/O. A handler that enforces the cap
-        // post-read has already allocated the oversized payload by the
-        // time it rejects, defeating the purpose. We iterate over every
-        // request (not unique paths), so repeating one large file N times
-        // sums to N × size as expected. Paths without metadata (cold PAS
-        // mount, virtual resolver) contribute 0 to this estimate; their
-        // actual byte cost falls through to the request-time tonic message
-        // size limit at the transport layer.
+        // kernel performs any backend I/O. Only paths that pass the §13
+        // permission gate contribute to the sum: a caller cannot probe
+        // existence/size of denied paths by toggling resource_exhausted.
+        // Paths without metadata (cold PAS mount, virtual resolver) and
+        // denied paths contribute 0 to this estimate; the post-read
+        // defense-in-depth check below catches anything missed.
         const MAX_AGG: usize = 100 * 1024 * 1024;
         let mut declared_total: usize = 0;
         for r in &rust_reqs {
+            if self
+                .kernel
+                .check_permission(&r.path, kernel::core::dispatch::Permission::Read, &ctx)
+                .is_err()
+            {
+                continue;
+            }
             if let Some(meta) = self.kernel.metastore_get(&r.path).ok().flatten() {
                 let file_size = meta.size as usize;
                 // Respect the per-request offset/len window: a 100 GB file

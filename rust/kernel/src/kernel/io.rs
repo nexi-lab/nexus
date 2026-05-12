@@ -262,6 +262,31 @@ impl Kernel {
         timeout_ms: u64,
         offset: u64,
     ) -> Result<SysReadResult, KernelError> {
+        self.sys_read_inner(path, ctx, max_link_hops, timeout_ms, offset, false)
+    }
+
+    /// Read variant that skips the §13 permission gate AND §11 native
+    /// PRE-read hook. Used only by `_read_batch`'s Phase B fan-out, which
+    /// has already run both checks in Phase A. Calling normal `sys_read`
+    /// from Phase B would double-dispatch hooks (singletons + group leads)
+    /// and risk double-firing audit/permission side effects.
+    fn sys_read_for_batch(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysReadResult, KernelError> {
+        self.sys_read_inner(path, ctx, 1, 5000, 0, true)
+    }
+
+    fn sys_read_inner(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        max_link_hops: u8,
+        timeout_ms: u64,
+        offset: u64,
+        skip_authz: bool,
+    ) -> Result<SysReadResult, KernelError> {
         let not_found = || KernelError::FileNotFound(path.to_string());
 
         // 1. Validate
@@ -279,22 +304,24 @@ impl Kernel {
             return Err(not_found());
         }
 
-        // 1c. Permission gate (§13) — BEFORE native hooks.
-        self.check_permission(path, Permission::Read, ctx)?;
+        if !skip_authz {
+            // 1c. Permission gate (§13) — BEFORE native hooks.
+            self.check_permission(path, Permission::Read, ctx)?;
 
-        // 1d. Native INTERCEPT PRE hooks (§11 native hooks) — audit etc.
-        let hook_id = HookIdentity {
-            user_id: ctx.user_id.clone(),
-            zone_id: ctx.zone_id.clone(),
-            agent_id: ctx.agent_id.clone().unwrap_or_default(),
-            is_admin: ctx.is_admin,
-        };
-        self.dispatch_native_pre(&HookContext::Read(ReadHookCtx {
-            path: path.to_string(),
-            identity: hook_id,
-            content: None,
-            content_id: None,
-        }))?;
+            // 1d. Native INTERCEPT PRE hooks (§11 native hooks) — audit etc.
+            let hook_id = HookIdentity {
+                user_id: ctx.user_id.clone(),
+                zone_id: ctx.zone_id.clone(),
+                agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                is_admin: ctx.is_admin,
+            };
+            self.dispatch_native_pre(&HookContext::Read(ReadHookCtx {
+                path: path.to_string(),
+                identity: hook_id,
+                content: None,
+                content_id: None,
+            }))?;
+        }
 
         // 2. Route (pure Rust LPM)
         let route = match self.vfs_router.route(path, &ctx.zone_id) {
@@ -358,12 +385,13 @@ impl Kernel {
                     "DT_LINK chain rejected (ELOOP) at {path}"
                 )));
             }
-            return self.sys_read_with_link_depth(
+            return self.sys_read_inner(
                 target,
                 ctx,
                 max_link_hops - 1,
                 timeout_ms,
                 offset,
+                skip_authz,
             );
         }
 
@@ -2846,22 +2874,57 @@ impl Kernel {
                         Unit::Group { indices } => {
                             let lead = indices[0];
                             let req = &reqs[lead];
-                            let shared = self.sys_read(&req.path, ctx, 5000, 0);
+                            // Phase A already ran perm + native PRE-read hook for
+                            // every grouped path; use the no-authz variant to
+                            // avoid double-firing.
+                            let shared = self.sys_read_for_batch(&req.path, ctx);
+                            // Anchor for staleness check: the content_id the read
+                            // bytes actually came from. Re-fetched per-consumer
+                            // metadata MUST agree, or that consumer falls back
+                            // to its own read (rewrite race: file changed between
+                            // Phase A snapshot and the lead's sys_read).
+                            let lead_cid = shared.as_ref().ok().and_then(|r| r.content_id.clone());
                             for &i in indices.iter() {
-                                let consumer_meta = resolved
+                                // Re-fetch each consumer's current metadata to
+                                // close the Phase-A→Phase-B race window. If the
+                                // consumer's content_id no longer matches what
+                                // the lead actually read, fall back to a fresh
+                                // per-consumer read so bytes and gen/content_id
+                                // stay consistent.
+                                let consumer_route = resolved
                                     .get(i)
                                     .and_then(|o| o.as_ref())
-                                    .and_then(|r| r.entry.as_ref());
-                                local
-                                    .push((i, clone_read_result(&shared, &reqs[i], consumer_meta)));
+                                    .map(|r| &r.route)
+                                    .expect("resolved set in Phase A");
+                                let fresh_meta = self
+                                    .with_metastore_route(consumer_route, |ms| {
+                                        ms.get(&reqs[i].path).ok().flatten()
+                                    })
+                                    .flatten();
+                                let consumer_cid =
+                                    fresh_meta.as_ref().and_then(|m| m.content_id.as_deref());
+                                let bytes_match = match (&lead_cid, consumer_cid) {
+                                    (Some(l), Some(c)) => l == c,
+                                    _ => false,
+                                };
+                                if bytes_match {
+                                    local.push((
+                                        i,
+                                        clone_read_result(&shared, &reqs[i], fresh_meta.as_ref()),
+                                    ));
+                                } else {
+                                    // Rewrite race or lead error → fall back to
+                                    // this consumer's own read.
+                                    let r = self.sys_read_for_batch(&reqs[i].path, ctx);
+                                    local.push((i, slice_read_result(r, &reqs[i])));
+                                }
                             }
                         }
                         Unit::Singleton { idx } => {
                             let req = &reqs[*idx];
-                            // Always read from offset 0; slice per req.offset/req.len
-                            // in slice_read_result. (sys_read's offset param is for
-                            // DT_STREAM/DT_PIPE only; Task 7 rejects those here.)
-                            let r = self.sys_read(&req.path, ctx, 5000, 0);
+                            // Phase A already ran perm + native PRE-read hook;
+                            // use the no-authz variant.
+                            let r = self.sys_read_for_batch(&req.path, ctx);
                             local.push((*idx, slice_read_result(r, req)));
                         }
                     }

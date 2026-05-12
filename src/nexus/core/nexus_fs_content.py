@@ -1744,7 +1744,11 @@ class ContentMixin:
             # "permission_denied", "invalid_path", "io_error" directly instead
             # of collapsing them to data=None.  Handle before the legacy
             # data=None fallback so the correct exception / error key is used.
-            if r.error_kind:
+            # Tolerate legacy/test-double result shapes that only carry
+            # data/content_id/gen — they lack the error_kind discriminant.
+            _error_kind = getattr(r, "error_kind", "") or ""
+            _error_message = getattr(r, "error_message", "") or ""
+            if _error_kind:
                 # "unsupported" is the kernel's signal that this path's
                 # entry type cannot use the batch fast path (DT_PIPE /
                 # DT_STREAM today). Fall through to the legacy single-
@@ -1752,26 +1756,26 @@ class ContentMixin:
                 # virtual resolvers, and external connectors — instead
                 # of raising. Strict/partial behavior for the actual
                 # fallback result is decided by self.read().
-                if r.error_kind == "unsupported":
+                if _error_kind == "unsupported":
                     pass  # falls through to `r.data is None` block below
                 elif not partial:
-                    if r.error_kind == "not_found":
+                    if _error_kind == "not_found":
                         raise NexusFileNotFoundError(path)
-                    if r.error_kind == "permission_denied":
+                    if _error_kind == "permission_denied":
                         from nexus.contracts.exceptions import NexusPermissionError
 
-                        raise NexusPermissionError(r.error_message or path)
-                    if r.error_kind == "invalid_path":
+                        raise NexusPermissionError(_error_message or path)
+                    if _error_kind == "invalid_path":
                         from nexus.contracts.exceptions import InvalidPathError
 
-                        raise InvalidPathError(r.error_message or path)
+                        raise InvalidPathError(_error_message or path)
                     # io_error or other unknown kind
-                    raise OSError(f"read_batch({path}): {r.error_message}")
+                    raise OSError(f"read_batch({path}): {_error_message}")
                 else:
                     # partial mode — per-item error dict
-                    _err: dict[str, Any] = {"path": path, "error": r.error_kind}
-                    if r.error_kind == "io_error" and r.error_message:
-                        _err["message"] = r.error_message
+                    _err: dict[str, Any] = {"path": path, "error": _error_kind}
+                    if _error_kind == "io_error" and _error_message:
+                        _err["message"] = _error_message
                     results.append(_err)
                     continue
 

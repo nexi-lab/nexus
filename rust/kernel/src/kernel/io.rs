@@ -2851,8 +2851,12 @@ impl Kernel {
         // `None` (default) disables the cap so the Python wrapper's own
         // DoS guard stays in charge.
         if let Some(cap) = max_aggregate_bytes {
-            use std::collections::HashSet;
-            let mut seen: HashSet<(String, String)> = HashSet::new();
+            use std::collections::HashMap;
+            // Per-(mount, content_id) running max-size table. We charge
+            // the *maximum* declared size seen across rows that share a
+            // content_id, so a stale-small metadata row cannot understate
+            // the actual fetched blob size.
+            let mut sizes: HashMap<(String, String), usize> = HashMap::new();
             let mut declared: usize = 0;
             for slot in resolved.iter() {
                 let r = match slot {
@@ -2869,15 +2873,33 @@ impl Kernel {
                         )));
                     }
                 };
+                // DT_LINK metadata is size=0 / content_id=None at the
+                // link itself; the actual fetch follows the link to a
+                // target whose size we have not bounded here. Fail-
+                // closed under the cap rather than let a 0-byte
+                // accounting row hide a multi-GB target.
+                if meta.entry_type == crate::meta_store::DT_LINK {
+                    return Err(KernelError::IOError(format!(
+                        "read_batch cannot pre-bound DT_LINK target size; \
+                         refusing under aggregate cap (cap={} bytes)",
+                        cap
+                    )));
+                }
                 let cid = meta.content_id.clone().unwrap_or_default();
                 let blob_size = meta.size as usize;
                 if cid.is_empty() {
                     // Singleton — distinct fetch per request.
                     declared = declared.saturating_add(blob_size);
-                } else if seen.insert((r.route.mount_point.clone(), cid)) {
-                    // First time we see this (mount, content_id) — the
-                    // blob is fetched once and scattered to consumers.
-                    declared = declared.saturating_add(blob_size);
+                } else {
+                    // Track per-(mount, content_id) max-size. New rows
+                    // only increase the charge; smaller stale rows are
+                    // ignored.
+                    let key = (r.route.mount_point.clone(), cid);
+                    let prev = sizes.entry(key).or_insert(0);
+                    if blob_size > *prev {
+                        declared = declared.saturating_add(blob_size - *prev);
+                        *prev = blob_size;
+                    }
                 }
                 if declared > cap {
                     return Err(KernelError::IOError(format!(

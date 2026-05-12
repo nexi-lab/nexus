@@ -27,6 +27,7 @@ class ZoneRunner:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._closed = False
+        self._stopping = False
 
     @property
     def is_alive(self) -> bool:
@@ -85,13 +86,30 @@ class ZoneRunner:
         return asyncio.run_coroutine_threadsafe(invoke(), loop).result()
 
     def stop(self) -> None:
+        owns_shutdown = False
         with self._lock:
             thread = self._thread
-            if self._closed and not (thread is not None and thread.is_alive()):
+            if self._closed:
+                stopping = self._stopping
+                if not (stopping and thread is not None and thread.is_alive()):
+                    return
+            else:
+                self._closed = True
+                self._stopping = True
+                self._ready.set()
+                owns_shutdown = True
+            if not owns_shutdown:
+                wait_thread = thread
+            else:
+                loop = self._loop
+        if not owns_shutdown:
+            if wait_thread is not None and wait_thread is not threading.current_thread():
+                wait_thread.join(timeout=self._join_timeout)
                 return
-            self._closed = True
-            loop = self._loop
+            return
         if thread is None:
+            with self._lock:
+                self._stopping = False
             return
         if loop is None:
             self._ready.wait(timeout=self._join_timeout)
@@ -100,6 +118,8 @@ class ZoneRunner:
                 thread.join(timeout=self._join_timeout)
                 if thread.is_alive():
                     logger.warning("Zone runner %s thread did not terminate", self.zone_id)
+                with self._lock:
+                    self._stopping = False
                 return
         if thread is threading.current_thread():
             loop.call_soon(loop.stop)
@@ -119,6 +139,9 @@ class ZoneRunner:
         thread.join(timeout=join_timeout)
         if thread.is_alive():
             logger.warning("Zone runner %s thread did not terminate", self.zone_id)
+        else:
+            with self._lock:
+                self._stopping = False
 
     def is_current_runner(self) -> bool:
         return getattr(_CURRENT, "runner", None) is self
@@ -150,6 +173,8 @@ class ZoneRunner:
                 asyncio.set_event_loop(None)
                 loop.close()
                 self._loop = None
+                with self._lock:
+                    self._stopping = False
 
     async def _cancel_pending(
         self,

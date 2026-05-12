@@ -189,6 +189,43 @@ def test_stop_is_idempotent() -> None:
     assert not runner.is_alive
 
 
+def test_concurrent_stop_callers_return_without_exceptions() -> None:
+    runner = _BlockingCancelRunner("zone-a", join_timeout=0.5)
+    stop_errors: list[BaseException] = []
+    release_stops = threading.Event()
+
+    def stop_runner() -> None:
+        try:
+            release_stops.wait(2.0)
+            runner.stop()
+        except BaseException as exc:
+            stop_errors.append(exc)
+
+    runner.start()
+    first = threading.Thread(target=stop_runner)
+    second = threading.Thread(target=stop_runner)
+    first.start()
+    second.start()
+    try:
+        release_stops.set()
+        assert runner.first_cleanup_started.wait(2.0)
+        assert runner.second_cleanup_started.wait(2.0)
+        runner.release_cleanup.set()
+
+        first.join(2.0)
+        second.join(2.0)
+
+        assert stop_errors == []
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert not runner.is_alive
+    finally:
+        runner.release_cleanup.set()
+        first.join(2.0)
+        second.join(2.0)
+        runner.stop()
+
+
 def test_start_after_stop_raises() -> None:
     runner = ZoneRunner("zone-a")
 
@@ -288,6 +325,37 @@ def test_stop_terminates_when_pending_task_suppresses_cancellation(
         runner.stop()
 
 
+def test_stop_wakes_start_waiting_for_readiness() -> None:
+    runner = _DelayedStartRunner("zone-a", join_timeout=0.1)
+    start_errors: list[BaseException] = []
+
+    def start_runner() -> None:
+        try:
+            runner.start()
+        except BaseException as exc:
+            start_errors.append(exc)
+
+    starter = threading.Thread(target=start_runner)
+    starter.start()
+    try:
+        assert runner.startup_blocked.wait(2.0)
+
+        before_stop = time.monotonic()
+        runner.stop()
+        starter.join(0.5)
+        elapsed = time.monotonic() - before_stop
+
+        assert not starter.is_alive()
+        assert elapsed < 0.5
+        assert len(start_errors) == 1
+        assert isinstance(start_errors[0], RuntimeError)
+        assert "has been stopped" in str(start_errors[0])
+    finally:
+        runner.release_startup.set()
+        starter.join(2.0)
+        runner.stop()
+
+
 def test_stop_during_startup_does_not_strand_runner() -> None:
     runner = _DelayedStartRunner("zone-a", join_timeout=0.1)
     start_errors: list[BaseException] = []
@@ -344,3 +412,30 @@ class _DelayedStartRunner(ZoneRunner):
         self.startup_blocked.set()
         self.release_startup.wait(2.0)
         super()._thread_main()
+
+
+class _BlockingCancelRunner(ZoneRunner):
+    def __init__(self, zone_id: str, join_timeout: float = 5.0) -> None:
+        super().__init__(zone_id, join_timeout)
+        self._cleanup_count = 0
+        self._cleanup_count_lock = threading.Lock()
+        self.first_cleanup_started = threading.Event()
+        self.second_cleanup_started = threading.Event()
+        self.release_cleanup = threading.Event()
+
+    async def _cancel_pending(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        *,
+        stop: bool = True,
+        timeout: float | None = None,
+    ) -> None:
+        with self._cleanup_count_lock:
+            self._cleanup_count += 1
+            cleanup_count = self._cleanup_count
+        if cleanup_count == 1:
+            self.first_cleanup_started.set()
+        elif cleanup_count == 2:
+            self.second_cleanup_started.set()
+        await asyncio.to_thread(self.release_cleanup.wait, 2.0)
+        await super()._cancel_pending(loop, stop=stop, timeout=timeout)

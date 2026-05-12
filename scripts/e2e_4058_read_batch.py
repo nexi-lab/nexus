@@ -149,9 +149,8 @@ def test_http_batch_read_legacy(c: httpx.Client) -> None:
     r = c.post("/api/v2/files/batch-read", json={"paths": paths}, timeout=30)
     if r.status_code >= 400:
         fail(f"batch-read -> HTTP {r.status_code}: {r.text[:300]}")
-    body = r.json()
-    # Could be {"files": {...}} or {"results": [...]} — accept either; just verify each path
-    # appears with the right content somehow.
+    # Response could be {"files": {...}} or {"results": [...]} — accept
+    # either; just verify each path's content appears somewhere in the body.
     json_str = r.text
     for i, p in enumerate(paths):
         want = f"bulk-{i}"

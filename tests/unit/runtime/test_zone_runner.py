@@ -51,6 +51,51 @@ def test_start_uses_daemon_thread_named_for_zone() -> None:
         runner.stop()
 
 
+def test_concurrent_call_waits_for_startup_readiness() -> None:
+    runner = _DelayedStartRunner("zone-a", join_timeout=1.0)
+    start_errors: list[BaseException] = []
+    call_errors: list[BaseException] = []
+    call_results: list[str] = []
+
+    async def work() -> str:
+        return "ok"
+
+    def start_runner() -> None:
+        try:
+            runner.start()
+        except BaseException as exc:
+            start_errors.append(exc)
+
+    def call_runner() -> None:
+        try:
+            call_results.append(runner.call_sync(work))
+        except BaseException as exc:
+            call_errors.append(exc)
+
+    starter = threading.Thread(target=start_runner)
+    caller = threading.Thread(target=call_runner)
+    starter.start()
+    try:
+        assert runner.startup_blocked.wait(2.0)
+        caller.start()
+        caller.join(0.1)
+
+        assert caller.is_alive()
+
+        runner.release_startup.set()
+        starter.join(2.0)
+        caller.join(2.0)
+
+        assert start_errors == []
+        assert call_errors == []
+        assert call_results == ["ok"]
+    finally:
+        runner.release_startup.set()
+        starter.join(2.0)
+        caller.join(2.0)
+        runner.stop()
+
+
 def test_call_sync_runs_from_sync_code() -> None:
     runner = ZoneRunner("zone-a")
 
@@ -201,7 +246,9 @@ def test_stop_during_startup_does_not_strand_runner() -> None:
         stranded = runner.is_alive
         runner.stop()
 
-        assert all(isinstance(exc, RuntimeError) for exc in start_errors)
+        assert len(start_errors) == 1
+        assert isinstance(start_errors[0], RuntimeError)
+        assert "has been stopped" in str(start_errors[0])
         assert not stranded
         assert not runner.is_alive
     finally:

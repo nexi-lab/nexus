@@ -36,18 +36,24 @@ class ZoneRunner:
         with self._lock:
             if self._closed:
                 raise RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._ready.clear()
-            thread = threading.Thread(
-                target=self._thread_main,
-                name=f"nexus-zone-{self.zone_id}",
-                daemon=True,
-            )
-            self._thread = thread
-            thread.start()
+            thread = self._thread
+            if thread is None or not thread.is_alive():
+                self._ready.clear()
+                thread = threading.Thread(
+                    target=self._thread_main,
+                    name=f"nexus-zone-{self.zone_id}",
+                    daemon=True,
+                )
+                self._thread = thread
+                thread.start()
         self._ready.wait(timeout=5.0)
-        if self._loop is None:
+        with self._lock:
+            loop = self._loop
+            stopped = self._closed
+            thread_alive = thread.is_alive()
+        if stopped:
+            raise RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
+        if loop is None or not thread_alive:
             raise RuntimeError(f"ZoneRunner {self.zone_id!r} did not start")
 
     async def call(self, work: Callable[[], Awaitable[T]]) -> T:

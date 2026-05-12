@@ -2817,16 +2817,26 @@ impl Kernel {
         }
 
         // Aggregate-bytes cap — only authorized paths (those that survived
-        // Phase A's permission + native PRE-read hook) contribute. A non-
-        // zero cap returned by `read_batch_max_aggregate_bytes` causes a
-        // hard outer error; 0 (default) disables the cap so the Python
-        // wrapper's own DoS guard remains in charge. gRPC `BatchRead`
-        // sets this knob to 100 MiB so a malicious client cannot force
-        // the kernel to fetch / clone an oversized response.
+        // Phase A's permission + native PRE-read hook) contribute. We
+        // count actual fetched bytes, not response window bytes: Phase B
+        // calls sys_read (which is whole-blob today, slicing happens in
+        // the kernel after the fetch). So a request reading `(/big, off=0,
+        // len=1)` from a 100 GB file costs ~100 GB of fetch/cache fill,
+        // not 1 byte. Coalescing by (mount, content_id) means one fetch
+        // per distinct blob; singletons (no content_id) each fetch their
+        // own file. Paths without metadata still don't contribute — the
+        // post-read defense-in-depth in the transport handler catches
+        // those before serialization.
+        //
+        // A non-zero cap returned by `read_batch_max_aggregate_bytes`
+        // causes a hard outer error; 0 (default) disables the cap so the
+        // Python wrapper's own DoS guard remains in charge.
         let agg_cap = self.read_batch_max_aggregate_bytes();
         if agg_cap > 0 {
+            use std::collections::HashSet;
+            let mut seen: HashSet<(String, String)> = HashSet::new();
             let mut declared: usize = 0;
-            for (i, slot) in resolved.iter().enumerate() {
+            for slot in resolved.iter() {
                 let r = match slot {
                     Some(r) => r,
                     None => continue,
@@ -2835,14 +2845,16 @@ impl Kernel {
                     Some(m) => m,
                     None => continue,
                 };
-                let req = &reqs[i];
-                let file_size = meta.size as usize;
-                let off = (req.offset as usize).min(file_size);
-                let window = match req.len {
-                    Some(l) => (l as usize).min(file_size.saturating_sub(off)),
-                    None => file_size.saturating_sub(off),
-                };
-                declared = declared.saturating_add(window);
+                let cid = meta.content_id.clone().unwrap_or_default();
+                let blob_size = meta.size as usize;
+                if cid.is_empty() {
+                    // Singleton — distinct fetch per request.
+                    declared = declared.saturating_add(blob_size);
+                } else if seen.insert((r.route.mount_point.clone(), cid)) {
+                    // First time we see this (mount, content_id) — the
+                    // blob is fetched once and scattered to consumers.
+                    declared = declared.saturating_add(blob_size);
+                }
                 if declared > agg_cap {
                     return Err(KernelError::IOError(format!(
                         "read_batch declared aggregate {} bytes exceeds {} bytes cap",
@@ -2953,6 +2965,21 @@ impl Kernel {
                                     .and_then(|o| o.as_ref())
                                     .map(|r| &r.route)
                                     .expect("resolved set in Phase A");
+                                // Per-consumer route stability check. A mount
+                                // change can shadow / remap a consumer path
+                                // even when the lead's mount looks stable.
+                                let consumer_route_stable = self
+                                    .vfs_router
+                                    .route(&reqs[i].path, &ctx.zone_id)
+                                    .map(|r| r.mount_point == consumer_route.mount_point)
+                                    .unwrap_or(false);
+                                if !consumer_route_stable {
+                                    // Re-run full sys_read so authz + hooks
+                                    // run against the current mount.
+                                    let r = self.sys_read(&reqs[i].path, ctx, 5000, 0);
+                                    local.push((i, slice_read_result(r, &reqs[i])));
+                                    continue;
+                                }
                                 let fresh_meta = self
                                     .with_metastore_route(consumer_route, |ms| {
                                         ms.get(&reqs[i].path).ok().flatten()

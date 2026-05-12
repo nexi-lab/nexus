@@ -6,6 +6,15 @@ import pytest
 from nexus.runtime.zone_runner import ZoneRunner
 
 
+def test_join_timeout_can_be_positional() -> None:
+    runner = ZoneRunner("zone-a", 1.0)
+
+    try:
+        assert not runner.is_alive
+    finally:
+        runner.stop()
+
+
 @pytest.mark.asyncio
 async def test_call_runs_on_dedicated_loop_and_thread() -> None:
     runner = ZoneRunner("zone-a")

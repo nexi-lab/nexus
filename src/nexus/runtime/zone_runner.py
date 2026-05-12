@@ -16,7 +16,7 @@ _CURRENT = threading.local()
 class ZoneRunner:
     """Dedicated thread and asyncio loop for one zone."""
 
-    def __init__(self, zone_id: str, *, join_timeout: float = 5.0) -> None:
+    def __init__(self, zone_id: str, join_timeout: float = 5.0) -> None:
         if not zone_id:
             raise ValueError("zone_id is required")
         self.zone_id = zone_id

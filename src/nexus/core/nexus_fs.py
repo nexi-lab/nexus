@@ -278,20 +278,25 @@ class NexusFS(  # type: ignore[misc]
                     # slot + install real `PeerBlobClient` (idempotent).
                     # Log on failure so a stale wheel surfaces in the
                     # logs rather than silently disabling federation.
-                    try:
-                        import nexus_runtime as _nk
+                    # Skip federation wiring during pytest — parallel xdist
+                    # workers compete for the same gRPC port causing 8+ min
+                    # hangs. Federation is an integration-level concern; unit
+                    # tests pass a pre-built kernel via _provided_kernel instead.
+                    import os as _os
 
-                        # Federation first so init_from_env stashes the
-                        # blob-fetcher slot before transport drains it.
-                        _nk.install_federation_wiring(self._kernel)
-                        _nk.install_transport_wiring(self._kernel)
-                    except Exception as _wiring_exc:
-                        logger.warning(
-                            "install_transport_wiring/install_federation_wiring "
-                            "failed (federation peer-blob fetch will fall back "
-                            "to Noop): %s",
-                            _wiring_exc,
-                        )
+                    if not _os.environ.get("PYTEST_CURRENT_TEST"):
+                        try:
+                            import nexus_runtime as _nk
+
+                            _nk.install_federation_wiring(self._kernel)
+                            _nk.install_transport_wiring(self._kernel)
+                        except Exception as _wiring_exc:
+                            logger.warning(
+                                "install_transport_wiring/install_federation_wiring "
+                                "failed (federation peer-blob fetch will fall back "
+                                "to Noop): %s",
+                                _wiring_exc,
+                            )
                     # Wire redb metastore — ALL reads and writes go through
                     # Rust redb. When the caller handed us a path, open
                     # against it. When ``None`` was passed, fall back to a

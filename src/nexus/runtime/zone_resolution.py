@@ -7,6 +7,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 
 _EXPLICIT_ZONE_ATTRS = ("zone", "zone_id", "target_zone_id")
 _PATH_ATTRS = ("path", "src", "dst", "old_path", "new_path", "prefix")
+_CONTAINER_ATTRS = ("files", "operations")
 
 
 def zone_from_path(value: str) -> str | None:
@@ -52,33 +53,48 @@ def _read_attr(value: Any, attr: str) -> Any:
 
 
 def _iter_path_values(params: Any) -> Iterable[str]:
+    seen: set[int] = set()
     for attr in _PATH_ATTRS:
         value = _read_attr(params, attr)
-        yield from _paths_from_value(value)
-    files = _read_attr(params, "files")
-    yield from _paths_from_value(files)
-    operations = _read_attr(params, "operations")
-    yield from _paths_from_value(operations)
+        yield from _paths_from_value(value, seen)
+    for attr in _CONTAINER_ATTRS:
+        value = _read_attr(params, attr)
+        yield from _paths_from_value(value, seen)
 
 
-def _paths_from_value(value: Any) -> Iterable[str]:
+def _paths_from_value(value: Any, seen: set[int]) -> Iterable[str]:
     if isinstance(value, str):
         yield value
         return
-    if isinstance(value, dict):
-        for key in _PATH_ATTRS:
-            nested = value.get(key)
-            if isinstance(nested, str):
-                yield nested
+    if value is None or isinstance(value, bytes | bytearray | memoryview):
         return
-    if isinstance(value, tuple) and value and isinstance(value[0], str):
-        yield value[0]
+    if isinstance(value, dict):
+        if _already_seen(value, seen):
+            return
+        for key in _PATH_ATTRS:
+            yield from _paths_from_value(value.get(key), seen)
+        for key in _CONTAINER_ATTRS:
+            yield from _paths_from_value(value.get(key), seen)
         return
     if isinstance(value, list | tuple):
+        if _already_seen(value, seen):
+            return
         for item in value:
-            yield from _paths_from_value(item)
+            yield from _paths_from_value(item, seen)
+        return
+    if _already_seen(value, seen):
         return
     for attr in _PATH_ATTRS:
         nested = getattr(value, attr, None)
-        if isinstance(nested, str):
-            yield nested
+        yield from _paths_from_value(nested, seen)
+    for attr in _CONTAINER_ATTRS:
+        nested = getattr(value, attr, None)
+        yield from _paths_from_value(nested, seen)
+
+
+def _already_seen(value: Any, seen: set[int]) -> bool:
+    value_id = id(value)
+    if value_id in seen:
+        return True
+    seen.add(value_id)
+    return False

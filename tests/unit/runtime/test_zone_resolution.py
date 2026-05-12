@@ -15,6 +15,13 @@ def test_zone_from_path_reads_zone_prefix() -> None:
     assert zone_from_path("/plain/path.txt") is None
 
 
+def test_zone_from_path_ignores_empty_and_root_paths() -> None:
+    assert zone_from_path("") is None
+    assert zone_from_path("/") is None
+    assert zone_from_path("/zone/") is None
+    assert zone_from_path(f"/zone/{ROOT_ZONE_ID}/docs/a.txt") is None
+
+
 def test_zone_from_params_prefers_explicit_zone_attribute() -> None:
     params = SimpleNamespace(zone_id="ops", path="/zone/eng/docs/a.txt")
     assert zone_from_params(params) == "ops"
@@ -32,6 +39,28 @@ def test_zone_from_params_reads_tuple_file_containers() -> None:
 
 def test_zone_from_params_reads_tuple_operation_containers() -> None:
     params = {"operations": ({"path": "/zone/legal/a.txt"},)}
+    assert zone_from_params(params) == "legal"
+
+
+def test_zone_from_params_reads_nested_dict_container_fields() -> None:
+    params = {"operations": {"files": [("/zone/eng/a.txt", b"a")]}}
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_reads_nested_object_container_fields() -> None:
+    params = SimpleNamespace(
+        operations=SimpleNamespace(files=[SimpleNamespace(path="/zone/legal/a.txt")])
+    )
+    assert zone_from_params(params) == "legal"
+
+
+def test_zone_from_params_reads_tagged_operation_tuple_payload() -> None:
+    params = {"operations": [("write", {"path": "/zone/eng/a.txt"})]}
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_reads_tagged_operation_tuple_paths() -> None:
+    params = {"operations": [("rename", "/zone/legal/a.txt", "/zone/legal/b.txt")]}
     assert zone_from_params(params) == "legal"
 
 

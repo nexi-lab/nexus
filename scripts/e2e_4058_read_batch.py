@@ -187,7 +187,7 @@ def test_grpc_batch_read(env_vars: dict[str, str], c: httpx.Client) -> None:
         # 3.1 — basic
         req = vfs_pb2.BatchReadRequest(
             auth_token=api_key,
-            items=[vfs_pb2.BatchReadItemRequest(path=p, offset=0, len=0) for p in payloads],
+            items=[vfs_pb2.BatchReadItemRequest(path=p, offset=0) for p in payloads],
         )
         resp = stub.BatchRead(req, timeout=30)
         if len(resp.results) != 3:
@@ -204,9 +204,9 @@ def test_grpc_batch_read(env_vars: dict[str, str], c: httpx.Client) -> None:
         req2 = vfs_pb2.BatchReadRequest(
             auth_token=api_key,
             items=[
-                vfs_pb2.BatchReadItemRequest(path="/e2e_grpc_a.txt", offset=0, len=0),
-                vfs_pb2.BatchReadItemRequest(path="/e2e_grpc_missing.txt", offset=0, len=0),
-                vfs_pb2.BatchReadItemRequest(path="/e2e_grpc_b.txt", offset=2, len=4),  # "ta_p"
+                vfs_pb2.BatchReadItemRequest(path="/e2e_grpc_a.txt", offset=0),
+                vfs_pb2.BatchReadItemRequest(path="/e2e_grpc_missing.txt", offset=0),
+                vfs_pb2.BatchReadItemRequest(path="/e2e_grpc_b.txt", offset=2, length=4),  # "ta_p"
             ],
         )
         resp2 = stub.BatchRead(req2, timeout=30)
@@ -232,7 +232,7 @@ def test_grpc_batch_read(env_vars: dict[str, str], c: httpx.Client) -> None:
         resp4 = stub.BatchRead(
             vfs_pb2.BatchReadRequest(
                 auth_token=api_key,
-                items=[vfs_pb2.BatchReadItemRequest(path="/e2e_grpc_a.txt", offset=0, len=0)] * 5,
+                items=[vfs_pb2.BatchReadItemRequest(path="/e2e_grpc_a.txt", offset=0)] * 5,
             ),
             timeout=30,
         )

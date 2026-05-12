@@ -1166,17 +1166,17 @@ mod tests {
                 BatchReadItemRequest {
                     path: "/x.txt".into(),
                     offset: 0,
-                    len: 0,
+                    length: None, // whole file from offset
                 },
                 BatchReadItemRequest {
                     path: "/missing.txt".into(),
                     offset: 0,
-                    len: 0,
+                    length: None,
                 },
                 BatchReadItemRequest {
                     path: "/x.txt".into(),
                     offset: 1,
-                    len: 3,
+                    length: Some(3),
                 },
             ],
         });

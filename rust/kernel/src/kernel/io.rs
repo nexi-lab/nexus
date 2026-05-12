@@ -2831,6 +2831,23 @@ impl Kernel {
                 results[i] = Some(Err(e));
                 continue;
             }
+            // Zero-length range short-circuit. Phase A has already run
+            // §13 permission + §11 native PRE-read hook for this path,
+            // so returning an empty buffer is authoritative — no need
+            // to descend through Phase B (and no need to follow DT_LINK
+            // targets just to produce 0 bytes). Lets the cap-zero-with-
+            // link edge case succeed.
+            if req.len == Some(0) {
+                results[i] = Some(Ok(SysReadResult {
+                    data: Some(Vec::new()),
+                    post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                    content_id: entry.as_ref().and_then(|m| m.content_id.clone()),
+                    gen: entry.as_ref().map(|m| m.gen).unwrap_or(0),
+                    entry_type: entry.as_ref().map(|m| m.entry_type).unwrap_or(DT_REG),
+                    stream_next_offset: None,
+                }));
+                continue;
+            }
             resolved[i] = Some(ResolvedRead { route, entry });
         }
 
@@ -2867,7 +2884,7 @@ impl Kernel {
             // the final ceiling.
             let mut sizes: HashMap<(String, String), usize> = HashMap::new();
             let mut declared: usize = 0;
-            for slot in resolved.iter() {
+            for (i, slot) in resolved.iter().enumerate() {
                 let r = match slot {
                     Some(r) => r,
                     None => continue,
@@ -2875,14 +2892,24 @@ impl Kernel {
                 let meta = match r.entry.as_ref() {
                     Some(m) => m,
                     // No metastore entry under a cap is ambiguous: it
-                    // might be a normal missing file (Phase B will
-                    // return per-item FileNotFound) OR an external-
-                    // connector / virtual-resolver path with bytes
-                    // produced lazily. Skipping it here keeps normal
-                    // "missing in a batch" callers from blowing up the
-                    // whole RPC. The post-read defense-in-depth in the
-                    // transport handler catches the lazy-fetched case.
-                    None => continue,
+                    // might be a normal missing file (Phase B returns
+                    // per-item FileNotFound) OR an external-connector
+                    // / virtual-resolver path with bytes produced
+                    // lazily by the backend. To prevent capped callers
+                    // from bypassing the DoS guard via metadata-less
+                    // external mounts, we don't outer-Err the whole
+                    // batch any more; instead we mark this path with a
+                    // per-item Err so Phase B never fetches its bytes.
+                    // Genuine missing files would receive FileNotFound
+                    // from Phase B anyway, so the user-visible result
+                    // is the same.
+                    None => {
+                        results[i] = Some(Err(KernelError::IOError(format!(
+                            "read_batch cannot bound metadata-less path under cap (cap={} bytes)",
+                            cap
+                        ))));
+                        continue;
+                    }
                 };
                 // DT_LINK metadata is size=0 / content_id=None at the
                 // link itself; the actual fetch follows the link to a

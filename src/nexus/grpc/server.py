@@ -198,9 +198,8 @@ async def shutdown_grpc(app: "FastAPI", _svc: "LifespanServices") -> None:
     """Stop the Rust gRPC server if running."""
     handle = getattr(app.state, "grpc_server_handle", None)
     if handle is not None:
-        # `shutdown` is sync — the Rust runtime wait happens inside the
-        # PyO3 method. Run on default executor so we don't block the
-        # FastAPI event loop while tonic flushes in-flight responses.
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle.shutdown)
+        # `shutdown` is sync, but the Rust side has its own short timeout.
+        # Running it through the default executor can starve behind unrelated
+        # shutdown work and consume Docker's whole stop grace period.
+        handle.shutdown()
         logger.info("Rust VFS gRPC server stopped")

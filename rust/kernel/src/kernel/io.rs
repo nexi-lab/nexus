@@ -21,7 +21,9 @@ use crate::lock_manager::{LockManager, LockMode};
 use crate::meta_store::{FileMetadata, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 
 use super::{
-    validate_path_fast, Kernel, KernelError, OpMetadataResult, OperationContext, StatResult,
+    validate_path_fast,
+    write_buffer::{DirtyWrite, DirtyWriteKey, DirtyWriteRoute, FlushSelection},
+    FlushWriteBufferResult, Kernel, KernelError, OpMetadataResult, OperationContext, StatResult,
     SysCatResult, SysCopyResult, SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult,
     SysUnlinkResult, SysWriteResult,
 };
@@ -292,6 +294,8 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
+        let _ = self.flush_due_write_buffer();
+
         // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
         // Short-circuits to metastore get_file_metadata without hooks/routing.
         if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
@@ -344,6 +348,16 @@ impl Kernel {
         {
             Some(meta) => meta,
             None => {
+                if let Some(data) = self.write_buffer.get_dirty_bytes(path, &ctx.zone_id) {
+                    return Ok(SysReadResult {
+                        data: Some(data),
+                        post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                        content_id: None,
+                        gen: 1,
+                        entry_type: DT_REG,
+                        stream_next_offset: None,
+                    });
+                }
                 // MetaStore miss → try backend directly (all backend types
                 // uniformly).  CAS backends return Err for path-based reads
                 // (hash-addressed).  Path-local/external backends serve the
@@ -512,6 +526,17 @@ impl Kernel {
         // Content identifier: CAS backends use content_id (hash). Path-addressed
         // backends derive their physical path from `path - mount_prefix`
         // inside the backend itself; the kernel always passes the content_id.
+        if let Some(data) = self.write_buffer.get_dirty_bytes(path, &ctx.zone_id) {
+            return Ok(SysReadResult {
+                data: Some(data),
+                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                content_id: entry.content_id.clone(),
+                gen: entry.gen.saturating_add(1),
+                entry_type: DT_REG,
+                stream_next_offset: None,
+            });
+        }
+
         let content_id = match entry.content_id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => id,
             None => return Err(not_found()),
@@ -722,7 +747,18 @@ impl Kernel {
             stream_next_offset: None,
         })
     }
+}
 
+struct WriteCommitInput<'a> {
+    path: &'a str,
+    ctx: &'a OperationContext,
+    content: &'a [u8],
+    offset: u64,
+    route: &'a crate::vfs_router::RouteResult,
+    old_metadata: Option<Option<FileMetadata>>,
+}
+
+impl Kernel {
     // ── sys_write ──────────────────────────────────────────────────────
 
     /// Rust syscall: write file content (pure Rust, no GIL).
@@ -769,6 +805,8 @@ impl Kernel {
 
         // 1. Validate
         validate_path_fast(path)?;
+
+        let _ = self.flush_due_write_buffer();
 
         // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
         // Short-circuits to metastore set_file_metadata without hooks/routing.
@@ -847,7 +885,7 @@ impl Kernel {
         }
 
         // 3b. DT_PIPE / DT_STREAM: try Rust IPC registry
-        if let Some(entry) = entry {
+        if let Some(entry) = &entry {
             if entry.entry_type == DT_PIPE {
                 if let Some(buf) = self.pipe_manager.get(path) {
                     match buf.push(effective_content) {
@@ -945,6 +983,69 @@ impl Kernel {
             }
         }
 
+        let policy = self.write_buffer.policy_for(path);
+        if policy.enabled() && route.backend.is_some() {
+            let lock_handle = self.lock_manager.blocking_acquire(
+                path,
+                LockMode::Write,
+                self.vfs_lock_timeout_ms(),
+            );
+            if lock_handle == 0 {
+                return miss();
+            }
+
+            let old_entry = entry.clone();
+            let dirty_key = DirtyWriteKey::new(path, &ctx.zone_id);
+            let base_content =
+                match if offset == 0 || self.write_buffer.contains_dirty_key(&dirty_key) {
+                    Ok(Vec::new())
+                } else {
+                    self.load_buffered_write_base(path, ctx, &route, old_entry.as_ref())
+                } {
+                    Ok(content) => content,
+                    Err(err) => {
+                        self.lock_manager.do_release(lock_handle);
+                        return Err(err);
+                    }
+                };
+            let now_ms = Self::now_ms_u64();
+            let merge_result = self.write_buffer.merge_write_with_base_and_context(
+                dirty_key,
+                DirtyWriteRoute::from_route(path, &route),
+                ctx.clone(),
+                old_entry.clone(),
+                base_content,
+                effective_content,
+                offset,
+                policy.clone(),
+                now_ms,
+            );
+
+            self.lock_manager.do_release(lock_handle);
+
+            let size = merge_result.map_err(KernelError::IOError)?;
+            if policy.byte_budget > 0 && size >= policy.byte_budget {
+                self.flush_write_buffer(Some(path), Some(&ctx.zone_id))?;
+            }
+
+            return Ok(SysWriteResult {
+                hit: true,
+                content_id: old_entry.as_ref().and_then(|e| e.content_id.clone()),
+                post_hook_needed: false,
+                version: old_entry.as_ref().map(|e| e.version + 1).unwrap_or(1),
+                gen: old_entry
+                    .as_ref()
+                    .map(|e| e.gen.saturating_add(1))
+                    .unwrap_or(1),
+                size: size as u64,
+                is_new: old_entry.is_none(),
+                old_content_id: old_entry.as_ref().and_then(|e| e.content_id.clone()),
+                old_size: old_entry.as_ref().map(|e| e.size),
+                old_version: old_entry.as_ref().map(|e| e.version),
+                old_modified_at_ms: old_entry.as_ref().and_then(|e| e.modified_at_ms),
+            });
+        }
+
         // 4. VFS lock (blocking write lock)
         let lock_handle =
             self.lock_manager
@@ -953,43 +1054,122 @@ impl Kernel {
             return miss();
         }
 
+        let result = self.commit_write_through(WriteCommitInput {
+            path,
+            ctx,
+            content: effective_content,
+            offset,
+            route: &route,
+            old_metadata: None,
+        });
+
+        self.lock_manager.do_release(lock_handle);
+
+        result
+    }
+
+    fn load_buffered_write_base(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        route: &crate::vfs_router::RouteResult,
+        old_entry: Option<&FileMetadata>,
+    ) -> Result<Vec<u8>, KernelError> {
+        let backend = route
+            .backend
+            .as_ref()
+            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
+        if let Some(content_id) = old_entry
+            .and_then(|e| e.content_id.as_deref())
+            .filter(|content_id| !content_id.is_empty())
+        {
+            return backend.read_content(content_id, ctx).map_err(|err| {
+                KernelError::BackendError(format!(
+                    "buffered partial base read({path}, {content_id}): {err:?}"
+                ))
+            });
+        }
+
+        backend
+            .read_content(&route.backend_path, ctx)
+            .map_err(|err| match err {
+                crate::abc::object_store::StorageError::NotFound(_) => {
+                    KernelError::FileNotFound(path.to_string())
+                }
+                other => KernelError::BackendError(format!(
+                    "buffered partial direct base read({path}, {}): {other:?}",
+                    route.backend_path
+                )),
+            })
+    }
+
+    fn commit_old_metadata(&self, input: &WriteCommitInput<'_>) -> Option<FileMetadata> {
+        match &input.old_metadata {
+            Some(old_metadata) => old_metadata.clone(),
+            None => self
+                .with_metastore_route(input.route, |ms| ms.get(input.path).ok().flatten())
+                .flatten(),
+        }
+    }
+
+    fn commit_write_through(
+        &self,
+        input: WriteCommitInput<'_>,
+    ) -> Result<SysWriteResult, KernelError> {
+        let miss = || {
+            Ok(SysWriteResult {
+                hit: false,
+                content_id: None,
+                post_hook_needed: false,
+                version: 0,
+                gen: 0,
+                size: 0,
+                is_new: false,
+                old_content_id: None,
+                old_size: None,
+                old_version: None,
+                old_modified_at_ms: None,
+            })
+        };
+
         // 5. Backend write (Rust-native ObjectStore).
         //    Pass backend_path as content_id for PAS; for CAS at offset=0
         //    content_id is ignored, but for offset>0 we need the OLD
         //    content hash so CASEngine::write_partial can splice against
         //    it. Look up old entry (dcache → metastore fallback).
-        let effective_content_id = if offset == 0 {
-            route.backend_path.clone()
+        let effective_content_id = if input.offset == 0 {
+            input.route.backend_path.clone()
         } else {
             // Partial write path: use the CAS hash from the existing inode.
             // PathLocalBackend ignores content_id when offset>0 (uses the
             // on-disk file instead), so this value is only consulted by
             // CasLocalBackend.
-            let old_entry: Option<FileMetadata> = self
-                .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
-                .flatten();
+            let old_entry = self.commit_old_metadata(&input);
             match old_entry {
                 Some(e) => e.content_id.unwrap_or_default(),
                 None => {
                     // Partial write requires an existing file — but
                     // `sys_write` contract says "file must exist" anyway,
                     // so just surface that.
-                    self.lock_manager.do_release(lock_handle);
-                    return Err(KernelError::FileNotFound(path.to_string()));
+                    return Err(KernelError::FileNotFound(input.path.to_string()));
                 }
             }
         };
-        let write_result = match route.backend.as_ref() {
+        let write_result = match input.route.backend.as_ref() {
             Some(backend) => {
-                match backend.write_content(effective_content, &effective_content_id, ctx, offset) {
+                match backend.write_content(
+                    input.content,
+                    &effective_content_id,
+                    input.ctx,
+                    input.offset,
+                ) {
                     Ok(wr) => Some(wr),
                     Err(storage_err) => {
                         // Storage/backend-level failure (connector wrapper raised a
-                        // BackendError, disk full, permission denied, etc.). Release
-                        // the VFS lock and surface the error to Python so callers
-                        // can react (F2 C4 / Issue #3765 Cat-7 regression — previous
-                        // code silently swallowed this via ``.ok()``).
-                        self.lock_manager.do_release(lock_handle);
+                        // BackendError, disk full, permission denied, etc.). Surface
+                        // the error to Python so callers can react (F2 C4 / Issue
+                        // #3765 Cat-7 regression — previous code silently swallowed
+                        // this via ``.ok()``).
                         return Err(KernelError::BackendError(format!("{storage_err:?}")));
                     }
                 }
@@ -1007,9 +1187,7 @@ impl Kernel {
                 // DCache → metastore fallback ensures accuracy even on cold
                 // dcache (matches the authority that Python metadata.get()
                 // had before this crossing elimination).
-                let old_entry: Option<FileMetadata> = self
-                    .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
-                    .flatten();
+                let old_entry = self.commit_old_metadata(&input);
                 let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                 let old_gen = old_entry.as_ref().map(|e| e.gen).unwrap_or(0);
                 let old_content_id = old_entry.as_ref().and_then(|e| e.content_id.clone());
@@ -1029,8 +1207,8 @@ impl Kernel {
                 // ZoneMetaStore translates at its boundary; the global
                 // fallback stores full paths directly.
                 let meta = self.build_metadata(
-                    path,
-                    &route.zone_id,
+                    input.path,
+                    &input.route.zone_id,
                     DT_REG,
                     wr.size,
                     Some(wr.content_id.clone()),
@@ -1040,21 +1218,18 @@ impl Kernel {
                     created_at_ms,
                     Some(now_ms),
                 );
-                // Atomic commit — metastore (raft) write. Releases the VFS
-                // lock before propagating so the next caller doesn't block
-                // on stale state if raft propose fails. Hot path: bypass
+                // Atomic commit — metastore (raft) write. Hot path: bypass
                 // the routing wrapper and dispatch through the trait via
                 // route.metastore (already resolved above).
                 let put_res = self
-                    .with_metastore_route(&route, |ms| ms.put(path, meta))
+                    .with_metastore_route(input.route, |ms| ms.put(input.path, meta))
                     .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
                     .and_then(|r| {
-                        r.map_err(|e| KernelError::IOError(format!("metastore_put({path}): {e:?}")))
+                        r.map_err(|e| {
+                            KernelError::IOError(format!("metastore_put({}): {e:?}", input.path))
+                        })
                     });
-                if let Err(e) = put_res {
-                    self.lock_manager.do_release(lock_handle);
-                    return Err(e);
-                }
+                put_res?;
 
                 // Snapshot old_entry fields for the result struct before
                 // dispatch_mutation moves old_content_id into its closure.
@@ -1069,7 +1244,7 @@ impl Kernel {
                 // observer callbacks run off the syscall hot path.
                 let content_id = wr.content_id.clone();
                 let size = wr.size;
-                self.dispatch_mutation(FileEventType::FileWrite, path, ctx, |ev| {
+                self.dispatch_mutation(FileEventType::FileWrite, input.path, input.ctx, |ev| {
                     ev.size = Some(size);
                     ev.content_id = Some(content_id);
                     ev.version = Some(new_version);
@@ -1081,12 +1256,12 @@ impl Kernel {
                 // Native POST hooks (fire-and-forget — AuditHook sends to channel
                 // in ~100 ns; no content clone on post path).
                 self.dispatch_native_post(&HookContext::Write(WriteHookCtx {
-                    path: path.to_string(),
+                    path: input.path.to_string(),
                     identity: HookIdentity {
-                        user_id: ctx.user_id.clone(),
-                        zone_id: ctx.zone_id.clone(),
-                        agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                        is_admin: ctx.is_admin,
+                        user_id: input.ctx.user_id.clone(),
+                        zone_id: input.ctx.zone_id.clone(),
+                        agent_id: input.ctx.agent_id.clone().unwrap_or_default(),
+                        is_admin: input.ctx.is_admin,
                     },
                     content: vec![],
                     is_new_file: result_is_new,
@@ -1113,16 +1288,160 @@ impl Kernel {
         };
         if let Ok(result) = &result {
             if result.hit {
-                self.file_cache.invalidate_path(&ctx.zone_id, path, "raw");
+                self.file_cache
+                    .invalidate_path(&input.ctx.zone_id, input.path, "raw");
                 self.index_cache
-                    .invalidate_parent_listing(&ctx.zone_id, path);
+                    .invalidate_parent_listing(&input.ctx.zone_id, input.path);
             }
         }
 
-        // 7. Release VFS lock (always, even on miss)
-        self.lock_manager.do_release(lock_handle);
-
         result
+    }
+
+    pub fn flush_due_write_buffer(&self) -> Result<FlushWriteBufferResult, KernelError> {
+        let now = Self::now_ms_u64();
+        let due = self.write_buffer.due_dirty(now);
+        let mut total = FlushWriteBufferResult::default();
+        for dirty in due {
+            Self::merge_flush_result(&mut total, self.flush_dirty_entry(dirty, false));
+        }
+        Self::finish_flush_result(total)
+    }
+
+    pub fn flush_write_buffer(
+        &self,
+        path: Option<&str>,
+        zone_id: Option<&str>,
+    ) -> Result<FlushWriteBufferResult, KernelError> {
+        let selection = FlushSelection {
+            path: path.map(str::to_string),
+            zone_id: zone_id.map(str::to_string),
+        };
+        let mut result = FlushWriteBufferResult::default();
+        for dirty in self.write_buffer.selected_dirty(&selection) {
+            Self::merge_flush_result(&mut result, self.flush_dirty_entry(dirty, false));
+        }
+        Self::finish_flush_result(result)
+    }
+
+    pub(crate) fn flush_write_buffer_locked_path(
+        &self,
+        path: &str,
+        zone_id: &str,
+    ) -> Result<FlushWriteBufferResult, KernelError> {
+        let mut result = FlushWriteBufferResult::default();
+        let key = DirtyWriteKey::new(path, zone_id);
+        if let Some(dirty) = self.write_buffer.get_dirty(&key) {
+            Self::merge_flush_result(&mut result, self.flush_dirty_entry(dirty, true));
+        }
+        Self::finish_flush_result(result)
+    }
+
+    pub(crate) fn flush_write_buffer_locked_prefix(
+        &self,
+        path: &str,
+        zone_id: &str,
+    ) -> Result<FlushWriteBufferResult, KernelError> {
+        // Caller must hold a write lock on `path`. LockManager write locks
+        // conflict with descendants, so an ancestor directory lock fences
+        // child writes while this prefix drain is in progress.
+        let selection = FlushSelection {
+            path: Some(path.to_string()),
+            zone_id: Some(zone_id.to_string()),
+        };
+        let mut result = FlushWriteBufferResult::default();
+        for dirty in self.write_buffer.selected_dirty(&selection) {
+            Self::merge_flush_result(&mut result, self.flush_dirty_entry(dirty, true));
+        }
+        Self::finish_flush_result(result)
+    }
+
+    fn flush_dirty_entry(
+        &self,
+        dirty: DirtyWrite,
+        lock_already_held: bool,
+    ) -> FlushWriteBufferResult {
+        let mut result = FlushWriteBufferResult::default();
+
+        let mut lock_handle = 0;
+        if !lock_already_held {
+            lock_handle = self.lock_manager.blocking_acquire(
+                &dirty.key.path,
+                LockMode::Write,
+                self.vfs_lock_timeout_ms(),
+            );
+            if lock_handle == 0 {
+                result.failed += 1;
+                result
+                    .errors
+                    .push(format!("vfs write lock timeout: {}", dirty.key.path));
+                return result;
+            }
+        }
+
+        if !self.write_buffer.claim_dirty_generation(&dirty) {
+            if lock_handle > 0 {
+                self.lock_manager.do_release(lock_handle);
+            }
+            return result;
+        }
+
+        let route = dirty.route.to_route_result();
+        let commit = self.commit_write_through(WriteCommitInput {
+            path: &dirty.key.path,
+            ctx: &dirty.context,
+            content: &dirty.content,
+            offset: 0,
+            route: &route,
+            old_metadata: Some(dirty.old_metadata.clone()),
+        });
+
+        match commit {
+            Ok(write) if write.hit => {
+                if self.write_buffer.remove_if_generation_matches(&dirty) {
+                    result.flushed += 1;
+                }
+            }
+            Ok(_) => {
+                result.failed += 1;
+                result
+                    .errors
+                    .push(format!("{}: buffered write commit missed", dirty.key.path));
+                self.write_buffer.unclaim_dirty_generation(&dirty);
+            }
+            Err(err) => {
+                result.failed += 1;
+                result.errors.push(format!("{}: {err:?}", dirty.key.path));
+                self.write_buffer.unclaim_dirty_generation(&dirty);
+            }
+        }
+        if lock_handle > 0 {
+            self.lock_manager.do_release(lock_handle);
+        }
+        result
+    }
+
+    fn merge_flush_result(total: &mut FlushWriteBufferResult, one: FlushWriteBufferResult) {
+        total.flushed += one.flushed;
+        total.failed += one.failed;
+        total.errors.extend(one.errors);
+    }
+
+    fn finish_flush_result(
+        result: FlushWriteBufferResult,
+    ) -> Result<FlushWriteBufferResult, KernelError> {
+        if result.failed > 0 {
+            return Err(KernelError::IOError(result.errors.join("; ")));
+        }
+        Ok(result)
+    }
+
+    fn flush_dirty_path_if_present(&self, path: &str, zone_id: &str) -> Result<(), KernelError> {
+        let key = DirtyWriteKey::new(path, zone_id);
+        if self.write_buffer.contains_dirty_key(&key) {
+            self.flush_write_buffer(Some(path), Some(zone_id))?;
+        }
+        Ok(())
     }
 
     // ── sys_stat ───────────────────────────────────────────────────────
@@ -1153,6 +1472,9 @@ impl Kernel {
 
         // 3. Route
         let route = self.vfs_router.route(path, zone_id).ok()?;
+        if self.flush_dirty_path_if_present(path, zone_id).is_err() {
+            return None;
+        }
 
         // 3.5. Mount-point synthesis (federation cross-zone mount).
         // When ``backend_path`` is empty the routed path IS the mount
@@ -1359,7 +1681,19 @@ impl Kernel {
 
             match meta {
                 Some(e) => e,
-                None => return miss(0),
+                None => {
+                    let dirty_key = DirtyWriteKey::new(path, &ctx.zone_id);
+                    if self.write_buffer.contains_dirty_key(&dirty_key) {
+                        self.flush_write_buffer(Some(path), Some(&ctx.zone_id))?;
+                    }
+                    match self
+                        .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+                        .flatten()
+                    {
+                        Some(e) => e,
+                        None => return miss(0),
+                    }
+                }
             }
         };
 
@@ -1432,6 +1766,13 @@ impl Kernel {
                 .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms());
         if lock_handle == 0 {
             return miss(entry.entry_type);
+        }
+
+        if entry.entry_type == DT_REG {
+            if let Err(err) = self.flush_write_buffer_locked_path(path, &ctx.zone_id) {
+                self.lock_manager.do_release(lock_handle);
+                return Err(err);
+            }
         }
 
         // 6. Atomic metastore delete + dcache evict (metadata-first ordering).
@@ -1553,6 +1894,8 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
+        self.flush_write_buffer(Some(old_path), Some(&ctx.zone_id))?;
+
         // 3. Sorted VFS lock acquire (deadlock-free: min(old,new) first)
         let (first, second) = if old_path <= new_path {
             (old_path, new_path)
@@ -1583,6 +1926,15 @@ impl Kernel {
         if lock1 == 0 {
             release_locks(&self.lock_manager, lock1, lock2);
             return miss();
+        }
+        if first != second && lock2 == 0 {
+            release_locks(&self.lock_manager, lock1, lock2);
+            return miss();
+        }
+
+        if let Err(err) = self.flush_write_buffer_locked_prefix(old_path, &ctx.zone_id) {
+            release_locks(&self.lock_manager, lock1, lock2);
+            return Err(err);
         }
 
         // 4. Existence check: get old metadata — use full VFS paths (R20.3 contract).
@@ -1867,6 +2219,8 @@ impl Kernel {
             Ok(r) => r,
             Err(_) => return miss(),
         };
+        self.flush_dirty_path_if_present(src_path, &ctx.zone_id)?;
+        self.flush_dirty_path_if_present(dst_path, &ctx.zone_id)?;
 
         // 3. Get source metadata via the routed metastore (internal
         //    cache fast path) — full VFS paths (R20.3 contract).
@@ -2416,6 +2770,8 @@ impl Kernel {
         // 2. Route (check write access)
         let route = self.vfs_router.route(path, &ctx.zone_id)?;
 
+        self.flush_write_buffer(Some(path), Some(&ctx.zone_id))?;
+
         // 3. Get metadata (per-mount or global) — full path
         let entry_type = self
             .with_metastore(&route.mount_point, |ms| {
@@ -2430,6 +2786,18 @@ impl Kernel {
         // DT_MOUNT(2) / DT_EXTERNAL_STORAGE(5) → Python handles unmount
         if entry_type == 2 || entry_type == 5 {
             return miss();
+        }
+
+        let lock_handle =
+            self.lock_manager
+                .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms());
+        if lock_handle == 0 {
+            return miss();
+        }
+
+        if let Err(err) = self.flush_write_buffer_locked_prefix(path, &ctx.zone_id) {
+            self.lock_manager.do_release(lock_handle);
+            return Err(err);
         }
 
         // 4. Check children (per-mount or global) — full-path prefix
@@ -2450,7 +2818,13 @@ impl Kernel {
                 Ok(0)
             }
         }) {
-            children_deleted = result?;
+            match result {
+                Ok(deleted) => children_deleted = deleted,
+                Err(err) => {
+                    self.lock_manager.do_release(lock_handle);
+                    return Err(err);
+                }
+            }
         }
 
         // 6. Backend rmdir (best-effort)
@@ -2463,9 +2837,18 @@ impl Kernel {
         // invalidation already happened: ``delete_batch`` invalidated
         // each child's cache row, and ``ms.delete`` invalidates the
         // parent's. No kernel-global cache to evict.
-        self.with_metastore_route(&route, |ms| ms.delete(path))
-            .ok_or_else(|| KernelError::IOError("no metastore wired".into()))?
-            .map_err(|e| KernelError::IOError(format!("metastore_delete({path}): {e:?}")))?;
+        let delete_result = self
+            .with_metastore_route(&route, |ms| ms.delete(path))
+            .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
+            .and_then(|result| {
+                result.map_err(|e| KernelError::IOError(format!("metastore_delete({path}): {e:?}")))
+            });
+        if let Err(err) = delete_result {
+            self.lock_manager.do_release(lock_handle);
+            return Err(err);
+        }
+
+        self.lock_manager.do_release(lock_handle);
 
         // 9. OBSERVE-phase dispatch (§11 OBSERVE): queue DirDelete.
         // Like sys_mkdir, only the top-level rmdir event fires —
@@ -2501,6 +2884,9 @@ impl Kernel {
             Ok(r) => r,
             Err(_) => return false,
         };
+        if self.flush_dirty_path_if_present(path, zone_id).is_err() {
+            return false;
+        }
         self.with_metastore_route(&route, |ms| ms.exists(path).unwrap_or(false))
             .unwrap_or(false)
     }
@@ -3196,6 +3582,12 @@ impl Kernel {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
+        if self
+            .flush_write_buffer(Some(normalized), Some(zone_id))
+            .is_err()
+        {
+            return Vec::new();
+        }
 
         let global_prefix = if normalized == contracts::VFS_ROOT {
             contracts::VFS_ROOT.to_string()

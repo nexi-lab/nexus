@@ -271,11 +271,7 @@ impl FileCache {
     /// different API keys / tenants on the same Nexus URL never share a
     /// cache. Pass the API key (or any stable per-principal identifier) —
     /// the value is only hashed locally, never written in cleartext. (#4055 R3)
-    pub fn new_with_config(
-        server_url: &str,
-        principal: &str,
-        config: CacheConfig,
-    ) -> Result<Self> {
+    pub fn new_with_config(server_url: &str, principal: &str, config: CacheConfig) -> Result<Self> {
         std::fs::create_dir_all(&config.root_dir).with_context(|| {
             format!("failed to create cache root {}", config.root_dir.display())
         })?;
@@ -772,7 +768,10 @@ mod tests {
         let b = CachePaths::for_server(&root, url, &p_bob);
         let n = CachePaths::for_server(&root, url, &p_none);
         assert_ne!(a.foyer_dir, b.foyer_dir, "alice and bob must not share");
-        assert_ne!(a.foyer_dir, n.foyer_dir, "alice and no-agent must not share");
+        assert_ne!(
+            a.foyer_dir, n.foyer_dir,
+            "alice and no-agent must not share"
+        );
         assert_ne!(b.foyer_dir, n.foyer_dir, "bob and no-agent must not share");
         assert!(a
             .foyer_dir
@@ -803,8 +802,7 @@ mod tests {
         std::fs::write(paths.sqlite_file.with_extension("db-wal"), b"old wal").unwrap();
         std::fs::write(paths.sqlite_file.with_extension("db-shm"), b"old shm").unwrap();
 
-        let _cache =
-            FileCache::new_with_config("http://migration.test", "test", config).unwrap();
+        let _cache = FileCache::new_with_config("http://migration.test", "test", config).unwrap();
 
         assert!(!paths.sqlite_file.exists());
         assert!(!paths.sqlite_file.with_extension("db-wal").exists());
@@ -823,8 +821,7 @@ mod tests {
             MAX_FILE_SIZE,
         )
         .unwrap();
-        let legacy_file =
-            CachePaths::for_server(dir.path(), server_url, "test").legacy_sqlite_file;
+        let legacy_file = CachePaths::for_server(dir.path(), server_url, "test").legacy_sqlite_file;
         std::fs::write(&legacy_file, b"old sqlite cache").unwrap();
         std::fs::write(legacy_file.with_extension("db-wal"), b"old wal").unwrap();
         std::fs::write(legacy_file.with_extension("db-shm"), b"old shm").unwrap();
@@ -1273,12 +1270,9 @@ mod tests {
         .unwrap();
 
         {
-            let cache = FileCache::new_with_config(
-                "http://flush-on-drop.test",
-                "test",
-                config.clone(),
-            )
-            .unwrap();
+            let cache =
+                FileCache::new_with_config("http://flush-on-drop.test", "test", config.clone())
+                    .unwrap();
             cache.put("/persisted.txt", b"persisted", Some("persisted-etag"), 0);
         }
 

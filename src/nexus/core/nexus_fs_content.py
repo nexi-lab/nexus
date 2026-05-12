@@ -1035,6 +1035,147 @@ class ContentMixin:
         finally:
             self.unlock(lock_id, path, context=context)
 
+    def _write_buffer_flush_target(
+        self,
+        path: str | None = None,
+        zone_id: str | None = None,
+        context: OperationContext | None = None,
+    ) -> tuple[str | None, str]:
+        effective_path = self._validate_path(path) if path is not None else None
+        effective_zone = zone_id or self._zone_id
+
+        caller_zone, _, is_admin = self._get_context_identity(context)
+        zone_perms = self._context_zone_perms(context)
+        if caller_zone == ROOT_ZONE_ID and len(zone_perms) > 1 and not is_admin:
+            target_zone = self._embedded_zone(effective_path)
+            requested_zone = zone_id if zone_id and zone_id != self._zone_id else None
+            if target_zone and requested_zone and target_zone != requested_zone:
+                from nexus.contracts.exceptions import AccessDeniedError
+
+                raise AccessDeniedError(
+                    f"Path zone {target_zone!r} does not match requested zone {requested_zone!r}",
+                    effective_path,
+                )
+            target_zone = target_zone or requested_zone
+            if target_zone is None:
+                from nexus.contracts.exceptions import AccessDeniedError
+
+                raise AccessDeniedError(
+                    "Multi-zone write buffer flush requires zone_id or zone-scoped path",
+                    effective_path,
+                )
+            self._require_write_buffer_zone(context, target_zone)
+            from nexus.lib.zone_scoping import scope_single_path
+
+            prefix = f"/zone/{target_zone}"
+            effective_path = (
+                prefix
+                if effective_path is None
+                else scope_single_path(effective_path, prefix, target_zone)
+            )
+            effective_zone = self._zone_id
+            return effective_path, effective_zone
+
+        if caller_zone and caller_zone != ROOT_ZONE_ID:
+            self._require_write_buffer_zone(context, caller_zone)
+            from nexus.lib.zone_scoping import scope_single_path
+
+            prefix = f"/zone/{caller_zone}"
+            effective_path = (
+                prefix
+                if effective_path is None
+                else scope_single_path(effective_path, prefix, caller_zone)
+            )
+            effective_zone = self._zone_id
+
+        return effective_path, effective_zone
+
+    def _context_zone_perms(
+        self, context: OperationContext | dict | None
+    ) -> tuple[tuple[str, str], ...]:
+        if context is None:
+            context = self._resolve_cred(None)
+        raw = (
+            context.get("zone_perms", ())
+            if isinstance(context, dict)
+            else getattr(context, "zone_perms", ())
+        )
+        return tuple((str(zone), str(perms)) for zone, perms in raw or ())
+
+    def _require_write_buffer_zone(
+        self,
+        context: OperationContext | dict | None,
+        requested_zone: str,
+    ) -> None:
+        caller_zone, _, is_admin = self._get_context_identity(context)
+        if is_admin:
+            return
+        zone_perms = self._context_zone_perms(context)
+        if zone_perms:
+            for zone, perms in zone_perms:
+                if zone == requested_zone and ("w" in perms or "x" in perms):
+                    return
+            from nexus.contracts.exceptions import AccessDeniedError
+
+            raise AccessDeniedError(
+                f"Write buffer flush requires write access to zone {requested_zone!r}",
+            )
+        if caller_zone == requested_zone or (
+            caller_zone == ROOT_ZONE_ID and requested_zone == ROOT_ZONE_ID
+        ):
+            return
+        from nexus.contracts.exceptions import AccessDeniedError
+
+        raise AccessDeniedError(
+            f"Write buffer flush zone {requested_zone!r} is outside caller zone {caller_zone!r}",
+        )
+
+    @staticmethod
+    def _embedded_zone(path: str | None) -> str | None:
+        if path is None:
+            return None
+        if path.startswith("/zone/"):
+            tail = path.removeprefix("/zone/")
+            return tail.split("/", 1)[0] or None
+        if path.startswith("/tenant:"):
+            tail = path.removeprefix("/tenant:")
+            return tail.split("/", 1)[0] or None
+        return None
+
+    def flush_write_buffer(
+        self,
+        path: str | None = None,
+        zone_id: str | None = None,
+        *,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Force buffered kernel writes to backend/metastore."""
+        effective_path, effective_zone = self._write_buffer_flush_target(path, zone_id, context)
+        result = self._kernel.flush_write_buffer(effective_path, effective_zone)
+        return {
+            "flushed": int(getattr(result, "flushed", 0)),
+            "failed": int(getattr(result, "failed", 0)),
+            "errors": list(getattr(result, "errors", [])),
+        }
+
+    def fsync(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Flush buffered writes for one path."""
+        return self.flush_write_buffer(path, self._zone_id, context=context)
+
+    def sync(
+        self,
+        zone_id: str | None = None,
+        *,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Flush buffered writes for this filesystem zone."""
+        return self.flush_write_buffer(None, zone_id or self._zone_id, context=context)
+
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
     def append(
         self,

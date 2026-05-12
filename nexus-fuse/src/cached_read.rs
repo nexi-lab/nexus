@@ -62,11 +62,8 @@ pub fn read_with_cache(
                         // optimistic-concurrency signal into silent stale
                         // data. Fall through to the invalidate + return
                         // path so the caller sees EAGAIN.
-                        let safe_to_serve_stale = e.is_transient()
-                            && !matches!(
-                                e,
-                                NexusClientError::Conflict(_)
-                            );
+                        let safe_to_serve_stale =
+                            e.is_transient() && !matches!(e, NexusClientError::Conflict(_));
                         if safe_to_serve_stale {
                             debug!("Revalidation failed for {}: {}, using stale cache", path, e);
                             if let Some(entry) = cache.get_stale(path) {
@@ -204,10 +201,7 @@ mod tests {
         );
         assert_eq!(err.to_errno(), libc::EAGAIN);
         // Stale entry was invalidated, not served.
-        assert!(matches!(
-            cache.get("/conflict.txt", 0),
-            CacheLookup::Miss
-        ));
+        assert!(matches!(cache.get("/conflict.txt", 0), CacheLookup::Miss));
     }
 
     #[test]

@@ -306,6 +306,9 @@ def test_all_public_methods_are_exposed_or_excluded():
         "write",  # Tier 2 → Rust thin dispatch
         "access",  # Tier 2 → Rust thin dispatch
         "is_directory",  # Tier 2 → Rust thin dispatch
+        "flush_write_buffer",  # Write coalescing flush → Rust thin dispatch
+        "fsync",  # Write coalescing path flush → Rust thin dispatch
+        "sync",  # Write coalescing zone flush → Rust thin dispatch
     }
 
     # Get all public methods

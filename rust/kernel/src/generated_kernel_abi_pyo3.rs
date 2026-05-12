@@ -25,7 +25,7 @@ use crate::dispatch::PathResolver;
 use crate::hook_registry::HookRegistry;
 #[cfg(feature = "py-hook-adapters")]
 use crate::hook_registry::InterceptHook;
-use crate::kernel::{Kernel, KernelError, OperationContext};
+use crate::kernel::{Kernel, KernelError, OperationContext, WriteBufferFlushHandle};
 use crate::meta_store::{FileMetadata, MetaStoreError};
 use crate::vfs_router::RouteError;
 
@@ -948,6 +948,16 @@ pub struct PySysWriteResult {
     pub old_modified_at_ms: Option<i64>,
 }
 
+// ── PyFlushWriteBufferResult ───────────────────────────────────
+
+/// Python-facing FlushWriteBufferResult.
+#[pyclass(get_all)]
+pub struct PyFlushWriteBufferResult {
+    pub flushed: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
+
 // ── PySysUnlinkResult ───────────────────────────────────────────
 
 /// Python-facing SysUnlinkResult.
@@ -1042,6 +1052,7 @@ pub struct PyKernel {
     /// without an extra accessor method that codegen would
     /// have to preserve. Not exposed to Python.
     pub(crate) inner: Arc<Kernel>,
+    _write_buffer_flusher: WriteBufferFlushHandle,
     // RwLock (not Mutex) so a hook callback can re-enter
     // ``sys_*`` without deadlocking. The recursion is real:
     // ReBAC's permission_hook reads its own ``/__sys__/rebac/...``
@@ -1089,8 +1100,12 @@ impl PyKernel {
 
     #[new]
     fn new() -> Self {
+        let inner = Arc::new(Kernel::new());
+        let write_buffer_flusher =
+            Kernel::spawn_write_buffer_flusher(&inner, std::time::Duration::from_millis(250));
         Self {
-            inner: Arc::new(Kernel::new()),
+            inner,
+            _write_buffer_flusher: write_buffer_flusher,
             hooks: RwLock::new(HookRegistry::new()),
         }
     }
@@ -2312,6 +2327,34 @@ impl PyKernel {
             old_size: result.old_size,
             old_version: result.old_version,
             old_modified_at_ms: result.old_modified_at_ms,
+        })
+    }
+
+    // ── write-buffer flushing ─────────────────────────────────────────
+
+    #[pyo3(signature = (path=None, zone_id=None))]
+    fn flush_write_buffer(
+        &self,
+        py: Python<'_>,
+        path: Option<&str>,
+        zone_id: Option<&str>,
+    ) -> PyResult<PyFlushWriteBufferResult> {
+        let result = py.detach(|| self.inner.flush_write_buffer(path, zone_id));
+        let result = result.map_err(|e| -> PyErr { e.into() })?;
+        Ok(PyFlushWriteBufferResult {
+            flushed: result.flushed,
+            failed: result.failed,
+            errors: result.errors,
+        })
+    }
+
+    fn flush_due_write_buffer(&self, py: Python<'_>) -> PyResult<PyFlushWriteBufferResult> {
+        let result = py.detach(|| self.inner.flush_due_write_buffer());
+        let result = result.map_err(|e| -> PyErr { e.into() })?;
+        Ok(PyFlushWriteBufferResult {
+            flushed: result.flushed,
+            failed: result.failed,
+            errors: result.errors,
         })
     }
 

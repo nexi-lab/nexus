@@ -9,6 +9,7 @@ pub mod constants;
 pub mod lock_state;
 pub mod operation_context;
 pub mod rust_service;
+pub mod write_coalescing;
 
 pub use constants::{
     env, is_system_path, BLAKE3_EMPTY, LOCKS_PATH_PREFIX, MAX_GRPC_MESSAGE_BYTES, ROOT_ZONE_ID,
@@ -19,3 +20,4 @@ pub use lock_state::{
 };
 pub use operation_context::OperationContext;
 pub use rust_service::{RustCallError, RustService};
+pub use write_coalescing::{WriteCoalescingMode, WriteCoalescingPolicy};

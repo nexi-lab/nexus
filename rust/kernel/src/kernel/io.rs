@@ -26,6 +26,121 @@ use super::{
     SysUnlinkResult, SysWriteResult,
 };
 
+/// Per-request resolved state produced by Phase A of `_read_batch`.
+/// Kept file-private; callers only see the final `Vec<Result<…>>`.
+/// `entry` is `None` when the metastore has no record yet; Phase B
+/// falls back to `sys_read` which retries the backend directly.
+///
+/// Fields are consumed by Task 4 coalescing; allow dead_code until then.
+#[allow(dead_code)]
+struct ResolvedRead {
+    route: crate::core::vfs_router::RouteResult,
+    entry: Option<FileMetadata>,
+}
+
+/// Produce a cheap structural clone of a `KernelError` for fan-out in
+/// `_read_batch`.  `KernelError` is `!Clone` (its `Route` variant holds a
+/// non-Clone `RouteError`), so we collapse that variant to its `Debug` repr.
+fn clone_kernel_err(e: &KernelError) -> KernelError {
+    match e {
+        KernelError::InvalidPath(s) => KernelError::InvalidPath(s.clone()),
+        KernelError::FileNotFound(s) => KernelError::FileNotFound(s.clone()),
+        KernelError::FileExists(s) => KernelError::FileExists(s.clone()),
+        KernelError::IOError(s) => KernelError::IOError(s.clone()),
+        KernelError::TrieError(s) => KernelError::TrieError(s.clone()),
+        KernelError::PipeFull(s) => KernelError::PipeFull(s.clone()),
+        KernelError::PipeEmpty(s) => KernelError::PipeEmpty(s.clone()),
+        KernelError::PipeClosed(s) => KernelError::PipeClosed(s.clone()),
+        KernelError::PipeExists(s) => KernelError::PipeExists(s.clone()),
+        KernelError::PipeNotFound(s) => KernelError::PipeNotFound(s.clone()),
+        KernelError::StreamFull(s) => KernelError::StreamFull(s.clone()),
+        KernelError::StreamEmpty(s) => KernelError::StreamEmpty(s.clone()),
+        KernelError::StreamClosed(s) => KernelError::StreamClosed(s.clone()),
+        KernelError::StreamExists(s) => KernelError::StreamExists(s.clone()),
+        KernelError::StreamNotFound(s) => KernelError::StreamNotFound(s.clone()),
+        KernelError::WouldBlock(s) => KernelError::WouldBlock(s.clone()),
+        KernelError::PermissionDenied(s) => KernelError::PermissionDenied(s.clone()),
+        KernelError::BackendError(s) => KernelError::BackendError(s.clone()),
+        KernelError::Federation(s) => KernelError::Federation(s.clone()),
+        KernelError::Route(_) => {
+            // RouteError isn't trivially cloneable. Collapse to a string form —
+            // batch path only needs the per-item error visible downstream; the
+            // structural detail is preserved in the Debug repr.
+            KernelError::IOError(format!("{:?}", e))
+        }
+    }
+}
+
+/// Build a per-consumer `SysReadResult` from the lead request's shared result.
+///
+/// On success the caller's `offset` + `len` window is sliced out of the
+/// lead's full-file bytes, so every consumer in a coalesced group gets
+/// exactly the range it asked for without an extra backend round-trip.
+///
+/// `consumer_meta` is the consumer path's own `FileMetadata` snapshot.
+/// We use it for the per-path `content_id`, `gen`, and `entry_type` so
+/// CAS-deduplicated or metadata-only-copied paths sharing a content hash
+/// still receive their *own* generation/content_id rather than the
+/// lead's. The shared payload is the only thing borrowed from the lead.
+fn clone_read_result(
+    shared: &Result<SysReadResult, KernelError>,
+    req: &crate::kernel::BatchReadRequest,
+    consumer_meta: Option<&FileMetadata>,
+) -> Result<SysReadResult, KernelError> {
+    match shared {
+        Err(e) => Err(clone_kernel_err(e)),
+        Ok(src) => {
+            let data = src.data.as_ref().map(|bytes| {
+                let off = (req.offset as usize).min(bytes.len());
+                let end = match req.len {
+                    Some(l) => off.saturating_add(l as usize).min(bytes.len()),
+                    None => bytes.len(),
+                };
+                bytes[off..end].to_vec()
+            });
+            // Per-consumer metadata when available; fall back to lead's
+            // values only when the consumer's metadata is missing (cold
+            // PAS-mount path read).
+            let (content_id, gen, entry_type) = match consumer_meta {
+                Some(m) => (
+                    m.content_id.clone(),
+                    m.gen,
+                    if m.entry_type == 0 {
+                        src.entry_type
+                    } else {
+                        m.entry_type
+                    },
+                ),
+                None => (src.content_id.clone(), src.gen, src.entry_type),
+            };
+            Ok(SysReadResult {
+                data,
+                post_hook_needed: src.post_hook_needed,
+                content_id,
+                gen,
+                entry_type,
+                stream_next_offset: src.stream_next_offset,
+            })
+        }
+    }
+}
+
+fn slice_read_result(
+    r: Result<SysReadResult, KernelError>,
+    req: &crate::kernel::BatchReadRequest,
+) -> Result<SysReadResult, KernelError> {
+    let mut r = r?;
+    if let Some(bytes) = r.data.as_ref() {
+        let off = (req.offset as usize).min(bytes.len());
+        let end = match req.len {
+            Some(l) => off.saturating_add(l as usize).min(bytes.len()),
+            None => bytes.len(),
+        };
+        r.data = Some(bytes[off..end].to_vec());
+    }
+    Ok(r)
+}
+
 impl Kernel {
     pub fn sys_read(
         &self,
@@ -147,6 +262,31 @@ impl Kernel {
         timeout_ms: u64,
         offset: u64,
     ) -> Result<SysReadResult, KernelError> {
+        self.sys_read_inner(path, ctx, max_link_hops, timeout_ms, offset, false)
+    }
+
+    /// Read variant that skips the §13 permission gate AND §11 native
+    /// PRE-read hook. Used only by `_read_batch`'s Phase B fan-out, which
+    /// has already run both checks in Phase A. Calling normal `sys_read`
+    /// from Phase B would double-dispatch hooks (singletons + group leads)
+    /// and risk double-firing audit/permission side effects.
+    fn sys_read_for_batch(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysReadResult, KernelError> {
+        self.sys_read_inner(path, ctx, 1, 5000, 0, true)
+    }
+
+    fn sys_read_inner(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        max_link_hops: u8,
+        timeout_ms: u64,
+        offset: u64,
+        skip_authz: bool,
+    ) -> Result<SysReadResult, KernelError> {
         let not_found = || KernelError::FileNotFound(path.to_string());
 
         // 1. Validate
@@ -164,22 +304,24 @@ impl Kernel {
             return Err(not_found());
         }
 
-        // 1c. Permission gate (§13) — BEFORE native hooks.
-        self.check_permission(path, Permission::Read, ctx)?;
+        if !skip_authz {
+            // 1c. Permission gate (§13) — BEFORE native hooks.
+            self.check_permission(path, Permission::Read, ctx)?;
 
-        // 1d. Native INTERCEPT PRE hooks (§11 native hooks) — audit etc.
-        let hook_id = HookIdentity {
-            user_id: ctx.user_id.clone(),
-            zone_id: ctx.zone_id.clone(),
-            agent_id: ctx.agent_id.clone().unwrap_or_default(),
-            is_admin: ctx.is_admin,
-        };
-        self.dispatch_native_pre(&HookContext::Read(ReadHookCtx {
-            path: path.to_string(),
-            identity: hook_id,
-            content: None,
-            content_id: None,
-        }))?;
+            // 1d. Native INTERCEPT PRE hooks (§11 native hooks) — audit etc.
+            let hook_id = HookIdentity {
+                user_id: ctx.user_id.clone(),
+                zone_id: ctx.zone_id.clone(),
+                agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                is_admin: ctx.is_admin,
+            };
+            self.dispatch_native_pre(&HookContext::Read(ReadHookCtx {
+                path: path.to_string(),
+                identity: hook_id,
+                content: None,
+                content_id: None,
+            }))?;
+        }
 
         // 2. Route (pure Rust LPM)
         let route = match self.vfs_router.route(path, &ctx.zone_id) {
@@ -243,12 +385,18 @@ impl Kernel {
                     "DT_LINK chain rejected (ELOOP) at {path}"
                 )));
             }
-            return self.sys_read_with_link_depth(
+            // DT_LINK target requires its own §13 permission gate +
+            // §11 native PRE-read hook (the link path's authorization
+            // does NOT grant access to the target). Force authz on the
+            // recursive call even when the outer batch caller set
+            // skip_authz=true.
+            return self.sys_read_inner(
                 target,
                 ctx,
                 max_link_hops - 1,
                 timeout_ms,
                 offset,
+                /* skip_authz */ false,
             );
         }
 
@@ -2580,33 +2728,411 @@ impl Kernel {
         Ok(results)
     }
 
-    /// Internal: batch read — parallel reads using rayon.
+    /// Internal: batch read. Accepts `(path, offset, len)` requests.
     ///
-    /// NOT a syscall — prefixed with `_`. Called by Python `read_bulk` method.
-    /// Returns Vec<SysReadResult> with per-path results.
-    /// Safe because Kernel is Sync (DashMap + parking_lot).
+    /// Returns per-request `Result` in input order. The outer `Err` is
+    /// reserved for kernel-wide setup failure (e.g. no metastore wired)
+    /// or an authorized-aggregate cap violation (see `max_aggregate_bytes`).
+    /// Per-request failures are inner `Err` and do NOT abort the batch.
+    ///
+    /// Coalesces same-`content_id` requests into one backend fetch;
+    /// bounded parallelism per `Kernel::read_batch_max_concurrency`.
+    ///
+    /// The convenience wrapper passes `None` for `max_aggregate_bytes`
+    /// (uncapped — callers like the Python wrapper do their own DoS
+    /// guarding). The gRPC `BatchRead` handler passes `Some(100 MiB)` so
+    /// the kernel rejects oversized authorized batches before Phase B
+    /// fetches any backend bytes. The cap is a *per-call* argument: it
+    /// never mutates shared kernel state and so concurrent callers do
+    /// not clobber each other.
     pub fn _read_batch(
         &self,
-        paths: &[String],
+        reqs: &[crate::kernel::BatchReadRequest],
         ctx: &OperationContext,
-    ) -> Result<Vec<SysReadResult>, KernelError> {
+    ) -> Result<Vec<Result<SysReadResult, KernelError>>, KernelError> {
+        self._read_batch_with_cap(reqs, ctx, None)
+    }
+
+    pub fn _read_batch_with_cap(
+        &self,
+        reqs: &[crate::kernel::BatchReadRequest],
+        ctx: &OperationContext,
+        max_aggregate_bytes: Option<usize>,
+    ) -> Result<Vec<Result<SysReadResult, KernelError>>, KernelError> {
+        if reqs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let n = reqs.len();
+        let mut results: Vec<Option<Result<SysReadResult, KernelError>>> =
+            (0..n).map(|_| None).collect();
+        let mut resolved: Vec<Option<ResolvedRead>> = (0..n).map(|_| None).collect();
+
+        // Phase A — validate, permission, route, metadata lookup.
+        for (i, req) in reqs.iter().enumerate() {
+            // 1. Path validation
+            if let Err(e) = validate_path_fast(&req.path) {
+                results[i] = Some(Err(e));
+                continue;
+            }
+            // 2. Permission gate
+            if let Err(e) = self.check_permission(&req.path, Permission::Read, ctx) {
+                results[i] = Some(Err(e));
+                continue;
+            }
+            // 3. Routing
+            let route = match self.vfs_router.route(&req.path, &ctx.zone_id) {
+                Ok(r) => r,
+                Err(_) => {
+                    results[i] = Some(Err(KernelError::FileNotFound(req.path.clone())));
+                    continue;
+                }
+            };
+            // 4. Metadata lookup (best-effort; None means cold-cache /
+            //    backend-only file — Phase B falls through to sys_read
+            //    which has its own backend fallback path).
+            let entry = self
+                .with_metastore_route(&route, |ms| ms.get(&req.path).ok().flatten())
+                .flatten();
+            // Reject pipe/stream — they have blocking IPC semantics that
+            // don't belong in batch reads. Per-item Err so the rest of
+            // the batch keeps going.
+            if let Some(m) = entry.as_ref() {
+                if m.entry_type == crate::meta_store::DT_PIPE
+                    || m.entry_type == crate::meta_store::DT_STREAM
+                {
+                    results[i] = Some(Err(KernelError::IOError(format!(
+                        "batch read does not support pipes/streams: {}",
+                        req.path
+                    ))));
+                    continue;
+                }
+            }
+            // Native INTERCEPT PRE hooks (§11 native hooks) — must fire
+            // PER PATH before coalescing so ReBAC permission_hook and
+            // audit hooks see every request's identity, not just the
+            // lead's. (Coalescing in Phase B would otherwise let a
+            // CAS-deduplicated path share bytes with a path the hook
+            // would have denied.) The lead path's sys_read will dispatch
+            // this hook again — minor double-firing tax, but the hook
+            // chain is required to be idempotent.
+            let hook_id = HookIdentity {
+                user_id: ctx.user_id.clone(),
+                zone_id: ctx.zone_id.clone(),
+                agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                is_admin: ctx.is_admin,
+            };
+            if let Err(e) = self.dispatch_native_pre(&HookContext::Read(ReadHookCtx {
+                path: req.path.clone(),
+                identity: hook_id,
+                content: None,
+                content_id: None,
+            })) {
+                results[i] = Some(Err(e));
+                continue;
+            }
+            // Zero-length range short-circuit — narrowed to require a
+            // concrete metastore entry whose type is a readable regular
+            // file. Phase A has already run §13 permission + §11 native
+            // PRE-read hook for this path, so returning empty bytes for
+            // a proven-existing DT_REG file is authoritative.
+            //
+            // Explicit exclusions:
+            //   • entry is None — path may not exist; falling through
+            //     lets Phase B return FileNotFound rather than fake
+            //     success.
+            //   • DT_LINK — the link target still needs its own
+            //     permission/hook chain; Phase B routes through
+            //     sys_read_inner which follows the link with authz.
+            //   • DT_PIPE / DT_STREAM — already rejected above.
+            if req.len == Some(0) {
+                if let Some(m) = entry.as_ref() {
+                    if m.entry_type != crate::meta_store::DT_LINK {
+                        results[i] = Some(Ok(SysReadResult {
+                            data: Some(Vec::new()),
+                            post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                            content_id: m.content_id.clone(),
+                            gen: m.gen,
+                            entry_type: m.entry_type,
+                            stream_next_offset: None,
+                        }));
+                        continue;
+                    }
+                }
+                // Fall through to Phase B — entry==None or DT_LINK both
+                // need the regular read path to resolve correctly.
+            }
+            resolved[i] = Some(ResolvedRead { route, entry });
+        }
+
+        // Aggregate-bytes cap — only authorized paths (those that survived
+        // Phase A's permission + native PRE-read hook) contribute. We
+        // count actual fetched bytes, not response window bytes: Phase B
+        // fetches whole blobs and slices in-kernel, so a request reading
+        // `(/big, off=0, len=1)` from a 100 GB file costs ~100 GB of
+        // backend bandwidth + cache fill, not 1 byte. Coalescing by
+        // (mount, content_id) means one fetch per distinct blob;
+        // singletons (no content_id) each fetch their own file.
+        //
+        // When `max_aggregate_bytes` is `Some(cap)` AND an authorized path
+        // has no metadata, we cannot bound its fetch cost upfront, so we
+        // reject the whole batch (fail-closed) rather than let cold PAS /
+        // virtual-resolver paths bypass the DoS guard.
+        //
+        // `None` (default) disables the cap so the Python wrapper's own
+        // DoS guard stays in charge.
+        if let Some(cap) = max_aggregate_bytes {
+            use std::collections::HashMap;
+            // Per-(mount, content_id) running max-size table. We charge
+            // the *maximum* declared size seen across rows that share a
+            // content_id, so a stale-small metadata row cannot understate
+            // the actual fetched blob size.
+            //
+            // Race note: the cap is computed from Phase A metadata, but
+            // Phase B can fetch newer bytes after a concurrent rewrite.
+            // The post-read defense-in-depth in the transport handler
+            // catches genuinely-oversized responses; a true
+            // pre-fetch-under-lock cap would require per-path VFS read
+            // locks (defeating coalescing). The Phase A→B window is
+            // narrow enough that the post-read guard is acceptable as
+            // the final ceiling.
+            let mut sizes: HashMap<(String, String), usize> = HashMap::new();
+            let mut declared: usize = 0;
+            for (i, slot) in resolved.iter().enumerate() {
+                let r = match slot {
+                    Some(r) => r,
+                    None => continue,
+                };
+                let meta = match r.entry.as_ref() {
+                    Some(m) => m,
+                    // No metastore entry under a cap is ambiguous: it
+                    // might be a normal missing file (Phase B returns
+                    // per-item FileNotFound) OR an external-connector
+                    // / virtual-resolver path with bytes produced
+                    // lazily by the backend. To prevent capped callers
+                    // from bypassing the DoS guard via metadata-less
+                    // external mounts, we don't outer-Err the whole
+                    // batch any more; instead we mark this path with a
+                    // per-item Err so Phase B never fetches its bytes.
+                    // Genuine missing files would receive FileNotFound
+                    // from Phase B anyway, so the user-visible result
+                    // is the same.
+                    None => {
+                        results[i] = Some(Err(KernelError::IOError(format!(
+                            "read_batch cannot bound metadata-less path under cap (cap={} bytes)",
+                            cap
+                        ))));
+                        continue;
+                    }
+                };
+                // DT_LINK metadata is size=0 / content_id=None at the
+                // link itself; the actual fetch follows the link to a
+                // target whose size we have not bounded here. Fail-
+                // closed under the cap rather than let a 0-byte
+                // accounting row hide a multi-GB target.
+                if meta.entry_type == crate::meta_store::DT_LINK {
+                    return Err(KernelError::IOError(format!(
+                        "read_batch cannot pre-bound DT_LINK target size; \
+                         refusing under aggregate cap (cap={} bytes)",
+                        cap
+                    )));
+                }
+                let cid = meta.content_id.clone().unwrap_or_default();
+                let blob_size = meta.size as usize;
+                if cid.is_empty() {
+                    // Singleton — distinct fetch per request.
+                    declared = declared.saturating_add(blob_size);
+                } else {
+                    // Track per-(mount, content_id) max-size. New rows
+                    // only increase the charge; smaller stale rows are
+                    // ignored.
+                    let key = (r.route.mount_point.clone(), cid);
+                    let prev = sizes.entry(key).or_insert(0);
+                    if blob_size > *prev {
+                        declared = declared.saturating_add(blob_size - *prev);
+                        *prev = blob_size;
+                    }
+                }
+                if declared > cap {
+                    return Err(KernelError::IOError(format!(
+                        "read_batch declared aggregate {} bytes exceeds {} bytes cap",
+                        declared, cap
+                    )));
+                }
+            }
+        }
+
+        // Phase B — group surviving requests by (mount_point, content_id).
+        // Requests whose `entry.content_id` is None or empty become
+        // singleton groups (no coalescing benefit).
+        use std::collections::HashMap;
+        let mut groups: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        let mut singletons: Vec<usize> = Vec::new();
+        for (i, slot) in resolved.iter().enumerate() {
+            if results[i].is_some() {
+                continue;
+            }
+            let r = match slot {
+                Some(r) => r,
+                None => continue,
+            };
+            let cid = r
+                .entry
+                .as_ref()
+                .and_then(|e| e.content_id.as_deref())
+                .unwrap_or("");
+            if cid.is_empty() {
+                singletons.push(i);
+            } else {
+                groups
+                    .entry((r.route.mount_point.clone(), cid.to_string()))
+                    .or_default()
+                    .push(i);
+            }
+        }
+
+        // Phase B fan-out — bounded parallelism over distinct work units.
+        // Each unit is either a coalesced group (one sys_read + N slices)
+        // or a singleton. Cap in-flight units at `read_batch_max_concurrency`
+        // via rayon::par_chunks so we never spin up more than the configured
+        // number of concurrent backend fetches.
         use rayon::prelude::*;
 
-        let results: Vec<SysReadResult> = paths
-            .par_iter()
-            .map(|path| {
-                self.sys_read(path, ctx, 5000, 0).unwrap_or(SysReadResult {
-                    data: None,
-                    post_hook_needed: false,
-                    content_id: None,
-                    gen: 0,
-                    entry_type: 0,
-                    stream_next_offset: None,
-                })
+        enum Unit {
+            Group { indices: Vec<usize> },
+            Singleton { idx: usize },
+        }
+
+        let group_vec: Vec<((String, String), Vec<usize>)> = groups.into_iter().collect();
+        let mut units: Vec<Unit> = Vec::with_capacity(group_vec.len() + singletons.len());
+        for (_key, indices) in group_vec {
+            units.push(Unit::Group { indices });
+        }
+        for i in singletons {
+            units.push(Unit::Singleton { idx: i });
+        }
+
+        let max_conc = self.read_batch_max_concurrency().max(1);
+        let chunk_size = units.len().div_ceil(max_conc).max(1);
+
+        let scattered: Vec<(usize, Result<SysReadResult, KernelError>)> = units
+            .par_chunks(chunk_size)
+            .flat_map_iter(|chunk| {
+                let mut local: Vec<(usize, Result<SysReadResult, KernelError>)> =
+                    Vec::with_capacity(chunk.len() * 2);
+                for unit in chunk {
+                    match unit {
+                        Unit::Group { indices } => {
+                            let lead = indices[0];
+                            let req = &reqs[lead];
+                            // Route stability check — if the lead's mount has
+                            // shifted since Phase A, fall back to full sys_read
+                            // so authz + hooks run against the *current* mount.
+                            // Otherwise use the no-authz variant since Phase A
+                            // already authorized this exact route.
+                            let phase_a_mount = resolved
+                                .get(lead)
+                                .and_then(|o| o.as_ref())
+                                .map(|r| r.route.mount_point.as_str())
+                                .unwrap_or("");
+                            let route_stable = self
+                                .vfs_router
+                                .route(&req.path, &ctx.zone_id)
+                                .map(|r| r.mount_point == phase_a_mount)
+                                .unwrap_or(false);
+                            let shared = if route_stable {
+                                self.sys_read_for_batch(&req.path, ctx)
+                            } else {
+                                self.sys_read(&req.path, ctx, 5000, 0)
+                            };
+                            // Anchor for staleness check: the content_id the read
+                            // bytes actually came from. Re-fetched per-consumer
+                            // metadata MUST agree, or that consumer falls back
+                            // to its own read (rewrite race: file changed between
+                            // Phase A snapshot and the lead's sys_read).
+                            let lead_cid = shared.as_ref().ok().and_then(|r| r.content_id.clone());
+                            for &i in indices.iter() {
+                                // Re-fetch each consumer's current metadata to
+                                // close the Phase-A→Phase-B race window. If the
+                                // consumer's content_id no longer matches what
+                                // the lead actually read, fall back to a fresh
+                                // per-consumer read so bytes and gen/content_id
+                                // stay consistent.
+                                let consumer_route = resolved
+                                    .get(i)
+                                    .and_then(|o| o.as_ref())
+                                    .map(|r| &r.route)
+                                    .expect("resolved set in Phase A");
+                                // Per-consumer route stability check. A mount
+                                // change can shadow / remap a consumer path
+                                // even when the lead's mount looks stable.
+                                let consumer_route_stable = self
+                                    .vfs_router
+                                    .route(&reqs[i].path, &ctx.zone_id)
+                                    .map(|r| r.mount_point == consumer_route.mount_point)
+                                    .unwrap_or(false);
+                                if !consumer_route_stable {
+                                    // Re-run full sys_read so authz + hooks
+                                    // run against the current mount.
+                                    let r = self.sys_read(&reqs[i].path, ctx, 5000, 0);
+                                    local.push((i, slice_read_result(r, &reqs[i])));
+                                    continue;
+                                }
+                                let fresh_meta = self
+                                    .with_metastore_route(consumer_route, |ms| {
+                                        ms.get(&reqs[i].path).ok().flatten()
+                                    })
+                                    .flatten();
+                                let consumer_cid =
+                                    fresh_meta.as_ref().and_then(|m| m.content_id.as_deref());
+                                let bytes_match = match (&lead_cid, consumer_cid) {
+                                    (Some(l), Some(c)) => l == c,
+                                    _ => false,
+                                };
+                                if bytes_match {
+                                    local.push((
+                                        i,
+                                        clone_read_result(&shared, &reqs[i], fresh_meta.as_ref()),
+                                    ));
+                                } else {
+                                    // Rewrite race or lead error → fall back to
+                                    // this consumer's own read.
+                                    let r = self.sys_read_for_batch(&reqs[i].path, ctx);
+                                    local.push((i, slice_read_result(r, &reqs[i])));
+                                }
+                            }
+                        }
+                        Unit::Singleton { idx } => {
+                            let req = &reqs[*idx];
+                            // Same route-stability check as the Group arm.
+                            let phase_a_mount = resolved
+                                .get(*idx)
+                                .and_then(|o| o.as_ref())
+                                .map(|r| r.route.mount_point.as_str())
+                                .unwrap_or("");
+                            let route_stable = self
+                                .vfs_router
+                                .route(&req.path, &ctx.zone_id)
+                                .map(|r| r.mount_point == phase_a_mount)
+                                .unwrap_or(false);
+                            let r = if route_stable {
+                                self.sys_read_for_batch(&req.path, ctx)
+                            } else {
+                                self.sys_read(&req.path, ctx, 5000, 0)
+                            };
+                            local.push((*idx, slice_read_result(r, req)));
+                        }
+                    }
+                }
+                local.into_iter()
             })
             .collect();
 
-        Ok(results)
+        for (i, r) in scattered {
+            results[i] = Some(r);
+        }
+
+        Ok(results.into_iter().map(|o| o.unwrap()).collect())
     }
 
     /// Internal: batch delete — full Rust + batch metastore.
@@ -2921,5 +3447,310 @@ impl Kernel {
             ));
         }
         Ok((key, actual_path))
+    }
+}
+
+#[cfg(test)]
+mod read_batch_tests {
+    use crate::abc::object_store::{ObjectStore, StorageError, WriteResult};
+    use crate::kernel::{Kernel, KernelError};
+    use contracts::OperationContext;
+    use parking_lot::Mutex;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn ctx() -> OperationContext {
+        // Admin + system bypass — fine for unit tests.
+        OperationContext::new("test", "root", true, None, true)
+    }
+
+    /// Minimal in-memory backend — enough for write + read round-trips.
+    #[derive(Default)]
+    struct MemBackend {
+        blobs: Mutex<HashMap<String, Vec<u8>>>,
+    }
+
+    impl ObjectStore for MemBackend {
+        fn name(&self) -> &str {
+            "mem"
+        }
+
+        fn write_content(
+            &self,
+            content: &[u8],
+            content_id: &str,
+            _ctx: &OperationContext,
+            offset: u64,
+        ) -> Result<WriteResult, StorageError> {
+            let mut map = self.blobs.lock();
+            let entry = map.entry(content_id.to_string()).or_default();
+            let start = offset as usize;
+            if start > entry.len() {
+                entry.resize(start, 0);
+            }
+            let end = start + content.len();
+            if end > entry.len() {
+                entry.resize(end, 0);
+            }
+            entry[start..end].copy_from_slice(content);
+            let size = entry.len() as u64;
+            Ok(WriteResult {
+                content_id: content_id.to_string(),
+                version: content_id.to_string(),
+                size,
+            })
+        }
+
+        fn read_content(
+            &self,
+            content_id: &str,
+            _ctx: &OperationContext,
+        ) -> Result<Vec<u8>, StorageError> {
+            self.blobs
+                .lock()
+                .get(content_id)
+                .cloned()
+                .ok_or_else(|| StorageError::NotFound(content_id.into()))
+        }
+
+        fn delete_file(&self, path: &str) -> Result<(), StorageError> {
+            self.blobs.lock().remove(path);
+            Ok(())
+        }
+
+        fn get_content_size(&self, content_id: &str) -> Result<u64, StorageError> {
+            self.blobs
+                .lock()
+                .get(content_id)
+                .map(|d| d.len() as u64)
+                .ok_or_else(|| StorageError::NotFound(content_id.into()))
+        }
+
+        fn copy_file(&self, src: &str, dst: &str) -> Result<WriteResult, StorageError> {
+            let mut map = self.blobs.lock();
+            let data = map
+                .get(src)
+                .cloned()
+                .ok_or_else(|| StorageError::NotFound(src.into()))?;
+            let size = data.len() as u64;
+            map.insert(dst.to_string(), data);
+            Ok(WriteResult {
+                content_id: dst.to_string(),
+                version: dst.to_string(),
+                size,
+            })
+        }
+    }
+
+    /// Kernel pre-wired with an in-memory backend at `/`.
+    fn kernel_with_backend() -> Kernel {
+        let k = Kernel::new();
+        let backend: Arc<dyn ObjectStore> = Arc::new(MemBackend::default());
+        k.add_mount(
+            "/",
+            contracts::ROOT_ZONE_ID,
+            Some(backend),
+            None,
+            None,
+            false,
+        )
+        .expect("add_mount");
+        k
+    }
+
+    #[test]
+    fn read_batch_empty_input_returns_empty_vec() {
+        let k = Kernel::new();
+        let out = k._read_batch(&[], &ctx()).expect("ok");
+        assert_eq!(out.len(), 0);
+    }
+
+    #[test]
+    fn read_batch_invalid_path_yields_per_item_err() {
+        let k = Kernel::new();
+        let reqs = vec![
+            crate::kernel::BatchReadRequest {
+                path: "".into(), // invalid
+                offset: 0,
+                len: None,
+            },
+            crate::kernel::BatchReadRequest {
+                path: "/definitely/does/not/exist".into(),
+                offset: 0,
+                len: None,
+            },
+        ];
+        let out = k._read_batch(&reqs, &ctx()).expect("outer ok");
+        assert_eq!(out.len(), 2);
+        assert!(matches!(out[0], Err(KernelError::InvalidPath(_))));
+        assert!(matches!(out[1], Err(KernelError::FileNotFound(_))));
+    }
+
+    #[test]
+    fn read_batch_single_file_round_trip() {
+        let k = kernel_with_backend();
+        let c = ctx();
+        k.sys_write("/r3.txt", &c, b"hi there", 0).expect("write");
+        let reqs = vec![crate::kernel::BatchReadRequest {
+            path: "/r3.txt".into(),
+            offset: 0,
+            len: None,
+        }];
+        let out = k._read_batch(&reqs, &c).expect("ok");
+        assert_eq!(out.len(), 1);
+        let r = out[0].as_ref().expect("inner ok");
+        assert_eq!(r.data.as_deref().unwrap(), b"hi there");
+    }
+
+    #[test]
+    fn read_batch_coalesces_same_content_id() {
+        let k = kernel_with_backend();
+        let c = ctx();
+        let payload = b"hello vectored world".to_vec();
+        k.sys_write("/coalesce.txt", &c, &payload, 0)
+            .expect("write");
+        let reqs: Vec<_> = (0..5)
+            .map(|_| crate::kernel::BatchReadRequest {
+                path: "/coalesce.txt".into(),
+                offset: 0,
+                len: None,
+            })
+            .collect();
+        let out = k._read_batch(&reqs, &c).expect("outer ok");
+        assert_eq!(out.len(), 5);
+        for r in &out {
+            let r = r.as_ref().expect("ok");
+            assert_eq!(r.data.as_deref().unwrap(), payload.as_slice());
+        }
+    }
+
+    #[test]
+    fn read_batch_100_distinct_paths_parallel() {
+        let k = kernel_with_backend();
+        let c = ctx();
+        let mut reqs = Vec::with_capacity(100);
+        for i in 0..100u32 {
+            let path = format!("/p{i:03}.txt");
+            let payload = format!("payload-{i}").into_bytes();
+            k.sys_write(&path, &c, &payload, 0).expect("write");
+            reqs.push(crate::kernel::BatchReadRequest {
+                path,
+                offset: 0,
+                len: None,
+            });
+        }
+        let out = k._read_batch(&reqs, &c).expect("outer ok");
+        assert_eq!(out.len(), 100);
+        for (i, r) in out.iter().enumerate() {
+            let r = r.as_ref().expect("ok");
+            let expected = format!("payload-{i}").into_bytes();
+            assert_eq!(r.data.as_deref().unwrap(), expected.as_slice());
+        }
+    }
+
+    #[test]
+    fn read_batch_range_slicing() {
+        let k = kernel_with_backend();
+        let c = ctx();
+        let payload = b"0123456789".to_vec(); // 10 bytes
+        k.sys_write("/r.txt", &c, &payload, 0).unwrap();
+
+        // Distinct paths so each request is a singleton (no coalescing).
+        // Need separate paths to force singletons; reuse same content via
+        // multiple writes.
+        for letter in ["a", "b", "c", "d"] {
+            k.sys_write(&format!("/r_{letter}.txt"), &c, &payload, 0)
+                .unwrap();
+        }
+
+        let reqs = vec![
+            // Whole file (coalesce-able with itself if duplicated, but
+            // single request → singleton path).
+            crate::kernel::BatchReadRequest {
+                path: "/r_a.txt".into(),
+                offset: 0,
+                len: None,
+            },
+            // Middle slice
+            crate::kernel::BatchReadRequest {
+                path: "/r_b.txt".into(),
+                offset: 3,
+                len: Some(4),
+            },
+            // Offset == size (empty)
+            crate::kernel::BatchReadRequest {
+                path: "/r_c.txt".into(),
+                offset: 10,
+                len: Some(5),
+            },
+            // Overshoot — truncated
+            crate::kernel::BatchReadRequest {
+                path: "/r_d.txt".into(),
+                offset: 8,
+                len: Some(50),
+            },
+        ];
+        let out = k._read_batch(&reqs, &c).expect("ok");
+        assert_eq!(
+            out[0].as_ref().unwrap().data.as_deref().unwrap(),
+            b"0123456789"
+        );
+        assert_eq!(out[1].as_ref().unwrap().data.as_deref().unwrap(), b"3456");
+        assert_eq!(out[2].as_ref().unwrap().data.as_deref().unwrap(), b"");
+        assert_eq!(out[3].as_ref().unwrap().data.as_deref().unwrap(), b"89");
+    }
+
+    #[test]
+    fn read_batch_rejects_pipe_entry() {
+        use crate::meta_store::{FileMetadata, DT_PIPE};
+        // kernel_with_backend registers a "/" mount so vfs_router.route succeeds.
+        let k = kernel_with_backend();
+        let c = ctx();
+        // Inject a DT_PIPE metadata row directly into the boot metastore.
+        // This bypasses the full pipe-creation pipeline and exercises
+        // exactly the guard we are testing.
+        let meta = FileMetadata {
+            entry_type: DT_PIPE,
+            ..FileMetadata::default()
+        };
+        k.metastore_put("/fake_pipe", meta).expect("put");
+        let reqs = vec![crate::kernel::BatchReadRequest {
+            path: "/fake_pipe".into(),
+            offset: 0,
+            len: None,
+        }];
+        let out = k._read_batch(&reqs, &c).expect("outer ok");
+        match &out[0] {
+            Err(KernelError::IOError(m)) => {
+                assert!(m.contains("pipe") || m.contains("stream"), "got: {m}");
+            }
+            Err(e) => panic!("expected IOError, got different KernelError: {e:?}"),
+            Ok(_) => panic!("expected IOError, got Ok"),
+        }
+    }
+
+    #[test]
+    fn read_batch_respects_max_concurrency_one() {
+        let k = kernel_with_backend();
+        k.set_read_batch_max_concurrency(1);
+        let c = ctx();
+        for i in 0..10 {
+            k.sys_write(&format!("/x{i}.txt"), &c, &format!("v{i}").into_bytes(), 0)
+                .unwrap();
+        }
+        let reqs: Vec<_> = (0..10)
+            .map(|i| crate::kernel::BatchReadRequest {
+                path: format!("/x{i}.txt"),
+                offset: 0,
+                len: None,
+            })
+            .collect();
+        let out = k._read_batch(&reqs, &c).expect("ok");
+        for (i, r) in out.iter().enumerate() {
+            assert_eq!(
+                r.as_ref().unwrap().data.as_deref().unwrap(),
+                format!("v{i}").as_bytes()
+            );
+        }
     }
 }

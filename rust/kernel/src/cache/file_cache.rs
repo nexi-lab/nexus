@@ -143,6 +143,16 @@ impl FileCache {
         }
     }
 
+    /// Evict every entry from the cache.
+    ///
+    /// Primarily useful for benchmarks and tests that need cache-cold
+    /// reads without destroying the `Kernel` instance.
+    pub fn clear(&self) {
+        let mut inner = self.inner.write();
+        inner.entries.clear();
+        inner.total_bytes = 0;
+    }
+
     pub fn invalidate_path(&self, scope_id: &str, path: &str, namespace: &str) {
         let mut inner = self.inner.write();
         let to_remove: Vec<FileCacheKey> = inner

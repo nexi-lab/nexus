@@ -1705,7 +1705,14 @@ class ContentMixin:
                 )
 
         # KERNEL: parallel Rust read for all allowed paths.
-        rust_results = self._kernel._read_batch(allowed_paths, _rust_ctx) if allowed_paths else []
+        # Task 10 — pass new tuple shape (path, offset=0, length=None) so the
+        # Rust kernel surfaces per-item error_kind instead of collapsing all
+        # failures to data=None (legacy behaviour).
+        rust_results = (
+            self._kernel._read_batch([(p, 0, None) for p in allowed_paths], _rust_ctx)
+            if allowed_paths
+            else []
+        )
 
         results: list[dict[str, Any]] = []
         hit_items: list[tuple[str, "FileMetadata | None"]] = []  # for post-hooks
@@ -1731,6 +1738,46 @@ class ContentMixin:
 
             r = next(allowed_iter)
             meta = batch_meta.get(path)
+
+            # Task 10 — explicit per-item error_kind from new kernel ABI.
+            # The new _read_batch (tuple-shape) surfaces "not_found",
+            # "permission_denied", "invalid_path", "io_error" directly instead
+            # of collapsing them to data=None.  Handle before the legacy
+            # data=None fallback so the correct exception / error key is used.
+            # Tolerate legacy/test-double result shapes that only carry
+            # data/content_id/gen — they lack the error_kind discriminant.
+            _error_kind = getattr(r, "error_kind", "") or ""
+            _error_message = getattr(r, "error_message", "") or ""
+            if _error_kind:
+                # "unsupported" is the kernel's signal that this path's
+                # entry type cannot use the batch fast path (DT_PIPE /
+                # DT_STREAM today). Fall through to the legacy single-
+                # file fallback below — which handles pipes/streams,
+                # virtual resolvers, and external connectors — instead
+                # of raising. Strict/partial behavior for the actual
+                # fallback result is decided by self.read().
+                if _error_kind == "unsupported":
+                    pass  # falls through to `r.data is None` block below
+                elif not partial:
+                    if _error_kind == "not_found":
+                        raise NexusFileNotFoundError(path)
+                    if _error_kind == "permission_denied":
+                        from nexus.contracts.exceptions import NexusPermissionError
+
+                        raise NexusPermissionError(_error_message or path)
+                    if _error_kind == "invalid_path":
+                        from nexus.contracts.exceptions import InvalidPathError
+
+                        raise InvalidPathError(_error_message or path)
+                    # io_error or other unknown kind
+                    raise OSError(f"read_batch({path}): {_error_message}")
+                else:
+                    # partial mode — per-item error dict
+                    _err: dict[str, Any] = {"path": path, "error": _error_kind}
+                    if _error_kind == "io_error" and _error_message:
+                        _err["message"] = _error_message
+                    results.append(_err)
+                    continue
 
             if r.data is None:
                 # Finding #2 — _read_batch returns data=None not only for missing CAS

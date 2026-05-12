@@ -26,6 +26,10 @@ service NexusVFSService {
 
   // Health check with server metadata.
   rpc Ping(PingRequest) returns (PingResponse);
+
+  // Vectored batch read (Issue #4058). Per-request errors are reported
+  // per-item; outer Status is reserved for transport-level failures.
+  rpc BatchRead(BatchReadRequest) returns (BatchReadResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -95,4 +99,35 @@ message PingResponse {
   string version = 1;
   string zone_id = 2;
   int64 uptime_seconds = 3;
+}
+
+// --- Batch read (Issue #4058) ---
+
+message BatchReadRequest {
+  string auth_token = 1;
+  repeated BatchReadItemRequest items = 2;
+}
+
+message BatchReadItemRequest {
+  string path = 1;
+  uint64 offset = 2;
+  // proto3 `optional` so callers can distinguish "no length set"
+  // (read to EOF from offset) from `length = 0` (legitimate zero-byte
+  // EOF probe). Old clients that omitted `length` continue to read
+  // whole files; new clients can explicitly set 0 for an empty slice.
+  // (Named `length` rather than `len` so the generated Rust struct
+  // doesn't trip `clippy::len_without_is_empty`.)
+  optional uint64 length = 3;
+}
+
+message BatchReadResponse {
+  repeated BatchReadItemResponse results = 1;  // input order
+}
+
+message BatchReadItemResponse {
+  bytes content = 1;        // empty when is_error
+  bool is_error = 2;
+  bytes error_payload = 3;  // JSON RPC error dict (same as CallResponse)
+  string content_id = 4;
+  uint64 gen = 5;
 }

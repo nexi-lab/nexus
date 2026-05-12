@@ -123,3 +123,7 @@ harness = false
 [[bench]]
 name = "ops_registry_bench"
 harness = false
+
+[[bench]]
+name = "read_batch"
+harness = false

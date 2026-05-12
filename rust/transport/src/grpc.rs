@@ -29,8 +29,9 @@ use tonic::{transport::Server, Request, Response, Status};
 use crate::TlsConfig;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
-    CallRequest, CallResponse, DeleteRequest, DeleteResponse, PingRequest, PingResponse,
-    ReadRequest, ReadResponse, WriteRequest, WriteResponse,
+    BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest, CallResponse,
+    DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse,
+    WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -103,7 +104,9 @@ impl Drop for VfsGrpcHandle {
 struct VfsServiceImpl {
     kernel: Arc<Kernel>,
     api_key: Option<Arc<str>>,
-    bridge: Arc<PyBridge>,
+    /// `None` only in `#[cfg(test)]` scenarios where the API-key fast-path
+    /// is always taken and the Python bridge is never reached.
+    bridge: Option<Arc<PyBridge>>,
     server_started_at: Instant,
     server_version: Arc<str>,
     /// Best-effort uptime in seconds reported by `Ping`.
@@ -138,7 +141,10 @@ impl VfsServiceImpl {
         }
 
         // OIDC path: delegate to Python authenticate callback.
-        let bridge = self.bridge.clone();
+        let bridge = match self.bridge.clone() {
+            Some(b) => b,
+            None => return Err(Status::unauthenticated("no auth bridge configured")),
+        };
         let token_owned = token.to_string();
         let auth_dict_serialized = tokio::task::spawn_blocking(move || {
             Python::attach(|py| -> PyResult<Option<AuthResult>> {
@@ -179,6 +185,22 @@ impl VfsServiceImpl {
             }
             // KernelError doesn't impl Display — use Debug formatter.
             other => (RpcErrorCode::InternalError, format!("{:?}", other)),
+        }
+    }
+
+    /// Test-only constructor: bypasses the `PyBridge` requirement.
+    /// The instance uses the API-key fast-path exclusively — Python is
+    /// never invoked. The token `"test-key"` is hard-coded so test
+    /// callers just pass `auth_token: "test-key".into()`.
+    #[cfg(test)]
+    pub(crate) fn for_test(kernel: Arc<Kernel>) -> Self {
+        Self {
+            kernel,
+            api_key: Some(Arc::from("test-key")),
+            bridge: None,
+            server_started_at: Instant::now(),
+            server_version: Arc::from("test"),
+            started_secs: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -316,6 +338,95 @@ impl NexusVfsService for VfsServiceImpl {
         }))
     }
 
+    async fn batch_read(
+        &self,
+        req: Request<BatchReadRequest>,
+    ) -> Result<Response<BatchReadResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token).await {
+            Ok(c) => c,
+            Err(s) => return Err(s),
+        };
+        // Federation tokens use Call dispatch (same rule as typed Read).
+        if !ctx.zone_perms.is_empty() {
+            return Err(Status::permission_denied(
+                "federation token: use Call dispatch (read_bulk RPC) — typed BatchRead bypasses zone authorization",
+            ));
+        }
+
+        // proto3 `optional uint64 length` lands as `Option<u64>` on the
+        // generated struct, so callers can distinguish "absent" (whole
+        // file from offset) from `Some(0)` (zero-byte slice).
+        let rust_reqs: Vec<kernel::kernel::BatchReadRequest> = req
+            .items
+            .into_iter()
+            .map(|it| kernel::kernel::BatchReadRequest {
+                path: it.path,
+                offset: it.offset,
+                len: it.length,
+            })
+            .collect();
+
+        // Per-call aggregate-bytes cap — passed directly into the kernel
+        // so concurrent BatchRead calls (and the Python wrapper, which
+        // passes None) never race on shared state. The cap is enforced
+        // inside _read_batch AFTER Phase A authorization, so denied
+        // paths contribute 0 and cannot be probed via resource_exhausted.
+        const MAX_AGG: usize = 100 * 1024 * 1024;
+
+        let outcome = self
+            .kernel
+            ._read_batch_with_cap(&rust_reqs, &ctx, Some(MAX_AGG));
+        let results = match outcome {
+            Ok(v) => v,
+            Err(KernelError::IOError(msg)) if msg.starts_with("read_batch declared aggregate") => {
+                return Err(Status::resource_exhausted(msg));
+            }
+            Err(e) => return Err(Status::internal(format!("{:?}", e))),
+        };
+
+        // Post-read defense-in-depth — catches paths whose metadata wasn't
+        // present in the upfront estimate (cold PAS, virtual resolver,
+        // external connector). Reads have already completed; we still
+        // refuse to serialize the response over the wire.
+        let mut total = 0usize;
+        for r in results.iter().filter_map(|r| r.as_ref().ok()) {
+            total = total.saturating_add(r.data.as_ref().map(|b| b.len()).unwrap_or(0));
+            if total > MAX_AGG {
+                return Err(Status::resource_exhausted(format!(
+                    "batch read response {} bytes exceeds {} MB",
+                    total,
+                    MAX_AGG / (1024 * 1024)
+                )));
+            }
+        }
+
+        let mapped: Vec<BatchReadItemResponse> = results
+            .into_iter()
+            .map(|r| match r {
+                Ok(r) => BatchReadItemResponse {
+                    content: r.data.unwrap_or_default(),
+                    is_error: false,
+                    error_payload: Vec::new(),
+                    content_id: r.content_id.unwrap_or_default(),
+                    gen: r.gen,
+                },
+                Err(e) => {
+                    let (code, msg) = self.map_kernel_err(e);
+                    BatchReadItemResponse {
+                        content: Vec::new(),
+                        is_error: true,
+                        error_payload: encode_rpc_error(code, &msg),
+                        content_id: String::new(),
+                        gen: 0,
+                    }
+                }
+            })
+            .collect();
+
+        Ok(Response::new(BatchReadResponse { results: mapped }))
+    }
+
     async fn call(&self, req: Request<CallRequest>) -> Result<Response<CallResponse>, Status> {
         let req = req.into_inner();
 
@@ -334,7 +445,18 @@ impl NexusVfsService for VfsServiceImpl {
             };
 
         let kernel = Arc::clone(&self.kernel);
-        let bridge = self.bridge.clone();
+        let bridge = match self.bridge.clone() {
+            Some(b) => b,
+            None => {
+                return Ok(Response::new(CallResponse {
+                    payload: encode_rpc_error_bytes(
+                        RpcErrorCode::InternalError,
+                        "Call RPC requires Python bridge (not configured)",
+                    ),
+                    is_error: true,
+                }))
+            }
+        };
         let api_key = self.api_key.clone();
         let payload = req.payload;
         let method = req.method;
@@ -453,7 +575,7 @@ pub fn spawn(
     let svc = VfsServiceImpl {
         kernel,
         api_key: cfg.api_key.clone(),
-        bridge: Arc::new(bridge),
+        bridge: Some(Arc::new(bridge)),
         server_started_at: Instant::now(),
         server_version: Arc::from(cfg.server_version.clone()),
         started_secs: Arc::new(AtomicU64::new(0)),
@@ -926,5 +1048,171 @@ mod tests {
         assert_eq!(resolve_rust_dispatch("get_capabilities"), None);
         assert_eq!(resolve_rust_dispatch("ping"), None);
         assert_eq!(resolve_rust_dispatch(""), None);
+    }
+
+    // ── BatchRead integration ──────────────────────────────────────────
+    //
+    // Wiring: rather than pulling `kernel`'s `test-utils` Cargo feature
+    // (which leaks `MemBackend` into production builds via feature
+    // unification), we define a minimal `MemBackend` here, implement
+    // `kernel::abc::object_store::ObjectStore` on it, and mount it via
+    // the public `Kernel::sys_setattr(DT_MOUNT=2)` path.  Only
+    // `write_content` and `read_content` are required; everything else
+    // has a default `NotSupported` impl in the trait.
+
+    use std::collections::HashMap;
+    use std::sync::Mutex as StdMutex;
+
+    use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+    use kernel::kernel::vfs_proto::{
+        nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
+    };
+    use kernel::kernel::Kernel;
+
+    /// Minimal in-memory `ObjectStore` for transport integration tests.
+    /// Kept entirely inside `#[cfg(test)]` — never compiled into production.
+    #[derive(Default)]
+    struct MemBackend {
+        blobs: StdMutex<HashMap<String, Vec<u8>>>,
+    }
+
+    impl ObjectStore for MemBackend {
+        fn name(&self) -> &str {
+            "mem"
+        }
+
+        fn write_content(
+            &self,
+            content: &[u8],
+            content_id: &str,
+            _ctx: &kernel::kernel::OperationContext,
+            offset: u64,
+        ) -> Result<WriteResult, StorageError> {
+            let mut map = self.blobs.lock().unwrap();
+            let entry = map.entry(content_id.to_string()).or_default();
+            let start = offset as usize;
+            if start > entry.len() {
+                entry.resize(start, 0);
+            }
+            let end = start + content.len();
+            if end > entry.len() {
+                entry.resize(end, 0);
+            }
+            entry[start..end].copy_from_slice(content);
+            let size = entry.len() as u64;
+            Ok(WriteResult {
+                content_id: content_id.to_string(),
+                version: content_id.to_string(),
+                size,
+            })
+        }
+
+        fn read_content(
+            &self,
+            content_id: &str,
+            _ctx: &kernel::kernel::OperationContext,
+        ) -> Result<Vec<u8>, StorageError> {
+            self.blobs
+                .lock()
+                .unwrap()
+                .get(content_id)
+                .cloned()
+                .ok_or_else(|| StorageError::NotFound(content_id.into()))
+        }
+    }
+
+    /// Create a `Kernel` pre-wired with an in-memory backend at `/`.
+    /// Uses only the public `sys_setattr(DT_MOUNT)` API — no
+    /// cross-crate `test-utils` feature required.
+    fn kernel_with_mem_backend() -> Kernel {
+        let k = Kernel::new();
+        let backend: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(MemBackend::default());
+        k.sys_setattr(
+            "/",
+            2, // DT_MOUNT
+            "mem",
+            Some(backend),
+            None,
+            None,
+            "",
+            kernel::ROOT_ZONE_ID,
+            false,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("kernel_with_mem_backend: sys_setattr DT_MOUNT");
+        k
+    }
+
+    #[tokio::test]
+    async fn batch_read_returns_per_item_results_in_order() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        kernel
+            .sys_write("/x.txt", &ctx, b"hello", 0)
+            .expect("write");
+
+        let svc = VfsServiceImpl::for_test(kernel.clone());
+
+        let req = tonic::Request::new(BatchReadRequest {
+            auth_token: "test-key".into(),
+            items: vec![
+                BatchReadItemRequest {
+                    path: "/x.txt".into(),
+                    offset: 0,
+                    length: None, // whole file from offset
+                },
+                BatchReadItemRequest {
+                    path: "/missing.txt".into(),
+                    offset: 0,
+                    length: None,
+                },
+                BatchReadItemRequest {
+                    path: "/x.txt".into(),
+                    offset: 1,
+                    length: Some(3),
+                },
+            ],
+        });
+
+        let resp = svc.batch_read(req).await.expect("rpc ok").into_inner();
+        assert_eq!(resp.results.len(), 3);
+
+        // item[0]: /x.txt from offset 0, full file
+        assert!(!resp.results[0].is_error, "item[0] should succeed");
+        assert_eq!(
+            resp.results[0].content, b"hello",
+            "item[0] content mismatch"
+        );
+
+        // item[1]: /missing.txt — should be a per-item error
+        assert!(
+            resp.results[1].is_error,
+            "item[1] should be error (file not found)"
+        );
+
+        // item[2]: /x.txt offset=1, len=3 → "ell"
+        assert!(!resp.results[2].is_error, "item[2] should succeed");
+        assert_eq!(resp.results[2].content, b"ell", "item[2] slice mismatch");
+    }
+
+    #[tokio::test]
+    async fn batch_read_empty_items_returns_empty_results() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let req = tonic::Request::new(BatchReadRequest {
+            auth_token: "test-key".into(),
+            items: vec![],
+        });
+
+        let resp = svc.batch_read(req).await.expect("rpc ok").into_inner();
+        assert_eq!(resp.results.len(), 0);
     }
 }

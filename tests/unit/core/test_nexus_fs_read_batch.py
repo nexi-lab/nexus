@@ -222,3 +222,46 @@ class TestReadBatchPathValidation:
 
         with pytest.raises(InvalidPathError):
             nx.read_batch([""], partial=True)
+
+
+class TestReadBatchTupleShape:
+    """Tests for the new _read_batch tuple-shape ABI (Issue #4058, Task 10).
+
+    These verify that:
+    - The success-path dict shape is preserved (back-compat).
+    - Per-item error_kind values are surfaced correctly in partial mode.
+    - Missing files raise NexusFileNotFoundError in strict mode.
+    """
+
+    def test_read_bulk_back_compat_returns_existing_shape(self, nx):
+        nx.write("/a.txt", b"alpha")
+        nx.write("/b.txt", b"beta")
+        out = nx.read_batch(["/a.txt", "/b.txt"])
+        assert len(out) == 2
+        assert out[0]["content"] == b"alpha"
+        assert out[1]["content"] == b"beta"
+        assert "content_id" in out[0]
+
+    def test_read_bulk_partial_mode_reports_per_item_errors(self, nx):
+        nx.write("/exists.txt", b"hi")
+        out = nx.read_batch(["/exists.txt", "/missing.txt"], partial=True)
+        assert out[0]["content"] == b"hi"
+        assert out[1]["error"] == "not_found"
+
+    def test_read_bulk_strict_mode_raises_not_found(self, nx):
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        nx.write("/present.txt", b"here")
+        with pytest.raises(NexusFileNotFoundError):
+            nx.read_batch(["/present.txt", "/ghost.txt"])
+
+    def test_read_bulk_partial_mode_success_item_has_all_keys(self, nx):
+        nx.write("/data.txt", b"payload")
+        out = nx.read_batch(["/data.txt"], partial=True)
+        assert len(out) == 1
+        item = out[0]
+        assert item["content"] == b"payload"
+        assert "content_id" in item
+        assert "version" in item
+        assert "size" in item
+        assert item["size"] == len(b"payload")

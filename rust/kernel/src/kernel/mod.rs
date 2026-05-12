@@ -33,7 +33,7 @@ use crate::vfs_router::{
 };
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Extension trait giving parking_lot's two read-lock methods names that
@@ -183,6 +183,15 @@ pub struct SysReadResult {
     /// DT_STREAM: next read offset (message index) for cursor advancement.
     /// None for non-stream entry types.
     pub stream_next_offset: Option<usize>,
+}
+
+/// Per-request entry for `Kernel::_read_batch`.
+///
+/// `offset` = byte offset into the file; `len = None` means "to EOF".
+pub struct BatchReadRequest {
+    pub path: String,
+    pub offset: u64,
+    pub len: Option<u64>,
 }
 
 pub struct SysCatResult {
@@ -598,6 +607,8 @@ pub struct Kernel {
     // VFS lock timeout for blocking acquire (ms) — ``AtomicU64`` so
     // ``set_vfs_lock_timeout`` stays ``&self``; reads are lock-free.
     vfs_lock_timeout_ms: AtomicU64,
+    // Max in-flight backend fetches inside `_read_batch`. Default 16.
+    read_batch_max_concurrency: AtomicUsize,
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
@@ -787,6 +798,7 @@ impl Kernel {
             metastore: parking_lot::RwLock::new(Some(Box::new(boot_metastore))),
             boot_metastore_tempdir: parking_lot::RwLock::new(Some(boot_tempdir)),
             vfs_lock_timeout_ms: AtomicU64::new(5000),
+            read_batch_max_concurrency: AtomicUsize::new(16),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
             stat_hook_count: AtomicU64::new(0),
@@ -896,6 +908,30 @@ impl Kernel {
     #[inline]
     fn vfs_lock_timeout_ms(&self) -> u64 {
         self.vfs_lock_timeout_ms.load(Ordering::Relaxed)
+    }
+
+    /// Max in-flight backend fetches inside `_read_batch` (clamped to ≥1).
+    #[inline]
+    pub fn read_batch_max_concurrency(&self) -> usize {
+        self.read_batch_max_concurrency
+            .load(Ordering::Relaxed)
+            .max(1)
+    }
+
+    /// Override the read-batch concurrency cap; clamped to ≥1.
+    pub fn set_read_batch_max_concurrency(&self, n: usize) {
+        self.read_batch_max_concurrency
+            .store(n.max(1), Ordering::Relaxed);
+    }
+
+    /// Evict every entry from the in-process file cache.
+    ///
+    /// Useful in benchmarks and integration tests that need cache-cold
+    /// reads without discarding the `Kernel` instance. Calling this in
+    /// production is safe but degrades hot-path read throughput until the
+    /// cache warms up again.
+    pub fn clear_file_cache(&self) {
+        self.file_cache.clear();
     }
 
     // ── Node identity (federation content origin) ─────────────────────

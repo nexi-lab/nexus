@@ -59,6 +59,11 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingResponse.FromString,
                 _registered_method=True)
+        self.BatchRead = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/BatchRead',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -98,6 +103,14 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def BatchRead(self, request, context):
+        """Vectored batch read (Issue #4058). Per-request errors are reported
+        per-item; outer Status is reserved for transport-level failures.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -125,6 +138,11 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.Ping,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingResponse.SerializeToString,
+            ),
+            'BatchRead': grpc.unary_unary_rpc_method_handler(
+                    servicer.BatchRead,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -262,6 +280,33 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/Ping',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def BatchRead(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/BatchRead',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadResponse.FromString,
             options,
             channel_credentials,
             insecure,

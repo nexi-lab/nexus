@@ -112,6 +112,11 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 #[cfg(feature = "python")]
 pub mod agent_registry_py;
 
+// PyO3 helper for batch-read error classification (Issue #4058).
+// Provides `batch_err_kind_msg` used by `generated_kernel_abi_pyo3`.
+#[cfg(feature = "python")]
+pub mod batch_read_py;
+
 // kernel↔raft Cargo edge direction: `raft → kernel`. Raft state-machine
 // impls (zone_meta_store) and the
 // `RaftDistributedCoordinator` trait impl live in the raft crate.

@@ -385,13 +385,18 @@ impl Kernel {
                     "DT_LINK chain rejected (ELOOP) at {path}"
                 )));
             }
+            // DT_LINK target requires its own §13 permission gate +
+            // §11 native PRE-read hook (the link path's authorization
+            // does NOT grant access to the target). Force authz on the
+            // recursive call even when the outer batch caller set
+            // skip_authz=true.
             return self.sys_read_inner(
                 target,
                 ctx,
                 max_link_hops - 1,
                 timeout_ms,
                 offset,
-                skip_authz,
+                /* skip_authz */ false,
             );
         }
 
@@ -2811,6 +2816,42 @@ impl Kernel {
             resolved[i] = Some(ResolvedRead { route, entry });
         }
 
+        // Aggregate-bytes cap — only authorized paths (those that survived
+        // Phase A's permission + native PRE-read hook) contribute. A non-
+        // zero cap returned by `read_batch_max_aggregate_bytes` causes a
+        // hard outer error; 0 (default) disables the cap so the Python
+        // wrapper's own DoS guard remains in charge. gRPC `BatchRead`
+        // sets this knob to 100 MiB so a malicious client cannot force
+        // the kernel to fetch / clone an oversized response.
+        let agg_cap = self.read_batch_max_aggregate_bytes();
+        if agg_cap > 0 {
+            let mut declared: usize = 0;
+            for (i, slot) in resolved.iter().enumerate() {
+                let r = match slot {
+                    Some(r) => r,
+                    None => continue,
+                };
+                let meta = match r.entry.as_ref() {
+                    Some(m) => m,
+                    None => continue,
+                };
+                let req = &reqs[i];
+                let file_size = meta.size as usize;
+                let off = (req.offset as usize).min(file_size);
+                let window = match req.len {
+                    Some(l) => (l as usize).min(file_size.saturating_sub(off)),
+                    None => file_size.saturating_sub(off),
+                };
+                declared = declared.saturating_add(window);
+                if declared > agg_cap {
+                    return Err(KernelError::IOError(format!(
+                        "read_batch declared aggregate {} bytes exceeds {} bytes cap",
+                        declared, agg_cap
+                    )));
+                }
+            }
+        }
+
         // Phase B — group surviving requests by (mount_point, content_id).
         // Requests whose `entry.content_id` is None or empty become
         // singleton groups (no coalescing benefit).
@@ -2874,10 +2915,26 @@ impl Kernel {
                         Unit::Group { indices } => {
                             let lead = indices[0];
                             let req = &reqs[lead];
-                            // Phase A already ran perm + native PRE-read hook for
-                            // every grouped path; use the no-authz variant to
-                            // avoid double-firing.
-                            let shared = self.sys_read_for_batch(&req.path, ctx);
+                            // Route stability check — if the lead's mount has
+                            // shifted since Phase A, fall back to full sys_read
+                            // so authz + hooks run against the *current* mount.
+                            // Otherwise use the no-authz variant since Phase A
+                            // already authorized this exact route.
+                            let phase_a_mount = resolved
+                                .get(lead)
+                                .and_then(|o| o.as_ref())
+                                .map(|r| r.route.mount_point.as_str())
+                                .unwrap_or("");
+                            let route_stable = self
+                                .vfs_router
+                                .route(&req.path, &ctx.zone_id)
+                                .map(|r| r.mount_point == phase_a_mount)
+                                .unwrap_or(false);
+                            let shared = if route_stable {
+                                self.sys_read_for_batch(&req.path, ctx)
+                            } else {
+                                self.sys_read(&req.path, ctx, 5000, 0)
+                            };
                             // Anchor for staleness check: the content_id the read
                             // bytes actually came from. Re-fetched per-consumer
                             // metadata MUST agree, or that consumer falls back
@@ -2922,9 +2979,22 @@ impl Kernel {
                         }
                         Unit::Singleton { idx } => {
                             let req = &reqs[*idx];
-                            // Phase A already ran perm + native PRE-read hook;
-                            // use the no-authz variant.
-                            let r = self.sys_read_for_batch(&req.path, ctx);
+                            // Same route-stability check as the Group arm.
+                            let phase_a_mount = resolved
+                                .get(*idx)
+                                .and_then(|o| o.as_ref())
+                                .map(|r| r.route.mount_point.as_str())
+                                .unwrap_or("");
+                            let route_stable = self
+                                .vfs_router
+                                .route(&req.path, &ctx.zone_id)
+                                .map(|r| r.mount_point == phase_a_mount)
+                                .unwrap_or(false);
+                            let r = if route_stable {
+                                self.sys_read_for_batch(&req.path, ctx)
+                            } else {
+                                self.sys_read(&req.path, ctx, 5000, 0)
+                            };
                             local.push((*idx, slice_read_result(r, req)));
                         }
                     }

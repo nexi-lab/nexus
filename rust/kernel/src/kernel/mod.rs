@@ -609,6 +609,10 @@ pub struct Kernel {
     vfs_lock_timeout_ms: AtomicU64,
     // Max in-flight backend fetches inside `_read_batch`. Default 16.
     read_batch_max_concurrency: AtomicUsize,
+    // Max declared authorized aggregate bytes for `_read_batch`. 0 = uncapped.
+    // Default 0 (Python wrapper enforces its own DoS cap). gRPC handler
+    // sets 100 MiB so authorized aggregates can never serialize past that.
+    read_batch_max_aggregate_bytes: AtomicUsize,
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
@@ -799,6 +803,7 @@ impl Kernel {
             boot_metastore_tempdir: parking_lot::RwLock::new(Some(boot_tempdir)),
             vfs_lock_timeout_ms: AtomicU64::new(5000),
             read_batch_max_concurrency: AtomicUsize::new(16),
+            read_batch_max_aggregate_bytes: AtomicUsize::new(0),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
             stat_hook_count: AtomicU64::new(0),
@@ -922,6 +927,23 @@ impl Kernel {
     pub fn set_read_batch_max_concurrency(&self, n: usize) {
         self.read_batch_max_concurrency
             .store(n.max(1), Ordering::Relaxed);
+    }
+
+    /// Max declared aggregate response bytes for `_read_batch`.
+    /// `0` (default) disables the cap; non-zero values cause the kernel
+    /// to reject batches whose authorized declared size exceeds the cap
+    /// with `KernelError::IOError("read_batch aggregate ... exceeds ...")`.
+    /// The gRPC `BatchRead` handler sets 100 MiB; the Python wrapper
+    /// runs its own DoS guard so it leaves this knob at 0.
+    #[inline]
+    pub fn read_batch_max_aggregate_bytes(&self) -> usize {
+        self.read_batch_max_aggregate_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Override the read-batch aggregate-bytes cap. `0` disables.
+    pub fn set_read_batch_max_aggregate_bytes(&self, n: usize) {
+        self.read_batch_max_aggregate_bytes
+            .store(n, Ordering::Relaxed);
     }
 
     /// Evict every entry from the in-process file cache.

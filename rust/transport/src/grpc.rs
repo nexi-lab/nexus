@@ -364,46 +364,22 @@ impl NexusVfsService for VfsServiceImpl {
             })
             .collect();
 
-        // Aggregate-size cap — preflight using metastore sizes BEFORE the
-        // kernel performs any backend I/O. Only paths that pass the §13
-        // permission gate contribute to the sum: a caller cannot probe
-        // existence/size of denied paths by toggling resource_exhausted.
-        // Paths without metadata (cold PAS mount, virtual resolver) and
-        // denied paths contribute 0 to this estimate; the post-read
-        // defense-in-depth check below catches anything missed.
+        // Aggregate-bytes cap — enforced by the kernel inside _read_batch
+        // AFTER Phase A authorization (permission gate + native PRE-read
+        // hook). The kernel runs the same auth/hook chain the actual
+        // reads do, so denied paths contribute 0 to the cap and a caller
+        // cannot probe their existence/size via resource_exhausted. We
+        // install the knob (idempotent) here; the kernel returns an
+        // IOError with the well-known prefix on cap overage.
         const MAX_AGG: usize = 100 * 1024 * 1024;
-        let mut declared_total: usize = 0;
-        for r in &rust_reqs {
-            if self
-                .kernel
-                .check_permission(&r.path, kernel::core::dispatch::Permission::Read, &ctx)
-                .is_err()
-            {
-                continue;
-            }
-            if let Some(meta) = self.kernel.metastore_get(&r.path).ok().flatten() {
-                let file_size = meta.size as usize;
-                // Respect the per-request offset/len window: a 100 GB file
-                // read as (offset=0, len=4096) only costs 4 KB.
-                let off = (r.offset as usize).min(file_size);
-                let window = match r.len {
-                    Some(l) => (l as usize).min(file_size.saturating_sub(off)),
-                    None => file_size.saturating_sub(off),
-                };
-                declared_total = declared_total.saturating_add(window);
-                if declared_total > MAX_AGG {
-                    return Err(Status::resource_exhausted(format!(
-                        "batch read declared aggregate {} bytes exceeds {} MB",
-                        declared_total,
-                        MAX_AGG / (1024 * 1024)
-                    )));
-                }
-            }
-        }
+        self.kernel.set_read_batch_max_aggregate_bytes(MAX_AGG);
 
         let outcome = self.kernel._read_batch(&rust_reqs, &ctx);
         let results = match outcome {
             Ok(v) => v,
+            Err(KernelError::IOError(msg)) if msg.starts_with("read_batch declared aggregate") => {
+                return Err(Status::resource_exhausted(msg));
+            }
             Err(e) => return Err(Status::internal(format!("{:?}", e))),
         };
 

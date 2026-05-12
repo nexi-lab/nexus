@@ -29,6 +29,10 @@ class ZoneRunner:
         self._closed = False
         self._stopping = False
         self._submitted: dict[asyncio.Task[Any], concurrent.futures.Future[Any]] = {}
+        self._pending_submissions: dict[
+            concurrent.futures.Future[Any],
+            Coroutine[Any, Any, Any],
+        ] = {}
 
     @property
     def is_alive(self) -> bool:
@@ -181,8 +185,22 @@ class ZoneRunner:
             loop = self._require_loop()
             external: concurrent.futures.Future[T] = concurrent.futures.Future()
             submitted = invoke()
+            self._pending_submissions[external] = submitted
 
             def schedule() -> None:
+                with self._lock:
+                    pending = self._pending_submissions.pop(external, None)
+                    closed = self._closed or self._stopping
+                if pending is None:
+                    submitted.close()
+                    return
+                if closed:
+                    submitted.close()
+                    if not external.done():
+                        external.set_exception(
+                            RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
+                        )
+                    return
                 try:
                     task = loop.create_task(submitted)
                 except RuntimeError:
@@ -206,6 +224,11 @@ class ZoneRunner:
             def cancel_loop_task(future: concurrent.futures.Future[T]) -> None:
                 if not future.cancelled():
                     return
+                with self._lock:
+                    pending = self._pending_submissions.pop(future, None)
+                if pending is not None:
+                    pending.close()
+                    return
                 task = self._task_for_external(future)
                 if task is None:
                     return
@@ -216,7 +239,10 @@ class ZoneRunner:
             try:
                 loop.call_soon_threadsafe(schedule)
             except RuntimeError as exc:
-                submitted.close()
+                with self._lock:
+                    pending = self._pending_submissions.pop(external, None)
+                if pending is not None:
+                    pending.close()
                 external.set_exception(
                     RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
                 )
@@ -331,6 +357,12 @@ class ZoneRunner:
         with self._lock:
             submitted = list(self._submitted.items())
             self._submitted.clear()
+            pending_submissions = list(self._pending_submissions.items())
+            self._pending_submissions.clear()
+        for external, coroutine in pending_submissions:
+            coroutine.close()
+            if not external.done():
+                external.set_exception(exc)
         for task, external in submitted:
             if not external.done():
                 external.set_exception(exc)

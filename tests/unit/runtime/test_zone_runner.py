@@ -148,6 +148,73 @@ def test_call_sync_waiter_completes_when_loop_is_blocked_during_stop() -> None:
         runner.stop()
 
 
+def test_queued_call_sync_waiter_completes_when_loop_is_blocked_during_stop() -> None:
+    runner = ZoneRunner("zone-a", join_timeout=0.1)
+    blocker_started = threading.Event()
+    queued_started = threading.Event()
+    release_blocker = threading.Event()
+    blocker_results: list[str] = []
+    blocker_errors: list[BaseException] = []
+    queued_results: list[str] = []
+    queued_errors: list[BaseException] = []
+
+    async def blocking_work() -> str:
+        blocker_started.set()
+        release_blocker.wait(2.0)
+        return "blocker-success"
+
+    async def queued_work() -> str:
+        queued_started.set()
+        return "queued-success"
+
+    def call_blocker() -> None:
+        try:
+            blocker_results.append(runner.call_sync(blocking_work))
+        except BaseException as exc:
+            blocker_errors.append(exc)
+
+    def call_queued() -> None:
+        try:
+            queued_results.append(runner.call_sync(queued_work))
+        except BaseException as exc:
+            queued_errors.append(exc)
+
+    blocker = threading.Thread(target=call_blocker)
+    queued = threading.Thread(target=call_queued)
+    blocker.start()
+    try:
+        assert blocker_started.wait(2.0)
+        queued.start()
+        time.sleep(0.05)
+        assert not queued_started.is_set()
+
+        runner.stop()
+        blocker.join(1.0)
+        queued.join(1.0)
+
+        assert not blocker.is_alive()
+        assert not queued.is_alive()
+        assert blocker_results == []
+        assert queued_results == []
+        assert len(blocker_errors) == 1
+        assert len(queued_errors) == 1
+        assert isinstance(blocker_errors[0], RuntimeError)
+        assert isinstance(queued_errors[0], RuntimeError)
+        assert "stopped" in str(blocker_errors[0])
+        assert "stopped" in str(queued_errors[0])
+
+        release_blocker.set()
+        thread = runner._thread
+        if thread is not None:
+            thread.join(2.0)
+        assert not queued_started.is_set()
+    finally:
+        release_blocker.set()
+        blocker.join(2.0)
+        queued.join(2.0)
+        runner.stop()
+
+
 def test_same_runner_call_rejects_after_shutdown_starts() -> None:
     runner = ZoneRunner("zone-a", join_timeout=0.2)
     outer_started = threading.Event()

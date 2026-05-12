@@ -25,6 +25,16 @@ def test_zone_from_params_reads_nested_batch_paths() -> None:
     assert zone_from_params(params) == "eng"
 
 
+def test_zone_from_params_reads_tuple_file_containers() -> None:
+    params = {"files": (("/zone/eng/a.txt", b"a"),)}
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_reads_tuple_operation_containers() -> None:
+    params = {"operations": ({"path": "/zone/legal/a.txt"},)}
+    assert zone_from_params(params) == "legal"
+
+
 def test_target_zone_uses_non_root_context_when_no_path() -> None:
     context = OperationContext(user_id="alice", groups=[], zone_id="eng")
     assert target_zone_for_context(context, None) == "eng"

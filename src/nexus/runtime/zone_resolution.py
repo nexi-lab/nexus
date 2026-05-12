@@ -74,7 +74,7 @@ def _paths_from_value(value: Any) -> Iterable[str]:
     if isinstance(value, tuple) and value and isinstance(value[0], str):
         yield value[0]
         return
-    if isinstance(value, list):
+    if isinstance(value, list | tuple):
         for item in value:
             yield from _paths_from_value(item)
         return

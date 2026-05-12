@@ -2831,22 +2831,36 @@ impl Kernel {
                 results[i] = Some(Err(e));
                 continue;
             }
-            // Zero-length range short-circuit. Phase A has already run
-            // §13 permission + §11 native PRE-read hook for this path,
-            // so returning an empty buffer is authoritative — no need
-            // to descend through Phase B (and no need to follow DT_LINK
-            // targets just to produce 0 bytes). Lets the cap-zero-with-
-            // link edge case succeed.
+            // Zero-length range short-circuit — narrowed to require a
+            // concrete metastore entry whose type is a readable regular
+            // file. Phase A has already run §13 permission + §11 native
+            // PRE-read hook for this path, so returning empty bytes for
+            // a proven-existing DT_REG file is authoritative.
+            //
+            // Explicit exclusions:
+            //   • entry is None — path may not exist; falling through
+            //     lets Phase B return FileNotFound rather than fake
+            //     success.
+            //   • DT_LINK — the link target still needs its own
+            //     permission/hook chain; Phase B routes through
+            //     sys_read_inner which follows the link with authz.
+            //   • DT_PIPE / DT_STREAM — already rejected above.
             if req.len == Some(0) {
-                results[i] = Some(Ok(SysReadResult {
-                    data: Some(Vec::new()),
-                    post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                    content_id: entry.as_ref().and_then(|m| m.content_id.clone()),
-                    gen: entry.as_ref().map(|m| m.gen).unwrap_or(0),
-                    entry_type: entry.as_ref().map(|m| m.entry_type).unwrap_or(DT_REG),
-                    stream_next_offset: None,
-                }));
-                continue;
+                if let Some(m) = entry.as_ref() {
+                    if m.entry_type != crate::meta_store::DT_LINK {
+                        results[i] = Some(Ok(SysReadResult {
+                            data: Some(Vec::new()),
+                            post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                            content_id: m.content_id.clone(),
+                            gen: m.gen,
+                            entry_type: m.entry_type,
+                            stream_next_offset: None,
+                        }));
+                        continue;
+                    }
+                }
+                // Fall through to Phase B — entry==None or DT_LINK both
+                // need the regular read path to resolve correctly.
             }
             resolved[i] = Some(ResolvedRead { route, entry });
         }

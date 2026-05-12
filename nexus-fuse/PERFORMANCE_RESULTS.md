@@ -367,3 +367,20 @@ to reflect the actual measurement, which is what this PR now reports.
 - Rust: rustc 1.95.0
 - reqwest: 0.13 (async, rustls)
 - tokio: 1 (multi-thread, 2 worker threads in the shared HTTP runtime)
+
+## Issue #4060: FUSE Passthrough Large Sequential Reads
+
+Command:
+```bash
+dd if=/mnt/nexus/data/one-gib.bin of=/dev/null bs=8M status=progress
+```
+
+Opt-in Criterion harness:
+```bash
+NEXUS_FUSE_PASSTHROUGH_BENCH_FILE=/mnt/nexus/data/one-gib.bin \
+  cargo bench --bench passthrough_read -- --sample-size 10
+```
+
+Acceptance target: at least 2x the normal userspace read path on a supported Linux 6.9+ environment.
+
+Local non-Linux development note: passthrough throughput was not measured in this commit. The manual command is documented here, and Rust/Python coverage verifies eligibility, fallback, command construction, and the opt-in benchmark harness. The final PR should include Linux benchmark output from a host with FUSE passthrough enabled.

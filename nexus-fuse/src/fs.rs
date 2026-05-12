@@ -4,14 +4,16 @@ use crate::cache::FileCache;
 use crate::cached_read::{read_with_cache, CachedReadResult};
 use crate::client::{FileEntry, NexusClient};
 use crate::metrics;
+use crate::passthrough::{ActivePassthrough, OpenAccess, PassthroughDecision, PassthroughManager};
 use fuser::{
     AccessFlags, BsdFileFlags, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
-    Generation, INodeNo, LockOwner, OpenFlags, RenameFlags, ReplyAttr, ReplyData, ReplyDirectory,
-    ReplyEntry, ReplyWrite, ReplyXattr, Request, WriteFlags,
+    Generation, INodeNo, InitFlags, KernelConfig, LockOwner, OpenFlags, RenameFlags, ReplyAttr,
+    ReplyData, ReplyDirectory, ReplyEntry, ReplyWrite, ReplyXattr, Request, WriteFlags,
 };
 use log::{debug, error};
 use lru::LruCache;
 use std::ffi::OsStr;
+use std::io;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -36,6 +38,9 @@ const MAX_OPEN_FILE_HANDLES: usize = 128;
 
 /// Maximum total bytes retained by open file contents.
 const MAX_OPEN_FILE_CACHE_BYTES: usize = 128 * 1024 * 1024;
+
+/// Maximum stack depth requested for kernel passthrough.
+const PASSTHROUGH_MAX_STACK_DEPTH: u32 = 2;
 
 struct OpenFileCacheEntry {
     path: String,
@@ -262,6 +267,8 @@ pub struct NexusFs {
     dir_cache: Mutex<LruCache<u64, (Vec<FileEntry>, SystemTime)>>,
     /// Persistent foyer cache for file content (optional).
     file_cache: Option<Arc<FileCache>>,
+    /// Optional kernel passthrough manager for large read-only file opens.
+    passthrough: Option<Arc<PassthroughManager>>,
     /// Per-open file content cache for range reads that bypass persistent cache size limits.
     open_file_cache: Mutex<OpenFileCache>,
     next_file_handle: Mutex<u64>,
@@ -269,19 +276,39 @@ pub struct NexusFs {
 
 impl NexusFs {
     /// Create a new NexusFs instance.
-    pub fn new(client: NexusClient, file_cache: Option<Arc<FileCache>>) -> Self {
+    pub fn new(
+        client: NexusClient,
+        file_cache: Option<Arc<FileCache>>,
+        passthrough: Option<Arc<PassthroughManager>>,
+    ) -> Self {
         Self {
             client: Arc::new(client),
             inodes: Mutex::new(InodeTable::new()),
             attr_cache: Mutex::new(LruCache::new(NonZeroUsize::new(10000).unwrap())),
             dir_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
             file_cache,
+            passthrough,
             open_file_cache: Mutex::new(OpenFileCache::new(
                 NonZeroUsize::new(MAX_OPEN_FILE_HANDLES).unwrap(),
                 MAX_OPEN_FILE_CACHE_BYTES,
             )),
             next_file_handle: Mutex::new(1),
         }
+    }
+
+    #[cfg(test)]
+    fn passthrough_enabled_for_tests(&self) -> bool {
+        self.passthrough.is_some()
+    }
+
+    #[cfg(test)]
+    fn passthrough_runtime_failure_is_fatal_for_tests(&self) -> bool {
+        self.passthrough_runtime_failure_is_fatal()
+    }
+
+    #[cfg(test)]
+    fn passthrough_max_stack_depth_for_tests() -> u32 {
+        PASSTHROUGH_MAX_STACK_DEPTH
     }
 
     /// Parse timestamp string to SystemTime.
@@ -349,10 +376,7 @@ impl NexusFs {
     /// #4056 R5: returns the typed NexusClientError on RPC failure so
     /// callers can map it to the correct errno (EACCES/EPERM/etc.)
     /// instead of flattening every error to ENOENT.
-    fn check_is_directory(
-        &self,
-        path: &str,
-    ) -> Result<bool, crate::error::NexusClientError> {
+    fn check_is_directory(&self, path: &str) -> Result<bool, crate::error::NexusClientError> {
         if path == "/" {
             return Ok(true);
         }
@@ -497,18 +521,26 @@ impl NexusFs {
             cache.invalidate(path);
         }
 
+        if let Some(ref passthrough) = self.passthrough {
+            passthrough.invalidate_path(path);
+        }
+
         // Invalidate open-handle content caches for this path.
         self.open_file_cache.lock().unwrap().invalidate_path(path);
     }
 
-    fn allocate_file_handle(&self) -> u64 {
+    fn allocate_file_handle(&self) -> anyhow::Result<u64> {
+        if let Some(ref passthrough) = self.passthrough {
+            return passthrough.next_file_handle();
+        }
+
         let mut next = self.next_file_handle.lock().unwrap();
         let fh = *next;
         *next = next.wrapping_add(1);
         if *next == 0 {
             *next = 1;
         }
-        fh
+        Ok(fh)
     }
 
     fn reply_data_slice(content: &[u8], offset: u64, size: u32, reply: ReplyData) {
@@ -559,9 +591,86 @@ impl NexusFs {
     fn rmw_read(&self, path: &str) -> Result<Vec<u8>, crate::error::NexusClientError> {
         self.client.read(path)
     }
+
+    fn passthrough_runtime_failure_is_fatal(&self) -> bool {
+        self.passthrough
+            .as_ref()
+            .is_some_and(|passthrough| passthrough.require())
+    }
+
+    fn open_userspace(&self, reply: fuser::ReplyOpen) {
+        match self.allocate_file_handle() {
+            Ok(fh) => reply.opened(FileHandle(fh), FopenFlags::empty()),
+            Err(err) => {
+                error!("file handle allocation failed: {}", err);
+                reply.error(Errno::EIO);
+            }
+        }
+    }
+
+    fn reply_passthrough_open_failure<E: std::fmt::Display>(
+        &self,
+        path: &str,
+        operation: &str,
+        err: E,
+        reply: fuser::ReplyOpen,
+    ) {
+        if self.passthrough_runtime_failure_is_fatal() {
+            error!("passthrough {} failed for {}: {}", operation, path, err);
+            reply.error(Errno::EIO);
+        } else {
+            debug!(
+                "passthrough {} failed for {}; falling back to userspace open: {}",
+                operation, path, err
+            );
+            self.open_userspace(reply);
+        }
+    }
 }
 
 impl Filesystem for NexusFs {
+    fn init(&mut self, _req: &Request, config: &mut KernelConfig) -> io::Result<()> {
+        let Some(ref passthrough) = self.passthrough else {
+            return Ok(());
+        };
+
+        let capability_ok = match config.add_capabilities(InitFlags::FUSE_PASSTHROUGH) {
+            Ok(()) => true,
+            Err(unsupported) => {
+                error!(
+                    "kernel passthrough capability not available: {:?}",
+                    unsupported
+                );
+                false
+            }
+        };
+        let stack_depth_ok = match config.set_max_stack_depth(PASSTHROUGH_MAX_STACK_DEPTH) {
+            Ok(_) => true,
+            Err(maximum) => {
+                error!(
+                    "kernel passthrough stack depth negotiation failed; maximum accepted depth={}",
+                    maximum
+                );
+                false
+            }
+        };
+
+        let negotiated = capability_ok && stack_depth_ok;
+        passthrough.set_negotiated(negotiated);
+
+        if negotiated {
+            debug!("kernel passthrough negotiated");
+            Ok(())
+        } else if passthrough.require() {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "kernel passthrough negotiation failed",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         let name = name.to_string_lossy();
         debug!("lookup: parent={}, name={}", parent, name);
@@ -1254,24 +1363,108 @@ impl Filesystem for NexusFs {
         }
     }
 
-    fn open(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: fuser::ReplyOpen) {
+    fn open(&self, _req: &Request, ino: INodeNo, flags: OpenFlags, reply: fuser::ReplyOpen) {
         debug!("open: ino={}", ino);
 
         let path = resolve_path!(self, ino.0, reply);
 
-        match self.check_is_directory(&path) {
-            Ok(true) => reply.error(Errno::EISDIR),
-            Ok(false) => {
-                let fh = self.allocate_file_handle();
-                reply.opened(FileHandle(fh), FopenFlags::empty());
+        if self.passthrough.is_none() {
+            match self.check_is_directory(&path) {
+                Ok(true) => reply.error(Errno::EISDIR),
+                Ok(false) => self.open_userspace(reply),
+                Err(e) => {
+                    if !e.is_not_found() && !e.is_permission_denied() {
+                        error!("open stat error for {}: {}", path, e);
+                    }
+                    reply.error(errno_for(&e));
+                }
             }
+            return;
+        }
+
+        let metadata = match self.client.stat(&path) {
+            Ok(metadata) => metadata,
             Err(e) => {
                 if !e.is_not_found() && !e.is_permission_denied() {
                     error!("open stat error for {}: {}", path, e);
                 }
                 reply.error(errno_for(&e));
+                return;
+            }
+        };
+
+        if metadata.is_directory {
+            reply.error(Errno::EISDIR);
+            return;
+        }
+
+        if let Some(ref passthrough) = self.passthrough {
+            let access = OpenAccess::from_open_flags(flags);
+            match passthrough.decide(&path, &metadata, access) {
+                PassthroughDecision::Allow => {
+                    let fh = match self.allocate_file_handle() {
+                        Ok(fh) => fh,
+                        Err(err) => {
+                            self.reply_passthrough_open_failure(
+                                &path,
+                                "file handle allocation",
+                                err,
+                                reply,
+                            );
+                            return;
+                        }
+                    };
+                    let backing = match passthrough.materialize(&path, &self.client, &metadata) {
+                        Ok(backing) => backing,
+                        Err(err) => {
+                            self.reply_passthrough_open_failure(
+                                &path,
+                                "materialization",
+                                err,
+                                reply,
+                            );
+                            return;
+                        }
+                    };
+                    let backing_id = match reply.open_backing(backing.file()) {
+                        Ok(backing_id) => Arc::new(backing_id),
+                        Err(err) => {
+                            self.reply_passthrough_open_failure(
+                                &path,
+                                "backing registration",
+                                err,
+                                reply,
+                            );
+                            return;
+                        }
+                    };
+                    let active = ActivePassthrough {
+                        backing,
+                        backing_id: Arc::clone(&backing_id),
+                    };
+                    if let Err(err) = passthrough.insert_active(fh, active) {
+                        self.reply_passthrough_open_failure(
+                            &path,
+                            &format!("active handle insert for fh={}", fh),
+                            err,
+                            reply,
+                        );
+                        return;
+                    }
+                    reply.opened_passthrough(
+                        FileHandle(fh),
+                        FopenFlags::empty(),
+                        backing_id.as_ref(),
+                    );
+                    return;
+                }
+                PassthroughDecision::Deny(reason) => {
+                    debug!("passthrough denied for {}: {:?}", path, reason);
+                }
             }
         }
+
+        self.open_userspace(reply);
     }
 
     fn opendir(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: fuser::ReplyOpen) {
@@ -1320,6 +1513,14 @@ impl Filesystem for NexusFs {
     ) {
         if fh.0 != 0 {
             self.open_file_cache.lock().unwrap().remove(fh.0);
+        }
+        if let Some(ref passthrough) = self.passthrough {
+            if let Err(err) = passthrough.remove_active(fh.0) {
+                error!(
+                    "passthrough active handle cleanup failed for fh={}: {}",
+                    fh.0, err
+                );
+            }
         }
         reply.ok();
     }
@@ -1383,6 +1584,52 @@ mod tests {
     }
 
     #[test]
+    fn nexus_fs_can_be_constructed_with_passthrough_manager() {
+        let fs = nexus_fs_with_passthrough_required(false);
+
+        assert!(fs.passthrough_enabled_for_tests());
+    }
+
+    #[test]
+    fn optional_passthrough_runtime_failure_is_not_fatal() {
+        let fs = nexus_fs_with_passthrough_required(false);
+
+        assert!(!fs.passthrough_runtime_failure_is_fatal_for_tests());
+    }
+
+    #[test]
+    fn required_passthrough_runtime_failure_is_fatal() {
+        let fs = nexus_fs_with_passthrough_required(true);
+
+        assert!(fs.passthrough_runtime_failure_is_fatal_for_tests());
+    }
+
+    #[test]
+    fn passthrough_requests_maximum_supported_stack_depth() {
+        assert_eq!(NexusFs::passthrough_max_stack_depth_for_tests(), 2);
+    }
+
+    fn nexus_fs_with_passthrough_required(require: bool) -> NexusFs {
+        use crate::passthrough::{PassthroughConfig, PassthroughManager};
+
+        let client = NexusClient::new("http://localhost:2026", "test-key", None).expect("client");
+        let manager = PassthroughManager::new(
+            "http://localhost:2026".to_string(),
+            PassthroughConfig {
+                enabled: true,
+                allow_patterns: vec!["/data/**".to_string()],
+                deny_patterns: vec![],
+                threshold_bytes: 128 * 1024,
+                require,
+                backing_dir: None,
+            },
+        )
+        .expect("manager");
+
+        NexusFs::new(client, None, Some(Arc::new(manager)))
+    }
+
+    #[test]
     fn test_get_or_create_idempotent() {
         let mut table = InodeTable::new();
         let inode1 = table.get_or_create("/foo/bar");
@@ -1432,7 +1679,7 @@ mod tests {
         cache.backdate_for_test("/stale.txt", 3601);
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
-        let fs = NexusFs::new(client, Some(cache));
+        let fs = NexusFs::new(client, Some(cache), None);
 
         let result = fs.read_cached("/stale.txt", 0).unwrap();
 
@@ -1465,7 +1712,7 @@ mod tests {
         cache.backdate_for_test("/not-modified.txt", 3601);
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
-        let fs = NexusFs::new(client, Some(cache));
+        let fs = NexusFs::new(client, Some(cache), None);
 
         let result = fs.read_cached("/not-modified.txt", 0).unwrap();
 
@@ -1686,7 +1933,7 @@ mod tests {
         // through it).
         cache.put("/rmw.txt", b"STALE-CACHED", Some("stale-etag"), 0);
 
-        let fs = NexusFs::new(client, Some(cache.clone()));
+        let fs = NexusFs::new(client, Some(cache.clone()), None);
         let bytes = fs.rmw_read("/rmw.txt").expect("rmw_read");
         assert_eq!(
             bytes, fresh,

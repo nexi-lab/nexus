@@ -66,6 +66,11 @@ libc = "0.2"
 # scheduling primitives used by foyer's hybrid cache.
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal", "sync", "time"] }
 
+# Passthrough path matching and stable backing-file keys
+globset = "0.4"
+sha2 = "0.10"
+hex = "0.4"
+
 [dev-dependencies]
 # Mocking HTTP requests for tests
 mockito = "1.7"
@@ -99,6 +104,10 @@ harness = false
 
 [[bench]]
 name = "concurrent_read"
+harness = false
+
+[[bench]]
+name = "passthrough_read"
 harness = false
 
 [profile.release]

@@ -124,7 +124,7 @@ class ZoneRunner:
         if thread is threading.current_thread():
             loop.call_soon(loop.stop)
             return
-        join_timeout = self._join_timeout
+        join_timeout = self._join_timeout * 2
         try:
             future = asyncio.run_coroutine_threadsafe(
                 self._cancel_pending(loop, timeout=self._join_timeout),
@@ -136,7 +136,6 @@ class ZoneRunner:
             future.cancel()
             future.add_done_callback(self._consume_submitted_result)
             loop.call_soon_threadsafe(loop.stop)
-            join_timeout += self._join_timeout
         except RuntimeError:
             return
         thread.join(timeout=join_timeout)

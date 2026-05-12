@@ -118,8 +118,9 @@ class ZoneRunner:
                 thread.join(timeout=self._join_timeout)
                 if thread.is_alive():
                     logger.warning("Zone runner %s thread did not terminate", self.zone_id)
-                with self._lock:
-                    self._stopping = False
+                else:
+                    with self._lock:
+                        self._stopping = False
                 return
         if thread is threading.current_thread():
             loop.call_soon(loop.stop)

@@ -361,6 +361,55 @@ def test_stop_wakes_start_waiting_for_readiness() -> None:
         runner.stop()
 
 
+def test_stop_keeps_stopping_state_when_startup_join_times_out() -> None:
+    runner = _DelayedStartRunner("zone-a", join_timeout=0.1)
+    start_errors: list[BaseException] = []
+
+    def start_runner() -> None:
+        try:
+            runner.start()
+        except BaseException as exc:
+            start_errors.append(exc)
+
+    starter = threading.Thread(target=start_runner)
+    starter.start()
+    try:
+        assert runner.startup_blocked.wait(2.0)
+
+        runner.stop()
+        thread = runner._thread
+        assert thread is not None
+        assert thread.is_alive()
+        assert runner._stopping
+
+        before_second_stop = time.monotonic()
+        runner.stop()
+        second_stop_duration = time.monotonic() - before_second_stop
+
+        assert second_stop_duration >= runner._join_timeout
+        assert runner._stopping
+
+        runner.release_startup.set()
+        starter.join(2.0)
+        thread.join(2.0)
+
+        assert len(start_errors) == 1
+        assert isinstance(start_errors[0], RuntimeError)
+        assert "has been stopped" in str(start_errors[0])
+        assert not runner.is_alive
+        assert not runner._stopping
+    finally:
+        runner.release_startup.set()
+        starter.join(2.0)
+        if runner.is_alive:
+            loop = runner._loop
+            thread = runner._thread
+            if loop is not None:
+                loop.call_soon_threadsafe(loop.stop)
+            if thread is not None:
+                thread.join(2.0)
+
+
 def test_stop_during_startup_does_not_strand_runner() -> None:
     runner = _DelayedStartRunner("zone-a", join_timeout=0.1)
     start_errors: list[BaseException] = []

@@ -618,6 +618,30 @@ class TestIndexDirectory:
         assert IndexingService._query_file_models(session, paths) == {}
         assert session.execute.call_count == 3
 
+    def test_query_file_models_skips_ambiguous_paths_across_zones(self) -> None:
+        root_model = _mock_file_model(path_id="root-path", virtual_path="/shared/report.md")
+        root_model.zone_id = "root"
+        other_zone_model = _mock_file_model(path_id="other-path", virtual_path="/shared/report.md")
+        other_zone_model.zone_id = "other-zone"
+        unique_model = _mock_file_model(path_id="unique-path", virtual_path="/shared/unique.md")
+        unique_model.zone_id = "root"
+
+        session = MagicMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [
+            root_model,
+            other_zone_model,
+            unique_model,
+        ]
+        session.execute.return_value = result
+
+        rows = IndexingService._query_file_models(
+            session,
+            ["/shared/report.md", "/shared/unique.md"],
+        )
+
+        assert rows == {"/shared/unique.md": unique_model}
+
 
 class TestVirtualReadmeIndexing:
     """Issue #3728: virtual ``.readme/`` overlay paths have no

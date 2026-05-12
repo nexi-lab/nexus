@@ -569,15 +569,28 @@ class IndexingService:
         if not paths:
             return {}
         unique_paths = list(dict.fromkeys(paths))
-        rows: list[Any] = []
+        rows_by_path: dict[str, list[Any]] = {}
         for start in range(0, len(unique_paths), _QUERY_FILE_MODELS_BATCH_SIZE):
             batch = unique_paths[start : start + _QUERY_FILE_MODELS_BATCH_SIZE]
             stmt = select(FilePathModel).where(
                 FilePathModel.virtual_path.in_(batch),
                 FilePathModel.deleted_at.is_(None),
             )
-            rows.extend(session.execute(stmt).scalars().all())
-        return {str(row.virtual_path): row for row in rows}
+            for row in session.execute(stmt).scalars().all():
+                rows_by_path.setdefault(str(row.virtual_path), []).append(row)
+
+        result: dict[str, Any] = {}
+        for path, rows in rows_by_path.items():
+            if len(rows) == 1:
+                result[path] = rows[0]
+                continue
+            zones = sorted(str(getattr(row, "zone_id", "<unknown>")) for row in rows)
+            logger.warning(
+                "[INDEXING-SVC] Skipping %s: ambiguous file_paths rows across zones %s",
+                path,
+                zones,
+            )
+        return result
 
     def _directory_read_concurrency(self) -> int:
         configured = getattr(self._pipeline, "_max_concurrency", None)

@@ -79,13 +79,21 @@ class ZoneRunner:
 
     def stop(self) -> None:
         with self._lock:
-            if self._closed:
+            thread = self._thread
+            if self._closed and not (thread is not None and thread.is_alive()):
                 return
             self._closed = True
             loop = self._loop
-            thread = self._thread
-        if loop is None or thread is None:
+        if thread is None:
             return
+        if loop is None:
+            self._ready.wait(timeout=self._join_timeout)
+            loop = self._loop
+            if loop is None:
+                thread.join(timeout=self._join_timeout)
+                if thread.is_alive():
+                    logger.warning("Zone runner %s thread did not terminate", self.zone_id)
+                return
         if thread is threading.current_thread():
             loop.call_soon(loop.stop)
             return
@@ -116,6 +124,8 @@ class ZoneRunner:
         _CURRENT.runner = self
         self._loop = loop
         self._ready.set()
+        if self._closed:
+            loop.stop()
         try:
             loop.run_forever()
         finally:

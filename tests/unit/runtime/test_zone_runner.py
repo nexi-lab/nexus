@@ -6,6 +6,11 @@ import pytest
 from nexus.runtime.zone_runner import ZoneRunner
 
 
+def test_empty_zone_id_raises() -> None:
+    with pytest.raises(ValueError, match="zone_id is required"):
+        ZoneRunner("")
+
+
 def test_join_timeout_can_be_positional() -> None:
     runner = ZoneRunner("zone-a", 1.0)
 
@@ -33,6 +38,19 @@ async def test_call_runs_on_dedicated_loop_and_thread() -> None:
     assert worker_loop is not caller_loop
 
 
+def test_start_uses_daemon_thread_named_for_zone() -> None:
+    runner = ZoneRunner("zone-a")
+
+    try:
+        runner.start()
+        thread = runner._thread
+        assert thread is not None
+        assert thread.daemon
+        assert thread.name == "nexus-zone-zone-a"
+    finally:
+        runner.stop()
+
+
 def test_call_sync_runs_from_sync_code() -> None:
     runner = ZoneRunner("zone-a")
 
@@ -56,6 +74,33 @@ async def test_call_propagates_exception() -> None:
         with pytest.raises(ValueError, match="boom"):
             await runner.call(work)
     finally:
+        runner.stop()
+
+
+@pytest.mark.asyncio
+async def test_call_cancellation_cancels_submitted_work() -> None:
+    runner = ZoneRunner("zone-a")
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    async def work() -> str:
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return "done"
+
+    task = asyncio.create_task(runner.call(work))
+    try:
+        assert await asyncio.to_thread(started.wait, 2.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert await asyncio.to_thread(cancelled.wait, 2.0)
+    finally:
+        task.cancel()
         runner.stop()
 
 
@@ -96,5 +141,92 @@ def test_stop_is_idempotent() -> None:
     assert not runner.is_alive
 
 
+def test_start_after_stop_raises() -> None:
+    runner = ZoneRunner("zone-a")
+
+    runner.stop()
+
+    with pytest.raises(RuntimeError, match="ZoneRunner 'zone-a' has been stopped"):
+        runner.start()
+
+
+def test_stop_cancels_pending_tasks() -> None:
+    runner = ZoneRunner("zone-a")
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    async def pending_work() -> None:
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async def schedule_pending_work() -> None:
+        asyncio.create_task(pending_work())
+
+    try:
+        runner.call_sync(schedule_pending_work)
+        assert started.wait(2.0)
+        runner.stop()
+        assert cancelled.wait(2.0)
+        assert not runner.is_alive
+    finally:
+        runner.stop()
+
+
+def test_stop_during_startup_does_not_strand_runner() -> None:
+    runner = _DelayedStartRunner("zone-a", join_timeout=0.1)
+    start_errors: list[BaseException] = []
+
+    def start_runner() -> None:
+        try:
+            runner.start()
+        except BaseException as exc:
+            start_errors.append(exc)
+
+    starter = threading.Thread(target=start_runner)
+    starter.start()
+    try:
+        assert runner.startup_blocked.wait(2.0)
+
+        runner.stop()
+        runner.release_startup.set()
+        starter.join(2.0)
+        runner_thread = runner._thread
+        if runner_thread is not None:
+            runner_thread.join(2.0)
+
+        stranded = runner.is_alive
+        runner.stop()
+
+        assert all(isinstance(exc, RuntimeError) for exc in start_errors)
+        assert not stranded
+        assert not runner.is_alive
+    finally:
+        runner.release_startup.set()
+        starter.join(2.0)
+        if runner.is_alive:
+            loop = runner._loop
+            thread = runner._thread
+            if loop is not None:
+                loop.call_soon_threadsafe(loop.stop)
+            if thread is not None:
+                thread.join(2.0)
+
+
 async def _return_value(value: str) -> str:
     return value
+
+
+class _DelayedStartRunner(ZoneRunner):
+    def __init__(self, zone_id: str, join_timeout: float = 5.0) -> None:
+        super().__init__(zone_id, join_timeout)
+        self.startup_blocked = threading.Event()
+        self.release_startup = threading.Event()
+
+    def _thread_main(self) -> None:
+        self.startup_blocked.set()
+        self.release_startup.wait(2.0)
+        super()._thread_main()

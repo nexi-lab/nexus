@@ -2856,6 +2856,15 @@ impl Kernel {
             // the *maximum* declared size seen across rows that share a
             // content_id, so a stale-small metadata row cannot understate
             // the actual fetched blob size.
+            //
+            // Race note: the cap is computed from Phase A metadata, but
+            // Phase B can fetch newer bytes after a concurrent rewrite.
+            // The post-read defense-in-depth in the transport handler
+            // catches genuinely-oversized responses; a true
+            // pre-fetch-under-lock cap would require per-path VFS read
+            // locks (defeating coalescing). The Phase A→B window is
+            // narrow enough that the post-read guard is acceptable as
+            // the final ceiling.
             let mut sizes: HashMap<(String, String), usize> = HashMap::new();
             let mut declared: usize = 0;
             for slot in resolved.iter() {
@@ -2865,13 +2874,15 @@ impl Kernel {
                 };
                 let meta = match r.entry.as_ref() {
                     Some(m) => m,
-                    None => {
-                        return Err(KernelError::IOError(format!(
-                            "read_batch declared aggregate cannot be \
-                             bounded: path has no metastore entry (cap={} bytes)",
-                            cap
-                        )));
-                    }
+                    // No metastore entry under a cap is ambiguous: it
+                    // might be a normal missing file (Phase B will
+                    // return per-item FileNotFound) OR an external-
+                    // connector / virtual-resolver path with bytes
+                    // produced lazily. Skipping it here keeps normal
+                    // "missing in a batch" callers from blowing up the
+                    // whole RPC. The post-read defense-in-depth in the
+                    // transport handler catches the lazy-fetched case.
+                    None => continue,
                 };
                 // DT_LINK metadata is size=0 / content_id=None at the
                 // link itself; the actual fetch follows the link to a

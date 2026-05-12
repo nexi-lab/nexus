@@ -111,7 +111,13 @@ message BatchReadRequest {
 message BatchReadItemRequest {
   string path = 1;
   uint64 offset = 2;
-  uint64 len = 3;       // 0 = entire file from offset (sentinel)
+  // proto3 `optional` so callers can distinguish "no length set"
+  // (read to EOF from offset) from `length = 0` (legitimate zero-byte
+  // EOF probe). Old clients that omitted `length` continue to read
+  // whole files; new clients can explicitly set 0 for an empty slice.
+  // (Named `length` rather than `len` so the generated Rust struct
+  // doesn't trip `clippy::len_without_is_empty`.)
+  optional uint64 length = 3;
 }
 
 message BatchReadResponse {

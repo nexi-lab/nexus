@@ -354,13 +354,16 @@ impl NexusVfsService for VfsServiceImpl {
             ));
         }
 
+        // proto3 `optional uint64 length` lands as `Option<u64>` on the
+        // generated struct, so callers can distinguish "absent" (whole
+        // file from offset) from `Some(0)` (zero-byte slice).
         let rust_reqs: Vec<kernel::kernel::BatchReadRequest> = req
             .items
             .into_iter()
             .map(|it| kernel::kernel::BatchReadRequest {
                 path: it.path,
                 offset: it.offset,
-                len: if it.len == 0 { None } else { Some(it.len) },
+                len: it.length,
             })
             .collect();
 

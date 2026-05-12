@@ -10,3 +10,4 @@ pub mod error;
 pub mod fs;
 pub mod hydrate;
 pub mod metrics;
+pub mod passthrough;

@@ -463,6 +463,8 @@ def connect(
         install_remote_kernel_rpc_overrides(nfs, transport)
         cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
         nfs._register_runtime_closeable(transport)
+        nfs._remote_base_url = server_url
+        nfs._remote_api_key = api_key or ""
 
         return nfs
 

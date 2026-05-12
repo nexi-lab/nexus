@@ -102,6 +102,23 @@ pub enum ReadResponse {
     NotModified,
 }
 
+/// Response from read operations that decode content directly into a writer.
+#[derive(Debug)]
+pub enum ReadToWriterResponse {
+    /// Content was written into the supplied writer.
+    Content {
+        bytes_written: u64,
+        etag: Option<String>,
+    },
+    /// Content not modified (304 response).
+    NotModified,
+}
+
+enum EncodedReadResponse {
+    Content { data: String, etag: Option<String> },
+    NotModified,
+}
+
 /// Process-wide tokio runtime that drives every NexusClient HTTP
 /// future. Stored in a `OnceLock` so it lives for the entire process
 /// and never drops in an async context (which would panic). One
@@ -247,10 +264,7 @@ impl NexusClient {
             -32004 => NexusClientError::PermissionDenied(message),
             -32005 => NexusClientError::ValidationError(message),
             -32006 => NexusClientError::Conflict(message),
-            other => NexusClientError::InvalidResponse(format!(
-                "RPC error {}: {}",
-                other, message
-            )),
+            other => NexusClientError::InvalidResponse(format!("RPC error {}: {}", other, message)),
         }
     }
 
@@ -320,12 +334,7 @@ impl NexusClient {
         let url = format!("{}/api/auth/whoami", self.base_url);
         debug!("GET {}", url);
 
-        let resp = self
-            .client
-            .get(&url)
-            .headers(self.headers())
-            .send()
-            .await?;
+        let resp = self.client.get(&url).headers(self.headers()).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -481,6 +490,25 @@ impl NexusClient {
     ) -> Result<ReadResponse, NexusClientError> {
         use base64::{engine::general_purpose::STANDARD, Engine};
 
+        match self
+            .read_encoded_with_etag_async(path, if_none_match)
+            .await?
+        {
+            EncodedReadResponse::Content { data, etag } => {
+                let content = STANDARD.decode(&data).map_err(|e| {
+                    NexusClientError::InvalidResponse(format!("base64 decode error: {}", e))
+                })?;
+                Ok(ReadResponse::Content { content, etag })
+            }
+            EncodedReadResponse::NotModified => Ok(ReadResponse::NotModified),
+        }
+    }
+
+    async fn read_encoded_with_etag_async(
+        &self,
+        path: &str,
+        if_none_match: Option<&str>,
+    ) -> Result<EncodedReadResponse, NexusClientError> {
         let url = format!("{}/api/nfs/read", self.base_url);
 
         let rpc_request = json!({
@@ -511,7 +539,7 @@ impl NexusClient {
         // Handle 304 Not Modified
         if resp.status().as_u16() == 304 {
             debug!("Server returned 304 Not Modified for {}", path);
-            return Ok(ReadResponse::NotModified);
+            return Ok(EncodedReadResponse::NotModified);
         }
 
         if !resp.status().is_success() {
@@ -550,11 +578,10 @@ impl NexusClient {
         let result = rpc_resp.result.ok_or_else(|| {
             NexusClientError::InvalidResponse("no result in response".to_string())
         })?;
-        let content = STANDARD.decode(&result.data).map_err(|e| {
-            NexusClientError::InvalidResponse(format!("base64 decode error: {}", e))
-        })?;
-
-        Ok(ReadResponse::Content { content, etag })
+        Ok(EncodedReadResponse::Content {
+            data: result.data,
+            etag,
+        })
     }
 
     /// Read file contents with ETag support for conditional requests.
@@ -567,12 +594,54 @@ impl NexusClient {
         self.block_on(self.read_with_etag_async(path, if_none_match))
     }
 
-    /// Async core: write.
-    pub async fn write_async(
+    /// Async core: read with optional If-None-Match and decode into a writer.
+    pub async fn read_with_etag_to_writer_async<W: std::io::Write>(
         &self,
         path: &str,
-        content: &[u8],
-    ) -> Result<(), NexusClientError> {
+        if_none_match: Option<&str>,
+        writer: &mut W,
+    ) -> Result<ReadToWriterResponse, NexusClientError> {
+        use base64::engine::general_purpose::STANDARD;
+        use base64::read::DecoderReader;
+        use std::io;
+
+        match self
+            .read_encoded_with_etag_async(path, if_none_match)
+            .await?
+        {
+            EncodedReadResponse::Content { data, etag } => {
+                let mut decoder = DecoderReader::new(data.as_bytes(), &STANDARD);
+                let bytes_written = io::copy(&mut decoder, writer).map_err(|err| {
+                    if err.kind() == io::ErrorKind::InvalidData {
+                        NexusClientError::InvalidResponse(format!("base64 decode error: {}", err))
+                    } else {
+                        NexusClientError::Other(anyhow::anyhow!(
+                            "failed to write read response into writer: {}",
+                            err
+                        ))
+                    }
+                })?;
+                Ok(ReadToWriterResponse::Content {
+                    bytes_written,
+                    etag,
+                })
+            }
+            EncodedReadResponse::NotModified => Ok(ReadToWriterResponse::NotModified),
+        }
+    }
+
+    /// Read file contents with ETag support, decoding directly into a writer.
+    pub fn read_with_etag_to_writer<W: std::io::Write>(
+        &self,
+        path: &str,
+        if_none_match: Option<&str>,
+        writer: &mut W,
+    ) -> Result<ReadToWriterResponse, NexusClientError> {
+        self.block_on(self.read_with_etag_to_writer_async(path, if_none_match, writer))
+    }
+
+    /// Async core: write.
+    pub async fn write_async(&self, path: &str, content: &[u8]) -> Result<(), NexusClientError> {
         use base64::{engine::general_purpose::STANDARD, Engine};
 
         // API expects {"__type__": "bytes", "data": "base64..."} format
@@ -598,9 +667,7 @@ impl NexusClient {
 
     /// Async core: mkdir.
     pub async fn mkdir_async(&self, path: &str) -> Result<(), NexusClientError> {
-        let _: Value = self
-            .rpc_call_async("mkdir", json!({"path": path}))
-            .await?;
+        let _: Value = self.rpc_call_async("mkdir", json!({"path": path})).await?;
         Ok(())
     }
 
@@ -611,9 +678,7 @@ impl NexusClient {
 
     /// Async core: delete.
     pub async fn delete_async(&self, path: &str) -> Result<(), NexusClientError> {
-        let _: Value = self
-            .rpc_call_async("delete", json!({"path": path}))
-            .await?;
+        let _: Value = self.rpc_call_async("delete", json!({"path": path})).await?;
         Ok(())
     }
 
@@ -650,18 +715,13 @@ impl NexusClient {
     /// them into `false`, so callers that need to distinguish
     /// "path is missing" from "you don't have permission to ask" can
     /// see the auth signal (#4056 R4).
-    pub async fn exists_result_async(
-        &self,
-        path: &str,
-    ) -> Result<bool, NexusClientError> {
+    pub async fn exists_result_async(&self, path: &str) -> Result<bool, NexusClientError> {
         #[derive(Deserialize)]
         struct ExistsResult {
             exists: bool,
         }
 
-        let result: ExistsResult = self
-            .rpc_call_async("exists", json!({"path": path}))
-            .await?;
+        let result: ExistsResult = self.rpc_call_async("exists", json!({"path": path})).await?;
         Ok(result.exists)
     }
 
@@ -687,5 +747,86 @@ impl NexusClient {
     /// variant.
     pub fn exists(&self, path: &str) -> bool {
         self.block_on(self.exists_async(path))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use mockito::Server;
+    use std::io;
+
+    #[test]
+    fn read_with_etag_to_writer_decodes_content_into_writer() {
+        let mut server = Server::new();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"__type__":"bytes","data":"{}"}}}}"#,
+            STANDARD.encode(b"writer-data")
+        );
+        let _mock = server
+            .mock("POST", "/api/nfs/read")
+            .match_body(mockito::Matcher::Regex(
+                r#""path"\s*:\s*"/data/file.bin""#.to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_header("etag", r#""etag-1""#)
+            .with_body(body)
+            .create();
+        let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+        let mut output = Vec::new();
+
+        let result = client
+            .read_with_etag_to_writer("/data/file.bin", None, &mut output)
+            .unwrap();
+
+        assert_eq!(output, b"writer-data");
+        match result {
+            ReadToWriterResponse::Content {
+                bytes_written,
+                etag,
+            } => {
+                assert_eq!(bytes_written, b"writer-data".len() as u64);
+                assert_eq!(etag.as_deref(), Some("etag-1"));
+            }
+            ReadToWriterResponse::NotModified => panic!("expected content"),
+        }
+    }
+
+    #[test]
+    fn read_with_etag_to_writer_preserves_writer_errors_as_io_failures() {
+        struct FailingWriter;
+
+        impl io::Write for FailingWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::Other, "disk full"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut server = Server::new();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"__type__":"bytes","data":"{}"}}}}"#,
+            STANDARD.encode(b"writer-data")
+        );
+        let _mock = server
+            .mock("POST", "/api/nfs/read")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create();
+        let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+        let mut output = FailingWriter;
+
+        let err = client
+            .read_with_etag_to_writer("/data/file.bin", None, &mut output)
+            .unwrap_err();
+
+        assert!(matches!(err, NexusClientError::Other(_)));
+        assert_eq!(err.to_errno(), libc::EIO);
     }
 }

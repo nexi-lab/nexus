@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import logging
 import threading
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
@@ -109,6 +110,8 @@ class ZoneRunner:
             future.result(timeout=self._join_timeout)
         except (TimeoutError, concurrent.futures.TimeoutError):
             logger.warning("Timed out draining zone runner %s", self.zone_id)
+            future.cancel()
+            future.add_done_callback(self._consume_submitted_result)
             loop.call_soon_threadsafe(loop.stop)
             join_timeout += self._join_timeout
         except RuntimeError:
@@ -165,15 +168,35 @@ class ZoneRunner:
             if timeout is None:
                 await asyncio.gather(*tasks, return_exceptions=True)
             else:
-                _, pending = await asyncio.wait(tasks, timeout=timeout)
+                done, pending = await asyncio.wait(tasks, timeout=timeout)
+                for task in done:
+                    with contextlib.suppress(BaseException):
+                        task.result()
                 if pending:
                     logger.warning(
                         "Closing zone runner %s with %d pending task(s)",
                         self.zone_id,
                         len(pending),
                     )
+                    for task in pending:
+                        task.cancel()
+                        self._mark_task_abandoned(task)
         if stop:
             loop.stop()
+
+    @staticmethod
+    def _consume_submitted_result(future: concurrent.futures.Future[Any]) -> None:
+        with contextlib.suppress(BaseException):
+            future.result()
+
+    @staticmethod
+    def _mark_task_abandoned(task: asyncio.Task[object]) -> None:
+        with contextlib.suppress(Exception):
+            coro = task.get_coro()
+            if coro is not None:
+                coro.close()
+        if hasattr(task, "_log_destroy_pending"):
+            task._log_destroy_pending = False
 
 
 class ZoneRegistry:

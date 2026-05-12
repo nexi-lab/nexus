@@ -1,4 +1,6 @@
 import asyncio
+import gc
+import logging
 import threading
 import time
 
@@ -222,7 +224,27 @@ def test_stop_cancels_pending_tasks() -> None:
         runner.stop()
 
 
-def test_stop_terminates_when_pending_task_suppresses_cancellation() -> None:
+def test_stop_terminates_when_pending_task_suppresses_cancellation(
+    capsys,
+    caplog,
+    monkeypatch,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="nexus.runtime.zone_runner")
+    loop_diagnostics: list[str] = []
+    new_event_loop = asyncio.new_event_loop
+
+    def tracked_event_loop() -> asyncio.AbstractEventLoop:
+        loop = new_event_loop()
+
+        def capture_diagnostic(_loop, context) -> None:
+            message = context.get("message", "")
+            task = context.get("task")
+            loop_diagnostics.append(f"{message} {task!r}")
+
+        loop.set_exception_handler(capture_diagnostic)
+        return loop
+
+    monkeypatch.setattr(asyncio, "new_event_loop", tracked_event_loop)
     runner = ZoneRunner("zone-a", join_timeout=0.1)
     started = threading.Event()
     cancelled = threading.Event()
@@ -250,6 +272,14 @@ def test_stop_terminates_when_pending_task_suppresses_cancellation() -> None:
         assert cancelled.wait(2.0)
         assert stop_duration < 1.0
         assert not runner.is_alive
+        gc.collect()
+        captured = capsys.readouterr()
+        log_messages = "\n".join(record.getMessage() for record in caplog.records)
+        loop_diagnostic_messages = "\n".join(loop_diagnostics)
+        diagnostics = f"{captured.err}\n{log_messages}\n{loop_diagnostic_messages}"
+        assert "Closing zone runner zone-a with" in log_messages
+        assert "Task was destroyed but it is pending!" not in diagnostics
+        assert "ZoneRunner._cancel_pending" not in diagnostics
     finally:
         release.set()
         thread = runner._thread

@@ -5,7 +5,7 @@ import concurrent.futures
 import contextlib
 import logging
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, TypeVar
 
 T = TypeVar("T")
@@ -62,12 +62,12 @@ class ZoneRunner:
         if self.is_current_runner():
             return await work()
         await asyncio.to_thread(self.start)
-        loop = self._require_loop()
+        self._before_submit()
 
         async def invoke() -> T:
             return await work()
 
-        submitted = asyncio.run_coroutine_threadsafe(invoke(), loop)
+        submitted = self._submit(invoke)
         try:
             return await asyncio.wrap_future(submitted)
         except asyncio.CancelledError:
@@ -78,12 +78,12 @@ class ZoneRunner:
         if self.is_current_runner():
             raise RuntimeError("call_sync cannot run on owning runner thread")
         self.start()
-        loop = self._require_loop()
+        self._before_submit()
 
         async def invoke() -> T:
             return await work()
 
-        return asyncio.run_coroutine_threadsafe(invoke(), loop).result()
+        return self._submit(invoke).result()
 
     def stop(self) -> None:
         owns_shutdown = False
@@ -159,6 +159,24 @@ class ZoneRunner:
         if loop is None:
             raise RuntimeError(f"ZoneRunner {self.zone_id!r} is not running")
         return loop
+
+    def _before_submit(self) -> None:
+        return None
+
+    def _submit(
+        self,
+        invoke: Callable[[], Coroutine[Any, Any, T]],
+    ) -> concurrent.futures.Future[T]:
+        with self._lock:
+            if self._closed or self._stopping:
+                raise RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
+            loop = self._require_loop()
+            submitted = invoke()
+            try:
+                return asyncio.run_coroutine_threadsafe(submitted, loop)
+            except RuntimeError as exc:
+                submitted.close()
+                raise RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped") from exc
 
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()

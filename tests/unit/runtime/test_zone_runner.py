@@ -176,6 +176,40 @@ async def test_call_cancellation_during_startup_returns_promptly() -> None:
 
 
 @pytest.mark.asyncio
+async def test_call_rejects_submission_after_stop_begins(monkeypatch) -> None:
+    runner = ZoneRunner("zone-a")
+    pre_submit = threading.Event()
+    release_submit = threading.Event()
+    work_ran = threading.Event()
+
+    def pause_before_submit() -> None:
+        pre_submit.set()
+        release_submit.wait(2.0)
+
+    async def work() -> str:
+        work_ran.set()
+        return "bad"
+
+    def stop_while_call_is_paused() -> None:
+        pre_submit.wait(2.0)
+        runner.stop()
+        release_submit.set()
+
+    monkeypatch.setattr(runner, "_before_submit", pause_before_submit)
+    stopper = threading.Thread(target=stop_while_call_is_paused)
+    stopper.start()
+    task = asyncio.create_task(runner.call(work))
+    try:
+        with pytest.raises(RuntimeError, match="stopped|shutdown"):
+            await asyncio.wait_for(task, timeout=3.0)
+        assert not work_ran.is_set()
+    finally:
+        release_submit.set()
+        stopper.join(2.0)
+        runner.stop()
+
+
+@pytest.mark.asyncio
 async def test_same_runner_reentry_does_not_deadlock() -> None:
     runner = ZoneRunner("zone-a")
 

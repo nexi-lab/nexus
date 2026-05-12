@@ -275,8 +275,10 @@ def test_stop_terminates_when_pending_task_suppresses_cancellation(
 
         def capture_diagnostic(_loop, context) -> None:
             message = context.get("message", "")
+            exception = context.get("exception")
             task = context.get("task")
-            loop_diagnostics.append(f"{message} {task!r}")
+            future = context.get("future")
+            loop_diagnostics.append(f"{message} {exception!r} {task!r} {future!r}")
 
         loop.set_exception_handler(capture_diagnostic)
         return loop
@@ -316,7 +318,10 @@ def test_stop_terminates_when_pending_task_suppresses_cancellation(
         diagnostics = f"{captured.err}\n{log_messages}\n{loop_diagnostic_messages}"
         assert "Closing zone runner zone-a with" in log_messages
         assert "Task was destroyed but it is pending!" not in diagnostics
+        assert "Task exception was never retrieved" not in diagnostics
         assert "ZoneRunner._cancel_pending" not in diagnostics
+        assert "_cancel_pending" not in diagnostics
+        assert "cannot reuse already awaited coroutine" not in diagnostics
     finally:
         release.set()
         thread = runner._thread

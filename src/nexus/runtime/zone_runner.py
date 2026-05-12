@@ -126,8 +126,11 @@ class ZoneRunner:
             return
         join_timeout = self._join_timeout
         try:
-            future = asyncio.run_coroutine_threadsafe(self._cancel_pending(loop), loop)
-            future.result(timeout=self._join_timeout)
+            future = asyncio.run_coroutine_threadsafe(
+                self._cancel_pending(loop, timeout=self._join_timeout),
+                loop,
+            )
+            future.result(timeout=self._join_timeout * 2)
         except (TimeoutError, concurrent.futures.TimeoutError):
             logger.warning("Timed out draining zone runner %s", self.zone_id)
             future.cancel()
@@ -216,10 +219,6 @@ class ZoneRunner:
 
     @staticmethod
     def _mark_task_abandoned(task: asyncio.Task[object]) -> None:
-        with contextlib.suppress(Exception):
-            coro = task.get_coro()
-            if coro is not None:
-                coro.close()
         if hasattr(task, "_log_destroy_pending"):
             task._log_destroy_pending = False
 

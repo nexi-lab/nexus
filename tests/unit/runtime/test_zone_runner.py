@@ -111,6 +111,43 @@ def test_call_sync_runs_from_sync_code() -> None:
         runner.stop()
 
 
+def test_call_sync_waiter_completes_when_loop_is_blocked_during_stop() -> None:
+    runner = ZoneRunner("zone-a", join_timeout=0.1)
+    started = threading.Event()
+    release = threading.Event()
+    results: list[str] = []
+    errors: list[BaseException] = []
+
+    async def blocking_work() -> str:
+        started.set()
+        release.wait(2.0)
+        return "bad"
+
+    def call_runner() -> None:
+        try:
+            results.append(runner.call_sync(blocking_work))
+        except BaseException as exc:
+            errors.append(exc)
+
+    caller = threading.Thread(target=call_runner)
+    caller.start()
+    try:
+        assert started.wait(2.0)
+
+        runner.stop()
+        caller.join(1.0)
+
+        assert not caller.is_alive()
+        assert results == []
+        assert len(errors) == 1
+        assert isinstance(errors[0], RuntimeError)
+        assert "stopped" in str(errors[0])
+    finally:
+        release.set()
+        caller.join(2.0)
+        runner.stop()
+
+
 def test_same_runner_call_rejects_after_shutdown_starts() -> None:
     runner = ZoneRunner("zone-a", join_timeout=0.2)
     outer_started = threading.Event()
@@ -496,6 +533,47 @@ def test_stop_wakes_start_waiting_for_readiness() -> None:
         runner.release_startup.set()
         starter.join(2.0)
         runner.stop()
+
+
+def test_start_timeout_closes_runner_before_thread_becomes_ready() -> None:
+    runner = _DelayedStartRunner("zone-a", join_timeout=0.1)
+    start_errors: list[BaseException] = []
+
+    def start_runner() -> None:
+        try:
+            runner.start()
+        except BaseException as exc:
+            start_errors.append(exc)
+
+    starter = threading.Thread(target=start_runner)
+    starter.start()
+    try:
+        assert runner.startup_blocked.wait(2.0)
+        starter.join(0.5)
+
+        assert not starter.is_alive()
+        assert len(start_errors) == 1
+        assert isinstance(start_errors[0], RuntimeError)
+        assert "did not start" in str(start_errors[0])
+
+        runner.release_startup.set()
+        thread = runner._thread
+        if thread is not None:
+            thread.join(2.0)
+
+        assert not runner.is_alive
+        with pytest.raises(RuntimeError, match="stopped"):
+            runner.call_sync(lambda: _return_value("bad"))
+    finally:
+        runner.release_startup.set()
+        starter.join(2.0)
+        if runner.is_alive:
+            loop = runner._loop
+            thread = runner._thread
+            if loop is not None:
+                loop.call_soon_threadsafe(loop.stop)
+            if thread is not None:
+                thread.join(2.0)
 
 
 def test_stop_keeps_stopping_state_when_startup_join_times_out() -> None:

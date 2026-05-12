@@ -49,7 +49,7 @@ class ZoneRunner:
                 )
                 self._thread = thread
                 thread.start()
-        self._ready.wait(timeout=5.0)
+        self._ready.wait(timeout=self._join_timeout)
         with self._lock:
             loop = self._loop
             stopped = self._closed
@@ -57,6 +57,10 @@ class ZoneRunner:
         if stopped:
             raise RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
         if loop is None or not thread_alive:
+            with self._lock:
+                self._closed = True
+                self._stopping = thread_alive
+                self._ready.set()
             raise RuntimeError(f"ZoneRunner {self.zone_id!r} did not start")
 
     async def call(self, work: Callable[[], Awaitable[T]]) -> T:
@@ -136,6 +140,7 @@ class ZoneRunner:
             future.result(timeout=self._join_timeout * 2)
         except (TimeoutError, concurrent.futures.TimeoutError):
             logger.warning("Timed out draining zone runner %s", self.zone_id)
+            self._fail_submitted(RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped"))
             future.cancel()
             future.add_done_callback(self._consume_submitted_result)
             loop.call_soon_threadsafe(loop.stop)
@@ -149,6 +154,7 @@ class ZoneRunner:
         thread.join(timeout=join_timeout)
         if thread.is_alive():
             logger.warning("Zone runner %s thread did not terminate", self.zone_id)
+            self._fail_submitted(RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped"))
         else:
             with self._lock:
                 self._stopping = False
@@ -239,7 +245,7 @@ class ZoneRunner:
             with contextlib.suppress(BaseException):
                 task.result()
             return
-        if external.cancelled():
+        if external.done():
             with contextlib.suppress(BaseException):
                 task.result()
             return
@@ -264,10 +270,17 @@ class ZoneRunner:
             loop.run_forever()
         finally:
             try:
-                loop.run_until_complete(
-                    self._cancel_pending(loop, stop=False, timeout=self._join_timeout)
-                )
-                loop.run_until_complete(loop.shutdown_asyncgens())
+                try:
+                    loop.run_until_complete(
+                        self._cancel_pending(loop, stop=False, timeout=self._join_timeout)
+                    )
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except BaseException:
+                    logger.debug(
+                        "Zone runner %s final cleanup did not complete cleanly",
+                        self.zone_id,
+                        exc_info=True,
+                    )
             finally:
                 _CURRENT.runner = None
                 asyncio.set_event_loop(None)
@@ -313,6 +326,15 @@ class ZoneRunner:
     def _consume_submitted_result(future: concurrent.futures.Future[Any]) -> None:
         with contextlib.suppress(BaseException):
             future.result()
+
+    def _fail_submitted(self, exc: BaseException) -> None:
+        with self._lock:
+            submitted = list(self._submitted.items())
+            self._submitted.clear()
+        for task, external in submitted:
+            if not external.done():
+                external.set_exception(exc)
+            self._mark_task_abandoned(task)
 
     def _mark_task_abandoned(self, task: asyncio.Task[object]) -> None:
         with self._lock:

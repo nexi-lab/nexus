@@ -2731,15 +2731,33 @@ impl Kernel {
     /// Internal: batch read. Accepts `(path, offset, len)` requests.
     ///
     /// Returns per-request `Result` in input order. The outer `Err` is
-    /// reserved for kernel-wide setup failure (e.g. no metastore wired);
-    /// per-request failures are inner `Err` and do NOT abort the batch.
+    /// reserved for kernel-wide setup failure (e.g. no metastore wired)
+    /// or an authorized-aggregate cap violation (see `max_aggregate_bytes`).
+    /// Per-request failures are inner `Err` and do NOT abort the batch.
     ///
     /// Coalesces same-`content_id` requests into one backend fetch;
     /// bounded parallelism per `Kernel::read_batch_max_concurrency`.
+    ///
+    /// The convenience wrapper passes `None` for `max_aggregate_bytes`
+    /// (uncapped — callers like the Python wrapper do their own DoS
+    /// guarding). The gRPC `BatchRead` handler passes `Some(100 MiB)` so
+    /// the kernel rejects oversized authorized batches before Phase B
+    /// fetches any backend bytes. The cap is a *per-call* argument: it
+    /// never mutates shared kernel state and so concurrent callers do
+    /// not clobber each other.
     pub fn _read_batch(
         &self,
         reqs: &[crate::kernel::BatchReadRequest],
         ctx: &OperationContext,
+    ) -> Result<Vec<Result<SysReadResult, KernelError>>, KernelError> {
+        self._read_batch_with_cap(reqs, ctx, None)
+    }
+
+    pub fn _read_batch_with_cap(
+        &self,
+        reqs: &[crate::kernel::BatchReadRequest],
+        ctx: &OperationContext,
+        max_aggregate_bytes: Option<usize>,
     ) -> Result<Vec<Result<SysReadResult, KernelError>>, KernelError> {
         if reqs.is_empty() {
             return Ok(Vec::new());
@@ -2819,20 +2837,20 @@ impl Kernel {
         // Aggregate-bytes cap — only authorized paths (those that survived
         // Phase A's permission + native PRE-read hook) contribute. We
         // count actual fetched bytes, not response window bytes: Phase B
-        // calls sys_read (which is whole-blob today, slicing happens in
-        // the kernel after the fetch). So a request reading `(/big, off=0,
-        // len=1)` from a 100 GB file costs ~100 GB of fetch/cache fill,
-        // not 1 byte. Coalescing by (mount, content_id) means one fetch
-        // per distinct blob; singletons (no content_id) each fetch their
-        // own file. Paths without metadata still don't contribute — the
-        // post-read defense-in-depth in the transport handler catches
-        // those before serialization.
+        // fetches whole blobs and slices in-kernel, so a request reading
+        // `(/big, off=0, len=1)` from a 100 GB file costs ~100 GB of
+        // backend bandwidth + cache fill, not 1 byte. Coalescing by
+        // (mount, content_id) means one fetch per distinct blob;
+        // singletons (no content_id) each fetch their own file.
         //
-        // A non-zero cap returned by `read_batch_max_aggregate_bytes`
-        // causes a hard outer error; 0 (default) disables the cap so the
-        // Python wrapper's own DoS guard remains in charge.
-        let agg_cap = self.read_batch_max_aggregate_bytes();
-        if agg_cap > 0 {
+        // When `max_aggregate_bytes` is `Some(cap)` AND an authorized path
+        // has no metadata, we cannot bound its fetch cost upfront, so we
+        // reject the whole batch (fail-closed) rather than let cold PAS /
+        // virtual-resolver paths bypass the DoS guard.
+        //
+        // `None` (default) disables the cap so the Python wrapper's own
+        // DoS guard stays in charge.
+        if let Some(cap) = max_aggregate_bytes {
             use std::collections::HashSet;
             let mut seen: HashSet<(String, String)> = HashSet::new();
             let mut declared: usize = 0;
@@ -2843,7 +2861,13 @@ impl Kernel {
                 };
                 let meta = match r.entry.as_ref() {
                     Some(m) => m,
-                    None => continue,
+                    None => {
+                        return Err(KernelError::IOError(format!(
+                            "read_batch declared aggregate cannot be \
+                             bounded: path has no metastore entry (cap={} bytes)",
+                            cap
+                        )));
+                    }
                 };
                 let cid = meta.content_id.clone().unwrap_or_default();
                 let blob_size = meta.size as usize;
@@ -2855,10 +2879,10 @@ impl Kernel {
                     // blob is fetched once and scattered to consumers.
                     declared = declared.saturating_add(blob_size);
                 }
-                if declared > agg_cap {
+                if declared > cap {
                     return Err(KernelError::IOError(format!(
                         "read_batch declared aggregate {} bytes exceeds {} bytes cap",
-                        declared, agg_cap
+                        declared, cap
                     )));
                 }
             }

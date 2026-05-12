@@ -364,17 +364,16 @@ impl NexusVfsService for VfsServiceImpl {
             })
             .collect();
 
-        // Aggregate-bytes cap — enforced by the kernel inside _read_batch
-        // AFTER Phase A authorization (permission gate + native PRE-read
-        // hook). The kernel runs the same auth/hook chain the actual
-        // reads do, so denied paths contribute 0 to the cap and a caller
-        // cannot probe their existence/size via resource_exhausted. We
-        // install the knob (idempotent) here; the kernel returns an
-        // IOError with the well-known prefix on cap overage.
+        // Per-call aggregate-bytes cap — passed directly into the kernel
+        // so concurrent BatchRead calls (and the Python wrapper, which
+        // passes None) never race on shared state. The cap is enforced
+        // inside _read_batch AFTER Phase A authorization, so denied
+        // paths contribute 0 and cannot be probed via resource_exhausted.
         const MAX_AGG: usize = 100 * 1024 * 1024;
-        self.kernel.set_read_batch_max_aggregate_bytes(MAX_AGG);
 
-        let outcome = self.kernel._read_batch(&rust_reqs, &ctx);
+        let outcome = self
+            .kernel
+            ._read_batch_with_cap(&rust_reqs, &ctx, Some(MAX_AGG));
         let results = match outcome {
             Ok(v) => v,
             Err(KernelError::IOError(msg)) if msg.starts_with("read_batch declared aggregate") => {

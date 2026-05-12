@@ -1745,7 +1745,16 @@ class ContentMixin:
             # of collapsing them to data=None.  Handle before the legacy
             # data=None fallback so the correct exception / error key is used.
             if r.error_kind:
-                if not partial:
+                # "unsupported" is the kernel's signal that this path's
+                # entry type cannot use the batch fast path (DT_PIPE /
+                # DT_STREAM today). Fall through to the legacy single-
+                # file fallback below — which handles pipes/streams,
+                # virtual resolvers, and external connectors — instead
+                # of raising. Strict/partial behavior for the actual
+                # fallback result is decided by self.read().
+                if r.error_kind == "unsupported":
+                    pass  # falls through to `r.data is None` block below
+                elif not partial:
                     if r.error_kind == "not_found":
                         raise NexusFileNotFoundError(path)
                     if r.error_kind == "permission_denied":
@@ -1756,14 +1765,15 @@ class ContentMixin:
                         from nexus.contracts.exceptions import InvalidPathError
 
                         raise InvalidPathError(r.error_message or path)
-                    # io_error or unknown kind
+                    # io_error or other unknown kind
                     raise OSError(f"read_batch({path}): {r.error_message}")
-                # partial mode — per-item error dict
-                _err: dict[str, Any] = {"path": path, "error": r.error_kind}
-                if r.error_kind == "io_error" and r.error_message:
-                    _err["message"] = r.error_message
-                results.append(_err)
-                continue
+                else:
+                    # partial mode — per-item error dict
+                    _err: dict[str, Any] = {"path": path, "error": r.error_kind}
+                    if r.error_kind == "io_error" and r.error_message:
+                        _err["message"] = r.error_message
+                    results.append(_err)
+                    continue
 
             if r.data is None:
                 # Finding #2 — _read_batch returns data=None not only for missing CAS

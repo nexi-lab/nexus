@@ -6,8 +6,17 @@ from typing import Any
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 _EXPLICIT_ZONE_ATTRS = ("zone", "zone_id", "target_zone_id")
-_PATH_ATTRS = ("path", "src", "dst", "old_path", "new_path", "prefix")
-_CONTAINER_ATTRS = ("files", "operations")
+_PATH_ATTRS = (
+    "path",
+    "src",
+    "dst",
+    "source",
+    "destination",
+    "old_path",
+    "new_path",
+    "prefix",
+)
+_CONTAINER_ATTRS = ("files", "operations", "renames")
 
 
 def zone_from_path(value: str) -> str | None:
@@ -59,10 +68,10 @@ def _iter_path_values(params: Any) -> Iterable[str]:
         yield from _paths_from_value(value, seen)
     for attr in _CONTAINER_ATTRS:
         value = _read_attr(params, attr)
-        yield from _paths_from_value(value, seen)
+        yield from _paths_from_value(value, seen, container=attr)
 
 
-def _paths_from_value(value: Any, seen: set[int]) -> Iterable[str]:
+def _paths_from_value(value: Any, seen: set[int], *, container: str | None = None) -> Iterable[str]:
     if isinstance(value, str):
         yield value
         return
@@ -74,13 +83,18 @@ def _paths_from_value(value: Any, seen: set[int]) -> Iterable[str]:
         for key in _PATH_ATTRS:
             yield from _paths_from_value(value.get(key), seen)
         for key in _CONTAINER_ATTRS:
-            yield from _paths_from_value(value.get(key), seen)
+            yield from _paths_from_value(value.get(key), seen, container=key)
         return
     if isinstance(value, list | tuple):
         if _already_seen(value, seen):
             return
+        if container == "files" and isinstance(value, tuple) and value:
+            first = value[0]
+            if isinstance(first, str):
+                yield first
+                return
         for item in value:
-            yield from _paths_from_value(item, seen)
+            yield from _paths_from_value(item, seen, container=container)
         return
     if _already_seen(value, seen):
         return
@@ -89,7 +103,7 @@ def _paths_from_value(value: Any, seen: set[int]) -> Iterable[str]:
         yield from _paths_from_value(nested, seen)
     for attr in _CONTAINER_ATTRS:
         nested = getattr(value, attr, None)
-        yield from _paths_from_value(nested, seen)
+        yield from _paths_from_value(nested, seen, container=attr)
 
 
 def _already_seen(value: Any, seen: set[int]) -> bool:

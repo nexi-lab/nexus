@@ -64,6 +64,37 @@ def test_zone_from_params_reads_tagged_operation_tuple_paths() -> None:
     assert zone_from_params(params) == "legal"
 
 
+def test_zone_from_params_reads_operation_source_field() -> None:
+    params = {"operations": [{"source": "/zone/eng/a.txt"}]}
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_reads_operation_destination_field() -> None:
+    params = SimpleNamespace(operations=[SimpleNamespace(destination="/zone/legal/b.txt")])
+    assert zone_from_params(params) == "legal"
+
+
+def test_zone_from_params_reads_renames_container() -> None:
+    params = SimpleNamespace(renames=[("/zone/legal/a.txt", "/zone/legal/b.txt")])
+    assert zone_from_params(params) == "legal"
+
+
+def test_zone_from_params_does_not_read_file_tuple_content() -> None:
+    params = {"files": [("/plain/path.txt", "/zone/wrong/content")]}
+    assert zone_from_params(params) is None
+
+
+def test_zone_from_params_prefers_file_tuple_path_over_content() -> None:
+    params = {"files": [("/zone/eng/path.txt", "/zone/wrong/content")]}
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_handles_cyclic_containers() -> None:
+    operations: list[object] = []
+    operations.append(operations)
+    assert zone_from_params({"operations": operations}) is None
+
+
 def test_target_zone_uses_non_root_context_when_no_path() -> None:
     context = OperationContext(user_id="alice", groups=[], zone_id="eng")
     assert target_zone_for_context(context, None) == "eng"

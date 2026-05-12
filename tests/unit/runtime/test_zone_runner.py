@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 
 import pytest
 
@@ -218,6 +219,42 @@ def test_stop_cancels_pending_tasks() -> None:
         assert cancelled.wait(2.0)
         assert not runner.is_alive
     finally:
+        runner.stop()
+
+
+def test_stop_terminates_when_pending_task_suppresses_cancellation() -> None:
+    runner = ZoneRunner("zone-a", join_timeout=0.1)
+    started = threading.Event()
+    cancelled = threading.Event()
+    release = threading.Event()
+
+    async def stubborn_work() -> None:
+        started.set()
+        while not release.is_set():
+            try:
+                await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                cancelled.set()
+
+    async def schedule_stubborn_work() -> None:
+        asyncio.create_task(stubborn_work())
+
+    try:
+        runner.call_sync(schedule_stubborn_work)
+        assert started.wait(2.0)
+
+        before_stop = time.monotonic()
+        runner.stop()
+        stop_duration = time.monotonic() - before_stop
+
+        assert cancelled.wait(2.0)
+        assert stop_duration < 1.0
+        assert not runner.is_alive
+    finally:
+        release.set()
+        thread = runner._thread
+        if thread is not None:
+            thread.join(2.0)
         runner.stop()
 
 

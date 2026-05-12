@@ -103,15 +103,17 @@ class ZoneRunner:
         if thread is threading.current_thread():
             loop.call_soon(loop.stop)
             return
+        join_timeout = self._join_timeout
         try:
             future = asyncio.run_coroutine_threadsafe(self._cancel_pending(loop), loop)
             future.result(timeout=self._join_timeout)
         except (TimeoutError, concurrent.futures.TimeoutError):
             logger.warning("Timed out draining zone runner %s", self.zone_id)
             loop.call_soon_threadsafe(loop.stop)
+            join_timeout += self._join_timeout
         except RuntimeError:
             return
-        thread.join(timeout=self._join_timeout)
+        thread.join(timeout=join_timeout)
         if thread.is_alive():
             logger.warning("Zone runner %s thread did not terminate", self.zone_id)
 
@@ -136,7 +138,9 @@ class ZoneRunner:
             loop.run_forever()
         finally:
             try:
-                loop.run_until_complete(self._cancel_pending(loop, stop=False))
+                loop.run_until_complete(
+                    self._cancel_pending(loop, stop=False, timeout=self._join_timeout)
+                )
                 loop.run_until_complete(loop.shutdown_asyncgens())
             finally:
                 _CURRENT.runner = None
@@ -149,6 +153,7 @@ class ZoneRunner:
         loop: asyncio.AbstractEventLoop,
         *,
         stop: bool = True,
+        timeout: float | None = None,
     ) -> None:
         current = asyncio.current_task(loop=loop)
         tasks = [
@@ -157,7 +162,16 @@ class ZoneRunner:
         for task in tasks:
             task.cancel()
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            if timeout is None:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                _, pending = await asyncio.wait(tasks, timeout=timeout)
+                if pending:
+                    logger.warning(
+                        "Closing zone runner %s with %d pending task(s)",
+                        self.zone_id,
+                        len(pending),
+                    )
         if stop:
             loop.stop()
 

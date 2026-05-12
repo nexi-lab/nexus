@@ -28,6 +28,7 @@ class ZoneRunner:
         self._thread: threading.Thread | None = None
         self._closed = False
         self._stopping = False
+        self._submitted: dict[asyncio.Task[Any], concurrent.futures.Future[Any]] = {}
 
     @property
     def is_alive(self) -> bool:
@@ -60,6 +61,7 @@ class ZoneRunner:
 
     async def call(self, work: Callable[[], Awaitable[T]]) -> T:
         if self.is_current_runner():
+            self._raise_if_closed()
             return await work()
         await asyncio.to_thread(self.start)
         self._before_submit()
@@ -171,12 +173,84 @@ class ZoneRunner:
             if self._closed or self._stopping:
                 raise RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
             loop = self._require_loop()
+            external: concurrent.futures.Future[T] = concurrent.futures.Future()
             submitted = invoke()
+
+            def schedule() -> None:
+                try:
+                    task = loop.create_task(submitted)
+                except RuntimeError:
+                    submitted.close()
+                    if not external.done():
+                        external.set_exception(
+                            RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
+                        )
+                    logger.debug(
+                        "Zone runner %s rejected submission",
+                        self.zone_id,
+                        exc_info=True,
+                    )
+                    return
+                with self._lock:
+                    self._submitted[task] = external
+                task.add_done_callback(self._complete_submitted)
+                if external.cancelled():
+                    task.cancel()
+
+            def cancel_loop_task(future: concurrent.futures.Future[T]) -> None:
+                if not future.cancelled():
+                    return
+                task = self._task_for_external(future)
+                if task is None:
+                    return
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(task.cancel)
+
+            external.add_done_callback(cancel_loop_task)
             try:
-                return asyncio.run_coroutine_threadsafe(submitted, loop)
+                loop.call_soon_threadsafe(schedule)
             except RuntimeError as exc:
                 submitted.close()
+                external.set_exception(
+                    RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
+                )
                 raise RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped") from exc
+            return external
+
+    def _raise_if_closed(self) -> None:
+        with self._lock:
+            if self._closed or self._stopping:
+                raise RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped")
+
+    def _task_for_external(
+        self,
+        external: concurrent.futures.Future[Any],
+    ) -> asyncio.Task[Any] | None:
+        with self._lock:
+            for task, submitted_external in self._submitted.items():
+                if submitted_external is external:
+                    return task
+        return None
+
+    def _complete_submitted(self, task: asyncio.Task[Any]) -> None:
+        with self._lock:
+            external = self._submitted.pop(task, None)
+        if external is None:
+            with contextlib.suppress(BaseException):
+                task.result()
+            return
+        if external.cancelled():
+            with contextlib.suppress(BaseException):
+                task.result()
+            return
+        try:
+            result = task.result()
+        except asyncio.CancelledError:
+            external.cancel()
+        except BaseException as exc:
+            external.set_exception(exc)
+        else:
+            external.set_result(result)
 
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
@@ -240,8 +314,11 @@ class ZoneRunner:
         with contextlib.suppress(BaseException):
             future.result()
 
-    @staticmethod
-    def _mark_task_abandoned(task: asyncio.Task[object]) -> None:
+    def _mark_task_abandoned(self, task: asyncio.Task[object]) -> None:
+        with self._lock:
+            external = self._submitted.pop(task, None)
+        if external is not None and not external.done():
+            external.set_exception(RuntimeError(f"ZoneRunner {self.zone_id!r} has been stopped"))
         if hasattr(task, "_log_destroy_pending"):
             task._log_destroy_pending = False
 

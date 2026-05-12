@@ -111,6 +111,48 @@ def test_call_sync_runs_from_sync_code() -> None:
         runner.stop()
 
 
+def test_same_runner_call_rejects_after_shutdown_starts() -> None:
+    runner = ZoneRunner("zone-a", join_timeout=0.2)
+    outer_started = threading.Event()
+    nested_ran = threading.Event()
+    results: list[str] = []
+    errors: list[BaseException] = []
+
+    async def nested_work() -> str:
+        nested_ran.set()
+        return "bad"
+
+    async def outer_work() -> str:
+        outer_started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            with pytest.raises(RuntimeError, match="stopped|shutdown"):
+                await runner.call(nested_work)
+            return "rejected"
+        return "bad"
+
+    def call_runner() -> None:
+        try:
+            results.append(runner.call_sync(outer_work))
+        except BaseException as exc:
+            errors.append(exc)
+
+    caller = threading.Thread(target=call_runner)
+    caller.start()
+    try:
+        assert outer_started.wait(2.0)
+        runner.stop()
+        caller.join(2.0)
+
+        assert results == ["rejected"]
+        assert errors == []
+        assert not nested_ran.is_set()
+    finally:
+        caller.join(2.0)
+        runner.stop()
+
+
 @pytest.mark.asyncio
 async def test_call_propagates_exception() -> None:
     runner = ZoneRunner("zone-a")
@@ -207,6 +249,44 @@ async def test_call_rejects_submission_after_stop_begins(monkeypatch) -> None:
         release_submit.set()
         stopper.join(2.0)
         runner.stop()
+
+
+@pytest.mark.asyncio
+async def test_call_waiter_completes_when_stubborn_work_is_abandoned() -> None:
+    runner = ZoneRunner("zone-a", join_timeout=0.1)
+    started = threading.Event()
+    cancelled = threading.Event()
+    release = threading.Event()
+    stop_errors: list[BaseException] = []
+
+    async def stubborn_work() -> str:
+        started.set()
+        while not release.is_set():
+            try:
+                await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                cancelled.set()
+        return "released"
+
+    def stop_runner() -> None:
+        try:
+            assert started.wait(2.0)
+            runner.stop()
+        except BaseException as exc:
+            stop_errors.append(exc)
+
+    task = asyncio.create_task(runner.call(stubborn_work))
+    stopper = threading.Thread(target=stop_runner)
+    stopper.start()
+    try:
+        with pytest.raises((asyncio.CancelledError, RuntimeError), match="|stopped|shutdown"):
+            await asyncio.wait_for(task, timeout=1.0)
+        assert cancelled.wait(2.0)
+        assert stop_errors == []
+    finally:
+        release.set()
+        stopper.join(2.0)
+        await asyncio.to_thread(runner.stop)
 
 
 @pytest.mark.asyncio

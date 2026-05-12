@@ -61,7 +61,7 @@ class ZoneRunner:
     async def call(self, work: Callable[[], Awaitable[T]]) -> T:
         if self.is_current_runner():
             return await work()
-        self.start()
+        await asyncio.to_thread(self.start)
         loop = self._require_loop()
 
         async def invoke() -> T:
@@ -138,6 +138,11 @@ class ZoneRunner:
             future.add_done_callback(self._consume_submitted_result)
             loop.call_soon_threadsafe(loop.stop)
         except RuntimeError:
+            logger.debug(
+                "Zone runner %s loop unavailable during stop",
+                self.zone_id,
+                exc_info=True,
+            )
             return
         thread.join(timeout=join_timeout)
         if thread.is_alive():

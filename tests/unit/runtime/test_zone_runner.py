@@ -153,6 +153,29 @@ async def test_call_cancellation_cancels_submitted_work() -> None:
 
 
 @pytest.mark.asyncio
+async def test_call_cancellation_during_startup_returns_promptly() -> None:
+    runner = _DelayedStartRunner("zone-a", join_timeout=0.1)
+
+    async def work() -> str:
+        return "should-not-run"
+
+    started_at = time.monotonic()
+    task = asyncio.create_task(runner.call(work))
+    try:
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=0.5)
+
+        assert time.monotonic() - started_at < 1.0
+    finally:
+        task.cancel()
+        runner.release_startup.set()
+        await asyncio.to_thread(runner.stop)
+
+
+@pytest.mark.asyncio
 async def test_same_runner_reentry_does_not_deadlock() -> None:
     runner = ZoneRunner("zone-a")
 

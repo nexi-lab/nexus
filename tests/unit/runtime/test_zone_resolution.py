@@ -89,6 +89,26 @@ def test_zone_from_params_prefers_file_tuple_path_over_content() -> None:
     assert zone_from_params(params) == "eng"
 
 
+def test_zone_from_params_does_not_read_file_list_content() -> None:
+    params = {"files": [["/plain/path.txt", "/zone/wrong/content"]]}
+    assert zone_from_params(params) is None
+
+
+def test_zone_from_params_prefers_file_list_path_over_content() -> None:
+    params = {"files": [["/zone/eng/path.txt", "/zone/wrong/content"]]}
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_does_not_read_write_operation_content() -> None:
+    params = {"operations": [("write", "/plain/path.txt", "/zone/wrong/content")]}
+    assert zone_from_params(params) is None
+
+
+def test_zone_from_params_prefers_write_operation_path_over_content() -> None:
+    params = {"operations": [("write", "/zone/eng/path.txt", "/zone/wrong/content")]}
+    assert zone_from_params(params) == "eng"
+
+
 def test_zone_from_params_handles_cyclic_containers() -> None:
     operations: list[object] = []
     operations.append(operations)

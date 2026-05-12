@@ -17,6 +17,10 @@ _PATH_ATTRS = (
     "prefix",
 )
 _CONTAINER_ATTRS = ("files", "operations", "renames")
+_OPERATION_PATH_SLOTS = {
+    "write": (1,),
+    "rename": (1, 2),
+}
 
 
 def zone_from_path(value: str) -> str | None:
@@ -88,10 +92,17 @@ def _paths_from_value(value: Any, seen: set[int], *, container: str | None = Non
     if isinstance(value, list | tuple):
         if _already_seen(value, seen):
             return
-        if container == "files" and isinstance(value, tuple) and value:
+        if container == "files" and value:
             first = value[0]
             if isinstance(first, str):
                 yield first
+                return
+        if container == "operations" and value:
+            first = value[0]
+            if isinstance(first, str):
+                for index in _OPERATION_PATH_SLOTS.get(first, ()):
+                    if index < len(value):
+                        yield from _paths_from_value(value[index], seen)
                 return
         for item in value:
             yield from _paths_from_value(item, seen, container=container)

@@ -256,12 +256,8 @@ fn bench_hydration_cold_read(c: &mut Criterion) {
                 let client = NexusClient::new(&url, "k", None).unwrap();
                 let start = std::time::Instant::now();
                 for i in 0..50_usize {
-                    let _ = read_with_cache(
-                        &client,
-                        Some(cache.as_ref()),
-                        &format!("/f{}.txt", i),
-                        0,
-                    );
+                    let _ =
+                        read_with_cache(&client, Some(cache.as_ref()), &format!("/f{}.txt", i), 0);
                 }
                 total += start.elapsed();
             }

@@ -482,7 +482,9 @@ fn test_rpc_permission_error_code_maps_to_eperm() {
         .mock("POST", "/api/nfs/stat")
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"permission denied"}}"#)
+        .with_body(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"permission denied"}}"#,
+        )
         .create();
 
     let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
@@ -503,7 +505,9 @@ fn test_read_path_rpc_permission_error_code_maps_to_eperm() {
         .mock("POST", "/api/nfs/read")
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"no permission to read"}}"#)
+        .with_body(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"no permission to read"}}"#,
+        )
         .create();
 
     let client = NexusClient::new(&server.url(), "test-key", None).unwrap();

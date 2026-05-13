@@ -166,6 +166,44 @@ async def _idle_trimmer() -> None:
             logger.exception("idle_trimmer iteration failed")
 
 
+async def _flush_write_buffer_for_shutdown(app: "FastAPI") -> None:
+    """Drain buffered file writes before slower service teardown starts."""
+    nexus_fs = getattr(app.state, "nexus_fs", None)
+    if nexus_fs is None:
+        logger.debug("Shutdown write buffer flush skipped: no NexusFS on app.state")
+        return
+
+    kernel = getattr(nexus_fs, "_kernel", None)
+    flush = getattr(kernel, "flush_write_buffer", None) if kernel is not None else None
+    if flush is None:
+        flush = getattr(nexus_fs, "flush_write_buffer", None)
+    if flush is None:
+        logger.debug("Shutdown write buffer flush skipped: no flush method available")
+        return
+
+    dirty_count = getattr(kernel, "write_buffer_dirty_count", None) if kernel is not None else None
+    dirty_before = dirty_count() if dirty_count is not None else None
+    try:
+        if kernel is not None and getattr(kernel, "flush_write_buffer", None) is not None:
+            result = flush(None, None)
+        else:
+            loop = asyncio.get_running_loop()
+            zone_id = getattr(nexus_fs, "_zone_id", None)
+            result = await loop.run_in_executor(None, flush, None, zone_id)
+        dirty_after = dirty_count() if dirty_count is not None else None
+        logger.info(
+            "Shutdown write buffer flush completed: flushed=%s failed=%s dirty_before=%s "
+            "dirty_after=%s errors=%s",
+            getattr(result, "flushed", None),
+            getattr(result, "failed", None),
+            dirty_before,
+            dirty_after,
+            getattr(result, "errors", None),
+        )
+    except Exception:
+        logger.exception("Shutdown write buffer flush failed")
+
+
 @asynccontextmanager
 async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     """Application lifespan manager.
@@ -273,6 +311,8 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
 
     # --- Shutdown (reverse order) ---
     logger.info("Shutting down FastAPI Nexus server...")
+
+    await _flush_write_buffer_for_shutdown(app)
 
     # Cancel all background tasks first
     for task in bg_tasks:

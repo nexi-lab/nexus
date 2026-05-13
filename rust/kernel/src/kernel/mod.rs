@@ -99,6 +99,7 @@ mod ipc;
 mod locks;
 mod mount;
 mod observability;
+pub(crate) mod write_buffer;
 
 // ── KernelError ────────────────────────────────────────────────────────────
 
@@ -232,6 +233,29 @@ pub struct SysWriteResult {
     pub old_version: Option<u32>,
     /// Modified-at timestamp (epoch ms) before this write (None if new file).
     pub old_modified_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Default)]
+pub struct FlushWriteBufferResult {
+    pub flushed: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
+
+pub struct WriteBufferFlushHandle {
+    stop_tx: Option<std::sync::mpsc::Sender<()>>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for WriteBufferFlushHandle {
+    fn drop(&mut self) {
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.send(());
+        }
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
 }
 
 /// Result of sys_unlink(): hit + metadata for event payload.
@@ -658,6 +682,7 @@ pub struct Kernel {
     pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
     pub(crate) stream_manager: Arc<crate::stream_manager::StreamManager>,
+    write_buffer: write_buffer::WriteBuffer,
     // Native hook registry — pure Rust hooks dispatched lock-free.
     #[allow(dead_code)]
     // RwLock (not Mutex) so concurrent + recursive read-locks are allowed.
@@ -819,6 +844,7 @@ impl Kernel {
             ops_registry: Self::default_ops_registry(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
+            write_buffer: write_buffer::WriteBuffer::new(),
             native_hooks: RwLock::new(NativeHookRegistry::new()),
             self_address: parking_lot::RwLock::new(None),
             runtime,
@@ -908,6 +934,54 @@ impl Kernel {
     #[inline]
     fn vfs_lock_timeout_ms(&self) -> u64 {
         self.vfs_lock_timeout_ms.load(Ordering::Relaxed)
+    }
+
+    pub fn set_write_coalescing_policy(
+        &self,
+        prefix: &str,
+        policy: contracts::WriteCoalescingPolicy,
+    ) {
+        self.write_buffer.set_policy(prefix, policy);
+    }
+
+    pub fn spawn_write_buffer_flusher(
+        kernel: &Arc<Self>,
+        interval: std::time::Duration,
+    ) -> WriteBufferFlushHandle {
+        let kernel = Arc::downgrade(kernel);
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+        let join = std::thread::Builder::new()
+            .name("nexus-write-buffer-flusher".to_string())
+            .spawn(move || loop {
+                match stop_rx.recv_timeout(interval) {
+                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+
+                let Some(kernel) = kernel.upgrade() else {
+                    break;
+                };
+                if let Err(err) = kernel.flush_due_write_buffer() {
+                    tracing::warn!("write buffer background flush failed: {err:?}");
+                }
+            })
+            .expect("failed to spawn write buffer flusher");
+
+        WriteBufferFlushHandle {
+            stop_tx: Some(stop_tx),
+            join: Some(join),
+        }
+    }
+
+    pub fn write_buffer_dirty_count(&self) -> usize {
+        self.write_buffer.dirty_len()
+    }
+
+    pub(crate) fn now_ms_u64() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
     }
 
     /// Max in-flight backend fetches inside `_read_batch` (clamped to ≥1).
@@ -3199,7 +3273,7 @@ mod tests {
     // ── §11 OBSERVE ThreadPool tests ───────────────────────────────
 
     use crate::dispatch::{FileEvent, FileEventType, MutationObserver};
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::sync::Arc;
 
     /// Counts every observed event and stashes the path so the test
@@ -4001,6 +4075,729 @@ mod tests {
     // chain rejection. Tests below force the cold-cache path by
     // creating links via sys_setattr (writes through to metastore),
     // then evicting dcache before the syscall under test.
+
+    mod write_coalescing_syscalls {
+        use super::*;
+
+        struct CountingObjectStore {
+            content: parking_lot::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+            writes: AtomicUsize,
+            fail_writes: AtomicBool,
+        }
+
+        impl CountingObjectStore {
+            fn new() -> Self {
+                Self {
+                    content: parking_lot::Mutex::new(std::collections::HashMap::new()),
+                    writes: AtomicUsize::new(0),
+                    fail_writes: AtomicBool::new(false),
+                }
+            }
+
+            fn write_count(&self) -> usize {
+                self.writes.load(Ordering::Relaxed)
+            }
+
+            fn seed(&self, content_id: &str, content: &[u8]) {
+                self.content
+                    .lock()
+                    .insert(content_id.to_string(), content.to_vec());
+            }
+
+            fn stored(&self, content_id: &str) -> Option<Vec<u8>> {
+                self.content.lock().get(content_id).cloned()
+            }
+
+            fn set_fail_writes(&self, fail: bool) {
+                self.fail_writes.store(fail, Ordering::Relaxed);
+            }
+        }
+
+        impl crate::abc::object_store::ObjectStore for CountingObjectStore {
+            fn name(&self) -> &str {
+                "counting"
+            }
+
+            fn write_content(
+                &self,
+                content: &[u8],
+                content_id: &str,
+                _ctx: &OperationContext,
+                offset: u64,
+            ) -> Result<crate::abc::object_store::WriteResult, crate::abc::object_store::StorageError>
+            {
+                if self.fail_writes.load(Ordering::Relaxed) {
+                    return Err(crate::abc::object_store::StorageError::NotSupported(
+                        "injected write failure",
+                    ));
+                }
+                if offset != 0 {
+                    return Err(crate::abc::object_store::StorageError::NotSupported(
+                        "nonzero test offset",
+                    ));
+                }
+                self.writes.fetch_add(1, Ordering::Relaxed);
+                self.content
+                    .lock()
+                    .insert(content_id.to_string(), content.to_vec());
+                Ok(crate::abc::object_store::WriteResult {
+                    content_id: content_id.to_string(),
+                    version: content_id.to_string(),
+                    size: content.len() as u64,
+                })
+            }
+
+            fn read_content(
+                &self,
+                content_id: &str,
+                _ctx: &OperationContext,
+            ) -> Result<Vec<u8>, crate::abc::object_store::StorageError> {
+                self.content.lock().get(content_id).cloned().ok_or_else(|| {
+                    crate::abc::object_store::StorageError::NotFound(content_id.to_string())
+                })
+            }
+
+            fn delete_file(
+                &self,
+                path: &str,
+            ) -> Result<(), crate::abc::object_store::StorageError> {
+                self.content.lock().remove(path);
+                Ok(())
+            }
+
+            fn rmdir(
+                &self,
+                path: &str,
+                recursive: bool,
+            ) -> Result<(), crate::abc::object_store::StorageError> {
+                let prefix = format!("{}/", path.trim_end_matches('/'));
+                let mut content = self.content.lock();
+                let has_children = content.keys().any(|key| key.starts_with(&prefix));
+                if has_children && !recursive {
+                    return Err(crate::abc::object_store::StorageError::NotSupported(
+                        "directory not empty",
+                    ));
+                }
+                content.retain(|key, _| key != path && !key.starts_with(&prefix));
+                Ok(())
+            }
+
+            fn rename(
+                &self,
+                old_path: &str,
+                new_path: &str,
+            ) -> Result<(), crate::abc::object_store::StorageError> {
+                let mut content = self.content.lock();
+                if let Some(data) = content.remove(old_path) {
+                    content.insert(new_path.to_string(), data);
+                    return Ok(());
+                }
+
+                let old_prefix = format!("{}/", old_path.trim_end_matches('/'));
+                let new_prefix = format!("{}/", new_path.trim_end_matches('/'));
+                let moved: Vec<(String, Vec<u8>)> = content
+                    .iter()
+                    .filter_map(|(path, data)| {
+                        path.strip_prefix(&old_prefix)
+                            .map(|suffix| (format!("{new_prefix}{suffix}"), data.clone()))
+                    })
+                    .collect();
+                if moved.is_empty() {
+                    return Err(crate::abc::object_store::StorageError::NotFound(
+                        old_path.to_string(),
+                    ));
+                }
+                content.retain(|path, _| !path.starts_with(&old_prefix));
+                for (path, data) in moved {
+                    content.insert(path, data);
+                }
+                Ok(())
+            }
+        }
+
+        fn mounted_counting_kernel() -> (Kernel, Arc<CountingObjectStore>, OperationContext) {
+            let kernel = Kernel::new();
+            let backend = Arc::new(CountingObjectStore::new());
+            let mount_backend: Arc<dyn crate::abc::object_store::ObjectStore> = backend.clone();
+            kernel
+                .add_mount("/workspace", "root", Some(mount_backend), None, None, false)
+                .unwrap();
+            let ctx = OperationContext::new("test", "root", true, None, true);
+            (kernel, backend, ctx)
+        }
+
+        #[test]
+        fn default_policy_preserves_write_through_metadata_visibility() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+
+            let write = kernel
+                .sys_write("/workspace/default.txt", &ctx, b"visible", 0)
+                .unwrap();
+
+            assert_eq!(backend.write_count(), 1);
+            assert!(write.content_id.is_some());
+            let meta = kernel
+                .metastore_get("/workspace/default.txt")
+                .unwrap()
+                .expect("metadata committed by default write-through policy");
+            assert_eq!(meta.version, 1);
+            assert_eq!(meta.size, 7);
+            assert!(meta.content_id.is_some());
+        }
+
+        #[test]
+        fn strict_write_through_still_writes_each_call() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
+
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"one", 0)
+                .unwrap();
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"two", 0)
+                .unwrap();
+
+            assert_eq!(backend.write_count(), 2);
+            let read = kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).unwrap();
+            assert_eq!(read.data.unwrap(), b"two");
+        }
+
+        #[test]
+        fn latency_policy_coalesces_burst_until_flush() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+
+            for idx in 0..100 {
+                let payload = format!("payload-{idx}");
+                kernel
+                    .sys_write("/workspace/burst.txt", &ctx, payload.as_bytes(), 0)
+                    .unwrap();
+            }
+
+            assert_eq!(backend.write_count(), 0);
+            let read = kernel
+                .sys_read("/workspace/burst.txt", &ctx, 5_000, 0)
+                .unwrap();
+            assert_eq!(read.data.unwrap(), b"payload-99");
+
+            let flushed = kernel
+                .flush_write_buffer(Some("/workspace/burst.txt"), Some("root"))
+                .unwrap();
+            assert_eq!(flushed.flushed, 1);
+            assert_eq!(backend.write_count(), 1);
+        }
+
+        #[test]
+        fn background_flusher_drains_idle_latency_writes() {
+            let kernel = Arc::new(Kernel::new());
+            let backend = Arc::new(CountingObjectStore::new());
+            let mount_backend: Arc<dyn crate::abc::object_store::ObjectStore> = backend.clone();
+            kernel
+                .add_mount("/workspace", "root", Some(mount_backend), None, None, false)
+                .unwrap();
+            kernel.set_write_coalescing_policy(
+                "/",
+                contracts::WriteCoalescingPolicy {
+                    mode: contracts::WriteCoalescingMode::Latency,
+                    flush_window_ms: 10,
+                    byte_budget: 1024 * 1024,
+                    flush_on_close: true,
+                },
+            );
+            let _flusher =
+                Kernel::spawn_write_buffer_flusher(&kernel, std::time::Duration::from_millis(5));
+            let ctx = OperationContext::new("test", "root", true, None, true);
+
+            kernel
+                .sys_write("/workspace/idle.txt", &ctx, b"idle", 0)
+                .unwrap();
+            assert_eq!(backend.write_count(), 0);
+
+            for _ in 0..100 {
+                if backend.write_count() == 1 && kernel.write_buffer_dirty_count() == 0 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+
+            assert_eq!(backend.write_count(), 1);
+            assert_eq!(kernel.write_buffer_dirty_count(), 0);
+            let read = kernel
+                .sys_read("/workspace/idle.txt", &ctx, 5_000, 0)
+                .unwrap();
+            assert_eq!(read.data.unwrap(), b"idle");
+        }
+
+        #[test]
+        fn stat_access_and_readdir_flush_dirty_creates_for_metadata_visibility() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+
+            kernel
+                .sys_write("/workspace/new.txt", &ctx, b"new", 0)
+                .unwrap();
+            assert_eq!(backend.write_count(), 0);
+
+            let stat = kernel.sys_stat("/workspace/new.txt", "root").unwrap();
+            assert_eq!(stat.size, 3);
+            assert_eq!(backend.write_count(), 1);
+            assert!(kernel.access("/workspace/new.txt", "root"));
+            assert!(kernel
+                .readdir("/workspace", "root", true)
+                .iter()
+                .any(|(path, _)| path == "/workspace/new.txt"));
+        }
+
+        #[test]
+        fn copy_flushes_dirty_source_before_metadata_lookup() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+
+            kernel
+                .sys_write("/workspace/source.txt", &ctx, b"source", 0)
+                .unwrap();
+            assert_eq!(backend.write_count(), 0);
+
+            let copied = kernel
+                .sys_copy("/workspace/source.txt", "/workspace/copy.txt", &ctx)
+                .unwrap();
+
+            assert!(copied.hit);
+            assert_eq!(backend.write_count(), 2);
+            let read = kernel
+                .sys_read("/workspace/copy.txt", &ctx, 5_000, 0)
+                .unwrap();
+            assert_eq!(read.data.unwrap(), b"source");
+        }
+
+        #[test]
+        fn byte_budget_forces_synchronous_flush() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy(
+                "/",
+                contracts::WriteCoalescingPolicy {
+                    mode: contracts::WriteCoalescingMode::Latency,
+                    flush_window_ms: 1_000,
+                    byte_budget: 3,
+                    flush_on_close: true,
+                },
+            );
+
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+
+            assert_eq!(backend.write_count(), 1);
+            assert!(kernel.write_buffer_dirty_count() == 0);
+        }
+
+        #[test]
+        fn unlink_flushes_dirty_file_before_delete() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+            kernel.sys_unlink("/workspace/a.txt", &ctx, false).unwrap();
+
+            assert_eq!(backend.write_count(), 1);
+            assert!(kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).is_err());
+        }
+
+        #[test]
+        fn rename_flushes_dirty_old_path_before_move() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+            kernel
+                .sys_rename("/workspace/a.txt", "/workspace/b.txt", &ctx)
+                .unwrap();
+
+            assert_eq!(backend.write_count(), 1);
+            assert_eq!(kernel.write_buffer_dirty_count(), 0);
+            assert!(kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).is_err());
+            let read = kernel.sys_read("/workspace/b.txt", &ctx, 5_000, 0).unwrap();
+            assert_eq!(read.data.unwrap(), b"abc");
+        }
+
+        #[test]
+        fn rename_directory_flushes_dirty_children_before_move() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            kernel
+                .sys_mkdir("/workspace/dir", &ctx, true, false)
+                .unwrap();
+            kernel
+                .sys_write("/workspace/dir/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+
+            kernel
+                .sys_rename("/workspace/dir", "/workspace/moved", &ctx)
+                .unwrap();
+
+            assert_eq!(backend.write_count(), 1);
+            assert_eq!(kernel.write_buffer_dirty_count(), 0);
+            assert!(kernel
+                .sys_read("/workspace/dir/a.txt", &ctx, 5_000, 0)
+                .is_err());
+            let read = kernel
+                .sys_read("/workspace/moved/a.txt", &ctx, 5_000, 0)
+                .unwrap();
+            assert_eq!(read.data.unwrap(), b"abc");
+        }
+
+        #[test]
+        fn rmdir_recursive_flushes_dirty_children_before_delete() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            kernel
+                .sys_mkdir("/workspace/dir", &ctx, true, false)
+                .unwrap();
+            kernel
+                .sys_write("/workspace/dir/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+
+            let result = kernel.sys_rmdir("/workspace/dir", &ctx, true).unwrap();
+
+            assert_eq!(backend.write_count(), 1);
+            assert_eq!(kernel.write_buffer_dirty_count(), 0);
+            assert_eq!(result.children_deleted, 1);
+            assert!(kernel
+                .sys_read("/workspace/dir/a.txt", &ctx, 5_000, 0)
+                .is_err());
+        }
+
+        #[test]
+        fn metadata_only_route_does_not_buffer_write_without_backend() {
+            let kernel = Kernel::new();
+            let tempdir = tempfile::tempdir().unwrap();
+            let metastore = Arc::new(
+                crate::meta_store::LocalMetaStore::open(&tempdir.path().join("meta.redb")).unwrap(),
+            );
+            kernel
+                .add_mount("/workspace", "root", None, Some(metastore), None, false)
+                .unwrap();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            let ctx = OperationContext::new("test", "root", true, None, true);
+
+            let result = kernel
+                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+
+            assert!(!result.hit);
+            assert_eq!(kernel.write_buffer_dirty_count(), 0);
+        }
+
+        #[test]
+        fn locked_barrier_drains_dirty_path_without_reacquiring_lock() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+
+            let lock_handle = kernel.lock_manager.blocking_acquire(
+                "/workspace/a.txt",
+                crate::lock_manager::LockMode::Write,
+                kernel.vfs_lock_timeout_ms(),
+            );
+            assert_ne!(lock_handle, 0);
+
+            let flushed = kernel
+                .flush_write_buffer_locked_path("/workspace/a.txt", "root")
+                .unwrap();
+
+            kernel.lock_manager.do_release(lock_handle);
+
+            assert_eq!(flushed.flushed, 1);
+            assert_eq!(backend.write_count(), 1);
+            assert_eq!(kernel.write_buffer_dirty_count(), 0);
+        }
+
+        #[test]
+        fn locked_prefix_barrier_uses_directory_lock_to_fence_children() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            kernel
+                .sys_mkdir("/workspace/dir", &ctx, true, false)
+                .unwrap();
+            kernel
+                .sys_write("/workspace/dir/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+
+            let lock_handle = kernel.lock_manager.blocking_acquire(
+                "/workspace/dir",
+                crate::lock_manager::LockMode::Write,
+                kernel.vfs_lock_timeout_ms(),
+            );
+            assert_ne!(lock_handle, 0);
+            assert_eq!(
+                kernel.lock_manager.blocking_acquire(
+                    "/workspace/dir/a.txt",
+                    crate::lock_manager::LockMode::Write,
+                    0,
+                ),
+                0,
+                "directory write lock must block child write locks"
+            );
+
+            let flushed = kernel
+                .flush_write_buffer_locked_prefix("/workspace/dir", "root")
+                .unwrap();
+
+            kernel.lock_manager.do_release(lock_handle);
+
+            assert_eq!(flushed.flushed, 1);
+            assert_eq!(backend.write_count(), 1);
+            assert_eq!(kernel.write_buffer_dirty_count(), 0);
+        }
+
+        #[test]
+        fn unlink_locked_flush_error_releases_path_lock() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"seed", 0)
+                .unwrap();
+
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"dirty", 0)
+                .unwrap();
+            backend.set_fail_writes(true);
+
+            assert!(kernel.sys_unlink("/workspace/a.txt", &ctx, false).is_err());
+
+            let lock_handle = kernel.lock_manager.blocking_acquire(
+                "/workspace/a.txt",
+                crate::lock_manager::LockMode::Write,
+                0,
+            );
+            assert_ne!(lock_handle, 0);
+            kernel.lock_manager.do_release(lock_handle);
+        }
+
+        #[test]
+        fn ordinary_flush_does_not_claim_dirty_while_waiting_for_lock() {
+            let (kernel, _backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+
+            let lock_handle = kernel.lock_manager.blocking_acquire(
+                "/workspace/a.txt",
+                crate::lock_manager::LockMode::Write,
+                kernel.vfs_lock_timeout_ms(),
+            );
+            assert_ne!(lock_handle, 0);
+
+            let kernel = Arc::new(kernel);
+            let flushing_kernel = Arc::clone(&kernel);
+            let handle = std::thread::spawn(move || {
+                flushing_kernel
+                    .flush_write_buffer(Some("/workspace/a.txt"), Some("root"))
+                    .unwrap()
+            });
+
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
+            let dirty = kernel
+                .write_buffer
+                .get_dirty(&crate::kernel::write_buffer::DirtyWriteKey::new(
+                    "/workspace/a.txt",
+                    "root",
+                ))
+                .unwrap();
+            assert_eq!(dirty.flushing_generation, None);
+
+            kernel.lock_manager.do_release(lock_handle);
+            let flushed = handle.join().unwrap();
+            assert_eq!(flushed.flushed, 1);
+        }
+
+        #[test]
+        fn ordinary_flush_timeout_does_not_clear_existing_barrier_claim() {
+            let (kernel, _backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            kernel.set_vfs_lock_timeout(1);
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .unwrap();
+
+            let dirty = kernel
+                .write_buffer
+                .get_dirty(&crate::kernel::write_buffer::DirtyWriteKey::new(
+                    "/workspace/a.txt",
+                    "root",
+                ))
+                .unwrap();
+            assert!(kernel.write_buffer.claim_dirty_generation(&dirty));
+
+            let lock_handle = kernel.lock_manager.blocking_acquire(
+                "/workspace/a.txt",
+                crate::lock_manager::LockMode::Write,
+                0,
+            );
+            assert_ne!(lock_handle, 0);
+
+            assert!(kernel
+                .flush_write_buffer(Some("/workspace/a.txt"), Some("root"))
+                .is_err());
+            kernel.lock_manager.do_release(lock_handle);
+
+            let current = kernel
+                .write_buffer
+                .get_dirty(&crate::kernel::write_buffer::DirtyWriteKey::new(
+                    "/workspace/a.txt",
+                    "root",
+                ))
+                .unwrap();
+            assert_eq!(current.flushing_generation, Some(dirty.generation));
+        }
+
+        #[test]
+        fn buffered_partial_write_reads_own_spliced_bytes() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"hello", 0)
+                .unwrap();
+
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"XX", 1)
+                .unwrap();
+
+            assert_eq!(backend.write_count(), 1);
+            let read = kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).unwrap();
+            assert_eq!(read.data.unwrap(), b"hXXlo");
+        }
+
+        #[test]
+        fn metadata_missing_partial_buffered_write_uses_backend_base() {
+            let (kernel, backend, ctx) = mounted_counting_kernel();
+            backend.seed("seed.txt", b"hello");
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+
+            kernel
+                .sys_write("/workspace/seed.txt", &ctx, b"XX", 1)
+                .unwrap();
+
+            assert_eq!(backend.write_count(), 0);
+            let read = kernel
+                .sys_read("/workspace/seed.txt", &ctx, 5_000, 0)
+                .unwrap();
+            assert_eq!(read.data.unwrap(), b"hXXlo");
+
+            let flushed = kernel
+                .flush_write_buffer(Some("/workspace/seed.txt"), Some("root"))
+                .unwrap();
+            assert_eq!(flushed.flushed, 1);
+            assert_eq!(backend.stored("seed.txt").unwrap(), b"hXXlo");
+        }
+
+        #[test]
+        fn flush_uses_original_dirty_metadata_snapshot_for_version() {
+            let (kernel, _backend, ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"hello", 0)
+                .unwrap();
+
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            kernel
+                .sys_write("/workspace/a.txt", &ctx, b"dirty", 0)
+                .unwrap();
+
+            let route = kernel.vfs_router.route("/workspace/a.txt", "root").unwrap();
+            let external_meta = kernel.build_metadata(
+                "/workspace/a.txt",
+                &route.zone_id,
+                DT_REG,
+                8,
+                Some("external".to_string()),
+                41,
+                41,
+                None,
+                Some(1),
+                Some(2),
+            );
+            kernel
+                .with_metastore_route(&route, |ms| ms.put("/workspace/a.txt", external_meta))
+                .unwrap()
+                .unwrap();
+
+            kernel
+                .flush_write_buffer(Some("/workspace/a.txt"), Some("root"))
+                .unwrap();
+            let stat = kernel.sys_stat("/workspace/a.txt", "root").unwrap();
+            assert_eq!(stat.version, 2);
+            assert_eq!(stat.content_id.as_deref(), Some("a.txt"));
+        }
+
+        #[test]
+        fn buffered_flush_observer_uses_latest_writer_identity() {
+            let (kernel, _backend, _ctx) = mounted_counting_kernel();
+            kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
+            let captured = Arc::new(parking_lot::Mutex::new(None));
+            kernel.register_observer(
+                Arc::new(CapturingObserver {
+                    captured: Arc::clone(&captured),
+                }),
+                "writer-capture".to_string(),
+                FileEventType::FileWrite.bit(),
+            );
+
+            let first = OperationContext {
+                user_id: "alice".to_string(),
+                zone_id: "root".to_string(),
+                is_admin: false,
+                agent_id: Some("agent-a".to_string()),
+                is_system: false,
+                groups: vec![],
+                admin_capabilities: vec![],
+                subject_type: "user".to_string(),
+                subject_id: None,
+                request_id: "req-a".to_string(),
+                context_zone_id: None,
+                zone_perms: vec![],
+            };
+            let second = OperationContext {
+                user_id: "bob".to_string(),
+                zone_id: "root".to_string(),
+                is_admin: false,
+                agent_id: Some("agent-b".to_string()),
+                is_system: false,
+                groups: vec![],
+                admin_capabilities: vec![],
+                subject_type: "user".to_string(),
+                subject_id: None,
+                request_id: "req-b".to_string(),
+                context_zone_id: None,
+                zone_perms: vec![],
+            };
+
+            kernel
+                .sys_write("/workspace/a.txt", &first, b"first", 0)
+                .unwrap();
+            kernel
+                .sys_write("/workspace/a.txt", &second, b"second", 0)
+                .unwrap();
+            kernel
+                .flush_write_buffer(Some("/workspace/a.txt"), Some("root"))
+                .unwrap();
+            kernel.flush_observers();
+
+            let event = captured.lock().clone().expect("observer received event");
+            assert_eq!(event.user_id.as_deref(), Some("bob"));
+            assert_eq!(event.agent_id.as_deref(), Some("agent-b"));
+        }
+    }
 
     mod dt_link {
         use super::*;

@@ -64,6 +64,14 @@ pub trait KernelAbi: Send + Sync + 'static {
         offset: u64,
     ) -> Result<SysWriteResult, KernelError>;
 
+    fn flush_write_buffer(
+        &self,
+        path: Option<&str>,
+        zone_id: Option<&str>,
+    ) -> Result<crate::kernel::FlushWriteBufferResult, KernelError>;
+
+    fn flush_due_write_buffer(&self) -> Result<crate::kernel::FlushWriteBufferResult, KernelError>;
+
     fn sys_unlink(
         &self,
         path: &str,
@@ -179,6 +187,18 @@ impl KernelAbi for crate::kernel::Kernel {
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
         Self::sys_write(self, path, ctx, content, offset)
+    }
+
+    fn flush_write_buffer(
+        &self,
+        path: Option<&str>,
+        zone_id: Option<&str>,
+    ) -> Result<crate::kernel::FlushWriteBufferResult, KernelError> {
+        Self::flush_write_buffer(self, path, zone_id)
+    }
+
+    fn flush_due_write_buffer(&self) -> Result<crate::kernel::FlushWriteBufferResult, KernelError> {
+        Self::flush_due_write_buffer(self)
     }
 
     fn sys_unlink(

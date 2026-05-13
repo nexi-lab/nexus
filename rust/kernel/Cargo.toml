@@ -127,3 +127,7 @@ harness = false
 [[bench]]
 name = "read_batch"
 harness = false
+
+[[bench]]
+name = "write_coalescing"
+harness = false

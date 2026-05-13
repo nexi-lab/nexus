@@ -531,8 +531,14 @@ def connect(
                 tiering_config=tiering_cfg,
             )
 
-    # Resolve paths — new fields take precedence, db_path is legacy fallback
-    metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
+    # Resolve paths — new fields take precedence, db_path is a legacy fallback
+    # only when it is a filesystem path. Docker/demo configs use db_path for a
+    # PostgreSQL URL; treating that URL as a redb path makes the kernel fall
+    # back to a temp metastore, losing metadata on process restart.
+    legacy_metadata_path = cfg.db_path if cfg.db_path and "://" not in str(cfg.db_path) else None
+    metadata_path = (
+        cfg.metastore_path or legacy_metadata_path or str(Path(nexus_root) / "metastore")
+    )
     record_store_path = cfg.record_store_path or None
 
     # --- Profile resolution (Issue #1708, moved before metadata store for federation gating) ---

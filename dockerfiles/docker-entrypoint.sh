@@ -550,10 +550,24 @@ start_nexus_server() {
         echo -e "${GREEN}✓ Using deployment profile — no config file needed${NC}"
     fi
 
-    local cmd
-    cmd="$(build_serve_cmd)"
+    local auth_type="${NEXUS_AUTH_TYPE:-database}"
+    local cmd=()
+    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+        cmd=(nexusd --config "$CONFIG_FILE" --auth-type "$auth_type")
+    else
+        cmd=(
+            nexusd
+            --host "${NEXUS_HOST:-0.0.0.0}"
+            --port "${NEXUS_PORT:-2026}"
+            --auth-type "$auth_type"
+        )
+        if [ -n "${NEXUS_PROFILE:-}" ]; then
+            cmd+=(--profile "$NEXUS_PROFILE")
+        fi
+    fi
+
     echo "Starting server..."
-    eval "$cmd" &
+    "${cmd[@]}" &
     SERVER_PID=$!
 
     trap 'cleanup TERM' SIGTERM SIGINT

@@ -78,7 +78,10 @@ pub async fn hydrate_workspace(
     {
         Ok(Ok(list)) => list,
         Ok(Err(err)) => {
-            warn!("hydrate: root list failed for {:?}: {}", opts.workspace_root, err);
+            warn!(
+                "hydrate: root list failed for {:?}: {}",
+                opts.workspace_root, err
+            );
             failed.fetch_add(1, Ordering::Relaxed);
             return finalize_stats(
                 started,
@@ -329,13 +332,8 @@ mod tests {
     fn fresh_cache(label: &str) -> Arc<FileCache> {
         let _ = env_logger::builder().is_test(true).try_init();
         let dir = tempfile::tempdir().unwrap();
-        let config = CacheConfig::new(
-            dir.keep(),
-            8 * 1024 * 1024,
-            32 * 1024 * 1024,
-            1024 * 1024,
-        )
-        .unwrap();
+        let config =
+            CacheConfig::new(dir.keep(), 8 * 1024 * 1024, 32 * 1024 * 1024, 1024 * 1024).unwrap();
         Arc::new(
             FileCache::new_with_config(
                 &format!("http://test-{}.invalid", label),
@@ -383,7 +381,9 @@ mod tests {
             .mock("POST", "/api/nfs/read")
             .with_status(200)
             .with_header("etag", "\"abc\"")
-            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"aGVsbG8="}}"#)
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"aGVsbG8="}}"#,
+            )
             .create();
 
         let client = Arc::new(NexusClient::new(&server.url(), "test-key", None).unwrap());
@@ -429,7 +429,11 @@ mod tests {
         cache.put("/cached.txt", b"already-here", Some("etag-old"), 0);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let stats = rt.block_on(hydrate_workspace(client, cache.clone(), HydrateOptions::new("/".into())));
+        let stats = rt.block_on(hydrate_workspace(
+            client,
+            cache.clone(),
+            HydrateOptions::new("/".into()),
+        ));
 
         assert_eq!(stats.skipped_warm, 1);
         assert_eq!(stats.admitted_count, 1);
@@ -456,7 +460,10 @@ mod tests {
                 i
             ));
         }
-        let body = format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{"files":[{}]}}}}"#, files);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"files":[{}]}}}}"#,
+            files
+        );
         let _list_mock = server
             .mock("POST", "/api/nfs/list")
             .with_status(200)
@@ -516,11 +523,13 @@ mod tests {
         let _list_mock = server
             .mock("POST", "/api/nfs/list")
             .with_status(200)
-            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
+            .with_body(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"files":[
                 {"path":"/ok1.txt","is_directory":false,"size":3},
                 {"path":"/bad.txt","is_directory":false,"size":3},
                 {"path":"/ok2.txt","is_directory":false,"size":3}
-            ]}}"#)
+            ]}}"#,
+            )
             .create();
         let _stat_mock = mock_small_stat(&mut server);
 
@@ -542,7 +551,11 @@ mod tests {
         let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
         let cache = fresh_cache("per_file_err");
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let stats = rt.block_on(hydrate_workspace(client, cache, HydrateOptions::new("/".into())));
+        let stats = rt.block_on(hydrate_workspace(
+            client,
+            cache,
+            HydrateOptions::new("/".into()),
+        ));
 
         assert_eq!(stats.admitted_count, 2);
         assert_eq!(stats.failed, 1);
@@ -563,7 +576,11 @@ mod tests {
         let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
         let cache = fresh_cache("list_err");
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let stats = rt.block_on(hydrate_workspace(client, cache, HydrateOptions::new("/".into())));
+        let stats = rt.block_on(hydrate_workspace(
+            client,
+            cache,
+            HydrateOptions::new("/".into()),
+        ));
 
         assert_eq!(stats.admitted_count, 0);
         assert_eq!(stats.failed, 1);
@@ -584,7 +601,11 @@ mod tests {
         let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
         let cache = fresh_cache("empty");
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let stats = rt.block_on(hydrate_workspace(client, cache, HydrateOptions::new("/".into())));
+        let stats = rt.block_on(hydrate_workspace(
+            client,
+            cache,
+            HydrateOptions::new("/".into()),
+        ));
 
         assert_eq!(stats.admitted_count, 0);
         assert_eq!(stats.skipped_size, 0);
@@ -630,7 +651,11 @@ mod tests {
         let stats = rt.block_on(hydrate_workspace(client, cache, opts));
 
         // Depths 0, 1, 2, 3 each yield exactly one file → 4 admissions, 0 failures, no infinite loop.
-        assert_eq!(stats.admitted_count, 4, "expected 4 admits, got {:?}", stats);
+        assert_eq!(
+            stats.admitted_count, 4,
+            "expected 4 admits, got {:?}",
+            stats
+        );
         assert_eq!(stats.failed, 0);
     }
 
@@ -672,7 +697,11 @@ mod tests {
         // With max_entries=2 the per-entry cap fires inside the inner loop.
         // The third file (c.txt) must never be processed even though the list
         // response contains it.
-        assert_eq!(stats.admitted_count, 2, "expected 2 admits, got {:?}", stats);
+        assert_eq!(
+            stats.admitted_count, 2,
+            "expected 2 admits, got {:?}",
+            stats
+        );
         assert_eq!(stats.skipped_size, 0);
         assert_eq!(stats.failed, 0);
         // Sanity: c.txt was never put into cache.
@@ -697,7 +726,10 @@ mod tests {
                 i
             ));
         }
-        let body = format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{"files":[{}]}}}}"#, files);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"files":[{}]}}}}"#,
+            files
+        );
         server
             .mock("POST", "/api/nfs/list")
             .with_status(200)
@@ -788,9 +820,17 @@ mod tests {
         let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
         let cache = fresh_cache("subdir_fail");
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let stats = rt.block_on(hydrate_workspace(client, cache, HydrateOptions::new("/".into())));
+        let stats = rt.block_on(hydrate_workspace(
+            client,
+            cache,
+            HydrateOptions::new("/".into()),
+        ));
 
-        assert_eq!(stats.admitted_count, 1, "expected 1 admit from ok subdir, got {:?}", stats);
+        assert_eq!(
+            stats.admitted_count, 1,
+            "expected 1 admit from ok subdir, got {:?}",
+            stats
+        );
         // Per design: list errors mid-walk are not counted as `failed` (which is per-file fetch failures).
         assert_eq!(stats.failed, 0, "stats={:?}", stats);
     }
@@ -915,7 +955,11 @@ mod tests {
         let client = Arc::new(NexusClient::new(&server.url(), "k", None).unwrap());
         let cache = fresh_cache("entry_type_numeric");
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let stats = rt.block_on(hydrate_workspace(client, cache, HydrateOptions::new("/".into())));
+        let stats = rt.block_on(hydrate_workspace(
+            client,
+            cache,
+            HydrateOptions::new("/".into()),
+        ));
 
         // BFS must descend into /sub and admit /sub/file.txt. Pre-fix this
         // would have admitted 0 (the directory was treated as a file).

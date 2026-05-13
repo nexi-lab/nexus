@@ -166,7 +166,14 @@ fn cache_eviction_reason(value: &str) -> String {
 fn hydration_file_result(value: &str) -> String {
     bounded(
         value,
-        &["admitted", "skipped_warm", "skipped_size", "skipped_budget", "failed", "other"],
+        &[
+            "admitted",
+            "skipped_warm",
+            "skipped_size",
+            "skipped_budget",
+            "failed",
+            "other",
+        ],
     )
 }
 
@@ -376,9 +383,7 @@ pub fn record_hydration_bytes(result: &str, n: u64) {
 
 pub fn observe_hydration_duration_ms(ms: u64) {
     let mut metrics = METRICS.lock().unwrap();
-    metrics.hydration_duration_ms_total = metrics
-        .hydration_duration_ms_total
-        .saturating_add(ms);
+    metrics.hydration_duration_ms_total = metrics.hydration_duration_ms_total.saturating_add(ms);
 }
 
 fn write_sample_line(out: &mut String, name: &str, labels: &str, value: impl Display) {
@@ -656,7 +661,9 @@ pub fn render() -> String {
     }
 
     // Duration counter
-    out.push_str("# HELP nexus_hydration_duration_ms_total Cumulative hydration wall time in ms.\n");
+    out.push_str(
+        "# HELP nexus_hydration_duration_ms_total Cumulative hydration wall time in ms.\n",
+    );
     out.push_str("# TYPE nexus_hydration_duration_ms_total counter\n");
     out.push_str(&format!(
         "nexus_hydration_duration_ms_total {}\n",

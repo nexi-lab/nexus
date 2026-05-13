@@ -2300,7 +2300,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "use crate::hook_registry::HookRegistry;",
             '#[cfg(feature = "py-hook-adapters")]',
             "use crate::hook_registry::InterceptHook;",
-            "use crate::kernel::{Kernel, KernelError, OperationContext};",
+            "use crate::kernel::{Kernel, KernelError, OperationContext, WriteBufferFlushHandle};",
             "use crate::meta_store::{FileMetadata, MetaStoreError};",
             "use crate::vfs_router::RouteError;",
         ]
@@ -2972,6 +2972,16 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    pub old_modified_at_ms: Option<i64>,",
             "}",
             "",
+            "// ── PyFlushWriteBufferResult ───────────────────────────────────",
+            "",
+            "/// Python-facing FlushWriteBufferResult.",
+            "#[pyclass(get_all)]",
+            "pub struct PyFlushWriteBufferResult {",
+            "    pub flushed: usize,",
+            "    pub failed: usize,",
+            "    pub errors: Vec<String>,",
+            "}",
+            "",
             "// ── PySysUnlinkResult ───────────────────────────────────────────",
             "",
             "/// Python-facing SysUnlinkResult.",
@@ -3072,6 +3082,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    /// without an extra accessor method that codegen would",
             "    /// have to preserve. Not exposed to Python.",
             "    pub(crate) inner: Arc<Kernel>,",
+            "    _write_buffer_flusher: WriteBufferFlushHandle,",
             "    // RwLock (not Mutex) so a hook callback can re-enter",
             "    // ``sys_*`` without deadlocking. The recursion is real:",
             "    // ReBAC's permission_hook reads its own ``/__sys__/rebac/...``",
@@ -3119,8 +3130,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    #[new]",
             "    fn new() -> Self {",
+            "        let inner = Arc::new(Kernel::new());",
+            "        let write_buffer_flusher =",
+            "            Kernel::spawn_write_buffer_flusher(&inner, std::time::Duration::from_millis(250));",
             "        Self {",
-            "            inner: Arc::new(Kernel::new()),",
+            "            inner,",
+            "            _write_buffer_flusher: write_buffer_flusher,",
             "            hooks: RwLock::new(HookRegistry::new()),",
             "        }",
             "    }",
@@ -4261,6 +4276,37 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        })",
             "    }",
             "",
+            "    // ── write-buffer flushing ─────────────────────────────────────────",
+            "",
+            "    #[pyo3(signature = (path=None, zone_id=None))]",
+            "    fn flush_write_buffer(",
+            "        &self,",
+            "        py: Python<'_>,",
+            "        path: Option<&str>,",
+            "        zone_id: Option<&str>,",
+            "    ) -> PyResult<PyFlushWriteBufferResult> {",
+            "        let result = py.detach(|| self.inner.flush_write_buffer(path, zone_id));",
+            "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
+            "        Ok(PyFlushWriteBufferResult {",
+            "            flushed: result.flushed,",
+            "            failed: result.failed,",
+            "            errors: result.errors,",
+            "        })",
+            "    }",
+            "",
+            "    fn flush_due_write_buffer(",
+            "        &self,",
+            "        py: Python<'_>,",
+            "    ) -> PyResult<PyFlushWriteBufferResult> {",
+            "        let result = py.detach(|| self.inner.flush_due_write_buffer());",
+            "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
+            "        Ok(PyFlushWriteBufferResult {",
+            "            flushed: result.flushed,",
+            "            failed: result.failed,",
+            "            errors: result.errors,",
+            "        })",
+            "    }",
+            "",
             "    // ── sys_stat ───────────────────────────────────────────────────────",
             "",
             "    fn sys_stat<'py>(",
@@ -5359,7 +5405,15 @@ _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
     "read": "read",
     # Tier 2 lock_acquire dispatches to sys_lock and shapes the result.
     "lock_acquire": "sys_lock",
+    "flush_write_buffer": "flush_write_buffer",
+    "fsync": "fsync",
+    "sync": "sync",
 }
+
+
+# Public NexusFS methods that are not direct PyKernel syscall names but
+# should still be served by the thin gRPC syscall dispatcher.
+_EXTRA_KERNEL_SYSCALL_NAMES: set[str] = {"flush_write_buffer", "fsync", "sync"}
 
 
 # Mutation syscalls fire pub/sub events for file watchers via the gRPC
@@ -5427,7 +5481,10 @@ def generate_kernel_syscall_dispatch(classes: dict[str, "ClassDef"]) -> str:
     # filesystem.
     _MANUAL_WIRE_NAMES = ("sys_readdir", "close")
     wire_names = sorted(
-        set(syscalls) | set(_KERNEL_SYSCALL_ALIASES.keys()) | set(_MANUAL_WIRE_NAMES)
+        set(syscalls)
+        | set(_KERNEL_SYSCALL_ALIASES.keys())
+        | set(_EXTRA_KERNEL_SYSCALL_NAMES)
+        | set(_MANUAL_WIRE_NAMES)
     )
 
     names_block = ",\n        ".join(f'"{n}"' for n in wire_names)

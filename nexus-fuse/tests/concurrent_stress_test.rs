@@ -19,8 +19,7 @@ use std::thread;
 
 const READ_BODY: &str =
     r#"{"jsonrpc":"2.0","id":1,"result":{"__type__":"bytes","data":"YmVuY2hkYXRh"}}"#;
-const STAT_BODY: &str =
-    r#"{"jsonrpc":"2.0","id":1,"result":{"size":10,"gen":1,"etag":"abc","modified_at":null,"is_directory":false}}"#;
+const STAT_BODY: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"size":10,"gen":1,"etag":"abc","modified_at":null,"is_directory":false}}"#;
 
 #[test]
 fn concurrent_mixed_ops_do_not_panic_or_deadlock() {

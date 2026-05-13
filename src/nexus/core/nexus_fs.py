@@ -1009,6 +1009,17 @@ class NexusFS(  # type: ignore[misc]
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        flush_error: Exception | None = None
+
+        def _after_flush_cleanup(label: str, close_fn: Callable[[], None]) -> None:
+            if flush_error is None:
+                close_fn()
+                return
+            try:
+                close_fn()
+            except Exception as exc:
+                logger.debug("close: %s failed after write buffer flush failure: %s", label, exc)
+
         # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
         # Runs BEFORE pipe/IPC close so callbacks can drain pipe buffers
         # (Issue #3399: piped write observer needs to flush before buffers clear).
@@ -1018,19 +1029,27 @@ class NexusFS(  # type: ignore[misc]
             except Exception as exc:
                 logger.debug("close: callback failed (best-effort): %s", exc)
 
-        # Close IPC primitives — Rust kernel (§4.2)
-        # _kernel is None in remote connection mode (no local kernel)
-        if self._kernel is not None:
-            self._kernel.close_all_pipes()
-            self._kernel.close_all_streams()
-        # Close transport pool (persistent gRPC connections)
-        if hasattr(self, "_transport_pool") and self._transport_pool is not None:
-            self._transport_pool.close_all()
-
         # Auto-close all enlisted services that have a close() method
         # (rebac_manager, audit_store, etc.). Reverse registration order.
         if self._kernel is not None:
             self._kernel.service_close_all()
+
+        # Final durability barrier: callbacks/services may write during close.
+        if self._kernel is not None:
+            try:
+                self._kernel.flush_write_buffer(None, None)
+            except Exception as exc:
+                flush_error = exc
+                logger.error("close: write buffer flush failed: %s", exc, exc_info=True)
+
+        # Close IPC primitives — Rust kernel (§4.2)
+        # _kernel is None in remote connection mode (no local kernel)
+        if self._kernel is not None:
+            _after_flush_cleanup("close_all_pipes", self._kernel.close_all_pipes)
+            _after_flush_cleanup("close_all_streams", self._kernel.close_all_streams)
+        # Close transport pool (persistent gRPC connections)
+        if hasattr(self, "_transport_pool") and self._transport_pool is not None:
+            _after_flush_cleanup("transport_pool.close_all", self._transport_pool.close_all)
 
         # Metadata store close is a no-op — kernel manages the redb
         # lifecycle via ``release_metastores`` below.
@@ -1040,7 +1059,7 @@ class NexusFS(  # type: ignore[misc]
         # process-lifetime tests that open the same redb path in a second
         # NexusFS hit ``Database already open. Cannot acquire lock.`` (Issue
         # #3765 Cat-5/6). ``release_metastores`` is idempotent.
-        if self._kernel is not None:
+        if self._kernel is not None and flush_error is None:
             try:
                 _release = getattr(self._kernel, "release_metastores", None)
                 if _release is not None:
@@ -1059,7 +1078,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Close record store (Services layer SQL connections)
         if self._record_store is not None:
-            self._record_store.close()
+            _after_flush_cleanup("record_store.close", self._record_store.close)
 
         # Close process-local runtime resources owned by this NexusFS.
         while self._runtime_closeables:
@@ -1071,6 +1090,9 @@ class NexusFS(  # type: ignore[misc]
                 close_fn()
             except Exception as e:
                 logger.debug("Failed to close runtime resource %s: %s", type(resource).__name__, e)
+
+        if flush_error is not None:
+            raise flush_error
 
     def __enter__(self) -> "NexusFS":
         """Context manager entry."""

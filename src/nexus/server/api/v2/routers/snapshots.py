@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,10 @@ def _entry_to_response(entry: Any) -> SnapshotEntryResponse:
     )
 
 
+def _get_zone_registry(request: Request) -> Any | None:
+    return getattr(request.app.state, "zone_registry", None)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -170,45 +175,55 @@ def _entry_to_response(entry: Any) -> SnapshotEntryResponse:
 
 @router.post("", status_code=201, response_model=TransactionResponse)
 async def begin_transaction(
+    request: Request,
     body: BeginTransactionRequest,
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> TransactionResponse:
     """Begin a new transactional snapshot."""
     snapshot_service, zone_id, agent_id = ctx
-    try:
-        info = await snapshot_service.begin(
-            zone_id=zone_id,
-            agent_id=agent_id,
-            description=body.description,
-            ttl_seconds=body.ttl_seconds,
-        )
-        return _to_response(info)
-    except Exception as e:
-        logger.error("Failed to begin transaction: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to begin transaction") from e
+
+    async def _begin() -> TransactionResponse:
+        try:
+            info = await snapshot_service.begin(
+                zone_id=zone_id,
+                agent_id=agent_id,
+                description=body.description,
+                ttl_seconds=body.ttl_seconds,
+            )
+            return _to_response(info)
+        except Exception as e:
+            logger.error("Failed to begin transaction: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to begin transaction") from e
+
+    return await run_zone_scoped(_get_zone_registry(request), zone_id, _begin)
 
 
 @router.get("", response_model=TransactionListResponse)
 async def list_transactions(
+    request: Request,
     status: str | None = Query(None, description="Filter by status"),
     limit: int = Query(100, ge=1, le=1000),
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> TransactionListResponse:
     """List transactions scoped to the user's zone."""
     snapshot_service, zone_id, _ = ctx
-    try:
-        transactions = await snapshot_service.list_transactions(
-            zone_id=zone_id,
-            status=status,
-            limit=limit,
-        )
-        return TransactionListResponse(
-            transactions=[_to_response(t) for t in transactions],
-            count=len(transactions),
-        )
-    except Exception as e:
-        logger.error("Failed to list transactions: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to list transactions") from e
+
+    async def _list() -> TransactionListResponse:
+        try:
+            transactions = await snapshot_service.list_transactions(
+                zone_id=zone_id,
+                status=status,
+                limit=limit,
+            )
+            return TransactionListResponse(
+                transactions=[_to_response(t) for t in transactions],
+                count=len(transactions),
+            )
+        except Exception as e:
+            logger.error("Failed to list transactions: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to list transactions") from e
+
+    return await run_zone_scoped(_get_zone_registry(request), zone_id, _list)
 
 
 async def _verify_zone_ownership(snapshot_service: Any, txn_id: str, zone_id: str) -> Any:
@@ -225,23 +240,29 @@ async def _verify_zone_ownership(snapshot_service: Any, txn_id: str, zone_id: st
 
 @router.get("/{txn_id}", response_model=TransactionResponse)
 async def get_transaction(
+    request: Request,
     txn_id: str = Path(..., min_length=1, max_length=36),
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> TransactionResponse:
     """Get details of a specific transaction."""
     snapshot_service, zone_id, _ = ctx
-    try:
-        info = await _verify_zone_ownership(snapshot_service, txn_id, zone_id)
-        return _to_response(info)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to get transaction %s: %s", txn_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to get transaction") from e
+
+    async def _get() -> TransactionResponse:
+        try:
+            info = await _verify_zone_ownership(snapshot_service, txn_id, zone_id)
+            return _to_response(info)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to get transaction %s: %s", txn_id, e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to get transaction") from e
+
+    return await run_zone_scoped(_get_zone_registry(request), zone_id, _get)
 
 
 @router.post("/{txn_id}/commit", response_model=TransactionResponse)
 async def commit_transaction(
+    request: Request,
     txn_id: str = Path(..., min_length=1, max_length=36),
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> TransactionResponse:
@@ -253,37 +274,42 @@ async def commit_transaction(
     )
 
     snapshot_service, zone_id, _ = ctx
-    await _verify_zone_ownership(snapshot_service, txn_id, zone_id)
-    try:
-        info = await snapshot_service.commit(txn_id)
-        return _to_response(info)
-    except TransactionNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Transaction not found: {txn_id}") from e
-    except TransactionNotActiveError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    except TransactionConflictError as e:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": str(e),
-                "conflicts": [
-                    {
-                        "path": c.path,
-                        "expected_hash": c.expected_hash,
-                        "current_hash": c.current_hash,
-                        "reason": c.reason,
-                    }
-                    for c in e.conflicts
-                ],
-            },
-        ) from e
-    except Exception as e:
-        logger.error("Failed to commit transaction %s: %s", txn_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to commit transaction") from e
+
+    async def _commit() -> TransactionResponse:
+        await _verify_zone_ownership(snapshot_service, txn_id, zone_id)
+        try:
+            info = await snapshot_service.commit(txn_id)
+            return _to_response(info)
+        except TransactionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=f"Transaction not found: {txn_id}") from e
+        except TransactionNotActiveError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except TransactionConflictError as e:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": str(e),
+                    "conflicts": [
+                        {
+                            "path": c.path,
+                            "expected_hash": c.expected_hash,
+                            "current_hash": c.current_hash,
+                            "reason": c.reason,
+                        }
+                        for c in e.conflicts
+                    ],
+                },
+            ) from e
+        except Exception as e:
+            logger.error("Failed to commit transaction %s: %s", txn_id, e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to commit transaction") from e
+
+    return await run_zone_scoped(_get_zone_registry(request), zone_id, _commit)
 
 
 @router.post("/{txn_id}/rollback", response_model=TransactionResponse)
 async def rollback_transaction(
+    request: Request,
     txn_id: str = Path(..., min_length=1, max_length=36),
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> TransactionResponse:
@@ -294,32 +320,41 @@ async def rollback_transaction(
     )
 
     snapshot_service, zone_id, _ = ctx
-    await _verify_zone_ownership(snapshot_service, txn_id, zone_id)
-    try:
-        info = await snapshot_service.rollback(txn_id)
-        return _to_response(info)
-    except TransactionNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Transaction not found: {txn_id}") from e
-    except TransactionNotActiveError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    except Exception as e:
-        logger.error("Failed to rollback transaction %s: %s", txn_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to rollback transaction") from e
+
+    async def _rollback() -> TransactionResponse:
+        await _verify_zone_ownership(snapshot_service, txn_id, zone_id)
+        try:
+            info = await snapshot_service.rollback(txn_id)
+            return _to_response(info)
+        except TransactionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=f"Transaction not found: {txn_id}") from e
+        except TransactionNotActiveError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except Exception as e:
+            logger.error("Failed to rollback transaction %s: %s", txn_id, e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to rollback transaction") from e
+
+    return await run_zone_scoped(_get_zone_registry(request), zone_id, _rollback)
 
 
 @router.get("/{txn_id}/entries", response_model=list[SnapshotEntryResponse])
 async def list_entries(
+    request: Request,
     txn_id: str = Path(..., min_length=1, max_length=36),
     ctx: tuple[Any, str, str | None] = Depends(get_snapshot_context),
 ) -> list[SnapshotEntryResponse]:
     """List all entries for a transaction."""
     snapshot_service, zone_id, _ = ctx
-    await _verify_zone_ownership(snapshot_service, txn_id, zone_id)
-    try:
-        entries = await snapshot_service.list_entries(txn_id)
-        return [_entry_to_response(e) for e in entries]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to list entries for %s: %s", txn_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to list entries") from e
+
+    async def _entries() -> list[SnapshotEntryResponse]:
+        await _verify_zone_ownership(snapshot_service, txn_id, zone_id)
+        try:
+            entries = await snapshot_service.list_entries(txn_id)
+            return [_entry_to_response(e) for e in entries]
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to list entries for %s: %s", txn_id, e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to list entries") from e
+
+    return await run_zone_scoped(_get_zone_registry(request), zone_id, _entries)

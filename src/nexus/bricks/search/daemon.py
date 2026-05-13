@@ -54,6 +54,7 @@ from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMuta
 from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.env import get_database_url
+from nexus.server.zone_execution import run_zone_scoped
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -208,6 +209,7 @@ class SearchDaemon:
         settings_store: Any | None = None,
         path_context_cache: "PathContextCache | None" = None,
         sqlite_vec_backend: Any | None = None,
+        zone_registry: Any | None = None,
     ):
         """Initialize the search daemon.
 
@@ -229,6 +231,7 @@ class SearchDaemon:
         self._cache_brick = cache_brick
         self._settings_store = settings_store
         self._path_context_cache = path_context_cache
+        self._zone_registry = zone_registry
         # Codex review R6 (high): SANDBOX local sqlite-vec backend so
         # daemon-driven indexing (mutation events → IndexingPipeline)
         # populates the hybrid vector lane. Without this, only the
@@ -541,6 +544,15 @@ class SearchDaemon:
 
         Returns ``(canonical_path, BackfillResult)``.
         """
+
+        async def _work() -> Any:
+            return await self._add_indexed_directory_on_current_loop(zone_id, directory_path)
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+
+    async def _add_indexed_directory_on_current_loop(
+        self, zone_id: str, directory_path: str
+    ) -> Any:
         from nexus.bricks.search import scope_ops
 
         return await scope_ops.add_indexed_directory(self, zone_id, directory_path)
@@ -551,12 +563,30 @@ class SearchDaemon:
         Used by the registration recovery path so an operator who hit a
         backfill failure can retry without unregister + re-register.
         """
+
+        async def _work() -> Any:
+            return await self._rerun_backfill_for_directory_on_current_loop(zone_id, directory_path)
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+
+    async def _rerun_backfill_for_directory_on_current_loop(
+        self, zone_id: str, directory_path: str
+    ) -> Any:
         from nexus.bricks.search import scope_ops
 
         return await scope_ops.rerun_backfill_for_directory(self, zone_id, directory_path)
 
     async def remove_indexed_directory(self, zone_id: str, directory_path: str) -> str:
         """Unregister ``directory_path`` from scoped indexing. See scope_ops."""
+
+        async def _work() -> str:
+            return await self._remove_indexed_directory_on_current_loop(zone_id, directory_path)
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+
+    async def _remove_indexed_directory_on_current_loop(
+        self, zone_id: str, directory_path: str
+    ) -> str:
         from nexus.bricks.search import scope_ops
 
         return await scope_ops.remove_indexed_directory(self, zone_id, directory_path)
@@ -569,6 +599,17 @@ class SearchDaemon:
 
     async def purge_unscoped_embeddings(self, zone_id: str | None = None) -> dict[str, int]:
         """Delete stored embeddings for out-of-scope files. See scope_ops."""
+        if zone_id is None:
+            return await self._purge_unscoped_embeddings_on_current_loop(zone_id)
+
+        async def _work() -> dict[str, int]:
+            return await self._purge_unscoped_embeddings_on_current_loop(zone_id)
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+
+    async def _purge_unscoped_embeddings_on_current_loop(
+        self, zone_id: str | None = None
+    ) -> dict[str, int]:
         from nexus.bricks.search import scope_ops
 
         return await scope_ops.purge_unscoped_embeddings(self, zone_id)
@@ -1466,6 +1507,40 @@ class SearchDaemon:
         fusion_method: str = "rrf",
         zone_id: str | None = None,
     ) -> list[SearchResult]:
+        if zone_id is None:
+            return await self._search_on_current_loop(
+                query,
+                search_type=search_type,
+                limit=limit,
+                path_filter=path_filter,
+                alpha=alpha,
+                fusion_method=fusion_method,
+                zone_id=zone_id,
+            )
+
+        async def _work() -> list[SearchResult]:
+            return await self._search_on_current_loop(
+                query,
+                search_type=search_type,
+                limit=limit,
+                path_filter=path_filter,
+                alpha=alpha,
+                fusion_method=fusion_method,
+                zone_id=zone_id,
+            )
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+
+    async def _search_on_current_loop(
+        self,
+        query: str,
+        search_type: Literal["keyword", "semantic", "hybrid"] = "hybrid",
+        limit: int = 10,
+        path_filter: str | None = None,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        zone_id: str | None = None,
+    ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
 
         Args:
@@ -1788,6 +1863,20 @@ class SearchDaemon:
         *,
         zone_id: str | None = None,
     ) -> list[list[Any]]:
+        if zone_id is None:
+            return await self._batch_search_on_current_loop(queries, zone_id=zone_id)
+
+        async def _work() -> list[list[Any]]:
+            return await self._batch_search_on_current_loop(queries, zone_id=zone_id)
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+
+    async def _batch_search_on_current_loop(
+        self,
+        queries: list[dict[str, Any]],
+        *,
+        zone_id: str | None = None,
+    ) -> list[list[Any]]:
         """Batch search: embed N queries in ONE API call.
 
         Powers ``POST /api/v2/search/query/batch`` for benchmarks and bulk
@@ -1883,6 +1972,20 @@ class SearchDaemon:
         return results
 
     async def index_documents(
+        self,
+        documents: list[dict[str, Any]],
+        *,
+        zone_id: str | None = None,
+    ) -> int:
+        if zone_id is None:
+            return await self._index_documents_on_current_loop(documents, zone_id=zone_id)
+
+        async def _work() -> int:
+            return await self._index_documents_on_current_loop(documents, zone_id=zone_id)
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+
+    async def _index_documents_on_current_loop(
         self,
         documents: list[dict[str, Any]],
         *,

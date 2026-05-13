@@ -304,6 +304,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             settings_store=_settings_store,
             path_context_cache=path_context_cache,  # Issue #3773
             sqlite_vec_backend=_vec_backend,
+            zone_registry=getattr(app.state, "zone_registry", None),
         )
 
         # Embeddings are now handled by txtai backend (Issue #2663).

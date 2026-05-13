@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.server.zone_execution import run_zone_scoped
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
@@ -422,6 +423,8 @@ class CacheWarmer:
         config: WarmupConfig | None = None,
         file_tracker: FileAccessTracker | None = None,
         local_disk_cache: "LocalDiskCache | None" = None,
+        *,
+        zone_registry: Any | None = None,
     ):
         """Initialize cache warmer.
 
@@ -435,6 +438,7 @@ class CacheWarmer:
         self._config = config or WarmupConfig()
         self._file_tracker = file_tracker
         self._local_disk_cache = local_disk_cache
+        self._zone_registry = zone_registry
 
         # Semaphore for parallel workers
         self._semaphore = asyncio.Semaphore(self._config.parallel_workers)
@@ -454,6 +458,27 @@ class CacheWarmer:
         return self._is_warming
 
     async def warmup_directory(
+        self,
+        path: str,
+        depth: int | None = None,
+        include_content: bool | None = None,
+        max_files: int | None = None,
+        zone_id: str = ROOT_ZONE_ID,
+        context: Any | None = None,
+    ) -> WarmupStats:
+        async def _warm() -> WarmupStats:
+            return await self._warmup_directory_on_current_loop(
+                path,
+                depth=depth,
+                include_content=include_content,
+                max_files=max_files,
+                zone_id=zone_id,
+                context=context,
+            )
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _warm)
+
+    async def _warmup_directory_on_current_loop(
         self,
         path: str,
         depth: int | None = None,
@@ -540,6 +565,25 @@ class CacheWarmer:
         zone_id: str = ROOT_ZONE_ID,
         context: Any | None = None,
     ) -> WarmupStats:
+        async def _warm() -> WarmupStats:
+            return await self._warmup_from_history_on_current_loop(
+                user=user,
+                hours=hours,
+                max_files=max_files,
+                zone_id=zone_id,
+                context=context,
+            )
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _warm)
+
+    async def _warmup_from_history_on_current_loop(
+        self,
+        user: str | None = None,
+        hours: int = 24,
+        max_files: int | None = None,
+        zone_id: str = ROOT_ZONE_ID,
+        context: Any | None = None,
+    ) -> WarmupStats:
         """Pre-cache files based on user's recent access patterns.
 
         Args:
@@ -609,6 +653,21 @@ class CacheWarmer:
         zone_id: str = ROOT_ZONE_ID,
         paths: list[str] | None = None,
     ) -> WarmupStats:
+        async def _warm() -> WarmupStats:
+            return await self._warmup_permissions_on_current_loop(
+                user,
+                zone_id=zone_id,
+                paths=paths,
+            )
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _warm)
+
+    async def _warmup_permissions_on_current_loop(
+        self,
+        user: str,
+        zone_id: str = ROOT_ZONE_ID,
+        paths: list[str] | None = None,
+    ) -> WarmupStats:
         """Pre-cache permission graph for user.
 
         Args:
@@ -665,6 +724,23 @@ class CacheWarmer:
             self._is_warming = False
 
     async def warmup_paths(
+        self,
+        paths: list[str],
+        include_content: bool = False,
+        zone_id: str = ROOT_ZONE_ID,
+        context: Any | None = None,
+    ) -> WarmupStats:
+        async def _warm() -> WarmupStats:
+            return await self._warmup_paths_on_current_loop(
+                paths,
+                include_content=include_content,
+                zone_id=zone_id,
+                context=context,
+            )
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _warm)
+
+    async def _warmup_paths_on_current_loop(
         self,
         paths: list[str],
         include_content: bool = False,
@@ -986,6 +1062,7 @@ async def warmup_on_mount(
     include_content: bool = False,
     max_files: int = 1000,
     zone_id: str = ROOT_ZONE_ID,
+    zone_registry: Any | None = None,
 ) -> WarmupStats:
     """Convenience function: Warm cache after FUSE mount.
 
@@ -1000,7 +1077,7 @@ async def warmup_on_mount(
     Returns:
         WarmupStats
     """
-    warmer = CacheWarmer(nexus_fs)
+    warmer = CacheWarmer(nexus_fs, zone_registry=zone_registry)
     return await warmer.warmup_directory(
         path=mount_path,
         depth=depth,

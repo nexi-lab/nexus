@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from nexus.server.dependencies import require_auth
+from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +185,17 @@ def _get_mount_service(request: Request) -> Any:
     return svc
 
 
+def _get_zone_registry(request: Request) -> Any | None:
+    return getattr(request.app.state, "zone_registry", None)
+
+
+def _auth_zone(auth_result: dict[str, Any]) -> str | None:
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    return zone_id if zone_id != ROOT_ZONE_ID else None
+
+
 # ---------------------------------------------------------------------------
 # Discovery endpoints
 # ---------------------------------------------------------------------------
@@ -215,7 +227,7 @@ def list_connectors(_: dict = Depends(require_auth)) -> ConnectorsListResponse:
 @router.get("/available", response_model=list[AvailableConnector])
 async def list_available_connectors(
     request: Request,
-    _: dict = Depends(require_auth),
+    auth_result: dict = Depends(require_auth),
 ) -> list[AvailableConnector]:
     """List connectors with auth and mount status (for TUI Connectors tab)."""
     from nexus.backends import _register_optional_backends
@@ -230,31 +242,34 @@ async def list_available_connectors(
     # (which stores mount_point -> connector_type).
     type_to_mount: dict[str, str] = {ct: mp for mp, ct in _mount_types.items()}
 
-    result = []
-    for info in ConnectorRegistry.list_all():
-        mount_path = type_to_mount.get(info.name)
+    async def _list() -> list[AvailableConnector]:
+        result = []
+        for info in ConnectorRegistry.list_all():
+            mount_path = type_to_mount.get(info.name)
 
-        auth_state = {"auth_status": "unknown", "auth_source": None}
-        if auth_svc is not None:
-            try:
-                auth_state = await auth_svc.get_connector_auth_state(info.service_name)
-            except Exception:
-                logger.debug("Failed to resolve auth state for %s", info.name, exc_info=True)
+            auth_state = {"auth_status": "unknown", "auth_source": None}
+            if auth_svc is not None:
+                try:
+                    auth_state = await auth_svc.get_connector_auth_state(info.service_name)
+                except Exception:
+                    logger.debug("Failed to resolve auth state for %s", info.name, exc_info=True)
 
-        result.append(
-            AvailableConnector(
-                name=info.name,
-                description=info.description,
-                category=info.category,
-                capabilities=sorted(str(c) for c in info.backend_features),
-                user_scoped=info.user_scoped,
-                auth_status=str(auth_state.get("auth_status", "unknown")),
-                auth_source=auth_state.get("auth_source"),
-                mount_path=mount_path,
+            result.append(
+                AvailableConnector(
+                    name=info.name,
+                    description=info.description,
+                    category=info.category,
+                    capabilities=sorted(str(c) for c in info.backend_features),
+                    user_scoped=info.user_scoped,
+                    auth_status=str(auth_state.get("auth_status", "unknown")),
+                    auth_source=auth_state.get("auth_source"),
+                    mount_path=mount_path,
+                )
             )
-        )
 
-    return result
+        return result
+
+    return await run_zone_scoped(_get_zone_registry(request), _auth_zone(auth_result), _list)
 
 
 @router.get("/{name}/capabilities", response_model=ConnectorCapabilitiesResponse)
@@ -290,7 +305,7 @@ _mount_types: dict[str, str] = {}
 async def init_connector_auth(
     req: AuthInitRequest,
     request: Request,
-    _: dict = Depends(require_auth),
+    auth_result: dict = Depends(require_auth),
 ) -> AuthInitResponse:
     """Initiate OAuth flow for a connector. Returns a URL to open in a browser."""
     import secrets
@@ -441,17 +456,23 @@ async def init_connector_auth(
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported OAuth provider: {provider}")
 
-    # Snapshot the current auth state so we can detect a *change* during polling.
-    # Without this, pre-existing auth for the same connector would immediately
-    # report "completed" — a correctness bug for concurrent auth attempts.
-    auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
-    baseline_status = "unknown"
-    if auth_svc is not None:
-        try:
-            baseline = await auth_svc.get_connector_auth_state(info.service_name)
-            baseline_status = str(baseline.get("auth_status", "unknown"))
-        except Exception:
-            pass
+    async def _baseline_status() -> str:
+        # Snapshot the current auth state so we can detect a *change* during polling.
+        # Without this, pre-existing auth for the same connector would immediately
+        # report "completed" — a correctness bug for concurrent auth attempts.
+        auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
+        baseline_status = "unknown"
+        if auth_svc is not None:
+            try:
+                baseline = await auth_svc.get_connector_auth_state(info.service_name)
+                baseline_status = str(baseline.get("auth_status", "unknown"))
+            except Exception:
+                pass
+        return baseline_status
+
+    baseline_status = await run_zone_scoped(
+        _get_zone_registry(request), _auth_zone(auth_result), _baseline_status
+    )
 
     # Store pending auth state with the baseline snapshot
     _pending_auth[state_token] = {
@@ -480,7 +501,7 @@ async def init_connector_auth(
 async def get_auth_status(
     state_token: str,
     request: Request,
-    _: dict = Depends(require_auth),
+    auth_result: dict = Depends(require_auth),
 ) -> AuthStatusResponse:
     """Poll for OAuth completion status."""
     import time
@@ -510,44 +531,50 @@ async def get_auth_status(
     nx = _get_nx(request)
     auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
 
-    if auth_svc is not None:
-        try:
-            from nexus.backends.base.registry import ConnectorRegistry
+    async def _check() -> AuthStatusResponse | None:
+        if auth_svc is not None:
+            try:
+                from nexus.backends.base.registry import ConnectorRegistry
 
-            info = ConnectorRegistry.get_info(connector_name)
-            auth_state = await auth_svc.get_connector_auth_state(info.service_name)
-            status = str(auth_state.get("auth_status", "unknown"))
+                info = ConnectorRegistry.get_info(connector_name)
+                auth_state = await auth_svc.get_connector_auth_state(info.service_name)
+                status = str(auth_state.get("auth_status", "unknown"))
 
-            if status == "authed" and baseline_status != "authed":
-                # Auth state changed to authed — this flow completed.
-                # Invalidate ALL pending tokens for the same connector so
-                # concurrent auth/init calls don't also claim completion.
-                # The losing tokens will get 404 on next poll, which the
-                # TUI handles as "expired — retry".
-                stale = [
-                    k for k, v in _pending_auth.items() if v["connector_name"] == connector_name
-                ]
-                for k in stale:
-                    del _pending_auth[k]
-                return AuthStatusResponse(
-                    status="completed",
-                    connector_name=connector_name,
-                    message="Authentication successful.",
-                )
-            elif status == "expired" and baseline_status != "expired":
-                return AuthStatusResponse(
-                    status="denied",
-                    connector_name=connector_name,
-                    message="Authentication was denied or token expired.",
-                )
-            elif status == "error" and baseline_status != "error":
-                return AuthStatusResponse(
-                    status="error",
-                    connector_name=connector_name,
-                    message="Authentication failed. Check provider configuration.",
-                )
-        except Exception as e:
-            logger.debug("Error checking auth status for %s: %s", connector_name, e)
+                if status == "authed" and baseline_status != "authed":
+                    # Auth state changed to authed — this flow completed.
+                    # Invalidate ALL pending tokens for the same connector so
+                    # concurrent auth/init calls don't also claim completion.
+                    # The losing tokens will get 404 on next poll, which the
+                    # TUI handles as "expired — retry".
+                    stale = [
+                        k for k, v in _pending_auth.items() if v["connector_name"] == connector_name
+                    ]
+                    for k in stale:
+                        del _pending_auth[k]
+                    return AuthStatusResponse(
+                        status="completed",
+                        connector_name=connector_name,
+                        message="Authentication successful.",
+                    )
+                elif status == "expired" and baseline_status != "expired":
+                    return AuthStatusResponse(
+                        status="denied",
+                        connector_name=connector_name,
+                        message="Authentication was denied or token expired.",
+                    )
+                elif status == "error" and baseline_status != "error":
+                    return AuthStatusResponse(
+                        status="error",
+                        connector_name=connector_name,
+                        message="Authentication failed. Check provider configuration.",
+                    )
+            except Exception as e:
+                logger.debug("Error checking auth status for %s: %s", connector_name, e)
+        return None
+
+    checked = await run_zone_scoped(_get_zone_registry(request), _auth_zone(auth_result), _check)
+    if checked is not None:
+        return checked
 
     return AuthStatusResponse(
         status="pending",
@@ -587,232 +614,228 @@ async def mount_connector(
     mount_svc = _get_mount_service(request)
     nx = _get_nx(request)
 
-    # Write readme docs BEFORE mounting — after mount, the path routes to the
-    # connector backend instead of Raft. Writing first puts README.md + schemas
-    # in the Raft metastore where the TUI file explorer can browse them.
-    try:
-        from nexus.backends import BackendFactory
+    async def _mount() -> MountResponse:
+        # Write readme docs BEFORE mounting — after mount, the path routes to the
+        # connector backend instead of Raft. Writing first puts README.md + schemas
+        # in the Raft metastore where the TUI file explorer can browse them.
+        try:
+            from nexus.backends import BackendFactory
 
-        temp_backend = BackendFactory.create(req.connector_type, req.config or {})
-        if hasattr(temp_backend, "generate_readme"):
-            mp = req.mount_point.rstrip("/")
-            # Extract connector name from mount path (e.g., /mnt/gmail → gmail)
-            connector_name = mp.rsplit("/", 1)[-1]
-            # Create /skills/ directory entry via metadata_put so it shows
-            # in root-level readdir. sys_write creates files but the HTTP
-            # readdir doesn't synthesize parent directories from child paths.
-            try:
-                from datetime import UTC, datetime
+            temp_backend = BackendFactory.create(req.connector_type, req.config or {})
+            if hasattr(temp_backend, "generate_readme"):
+                mp = req.mount_point.rstrip("/")
+                # Extract connector name from mount path (e.g., /mnt/gmail → gmail)
+                connector_name = mp.rsplit("/", 1)[-1]
+                # Create /skills/ directory entry via metadata_put so it shows
+                # in root-level readdir. sys_write creates files but the HTTP
+                # readdir doesn't synthesize parent directories from child paths.
+                try:
+                    from datetime import UTC, datetime
 
-                from nexus.contracts.metadata import FileMetadata
+                    from nexus.contracts.metadata import FileMetadata
 
-                meta_store = nx._kernel
-                if meta_store:
-                    for dir_path in [
-                        "/skills",
-                        f"/skills/{connector_name}",
-                        f"/skills/{connector_name}/schemas",
-                    ]:
-                        try:
-                            if not meta_store.get(dir_path):
-                                meta_store.put(
-                                    FileMetadata(
-                                        path=dir_path,
-                                        size=0,
-                                        content_id=None,
-                                        created_at=datetime.now(UTC),
-                                        modified_at=datetime.now(UTC),
-                                        version=1,
-                                        zone_id=mount_context.zone_id,
+                    meta_store = nx._kernel
+                    if meta_store:
+                        for dir_path in [
+                            "/skills",
+                            f"/skills/{connector_name}",
+                            f"/skills/{connector_name}/schemas",
+                        ]:
+                            try:
+                                if not meta_store.get(dir_path):
+                                    meta_store.put(
+                                        FileMetadata(
+                                            path=dir_path,
+                                            size=0,
+                                            content_id=None,
+                                            created_at=datetime.now(UTC),
+                                            modified_at=datetime.now(UTC),
+                                            version=1,
+                                            zone_id=mount_context.zone_id,
+                                        )
                                     )
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+                # Write readme docs OUTSIDE the mount path so they're not shadowed
+                # by the connector backend. /skills/{name}/ stays in the Raft
+                # metastore and is always readable by agents and the TUI.
+                from nexus.backends.connectors.schema_generator import render_connector_readme
+
+                readme_base = f"/skills/{connector_name}"
+                readme_content = render_connector_readme(temp_backend, mp)
+                if readme_content:
+                    nx.write(
+                        f"{readme_base}/README.md",
+                        readme_content.encode("utf-8"),
+                        context=mount_context,
+                    )
+                    # Write individual schema files
+                    schemas = getattr(temp_backend, "SCHEMAS", {})
+                    if schemas and hasattr(temp_backend, "get_doc_generator"):
+                        doc_gen = temp_backend.get_doc_generator()
+                        for op_name, schema_cls in schemas.items():
+                            try:
+                                schema_yaml = doc_gen.generate_schema_yaml(op_name, schema_cls)
+                                nx.write(
+                                    f"{readme_base}/schemas/{op_name}.yaml",
+                                    schema_yaml.encode("utf-8"),
+                                    context=mount_context,
                                 )
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                            except Exception:
+                                pass
 
-            # Write readme docs OUTSIDE the mount path so they're not shadowed
-            # by the connector backend. /skills/{name}/ stays in the Raft
-            # metastore and is always readable by agents and the TUI.
-            from nexus.backends.connectors.schema_generator import render_connector_readme
+                    # Index readme doc into semantic search
+                    search_svc = getattr(mount_svc, "_search_service", None)
+                    if search_svc:
+                        search_daemon = getattr(search_svc, "_search_daemon", None)
+                        if search_daemon:
+                            import contextlib
 
-            readme_base = f"/skills/{connector_name}"
-            readme_content = render_connector_readme(temp_backend, mp)
-            if readme_content:
-                nx.write(
-                    f"{readme_base}/README.md",
-                    readme_content.encode("utf-8"),
-                    context=mount_context,
-                )
-                # Write individual schema files
-                schemas = getattr(temp_backend, "SCHEMAS", {})
-                if schemas and hasattr(temp_backend, "get_doc_generator"):
-                    doc_gen = temp_backend.get_doc_generator()
-                    for op_name, schema_cls in schemas.items():
-                        try:
-                            schema_yaml = doc_gen.generate_schema_yaml(op_name, schema_cls)
-                            nx.write(
-                                f"{readme_base}/schemas/{op_name}.yaml",
-                                schema_yaml.encode("utf-8"),
-                                context=mount_context,
-                            )
-                        except Exception:
-                            pass
+                            with contextlib.suppress(Exception):
+                                await search_daemon.index_documents(
+                                    [
+                                        {
+                                            "id": f"{readme_base}/README.md",
+                                            "text": readme_content,
+                                            "path": f"{readme_base}/README.md",
+                                        }
+                                    ],
+                                    zone_id=mount_context.zone_id or "default",
+                                )
+        except Exception:
+            pass  # Best effort — mount works without skill docs
 
-                # Index readme doc into semantic search
-                search_svc = getattr(mount_svc, "_search_service", None)
-                if search_svc:
-                    search_daemon = getattr(search_svc, "_search_daemon", None)
-                    if search_daemon:
-                        import contextlib
+        try:
+            result = await mount_svc.add_mount(
+                mount_point=req.mount_point,
+                backend_type=req.connector_type,
+                backend_config=req.config,
+                context=mount_context,
+            )
+            _mount_types[req.mount_point] = req.connector_type
 
-                        with contextlib.suppress(Exception):
-                            await search_daemon.index_documents(
-                                [
-                                    {
-                                        "id": f"{readme_base}/README.md",
-                                        "text": readme_content,
-                                        "path": f"{readme_base}/README.md",
-                                    }
-                                ],
-                                zone_id=mount_context.zone_id or "default",
-                            )
-    except Exception:
-        pass  # Best effort — mount works without skill docs
-
-    try:
-        result = await mount_svc.add_mount(
-            mount_point=req.mount_point,
-            backend_type=req.connector_type,
-            backend_config=req.config,
-            context=mount_context,
-        )
-        _mount_types[req.mount_point] = req.connector_type
-
-        # Also persist the mount config via MountManager so the bundle
-        # exporter (`nexus zone export --include-mounts`, Issue #4083)
-        # can find it. `add_mount` only registers in the kernel runtime
-        # mount table; without this, mounts created via the HTTP API
-        # surface as `mount_count=0` in exports — silently invisible.
-        #
-        # We don't roll back the kernel mount on persist failure: the
-        # caller still gets a working live mount, just not a portable
-        # one. But the response carries `persisted` / `persist_warning`
-        # so the caller (and audit log) sees the gap explicitly rather
-        # than discovering it later via an empty bundle.
-        persisted: bool | None = None
-        persist_warning: str | None = None
-        if getattr(mount_svc, "mount_manager", None) is not None:
-            persisted = False
-            try:
-                await mount_svc.save_mount(
-                    mount_point=req.mount_point,
-                    backend_type=req.connector_type,
-                    backend_config=req.config,
-                    context=mount_context,
-                )
-                persisted = True
-            except ValueError as dup_exc:
-                # ValueError can mean "mount_point already exists" (the
-                # idempotent-retry case we want to swallow) OR a real
-                # validation failure. Distinguish by message — if it
-                # doesn't look like an existence collision, surface as a
-                # warning so operators don't lose the signal.
-                msg = str(dup_exc).lower()
-                if "exist" in msg or "duplicate" in msg or "already" in msg:
-                    persisted = True  # already in store; treat as success
-                else:
+            # Also persist the mount config via MountManager so the bundle
+            # exporter (`nexus zone export --include-mounts`, Issue #4083)
+            # can find it. `add_mount` only registers in the kernel runtime
+            # mount table; without this, mounts created via the HTTP API
+            # surface as `mount_count=0` in exports.
+            persisted: bool | None = None
+            persist_warning: str | None = None
+            if getattr(mount_svc, "mount_manager", None) is not None:
+                persisted = False
+                try:
+                    await mount_svc.save_mount(
+                        mount_point=req.mount_point,
+                        backend_type=req.connector_type,
+                        backend_config=req.config,
+                        context=mount_context,
+                    )
+                    persisted = True
+                except ValueError as dup_exc:
+                    msg = str(dup_exc).lower()
+                    if "exist" in msg or "duplicate" in msg or "already" in msg:
+                        persisted = True
+                    else:
+                        persist_warning = (
+                            f"Mount activated, but persistence rejected the "
+                            f"config: {dup_exc}. Bundle export will not include "
+                            f"this mount until the persistent record is fixed."
+                        )
+                        logger.warning(
+                            "Mount %s activated but save_mount rejected: %s",
+                            req.mount_point,
+                            dup_exc,
+                        )
+                except Exception as persist_exc:
                     persist_warning = (
-                        f"Mount activated, but persistence rejected the "
-                        f"config: {dup_exc}. Bundle export will not include "
-                        f"this mount until the persistent record is fixed."
+                        f"Mount activated, but persistence failed: {persist_exc}. "
+                        f"Bundle export will not include this mount until the "
+                        f"persistent record is fixed."
                     )
                     logger.warning(
-                        "Mount %s activated but save_mount rejected: %s",
+                        "Mount %s activated but persistence failed: %s",
                         req.mount_point,
-                        dup_exc,
+                        persist_exc,
                     )
-            except Exception as persist_exc:
-                persist_warning = (
-                    f"Mount activated, but persistence failed: {persist_exc}. "
-                    f"Bundle export will not include this mount until the "
-                    f"persistent record is fixed."
-                )
-                logger.warning(
-                    "Mount %s activated but persistence failed: %s",
-                    req.mount_point,
-                    persist_exc,
-                )
 
-        return MountResponse(
-            mounted=True,
-            mount_point=str(result),
-            persisted=persisted,
-            persist_warning=persist_warning,
-        )
-    except Exception as e:
-        return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))
+            return MountResponse(
+                mounted=True,
+                mount_point=str(result),
+                persisted=persisted,
+                persist_warning=persist_warning,
+            )
+        except Exception as e:
+            return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))
+
+    return await run_zone_scoped(_get_zone_registry(request), mount_context.zone_id, _mount)
 
 
 @router.get("/mounts", response_model=list[MountInfo])
 async def list_mounted_connectors(
     request: Request,
-    _: dict = Depends(require_auth),
+    auth_result: dict = Depends(require_auth),
 ) -> list[MountInfo]:
     """List all mounted connectors with status."""
     mount_svc = _get_mount_service(request)
-    mounts = await mount_svc.list_mounts()
 
-    result = []
-    for m in mounts:
-        mp = m.get("mount_point", "")
-        # All backends are Rust-native — no Python backend metadata
-        # for skill_name/operations.  Use mount-level metadata only.
-        result.append(
-            MountInfo(
-                mount_point=mp,
-                skill_name=None,
-                operations=[],
-                sync_status=m.get("sync_status"),
-                last_sync=m.get("last_sync"),
+    async def _list_mounts() -> list[MountInfo]:
+        mounts = await mount_svc.list_mounts()
+
+        result = []
+        for m in mounts:
+            mp = m.get("mount_point", "")
+            # All backends are Rust-native — no Python backend metadata
+            # for skill_name/operations.  Use mount-level metadata only.
+            result.append(
+                MountInfo(
+                    mount_point=mp,
+                    skill_name=None,
+                    operations=[],
+                    sync_status=m.get("sync_status"),
+                    last_sync=m.get("last_sync"),
+                )
             )
-        )
+        return result
 
-    return result
+    return await run_zone_scoped(_get_zone_registry(request), _auth_zone(auth_result), _list_mounts)
 
 
 @router.post("/unmount", response_model=MountResponse)
 async def unmount_connector(
     req: MountRequest,
     request: Request,
-    _: dict = Depends(require_auth),
+    auth_result: dict = Depends(require_auth),
 ) -> MountResponse:
     """Unmount a connector."""
     mount_svc = _get_mount_service(request)
-    try:
-        await mount_svc.remove_mount(mount_point=req.mount_point)
-        _mount_types.pop(req.mount_point, None)
 
-        # Mirror the dual-write from the mount handler: also drop the
-        # persisted MountManager record so the bundle exporter (Issue
-        # #4083) doesn't keep returning a stale entry for an unmounted
-        # path. Best-effort — kernel unmount succeeded, so we report
-        # success regardless.
-        if getattr(mount_svc, "mount_manager", None) is not None:
-            try:
-                await mount_svc.delete_saved_mount(mount_point=req.mount_point)
-            except Exception as persist_exc:
-                import logging
+    async def _unmount() -> MountResponse:
+        try:
+            await mount_svc.remove_mount(mount_point=req.mount_point)
+            _mount_types.pop(req.mount_point, None)
 
-                logging.getLogger(__name__).warning(
-                    "Mount removed from kernel but config persistence cleanup failed for %s: %s",
-                    req.mount_point,
-                    persist_exc,
-                )
+            # Mirror the dual-write from the mount handler: also drop the
+            # persisted MountManager record so bundle export does not keep a
+            # stale entry for an unmounted path. Best effort: kernel unmount
+            # already succeeded, so still report success.
+            if getattr(mount_svc, "mount_manager", None) is not None:
+                try:
+                    await mount_svc.delete_saved_mount(mount_point=req.mount_point)
+                except Exception as persist_exc:
+                    logger.warning(
+                        "Mount removed from kernel but config persistence cleanup failed for %s: %s",
+                        req.mount_point,
+                        persist_exc,
+                    )
 
-        return MountResponse(mounted=False, mount_point=req.mount_point)
-    except Exception as e:
-        return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))
+            return MountResponse(mounted=False, mount_point=req.mount_point)
+        except Exception as e:
+            return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))
+
+    return await run_zone_scoped(_get_zone_registry(request), _auth_zone(auth_result), _unmount)
 
 
 # ---------------------------------------------------------------------------
@@ -824,7 +847,7 @@ async def unmount_connector(
 async def get_readme_doc(
     mount_path: str,
     request: Request,
-    _: dict = Depends(require_auth),
+    auth_result: dict = Depends(require_auth),
 ) -> ReadmeDocResponse:
     """Get README.md and schema list for a mounted connector."""
     if not mount_path.startswith("/"):
@@ -833,44 +856,47 @@ async def get_readme_doc(
     nx = _get_nx(request)
     mp = mount_path.rstrip("/")
 
-    # Skill backend no longer stored in DLC — always None
-    backend = None
+    async def _readme() -> ReadmeDocResponse:
+        # Skill backend no longer stored in DLC — always None
+        backend = None
 
-    # Generate skill doc from backend (preferred — always fresh)
-    content = ""
-    if backend and hasattr(backend, "generate_readme"):
-        import contextlib
+        # Generate skill doc from backend (preferred — always fresh)
+        content = ""
+        if backend and hasattr(backend, "generate_readme"):
+            import contextlib
 
-        with contextlib.suppress(Exception):
-            from nexus.backends.connectors.schema_generator import render_connector_readme
+            with contextlib.suppress(Exception):
+                from nexus.backends.connectors.schema_generator import render_connector_readme
 
-            content = render_connector_readme(backend, mp)
+                content = render_connector_readme(backend, mp)
 
-    # Fall back to reading from VFS if backend generation failed
-    if not content:
-        try:
-            raw = await asyncio.to_thread(nx.sys_read, f"{mp}/.readme/README.md")
-            content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
-        except Exception:
-            pass
+        # Fall back to reading from VFS if backend generation failed
+        if not content:
+            try:
+                raw = await asyncio.to_thread(nx.sys_read, f"{mp}/.readme/README.md")
+                content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            except Exception:
+                pass
 
-    if not content:
-        raise HTTPException(status_code=404, detail=f"No skill docs found for {mount_path}")
+        if not content:
+            raise HTTPException(status_code=404, detail=f"No skill docs found for {mount_path}")
 
-    # List schemas — from backend first, then VFS
-    schemas: list[str] = []
-    if backend:
-        s = getattr(backend, "SCHEMAS", {})
-        t = getattr(backend, "OPERATION_TRAITS", {})
-        schemas = list(s.keys()) if s else list(t.keys())
-    if not schemas:
-        try:
-            entries = await asyncio.to_thread(nx.sys_readdir, f"{mp}/.readme/schemas")
-            schemas = [str(e).replace(".yaml", "") for e in entries if str(e).endswith(".yaml")]
-        except Exception:
-            pass
+        # List schemas — from backend first, then VFS
+        schemas: list[str] = []
+        if backend:
+            s = getattr(backend, "SCHEMAS", {})
+            t = getattr(backend, "OPERATION_TRAITS", {})
+            schemas = list(s.keys()) if s else list(t.keys())
+        if not schemas:
+            try:
+                entries = await asyncio.to_thread(nx.sys_readdir, f"{mp}/.readme/schemas")
+                schemas = [str(e).replace(".yaml", "") for e in entries if str(e).endswith(".yaml")]
+            except Exception:
+                pass
 
-    return ReadmeDocResponse(mount_point=mount_path, content=content, schemas=schemas)
+        return ReadmeDocResponse(mount_point=mount_path, content=content, schemas=schemas)
+
+    return await run_zone_scoped(_get_zone_registry(request), _auth_zone(auth_result), _readme)
 
 
 @router.get("/schema/{mount_path:path}/{operation}")
@@ -878,7 +904,7 @@ async def get_schema(
     mount_path: str,
     operation: str,
     request: Request,
-    _: dict = Depends(require_auth),
+    auth_result: dict = Depends(require_auth),
 ) -> SchemaResponse:
     """Get annotated schema for an operation."""
     if not mount_path.startswith("/"):
@@ -887,52 +913,53 @@ async def get_schema(
     nx = _get_nx(request)
     mp = mount_path.rstrip("/")
 
-    # Skill backend no longer stored in DLC — always None
-    backend = None
+    async def _schema() -> SchemaResponse:
+        # Skill backend no longer stored in DLC — always None
+        backend = None
 
-    # Try generating from backend's schema generator
-    if backend:
-        try:
-            generator = getattr(backend, "get_doc_generator", None)
-            if generator:
-                doc_gen = generator()
-                schemas = getattr(backend, "SCHEMAS", {})
-                if operation in schemas:
-                    content = doc_gen.generate_schema_yaml(operation, schemas[operation])
-                    return SchemaResponse(
-                        mount_point=mount_path, operation=operation, content=content
-                    )
-        except Exception:
-            pass
-
-        # For backends with OPERATION_TRAITS but no SCHEMAS (e.g., hand-written docs),
-        # extract the operation section from the full skill doc
-        traits = getattr(backend, "OPERATION_TRAITS", {})
-        if operation in traits:
+        if backend:
             try:
-                from nexus.backends.connectors.schema_generator import render_connector_readme
-
-                full_doc = render_connector_readme(backend, mp)
-                # Find the operation section in the doc
-                op_display = operation.replace("_", " ").title()
-                idx = full_doc.lower().find(op_display.lower())
-                if idx >= 0:
-                    section = full_doc[idx : idx + 500]
-                    return SchemaResponse(
-                        mount_point=mount_path, operation=operation, content=section
-                    )
+                generator = getattr(backend, "get_doc_generator", None)
+                if generator:
+                    doc_gen = generator()
+                    schemas = getattr(backend, "SCHEMAS", {})
+                    if operation in schemas:
+                        content = doc_gen.generate_schema_yaml(operation, schemas[operation])
+                        return SchemaResponse(
+                            mount_point=mount_path, operation=operation, content=content
+                        )
             except Exception:
                 pass
 
-    # Try reading from VFS
-    try:
-        raw = await asyncio.to_thread(nx.sys_read, f"{mp}/.readme/schemas/{operation}.yaml")
-        content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
-        return SchemaResponse(mount_point=mount_path, operation=operation, content=content)
-    except Exception:
-        pass
+            traits = getattr(backend, "OPERATION_TRAITS", {})
+            if operation in traits:
+                try:
+                    from nexus.backends.connectors.schema_generator import render_connector_readme
 
-    raise HTTPException(status_code=404, detail=f"Schema '{operation}' not found for {mount_path}")
+                    full_doc = render_connector_readme(backend, mp)
+                    op_display = operation.replace("_", " ").title()
+                    idx = full_doc.lower().find(op_display.lower())
+                    if idx >= 0:
+                        section = full_doc[idx : idx + 500]
+                        return SchemaResponse(
+                            mount_point=mount_path, operation=operation, content=section
+                        )
+                except Exception:
+                    pass
+
+        # Try reading from VFS
+        try:
+            raw = await asyncio.to_thread(nx.sys_read, f"{mp}/.readme/schemas/{operation}.yaml")
+            content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            return SchemaResponse(mount_point=mount_path, operation=operation, content=content)
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=404, detail=f"Schema '{operation}' not found for {mount_path}"
+        )
+
+    return await run_zone_scoped(_get_zone_registry(request), _auth_zone(auth_result), _schema)
 
 
 # ---------------------------------------------------------------------------
@@ -981,40 +1008,48 @@ async def write_to_connector(
         virtual_path=mount_path,
     )
 
-    try:
-        data = req.yaml_content.encode("utf-8")
+    async def _write() -> WriteResponse:
+        try:
+            data = req.yaml_content.encode("utf-8")
 
-        # CLI-backed connectors dispatch YAML operations (send_email, create_draft,
-        # etc.) via write_content() — they must NOT go through nx.write() which
-        # stores to CAS. Gate on the "cli_backed" capability to avoid bypassing
-        # the kernel write path for ordinary path-addressed backends.
+            # CLI-backed connectors dispatch YAML operations (send_email, create_draft,
+            # etc.) via write_content() — they must NOT go through nx.write() which
+            # stores to CAS. Gate on the "cli_backed" capability to avoid bypassing
+            # the kernel write path for ordinary path-addressed backends.
 
-        # All backends are Rust-native now — check if this is a CLI connector
-        # by examining the backend_name pattern.
-        is_cli_connector = _route_backend_name is not None and (
-            "cli" in _route_backend_name or "gws" in _route_backend_name
-        )
-
-        if is_cli_connector and _backend_path:
-            # Write permissions are enforced by the pre-write intercept hooks below.
-            from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
-
-            # Load existing metadata so permission hooks can distinguish
-            # overwrite (check WRITE on file) vs create (check WRITE on parent).
-            _old_meta = nx._kernel.metastore_get(mount_path)
-
-            nx.intercept_pre_write(
-                _WHC(path=mount_path, content=data, context=write_context, old_metadata=_old_meta)
+            # All backends are Rust-native now — check if this is a CLI connector
+            # by examining the backend_name pattern.
+            is_cli_connector = _route_backend_name is not None and (
+                "cli" in _route_backend_name or "gws" in _route_backend_name
             )
 
-            # Write via kernel — Rust backend handles CLI dispatch.
-            result = nx.write(mount_path, data, context=write_context)
-        else:
-            result = nx.write(mount_path, data, context=write_context)
+            if is_cli_connector and _backend_path:
+                # Write permissions are enforced by the pre-write intercept hooks below.
+                from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
 
-        return WriteResponse(
-            success=True,
-            content_id=getattr(result, "content_id", None) if result else None,
-        )
-    except Exception as e:
-        return WriteResponse(success=False, error=str(e))
+                # Load existing metadata so permission hooks can distinguish
+                # overwrite (check WRITE on file) vs create (check WRITE on parent).
+                _old_meta = nx._kernel.metastore_get(mount_path)
+
+                nx.intercept_pre_write(
+                    _WHC(
+                        path=mount_path,
+                        content=data,
+                        context=write_context,
+                        old_metadata=_old_meta,
+                    )
+                )
+
+                # Write via kernel — Rust backend handles CLI dispatch.
+                result = nx.write(mount_path, data, context=write_context)
+            else:
+                result = nx.write(mount_path, data, context=write_context)
+
+            return WriteResponse(
+                success=True,
+                content_id=getattr(result, "content_id", None) if result else None,
+            )
+        except Exception as e:
+            return WriteResponse(success=False, error=str(e))
+
+    return await run_zone_scoped(_get_zone_registry(request), write_context.zone_id, _write)

@@ -16,10 +16,12 @@ FastAPI auto-runs sync endpoints in a threadpool.
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from anyio import from_thread
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 
@@ -28,6 +30,7 @@ from nexus.server.api.v2.dependencies import (
     _get_require_auth,
     get_workspace_registry,
 )
+from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,7 @@ class WorkspaceListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 workspace_router = APIRouter(prefix="/api/v2/registry/workspaces", tags=["registry"])
+T = TypeVar("T")
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +174,21 @@ def _list_workspace_db_models(registry: Any, *, user_id: str | None = None) -> l
         return list(session.execute(stmt).scalars().all())
 
 
+def _get_zone_registry(request: Request) -> Any | None:
+    return getattr(request.app.state, "zone_registry", None)
+
+
+def _run_zone_scoped_sync(request: Request, zone_id: str | None, work: Callable[[], T]) -> T:
+    zone_registry = _get_zone_registry(request)
+    if zone_registry is None or zone_id is None:
+        return work()
+
+    async def _work() -> T:
+        return work()
+
+    return from_thread.run(run_zone_scoped, zone_registry, zone_id, _work)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -177,15 +196,21 @@ def _list_workspace_db_models(registry: Any, *, user_id: str | None = None) -> l
 
 @workspace_router.get("", response_model=WorkspaceListResponse)
 def list_workspaces(
+    request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     registry: Any = Depends(get_workspace_registry),
 ) -> WorkspaceListResponse:
     """List workspaces visible to the authenticated caller."""
-    try:
+    context = _get_operation_context(auth_result)
+
+    def _list() -> WorkspaceListResponse:
         user_id = _get_caller_user_id(auth_result)
         db_models = _list_workspace_db_models(registry, user_id=user_id)
         items = [_build_workspace_response(m) for m in db_models]
         return WorkspaceListResponse(items=items, count=len(items))
+
+    try:
+        return _run_zone_scoped_sync(request, context.zone_id, _list)
     except Exception as e:
         logger.error("Failed to list workspaces: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list workspaces") from e
@@ -194,12 +219,14 @@ def list_workspaces(
 @workspace_router.post("", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)
 def register_workspace(
     request: WorkspaceRegisterRequest,
+    http_request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     registry: Any = Depends(get_workspace_registry),
 ) -> WorkspaceResponse:
     """Register a directory as a workspace."""
-    try:
-        context = _get_operation_context(auth_result)
+    context = _get_operation_context(auth_result)
+
+    def _register() -> WorkspaceResponse:
         ttl = timedelta(seconds=request.ttl_seconds) if request.ttl_seconds else None
 
         registry.register_workspace(
@@ -217,6 +244,8 @@ def register_workspace(
             raise HTTPException(status_code=500, detail="Workspace registered but not found in DB")
         return _build_workspace_response(db_model)
 
+    try:
+        return _run_zone_scoped_sync(http_request, context.zone_id, _register)
     except (ValueError, IntegrityError) as e:
         raise HTTPException(
             status_code=409,
@@ -234,18 +263,23 @@ def register_workspace(
 @workspace_router.get("/{path:path}", response_model=WorkspaceResponse)
 def get_workspace(
     path: str,
+    request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     registry: Any = Depends(get_workspace_registry),
 ) -> WorkspaceResponse:
     """Get workspace configuration by path (ownership-scoped)."""
     path = _normalize_path(path)
-    try:
+    context = _get_operation_context(auth_result)
+
+    def _get() -> WorkspaceResponse:
         user_id = _get_caller_user_id(auth_result)
         db_model = _get_workspace_db_model(registry, path, user_id=user_id)
         if db_model is None:
             raise HTTPException(status_code=404, detail=f"Workspace not found: {path}")
         return _build_workspace_response(db_model)
 
+    try:
+        return _run_zone_scoped_sync(request, context.zone_id, _get)
     except HTTPException:
         raise
     except Exception as e:
@@ -257,12 +291,15 @@ def get_workspace(
 def update_workspace(
     path: str,
     request: ResourceUpdateRequest,
+    http_request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     registry: Any = Depends(get_workspace_registry),
 ) -> WorkspaceResponse:
     """Update workspace name, description, or metadata (ownership-scoped)."""
     path = _normalize_path(path)
-    try:
+    context = _get_operation_context(auth_result)
+
+    def _update() -> WorkspaceResponse:
         user_id = _get_caller_user_id(auth_result)
         db_model = _get_workspace_db_model(registry, path, user_id=user_id)
         if db_model is None:
@@ -280,6 +317,8 @@ def update_workspace(
             raise HTTPException(status_code=500, detail="Workspace updated but not found in DB")
         return _build_workspace_response(db_model)
 
+    try:
+        return _run_zone_scoped_sync(http_request, context.zone_id, _update)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except HTTPException:
@@ -292,12 +331,15 @@ def update_workspace(
 @workspace_router.delete("/{path:path}")
 def unregister_workspace(
     path: str,
+    request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     registry: Any = Depends(get_workspace_registry),
 ) -> dict[str, Any]:
     """Unregister a workspace (ownership-scoped, does NOT delete files)."""
     path = _normalize_path(path)
-    try:
+    context = _get_operation_context(auth_result)
+
+    def _delete() -> dict[str, Any]:
         user_id = _get_caller_user_id(auth_result)
         db_model = _get_workspace_db_model(registry, path, user_id=user_id)
         if db_model is None:
@@ -308,6 +350,8 @@ def unregister_workspace(
             raise HTTPException(status_code=404, detail=f"Workspace not found: {path}")
         return {"unregistered": True, "path": path}
 
+    try:
+        return _run_zone_scoped_sync(request, context.zone_id, _delete)
     except HTTPException:
         raise
     except Exception as e:

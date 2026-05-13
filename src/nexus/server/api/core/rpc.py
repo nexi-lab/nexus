@@ -42,6 +42,33 @@ router = APIRouter()
 # by ``unscope_internal_path`` in ``path_utils.py``.
 
 
+def _context_allows_target_zone(context: Any, target_zone: str) -> bool:
+    if getattr(context, "is_admin", False):
+        return True
+    if getattr(context, "zone_id", None) == target_zone:
+        return True
+    if target_zone in set(getattr(context, "zone_set", ()) or ()):
+        return True
+    for zone_perm in getattr(context, "zone_perms", ()) or ():
+        if isinstance(zone_perm, (list, tuple)) and zone_perm and zone_perm[0] == target_zone:
+            return True
+    return False
+
+
+def _context_for_target_zone(context: Any, target_zone: str | None) -> Any:
+    if target_zone is None or getattr(context, "zone_id", None) == target_zone:
+        return context
+    if not _context_allows_target_zone(context, target_zone):
+        return context
+    updates: dict[str, Any] = {"zone_id": target_zone}
+    if getattr(context, "is_admin", False):
+        updates["zone_set"] = (target_zone,)
+        updates["zone_perms"] = ((target_zone, "rw"),)
+    for key, value in updates.items():
+        setattr(context, key, value)
+    return context
+
+
 @router.post("/api/nfs/{method}")
 @limiter.limit(RATE_LIMIT_AUTHENTICATED)
 async def rpc_endpoint(
@@ -130,6 +157,7 @@ async def rpc_endpoint(
             scope_params_for_zone(_params_ns, context.zone_id)
             raw_params = vars(_params_ns)
             target_zone = target_zone_for_context(context, raw_params)
+            context = _context_for_target_zone(context, target_zone)
             state = request.app.state
 
             # #4005 round-5: NO early 304 in the kernel branch.
@@ -235,6 +263,7 @@ async def rpc_endpoint(
         # Dispatch method
         _dispatch_start = _time.time()
         target_zone = target_zone_for_context(context, params)
+        context = _context_for_target_zone(context, target_zone)
 
         async def _work() -> Any:
             return await dispatch_method(

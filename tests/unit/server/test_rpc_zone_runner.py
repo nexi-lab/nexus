@@ -70,6 +70,7 @@ def test_http_rpc_auto_dispatch_runs_in_target_zone_runner() -> None:
         )
 
     assert response.status_code == 200
+    assert response.json()["result"]["zone"] == "eng"
     assert registry.zones == ["eng"]
     assert registry.runner.calls == 1
 
@@ -130,5 +131,6 @@ def test_http_rpc_kernel_copy_runs_in_target_zone_runner(monkeypatch: pytest.Mon
         )
 
     assert response.status_code == 200
+    assert response.json()["result"]["zone"] == "eng"
     assert registry.zones == ["eng"]
     assert registry.runner.calls == 1

@@ -94,6 +94,19 @@ def _get_stream_config(request: Request) -> dict[str, Any]:  # noqa: ARG001
     }
 
 
+def _schedule_queue_put(request_loop: Any, queue: asyncio.Queue[Any], item: Any) -> None:
+    """Schedule a queue put on the request loop from a zone runner loop."""
+    if request_loop.is_closed():
+        return
+
+    def _put_nowait() -> None:
+        with contextlib.suppress(asyncio.QueueFull):
+            queue.put_nowait(item)
+
+    with contextlib.suppress(RuntimeError):
+        request_loop.call_soon_threadsafe(_put_nowait)
+
+
 # =============================================================================
 # REST replay endpoint
 # =============================================================================
@@ -226,6 +239,7 @@ async def stream_events(
             idle_timeout = config["idle_timeout"]
 
             queue: asyncio.Queue[Any] = asyncio.Queue()
+            request_loop = asyncio.get_running_loop()
 
             async def _pump_events() -> None:
                 """Background task: pump events from stream into queue."""
@@ -243,11 +257,11 @@ async def stream_events(
                             idle_timeout=idle_timeout,
                         )
                         async for event in stream:
-                            await queue.put(event)
+                            _schedule_queue_put(request_loop, queue, event)
 
                     await run_zone_scoped(_get_zone_registry(request), effective_zone, _stream)
                 finally:
-                    await queue.put(None)  # sentinel
+                    _schedule_queue_put(request_loop, queue, None)  # sentinel
 
             pump_task = asyncio.create_task(_pump_events())
 

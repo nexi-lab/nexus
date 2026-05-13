@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import nexus.server.api.v2.routers.events_replay as events_replay_module
 from nexus.server.api.v2.routers.credentials import router as credentials_router
 from nexus.server.api.v2.routers.events_replay import router as events_router
 from nexus.server.api.v2.routers.events_replay import watch_router
@@ -52,6 +54,13 @@ class _Event:
         return {"event_id": "evt-1", "zone_id": "eng"}
 
 
+class _StreamEvent:
+    sequence_number = 7
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"event_id": "stream-1", "zone_id": "eng", "sequence_number": 7}
+
+
 class _ReplayResult:
     events = [_Event()]
     next_cursor = None
@@ -62,6 +71,12 @@ class FakeReplayService:
     def replay(self, **kwargs: Any) -> _ReplayResult:
         assert kwargs["zone_id"] == "eng"
         return _ReplayResult()
+
+
+class FakeStreamReplayService:
+    async def stream(self, **kwargs: Any):
+        assert kwargs["zone_id"] == "eng"
+        yield _StreamEvent()
 
 
 class FakeWatchFs:
@@ -139,6 +154,45 @@ def test_replay_events_runs_in_requested_zone_runner() -> None:
     assert response.status_code == 200
     assert response.json()["events"] == [{"event_id": "evt-1", "zone_id": "eng"}]
     assert registry.zones == ["eng"]
+
+
+def test_stream_events_delivers_event_from_auth_zone_runner() -> None:
+    registry = RecordingRegistry()
+    app = FastAPI()
+    app.state.replay_service = FakeStreamReplayService()
+    app.state.zone_registry = registry
+    app.dependency_overrides[require_auth] = _auth
+    app.include_router(events_router)
+
+    with TestClient(app) as client, client.stream("GET", "/api/v2/events/stream") as response:
+        lines = list(response.iter_lines())
+
+    assert response.status_code == 200
+    assert "event: event" in lines
+    assert any('"event_id": "stream-1"' in line for line in lines)
+    assert registry.zones == ["eng"]
+
+
+def test_stream_queue_handoff_uses_request_loop_threadsafe_callback() -> None:
+    class RecordingLoop:
+        def __init__(self) -> None:
+            self.callbacks: list[tuple[Callable[..., Any], tuple[Any, ...]]] = []
+
+        def is_closed(self) -> bool:
+            return False
+
+        def call_soon_threadsafe(self, callback: Callable[..., Any], *args: Any) -> None:
+            self.callbacks.append((callback, args))
+
+    loop = RecordingLoop()
+    queue: Any = asyncio.Queue()
+
+    events_replay_module._schedule_queue_put(loop, queue, "event")
+
+    assert len(loop.callbacks) == 1
+    callback, args = loop.callbacks[0]
+    callback(*args)
+    assert queue.get_nowait() == "event"
 
 
 def test_watch_for_changes_runs_in_auth_zone_runner() -> None:

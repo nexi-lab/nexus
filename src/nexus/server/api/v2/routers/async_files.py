@@ -1,27 +1,7 @@
 """File Operations REST API endpoints (Phase 4).
 
-Provides file operations using NexusFS via asyncio.to_thread():
-- POST   /write           - Write file content
-- GET    /read            - Read file content
-- DELETE /delete          - Delete file
-- GET    /exists          - Check file existence
-- GET    /list            - List directory contents
-- POST   /mkdir           - Create directory
-- GET    /metadata        - Get file metadata
-- POST   /batch-read      - Batch read multiple files (legacy, lenient)
-- POST   /batch/write     - Atomic batch write (Issue #3700)
-- POST   /batch/read      - Atomic batch read with optional partial mode (Issue #3700)
-- GET    /stream          - Stream file content
-- POST   /rename          - Rename/move file
-- POST   /copy            - Copy file
-- POST   /rename-batch     - Bulk rename/move files
-- POST   /copy-bulk       - Bulk copy files
-- GET    /glob            - Glob pattern search across files
-- GET    /grep            - Regex pattern search within files
-
-Async NexusFS methods (read, write, sys_stat, sys_readdir, sys_unlink,
-access, mkdir) are awaited directly. Sync methods (read_bulk,
-stream, write_stream) use asyncio.to_thread() for thread offloading.
+Provides direct NexusFS-backed REST endpoints for read, write, list,
+metadata, batch file operations, streaming, rename/copy, glob, and grep.
 All operations pass user context for permission enforcement.
 """
 
@@ -30,8 +10,8 @@ import base64
 import functools
 import json
 import logging
-from collections.abc import AsyncIterator, Iterator
-from typing import Any, cast
+from collections.abc import Awaitable, Callable, Iterator
+from typing import Any, TypeVar, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
@@ -49,13 +29,15 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
 )
 from nexus.core.path_utils import validate_path as _normalize_path
+from nexus.runtime.zone_resolution import (
+    target_zone_for_context,
+    zone_from_path,
+    zones_from_params,
+)
+from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Zone gate helper (#3785)
-# =============================================================================
+T = TypeVar("T")
 
 
 def _gate_zone(
@@ -123,11 +105,6 @@ def _apply_zone_override(
     if zone is None:
         return context
     return _dc.replace(context, zone_id=zone)
-
-
-# =============================================================================
-# Helpers
-# =============================================================================
 
 
 async def _read_connector_by_physical_path(
@@ -245,6 +222,12 @@ def _metadata_timestamp(meta: Any, name: str) -> str | None:
     return str(value)
 
 
+async def _maybe_await(value: Any) -> Any:
+    if hasattr(value, "__await__"):
+        return await value
+    return value
+
+
 def _encode_read_payload(
     raw: str | bytes,
     encoding: str | None,
@@ -278,11 +261,6 @@ def _to_metadata_response(meta: Any, fallback_path: str) -> "MetadataResponse":
         created_at=_metadata_timestamp(meta, "created_at"),
         modified_at=_metadata_timestamp(meta, "modified_at"),
     )
-
-
-# =============================================================================
-# Request/Response Models
-# =============================================================================
 
 
 class WriteRequest(BaseModel):
@@ -411,10 +389,6 @@ class BatchReadRequest(BaseModel):
 
     paths: list[str] = Field(..., description="List of paths to read")
 
-
-# ---------------------------------------------------------------------------
-# Batch write/read models (Issue #3700)
-# ---------------------------------------------------------------------------
 
 _MAX_BATCH_FILES = 500
 _MAX_BATCH_TOTAL_BYTES = 100 * 1024 * 1024  # 100 MB
@@ -607,11 +581,6 @@ class CopyBulkResponse(BaseModel):
     results: list[BulkCopyResult]
 
 
-# =============================================================================
-# Router Factory
-# =============================================================================
-
-
 def create_async_files_router(
     nexus_fs: Any | None = None,
     get_fs: Any | None = None,
@@ -654,6 +623,22 @@ def create_async_files_router(
     def _get_zone_registry() -> Any | None:
         return get_zone_registry() if get_zone_registry is not None else None
 
+    async def _run_for_context(
+        context: Any,
+        params: Any,
+        work: Callable[[], Awaitable[T]],
+    ) -> T:
+        zones = zones_from_params(params)
+        if len(zones) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Mixed-zone operations must be submitted per zone",
+            )
+        target_zone = target_zone_for_context(context, params)
+        if target_zone is None and isinstance(params, str):
+            target_zone = zone_from_path(params)
+        return await run_zone_scoped(_get_zone_registry(), target_zone, work)
+
     async def get_context(
         auth_result: dict[str, Any] | None = Depends(get_auth_result),
     ) -> Any:
@@ -661,10 +646,6 @@ def create_async_files_router(
         if auth_result is None or not auth_result.get("authenticated"):
             raise HTTPException(status_code=401, detail="Authentication required")
         return get_operation_context(auth_result)
-
-    # =============================================================================
-    # Write Endpoint
-    # =============================================================================
 
     @router.post("/write", response_model=WriteResponse)
     async def write_file(
@@ -692,85 +673,90 @@ def create_async_files_router(
         """
         context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
-            fs = await _get_fs()
 
-            # Snapshot tracking setup: validate conflict + capture original state BEFORE write
-            _ss = None
-            _norm_path: str | None = None
-            _original_hash: str | None = None
-            _original_metadata: dict[str, Any] | None = None
-            if transaction_id:
-                _ss = fs.service("snapshot_service") if hasattr(fs, "service") else None
-                if _ss is not None:
-                    _norm_path = _normalize_path(request.path)
-                    _ss.validate_path_available(transaction_id, _norm_path)
-                    # Capture original state for rollback
-                    try:
-                        _orig_meta = fs._kernel.get(_norm_path)
-                        if _orig_meta:
-                            _original_hash = _orig_meta.content_id
-                            _original_metadata = {
-                                "size": _orig_meta.size,
-                                "version": _orig_meta.version,
-                                "modified_at": _orig_meta.modified_at.isoformat()
-                                if _orig_meta.modified_at
-                                else None,
-                                "backend_name": getattr(_orig_meta, "backend_name", None),
-                            }
-                    except Exception:
-                        _original_hash = None
+            async def _work() -> Any:
+                fs = await _get_fs()
+
+                # Snapshot tracking setup: validate conflict + capture original state BEFORE write
+                _ss = None
+                _norm_path: str | None = None
+                _original_hash: str | None = None
+                _original_metadata: dict[str, Any] | None = None
+                if transaction_id:
+                    _ss = fs.service("snapshot_service") if hasattr(fs, "service") else None
+                    if _ss is not None:
+                        _norm_path = _normalize_path(request.path)
+                        _ss.validate_path_available(transaction_id, _norm_path)
+                        # Capture original state for rollback
+                        try:
+                            _orig_meta = fs._kernel.get(_norm_path)
+                            if _orig_meta:
+                                _original_hash = _orig_meta.content_id
+                                _original_metadata = {
+                                    "size": _orig_meta.size,
+                                    "version": _orig_meta.version,
+                                    "modified_at": _orig_meta.modified_at.isoformat()
+                                    if _orig_meta.modified_at
+                                    else None,
+                                    "backend_name": getattr(_orig_meta, "backend_name", None),
+                                }
+                        except Exception:
+                            _original_hash = None
+                    else:
+                        logger.warning(
+                            "txn track: snapshot_service unavailable, skipping txn=%s",
+                            transaction_id,
+                        )
+
+                # Decode content based on encoding
+                if request.encoding == "base64":
+                    content = base64.b64decode(request.content)
                 else:
-                    logger.warning(
-                        "txn track: snapshot_service unavailable, skipping txn=%s", transaction_id
-                    )
+                    content = request.content.encode("utf-8")
 
-            # Decode content based on encoding
-            if request.encoding == "base64":
-                content = base64.b64decode(request.content)
-            else:
-                content = request.content.encode("utf-8")
+                # Build write kwargs with optional write_mode (Issue #2929)
+                write_kwargs: dict[str, Any] = {
+                    "path": request.path,
+                    "buf": content,
+                    "context": context,
+                }
+                # fs.write is async — call directly
+                result = fs.write(**write_kwargs)
 
-            # Build write kwargs with optional write_mode (Issue #2929)
-            write_kwargs: dict[str, Any] = {
-                "path": request.path,
-                "buf": content,
-                "context": context,
-            }
-            # fs.write is async — call directly
-            result = fs.write(**write_kwargs)
+                # Track write in transaction AFTER successful write.
+                # Skip if _write_internal already tracked it (path already in registry).
+                if (
+                    _ss is not None
+                    and _norm_path is not None
+                    and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
+                ):
+                    try:
+                        _ss.track_write(
+                            transaction_id=transaction_id,
+                            path=_norm_path,
+                            original_hash=_original_hash,
+                            original_metadata=_original_metadata,
+                            new_hash=result.get("content_id"),
+                        )
+                        logger.info("txn tracked write: txn=%s path=%s", transaction_id, _norm_path)
+                    except Exception as _track_err:
+                        logger.warning("txn track write failed: %s", _track_err)
 
-            # Track write in transaction AFTER successful write.
-            # Skip if _write_internal already tracked it (path already in registry).
-            if (
-                _ss is not None
-                and _norm_path is not None
-                and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
-            ):
-                try:
-                    _ss.track_write(
-                        transaction_id=transaction_id,
-                        path=_norm_path,
-                        original_hash=_original_hash,
-                        original_metadata=_original_metadata,
-                        new_hash=result.get("content_id"),
-                    )
-                    logger.info("txn tracked write: txn=%s path=%s", transaction_id, _norm_path)
-                except Exception as _track_err:
-                    logger.warning("txn track write failed: %s", _track_err)
+                modified = result["modified_at"]
+                if hasattr(modified, "isoformat"):
+                    modified = modified.isoformat()
+                response_data = WriteResponse(
+                    content_id=result["content_id"],
+                    version=result["version"],
+                    size=result["size"],
+                    modified_at=str(modified),
+                )
+                return Response(
+                    content=response_data.model_dump_json(),
+                    media_type="application/json",
+                )
 
-            modified = result["modified_at"]
-            if hasattr(modified, "isoformat"):
-                modified = modified.isoformat()
-            response_data = WriteResponse(
-                content_id=result["content_id"],
-                version=result["version"],
-                size=result["size"],
-                modified_at=str(modified),
-            )
-            return Response(
-                content=response_data.model_dump_json(),
-                media_type="application/json",
-            )
+            return await _run_for_context(context, {"path": request.path, "zone": zone}, _work)
 
         except HTTPException:
             raise
@@ -787,10 +773,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Write error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Read Endpoint
-    # =============================================================================
 
     @router.get("/read", response_model=ReadResponse)
     async def read_file(
@@ -850,252 +832,300 @@ def create_async_files_router(
         if encoding in ("utf8", "utf-8"):
             encoding = None
         try:
-            fs = await _get_fs()
 
-            # Fast path: content-hash (content_id) lookup — used by the diff viewer
-            # to retrieve a historical snapshot stored in CAS.
-            if version:
-                if not transaction_id:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="transaction_id is required when version is specified",
-                    )
-                # --- Zone-ownership check (mirrors snapshots router) ---
-                _snap_svc = getattr(request.app.state, "transactional_snapshot_service", None)
-                if _snap_svc is None:
-                    _snap_svc = getattr(fs, "_snapshot_service", None)
-                if _snap_svc is None:
-                    raise HTTPException(status_code=503, detail="Snapshot service not available")
-                from nexus.contracts.constants import ROOT_ZONE_ID as _ROOT_ZONE_ID
+            async def _work() -> Any:
+                fs = await _get_fs()
 
-                _caller_zone = getattr(context, "zone_id", None) or _ROOT_ZONE_ID
-                _txn_info = await _snap_svc.get_transaction(transaction_id)
-                if _txn_info is None or _txn_info.zone_id != _caller_zone:
-                    raise HTTPException(
-                        status_code=404, detail=f"Transaction not found: {transaction_id}"
-                    )
-                # --- Validate hash belongs to path in this transaction ---
-                _entries = await _snap_svc.list_entries(transaction_id)
-                _matched_entry: Any = None
-                _matched_side: str | None = None  # "original" or "new"
-                for _e in _entries:
-                    if _e.path != path:
-                        continue
-                    if _e.original_hash == version:
-                        _matched_entry, _matched_side = _e, "original"
-                        break
-                    if _e.new_hash == version:
-                        _matched_entry, _matched_side = _e, "new"
-                        break
-                if _matched_entry is None:
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"version is not recorded for this path in transaction {transaction_id!r}",
-                    )
-                # --- Enforce standard read authorization via the VFS path ---
-                # For *delete* entries the live path no longer exists, so
-                # ``fs.access`` would reject every historical read of a
-                # deleted snapshot — even though the bytes are still in
-                # CAS. Skipping ``access`` would also drop the file-level
-                # READ ACL gate (the only place that runs READ permission
-                # hooks for that path), so a caller who never had file
-                # READ permission could otherwise recover deleted content
-                # via the snapshot endpoint (Issue #3989, codex r10).
-                # Compromise: keep the carve-out only for admins, who are
-                # the intended rollback consumers. Regular callers must
-                # use a write-side snapshot or get a 404 for the
-                # missing live path.
-                _entry_op = getattr(_matched_entry, "operation", None)
-                _is_admin = bool(getattr(context, "is_admin", False))
-                _skip_access = _entry_op == "delete" and _is_admin
-                if not _skip_access:
-                    try:
-                        _accessible = fs.access(path, context=context)
-                    except NexusPermissionError as e:
-                        raise HTTPException(status_code=403, detail=str(e)) from e
-                    if not _accessible:
-                        raise NexusFileNotFoundError(path)
-                _py_kernel = getattr(fs, "_kernel", None)
-                if _py_kernel is None:
-                    raise NexusFileNotFoundError(f"{path} (version {version})")
+                # Fast path: content-hash (content_id) lookup — used by the diff viewer
+                # to retrieve a historical snapshot stored in CAS.
+                if version:
+                    if not transaction_id:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="transaction_id is required when version is specified",
+                        )
+                    # --- Zone-ownership check (mirrors snapshots router) ---
+                    _snap_svc = getattr(request.app.state, "transactional_snapshot_service", None)
+                    if _snap_svc is None:
+                        _snap_svc = getattr(fs, "_snapshot_service", None)
+                    if _snap_svc is None:
+                        raise HTTPException(
+                            status_code=503, detail="Snapshot service not available"
+                        )
+                    from nexus.contracts.constants import ROOT_ZONE_ID as _ROOT_ZONE_ID
 
-                # Use the validated caller zone for all kernel calls — the
-                # snapshot/transaction check above already proved the caller
-                # is authorized for this zone. Hard-coding "root" would route
-                # the read through the wrong mount table for non-root zones
-                # and turn this into a privilege-escalation TOCTOU window
-                # (Issue #3989, codex r3).
-                _caller_zone_kernel = _caller_zone or "root"
-
-                # Resolve the mount that owns ``path`` so we can issue a real
-                # content-addressed read via the Rust kernel. Longest-prefix
-                # match against the caller's visible mount table; the root
-                # mount ("/") is always a valid candidate so files under a
-                # root-only deployment still take the cas_read path.
-                _mount_point: str | None = None
-                try:
-                    _mount_entries = fs.list_mounts(context=context)
-                    _candidates = sorted(
-                        (m["mount_point"] for m in _mount_entries if m.get("mount_point")),
-                        key=len,
-                        reverse=True,
-                    )
-                    for _mp in _candidates:
-                        _mp_norm = _mp.rstrip("/") or "/"
-                        # Root mount matches every absolute path; non-root
-                        # mounts match only if ``path`` equals the mount or
-                        # is a descendant. Without the root special-case,
-                        # production deployments that mount at ``/`` would
-                        # silently skip cas_read for every historical read
-                        # (Issue #3989, codex r4).
-                        if _mp_norm == "/" or path == _mp_norm or path.startswith(_mp_norm + "/"):
-                            _mount_point = _mp_norm
+                    _caller_zone = getattr(context, "zone_id", None) or _ROOT_ZONE_ID
+                    _txn_info = await _snap_svc.get_transaction(transaction_id)
+                    if _txn_info is None or _txn_info.zone_id != _caller_zone:
+                        raise HTTPException(
+                            status_code=404, detail=f"Transaction not found: {transaction_id}"
+                        )
+                    # --- Validate hash belongs to path in this transaction ---
+                    _entries = await _snap_svc.list_entries(transaction_id)
+                    _matched_entry: Any = None
+                    _matched_side: str | None = None  # "original" or "new"
+                    for _e in _entries:
+                        if _e.path != path:
+                            continue
+                        if _e.original_hash == version:
+                            _matched_entry, _matched_side = _e, "original"
                             break
-                except Exception:
-                    _mount_point = None
-
-                # Historical reads are CAS-only. ``cas_read`` keys the
-                # lookup by ``content_id`` at the backend, which is the
-                # only safe way to bind the returned bytes to the
-                # requested ``version`` — including for CDC-chunked
-                # content where reassembled-byte hash != manifest hash.
-                # A live-path fallback ``sys_read_raw`` was tempting for
-                # the "live cid == version" case, but is unsound under an
-                # ABA race (writer flips A→B→A between pre-stat and
-                # read; we'd serve B labeled as A). When cas_read fails
-                # we return 410 — the backend either lacks CAS or has
-                # GC'd the revision (Issue #3989, codex r5).
-                if _mount_point is None or not hasattr(_py_kernel, "cas_read"):
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            f"Historical version reads require a CAS-capable mount; "
-                            f"no such mount resolved for {path!r}."
-                        ),
-                    )
-
-                # Plumb federation origin hints into ``cas_read`` so chunked
-                # manifests whose blocks live on a peer node (replication
-                # window not yet closed, or peer-only origin) can still
-                # scatter-gather. The hash we're reading was either captured
-                # *before* the in-flight transaction (``original_hash``) or
-                # produced *by* it (``new_hash``); a different node may own
-                # each side, so we collect both candidates:
-                #
-                # 1. If the entry's serialized ``original_metadata`` carries
-                #    a writer address (from the pre-write snapshot), prefer
-                #    it for ``original_hash`` reads — that's the node that
-                #    last produced the *recorded* bytes.
-                # 2. The path's current ``last_writer_address`` is appended
-                #    as a fallback. For ``new_hash`` (post-write) it is the
-                #    direct producer; for ``original_hash`` it is still a
-                #    plausible peer if replication has fanned out at all.
-                #
-                # Origin hints affect *fetch reachability* only — every
-                # fetched chunk is BLAKE3-verified before composition, so
-                # stale/wrong/duplicate addresses can never cause us to
-                # serve corrupt bytes (Issue #3989, codex r6/r7).
-                _origins: list[str] = []
-
-                def _push_origin(addr: object) -> None:
-                    if not isinstance(addr, str):
-                        return
-                    s = addr.strip()
-                    if s and s not in _origins:
-                        _origins.append(s)
-
-                if _matched_side == "original":
-                    _orig_meta_raw = getattr(_matched_entry, "original_metadata", None)
-                    if isinstance(_orig_meta_raw, str) and _orig_meta_raw:
+                        if _e.new_hash == version:
+                            _matched_entry, _matched_side = _e, "new"
+                            break
+                    if _matched_entry is None:
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"version is not recorded for this path in transaction {transaction_id!r}",
+                        )
+                    # --- Enforce standard read authorization via the VFS path ---
+                    # For *delete* entries the live path no longer exists, so
+                    # ``fs.access`` would reject every historical read of a
+                    # deleted snapshot — even though the bytes are still in
+                    # CAS. Skipping ``access`` would also drop the file-level
+                    # READ ACL gate (the only place that runs READ permission
+                    # hooks for that path), so a caller who never had file
+                    # READ permission could otherwise recover deleted content
+                    # via the snapshot endpoint (Issue #3989, codex r10).
+                    # Compromise: keep the carve-out only for admins, who are
+                    # the intended rollback consumers. Regular callers must
+                    # use a write-side snapshot or get a 404 for the
+                    # missing live path.
+                    _entry_op = getattr(_matched_entry, "operation", None)
+                    _is_admin = bool(getattr(context, "is_admin", False))
+                    _skip_access = _entry_op == "delete" and _is_admin
+                    if not _skip_access:
                         try:
-                            _orig_meta = json.loads(_orig_meta_raw)
-                        except (TypeError, ValueError):
+                            _accessible = fs.access(path, context=context)
+                        except NexusPermissionError as e:
+                            raise HTTPException(status_code=403, detail=str(e)) from e
+                        if not _accessible:
+                            raise NexusFileNotFoundError(path)
+                    _py_kernel = getattr(fs, "_kernel", None)
+                    if _py_kernel is None:
+                        raise NexusFileNotFoundError(f"{path} (version {version})")
+
+                    # Use the validated caller zone for all kernel calls — the
+                    # snapshot/transaction check above already proved the caller
+                    # is authorized for this zone. Hard-coding "root" would route
+                    # the read through the wrong mount table for non-root zones
+                    # and turn this into a privilege-escalation TOCTOU window
+                    # (Issue #3989, codex r3).
+                    _caller_zone_kernel = _caller_zone or "root"
+
+                    # Resolve the mount that owns ``path`` so we can issue a real
+                    # content-addressed read via the Rust kernel. Longest-prefix
+                    # match against the caller's visible mount table; the root
+                    # mount ("/") is always a valid candidate so files under a
+                    # root-only deployment still take the cas_read path.
+                    _mount_point: str | None = None
+                    try:
+                        _mount_entries = fs.list_mounts(context=context)
+                        _candidates = sorted(
+                            (m["mount_point"] for m in _mount_entries if m.get("mount_point")),
+                            key=len,
+                            reverse=True,
+                        )
+                        for _mp in _candidates:
+                            _mp_norm = _mp.rstrip("/") or "/"
+                            # Root mount matches every absolute path; non-root
+                            # mounts match only if ``path`` equals the mount or
+                            # is a descendant. Without the root special-case,
+                            # production deployments that mount at ``/`` would
+                            # silently skip cas_read for every historical read
+                            # (Issue #3989, codex r4).
+                            if (
+                                _mp_norm == "/"
+                                or path == _mp_norm
+                                or path.startswith(_mp_norm + "/")
+                            ):
+                                _mount_point = _mp_norm
+                                break
+                    except Exception:
+                        _mount_point = None
+
+                    # Historical reads are CAS-only. ``cas_read`` keys the
+                    # lookup by ``content_id`` at the backend, which is the
+                    # only safe way to bind the returned bytes to the
+                    # requested ``version`` — including for CDC-chunked
+                    # content where reassembled-byte hash != manifest hash.
+                    # A live-path fallback ``sys_read_raw`` was tempting for
+                    # the "live cid == version" case, but is unsound under an
+                    # ABA race (writer flips A→B→A between pre-stat and
+                    # read; we'd serve B labeled as A). When cas_read fails
+                    # we return 410 — the backend either lacks CAS or has
+                    # GC'd the revision (Issue #3989, codex r5).
+                    if _mount_point is None or not hasattr(_py_kernel, "cas_read"):
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"Historical version reads require a CAS-capable mount; "
+                                f"no such mount resolved for {path!r}."
+                            ),
+                        )
+
+                    # Plumb federation origin hints into ``cas_read`` so chunked
+                    # manifests whose blocks live on a peer node (replication
+                    # window not yet closed, or peer-only origin) can still
+                    # scatter-gather. The hash we're reading was either captured
+                    # *before* the in-flight transaction (``original_hash``) or
+                    # produced *by* it (``new_hash``); a different node may own
+                    # each side, so we collect both candidates:
+                    #
+                    # 1. If the entry's serialized ``original_metadata`` carries
+                    #    a writer address (from the pre-write snapshot), prefer
+                    #    it for ``original_hash`` reads — that's the node that
+                    #    last produced the *recorded* bytes.
+                    # 2. The path's current ``last_writer_address`` is appended
+                    #    as a fallback. For ``new_hash`` (post-write) it is the
+                    #    direct producer; for ``original_hash`` it is still a
+                    #    plausible peer if replication has fanned out at all.
+                    #
+                    # Origin hints affect *fetch reachability* only — every
+                    # fetched chunk is BLAKE3-verified before composition, so
+                    # stale/wrong/duplicate addresses can never cause us to
+                    # serve corrupt bytes (Issue #3989, codex r6/r7).
+                    _origins: list[str] = []
+
+                    def _push_origin(addr: object) -> None:
+                        if not isinstance(addr, str):
+                            return
+                        s = addr.strip()
+                        if s and s not in _origins:
+                            _origins.append(s)
+
+                    if _matched_side == "original":
+                        _orig_meta_raw = getattr(_matched_entry, "original_metadata", None)
+                        if isinstance(_orig_meta_raw, str) and _orig_meta_raw:
+                            try:
+                                _orig_meta = json.loads(_orig_meta_raw)
+                            except (TypeError, ValueError):
+                                _orig_meta = None
+                        elif isinstance(_orig_meta_raw, dict):
+                            _orig_meta = _orig_meta_raw
+                        else:
                             _orig_meta = None
-                    elif isinstance(_orig_meta_raw, dict):
-                        _orig_meta = _orig_meta_raw
-                    else:
-                        _orig_meta = None
-                    if isinstance(_orig_meta, dict):
-                        _push_origin(_orig_meta.get("last_writer_address"))
-                        _push_origin(_orig_meta.get("writer_address"))
+                        if isinstance(_orig_meta, dict):
+                            _push_origin(_orig_meta.get("last_writer_address"))
+                            _push_origin(_orig_meta.get("writer_address"))
 
-                try:
-                    _stat = await asyncio.to_thread(fs.sys_stat, path, context=context)
-                    _push_origin((_stat or {}).get("last_writer_address"))
-                except Exception:
-                    pass
+                    try:
+                        _stat = await asyncio.to_thread(fs.sys_stat, path, context=context)
+                        _push_origin((_stat or {}).get("last_writer_address"))
+                    except Exception:
+                        pass
 
-                try:
-                    raw = await asyncio.to_thread(
-                        functools.partial(
-                            _py_kernel.cas_read,
+                    try:
+                        raw = await asyncio.to_thread(
+                            functools.partial(
+                                _py_kernel.cas_read,
+                                _mount_point,
+                                _caller_zone_kernel,
+                                version,
+                                origins=_origins,
+                            )
+                        )
+                    except Exception as cas_err:
+                        logger.debug(
+                            "cas_read(%s, %s, %s, origins=%s) failed: %s",
                             _mount_point,
                             _caller_zone_kernel,
                             version,
-                            origins=_origins,
+                            _origins,
+                            cas_err,
                         )
+                        raise HTTPException(
+                            status_code=410,
+                            detail=(
+                                f"Historical version {version!r} no longer retrievable at {path!r}: "
+                                "the backend lacks CAS support or this revision has been garbage collected."
+                            ),
+                        ) from cas_err
+
+                    content_v, enc_v = _encode_read_payload(raw, encoding)
+                    resp_v = ReadResponse(content=content_v, encoding=enc_v, content_id=version)
+                    return Response(
+                        content=resp_v.model_dump_json(),
+                        media_type="application/json",
+                        headers={"ETag": f'"{version}"'},
                     )
-                except Exception as cas_err:
-                    logger.debug(
-                        "cas_read(%s, %s, %s, origins=%s) failed: %s",
-                        _mount_point,
-                        _caller_zone_kernel,
-                        version,
-                        _origins,
-                        cas_err,
+
+                # Check If-None-Match header for caching
+                if_none_match = request.headers.get("If-None-Match")
+
+                # Get metadata first for ETag check
+                if if_none_match:
+                    meta = fs.sys_stat(path)
+                    if meta and meta.content_id:
+                        client_etag = if_none_match.strip('"')
+                        if client_etag == meta.content_id:
+                            return Response(
+                                status_code=304,
+                                headers={"ETag": f'"{meta.content_id}"'},
+                            )
+
+                # Issue #3266: For connector display paths (/mnt/*), resolve
+                # virtual_path → physical_path via search service and read
+                # directly from the connector backend. This avoids passing
+                # a backend-relative path into fs.read() which expects VFS paths.
+                connector_content: bytes | None = None
+                if path.startswith("/mnt/"):
+                    search = fs.service("search")
+                    if search is not None:
+                        resolve_fn = getattr(search, "resolve_physical_path", None)
+                        physical: str | None = resolve_fn(path) if resolve_fn else None
+                        if physical:
+                            connector_content = await _read_connector_by_physical_path(
+                                fs,
+                                path,
+                                physical,
+                                context,
+                            )
+
+                if connector_content is not None:
+                    # Connector fast path — apply section filtering before returning.
+                    if section and path.endswith(".md"):
+                        partial = _md_partial_read(fs, path, connector_content, section, block_type)
+                        if partial is not None:
+                            partial_str, partial_enc = _encode_read_payload(partial, encoding)
+                            return Response(
+                                content=ReadResponse(
+                                    content=partial_str, encoding=partial_enc
+                                ).model_dump_json(),
+                                media_type="application/json",
+                            )
+                    content_str, enc_str = _encode_read_payload(connector_content, encoding)
+                    if include_metadata:
+                        resp = ReadResponse(
+                            content=content_str,
+                            encoding=enc_str,
+                            content_id=None,
+                            version=None,
+                            modified_at=None,
+                            size=len(connector_content),
+                        )
+                    else:
+                        resp = ReadResponse(content=content_str, encoding=enc_str)
+                    return Response(
+                        content=resp.model_dump_json(),
+                        media_type="application/json",
                     )
-                    raise HTTPException(
-                        status_code=410,
-                        detail=(
-                            f"Historical version {version!r} no longer retrievable at {path!r}: "
-                            "the backend lacks CAS support or this revision has been garbage collected."
-                        ),
-                    ) from cas_err
 
-                content_v, enc_v = _encode_read_payload(raw, encoding)
-                resp_v = ReadResponse(content=content_v, encoding=enc_v, content_id=version)
-                return Response(
-                    content=resp_v.model_dump_json(),
-                    media_type="application/json",
-                    headers={"ETag": f'"{version}"'},
-                )
+                # Standard VFS read
+                result = fs.read(path, return_metadata=include_metadata, context=context)
 
-            # Check If-None-Match header for caching
-            if_none_match = request.headers.get("If-None-Match")
-
-            # Get metadata first for ETag check
-            if if_none_match:
-                meta = await asyncio.to_thread(fs.sys_stat, path)
-                if meta and meta.content_id:
-                    client_etag = if_none_match.strip('"')
-                    if client_etag == meta.content_id:
-                        return Response(
-                            status_code=304,
-                            headers={"ETag": f'"{meta.content_id}"'},
-                        )
-
-            # Issue #3266: For connector display paths (/mnt/*), resolve
-            # virtual_path → physical_path via search service and read
-            # directly from the connector backend. This avoids passing
-            # a backend-relative path into fs.read() which expects VFS paths.
-            connector_content: bytes | None = None
-            if path.startswith("/mnt/"):
-                search = fs.service("search")
-                if search is not None:
-                    resolve_fn = getattr(search, "resolve_physical_path", None)
-                    physical: str | None = resolve_fn(path) if resolve_fn else None
-                    if physical:
-                        connector_content = await _read_connector_by_physical_path(
-                            fs,
-                            path,
-                            physical,
-                            context,
-                        )
-
-            if connector_content is not None:
-                # Connector fast path — apply section filtering before returning.
+                # --- Markdown partial read (Issue #3718) ---
                 if section and path.endswith(".md"):
-                    partial = _md_partial_read(fs, path, connector_content, section, block_type)
+                    raw_content: bytes
+                    if include_metadata and isinstance(result, dict):
+                        _rc = result["content"]
+                        raw_content = _rc if isinstance(_rc, bytes) else _rc.encode("utf-8")
+                    elif isinstance(result, bytes):
+                        raw_content = result
+                    else:
+                        raw_content = str(result).encode("utf-8")
+
+                    partial = _md_partial_read(fs, path, raw_content, section, block_type)
                     if partial is not None:
                         partial_str, partial_enc = _encode_read_payload(partial, encoding)
                         return Response(
@@ -1104,81 +1134,43 @@ def create_async_files_router(
                             ).model_dump_json(),
                             media_type="application/json",
                         )
-                content_str, enc_str = _encode_read_payload(connector_content, encoding)
-                if include_metadata:
-                    resp = ReadResponse(
-                        content=content_str,
-                        encoding=enc_str,
-                        content_id=None,
-                        version=None,
-                        modified_at=None,
-                        size=len(connector_content),
+                    # Section explicitly requested but not found — don't leak full doc.
+                    # Any explicit section selector that returned None — don't leak full doc.
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Section '{section}' not found in {path}",
+                    )
+
+                if include_metadata and isinstance(result, dict):
+                    raw_content_md = result["content"]
+                    file_content, enc_md = _encode_read_payload(raw_content_md, encoding)
+
+                    response_data = ReadResponse(
+                        content=file_content,
+                        encoding=enc_md,
+                        content_id=result.get("content_id"),
+                        version=result.get("version"),
+                        modified_at=result.get("modified_at"),
+                        size=result.get("size"),
+                    )
+                    etag_val = result.get("content_id")
+                    return Response(
+                        content=response_data.model_dump_json(),
+                        media_type="application/json",
+                        headers={"ETag": f'"{etag_val}"'} if etag_val else {},
                     )
                 else:
-                    resp = ReadResponse(content=content_str, encoding=enc_str)
-                return Response(
-                    content=resp.model_dump_json(),
-                    media_type="application/json",
-                )
-
-            # Standard VFS read
-            result = fs.read(path, return_metadata=include_metadata, context=context)
-
-            # --- Markdown partial read (Issue #3718) ---
-            if section and path.endswith(".md"):
-                raw_content: bytes
-                if include_metadata and isinstance(result, dict):
-                    _rc = result["content"]
-                    raw_content = _rc if isinstance(_rc, bytes) else _rc.encode("utf-8")
-                elif isinstance(result, bytes):
-                    raw_content = result
-                else:
-                    raw_content = str(result).encode("utf-8")
-
-                partial = _md_partial_read(fs, path, raw_content, section, block_type)
-                if partial is not None:
-                    partial_str, partial_enc = _encode_read_payload(partial, encoding)
+                    # Simple content response
+                    if isinstance(result, (str, bytes)):
+                        plain, enc_plain = _encode_read_payload(result, encoding)
+                    else:
+                        plain, enc_plain = _encode_read_payload(str(result), encoding)
                     return Response(
-                        content=ReadResponse(
-                            content=partial_str, encoding=partial_enc
-                        ).model_dump_json(),
+                        content=ReadResponse(content=plain, encoding=enc_plain).model_dump_json(),
                         media_type="application/json",
                     )
-                # Section explicitly requested but not found — don't leak full doc.
-                # Any explicit section selector that returned None — don't leak full doc.
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Section '{section}' not found in {path}",
-                )
 
-            if include_metadata and isinstance(result, dict):
-                raw_content_md = result["content"]
-                file_content, enc_md = _encode_read_payload(raw_content_md, encoding)
-
-                response_data = ReadResponse(
-                    content=file_content,
-                    encoding=enc_md,
-                    content_id=result.get("content_id"),
-                    version=result.get("version"),
-                    modified_at=result.get("modified_at"),
-                    size=result.get("size"),
-                )
-                etag_val = result.get("content_id")
-                return Response(
-                    content=response_data.model_dump_json(),
-                    media_type="application/json",
-                    headers={"ETag": f'"{etag_val}"'} if etag_val else {},
-                )
-            else:
-                # Simple content response
-                if isinstance(result, (str, bytes)):
-                    plain, enc_plain = _encode_read_payload(result, encoding)
-                else:
-                    plain, enc_plain = _encode_read_payload(str(result), encoding)
-                return Response(
-                    content=ReadResponse(content=plain, encoding=enc_plain).model_dump_json(),
-                    media_type="application/json",
-                )
+            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
         except HTTPException:
             # Preserve explicit HTTP status codes (e.g., 400 transaction_id
@@ -1198,10 +1190,6 @@ def create_async_files_router(
             logger.exception(f"Read error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    # =============================================================================
-    # Markdown Structure Endpoint (Issue #3718)
-    # =============================================================================
-
     @router.get("/md-structure")
     async def md_structure(
         path: str = Query(..., description="Path to a markdown file"),
@@ -1213,30 +1201,30 @@ def create_async_files_router(
         ``GET /read?section=...&block_type=...``.
         """
         try:
-            fs = await _get_fs()
-            # Permission gate + content fetch for lazy index rebuild.
-            accessible = await fs.access(path, context=context)
-            if not accessible:
-                raise NexusFileNotFoundError(path)
-            raw = await fs.read(path, context=context)
-            content = (
-                raw
-                if isinstance(raw, bytes)
-                else (raw["content"] if isinstance(raw, dict) else str(raw).encode("utf-8"))
-            )
-            if isinstance(content, str):
-                content = content.encode("utf-8")
-            content_id = _md_get_content_id(fs, path)
-            listing = _md_get_listing(fs, path, content=content, content_id=content_id)
-            if listing is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No markdown structure available for {path}",
+
+            async def _work() -> Response:
+                fs = await _get_fs()
+                accessible = await fs.access(path, context=context)
+                if not accessible:
+                    raise NexusFileNotFoundError(path)
+                raw = await fs.read(path, context=context)
+                content = (
+                    raw
+                    if isinstance(raw, bytes)
+                    else (raw["content"] if isinstance(raw, dict) else str(raw).encode("utf-8"))
                 )
-            return Response(
-                content=json.dumps(listing),
-                media_type="application/json",
-            )
+                if isinstance(content, str):
+                    content = content.encode("utf-8")
+                content_id = _md_get_content_id(fs, path)
+                listing = _md_get_listing(fs, path, content=content, content_id=content_id)
+                if listing is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"No markdown structure available for {path}",
+                    )
+                return Response(content=json.dumps(listing), media_type="application/json")
+
+            return await _run_for_context(context, {"path": path}, _work)
         except HTTPException:
             raise
         except NexusPermissionError as e:
@@ -1300,10 +1288,6 @@ def create_async_files_router(
             logger.debug("md structure listing failed for %s", path, exc_info=True)
             return None
 
-    # =============================================================================
-    # Delete Endpoint
-    # =============================================================================
-
     @router.delete("/delete", response_model=DeleteResponse)
     async def delete_file(
         path: str = Query(..., description="Path to delete"),
@@ -1321,50 +1305,54 @@ def create_async_files_router(
         """Delete a file."""
         context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
-            fs = await _get_fs()
 
-            _ss = None
-            _norm_path: str | None = None
-            _original_hash: str | None = None
-            _original_metadata: dict[str, Any] | None = None
-            if transaction_id:
-                _ss = fs.service("snapshot_service") if hasattr(fs, "service") else None
-                if _ss is not None:
-                    _norm_path = _normalize_path(path)
-                    _ss.validate_path_available(transaction_id, _norm_path)
+            async def _work() -> DeleteResponse:
+                fs = await _get_fs()
+
+                _ss = None
+                _norm_path: str | None = None
+                _original_hash: str | None = None
+                _original_metadata: dict[str, Any] | None = None
+                if transaction_id:
+                    _ss = fs.service("snapshot_service") if hasattr(fs, "service") else None
+                    if _ss is not None:
+                        _norm_path = _normalize_path(path)
+                        _ss.validate_path_available(transaction_id, _norm_path)
+                        try:
+                            _orig_meta = fs._kernel.get(_norm_path)
+                            if _orig_meta:
+                                _original_hash = _orig_meta.content_id
+                                _original_metadata = {
+                                    "size": _orig_meta.size,
+                                    "version": _orig_meta.version,
+                                    "modified_at": _orig_meta.modified_at.isoformat()
+                                    if _orig_meta.modified_at
+                                    else None,
+                                    "backend_name": getattr(_orig_meta, "backend_name", None),
+                                }
+                        except Exception:
+                            _original_hash = None
+
+                fs.sys_unlink(path, context=context)
+
+                if (
+                    _ss is not None
+                    and _norm_path is not None
+                    and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
+                ):
                     try:
-                        _orig_meta = fs._kernel.get(_norm_path)
-                        if _orig_meta:
-                            _original_hash = _orig_meta.content_id
-                            _original_metadata = {
-                                "size": _orig_meta.size,
-                                "version": _orig_meta.version,
-                                "modified_at": _orig_meta.modified_at.isoformat()
-                                if _orig_meta.modified_at
-                                else None,
-                                "backend_name": getattr(_orig_meta, "backend_name", None),
-                            }
-                    except Exception:
-                        _original_hash = None
+                        _ss.track_delete(
+                            transaction_id=transaction_id,
+                            path=_norm_path,
+                            original_hash=_original_hash,
+                            original_metadata=_original_metadata,
+                        )
+                    except Exception as _track_err:
+                        logger.warning("txn track delete failed: %s", _track_err)
 
-            await asyncio.to_thread(fs.sys_unlink, path, context=context)
+                return DeleteResponse(deleted=True, path=path)
 
-            if (
-                _ss is not None
-                and _norm_path is not None
-                and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
-            ):
-                try:
-                    _ss.track_delete(
-                        transaction_id=transaction_id,
-                        path=_norm_path,
-                        original_hash=_original_hash,
-                        original_metadata=_original_metadata,
-                    )
-                except Exception as _track_err:
-                    logger.warning("txn track delete failed: %s", _track_err)
-
-            return DeleteResponse(deleted=True, path=path)
+            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -1377,10 +1365,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Delete error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Exists Endpoint
-    # =============================================================================
 
     @router.get("/exists", response_model=ExistsResponse)
     async def file_exists(
@@ -1395,9 +1379,13 @@ def create_async_files_router(
         """Check if a file or directory exists."""
         context = _apply_zone_override(context, zone, auth_result)
         try:
-            fs = await _get_fs()
-            exists = fs.access(path, context=context)
-            return ExistsResponse(exists=exists)
+
+            async def _work() -> ExistsResponse:
+                fs = await _get_fs()
+                exists = fs.access(path, context=context)
+                return ExistsResponse(exists=exists)
+
+            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -1406,10 +1394,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Exists error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # List Directory Endpoint
-    # =============================================================================
 
     @router.get("/list", response_model=ListResponse, response_model_by_alias=True)
     async def list_directory(
@@ -1438,161 +1422,141 @@ def create_async_files_router(
         """
         context = _apply_zone_override(context, zone, auth_result)
         try:
-            fs = await _get_fs()
 
-            # Decode opaque cursor (base64-encoded path)
-            cursor_path: str | None = None
-            if cursor is not None:
-                try:
-                    cursor_path = base64.b64decode(cursor).decode("utf-8")
-                except Exception:
-                    raise HTTPException(status_code=400, detail="Invalid cursor") from None
+            async def _work() -> Any:
+                fs = await _get_fs()
 
-            # Issue #3266: Prefer search service for listing (metastore-first).
-            # Same pattern as the RPC list handler in filesystem.py.
-            # Note: search.list() returns plain paths for dynamic connectors,
-            # while sys_readdir(details=True) returns detail dicts. We use
-            # sys_readdir as the primary path and only fall back to search
-            # for connector mounts where metastore-first listing is needed.
-            result = await asyncio.to_thread(
-                fs.sys_readdir,
-                path,
-                recursive=False,
-                details=True,
-                context=context,
-                limit=limit,
-                cursor=cursor_path,
-            )
+                # Decode opaque cursor (base64-encoded path)
+                cursor_path: str | None = None
+                if cursor is not None:
+                    try:
+                        cursor_path = base64.b64decode(cursor).decode("utf-8")
+                    except Exception:
+                        raise HTTPException(status_code=400, detail="Invalid cursor") from None
 
-            # Issue #3266: If sys_readdir returned nothing for a connector
-            # mount, try the search service (metastore-first listing).
-            result_items = result.items if hasattr(result, "items") else result
-            if not result_items and path.startswith("/mnt/"):
-                search = fs.service("search")
-                if search is not None:
-                    search_result = search.list(
-                        path=path,
-                        recursive=False,
-                        context=context,
-                    )
-                    if search_result:
-                        # Convert plain paths to detail dicts
-                        prefix = path.rstrip("/") + "/"
-                        detail_list = []
-                        for entry in search_result:
-                            entry_path = entry if isinstance(entry, str) else str(entry)
-                            entry_path = entry_path.rstrip("/")
-                            name = entry_path.split("/")[-1] if "/" in entry_path else entry_path
-                            is_dir = entry.endswith("/") if isinstance(entry, str) else False
-                            detail_list.append(
-                                {
-                                    "path": entry_path,
-                                    "name": name,
-                                    "is_directory": is_dir,
-                                    "size": 0,
-                                }
-                            )
-                        result = detail_list
-
-            # Inject mount point parent directories into the listing.
-            # Mount points exist in the VFS router but not in the metastore,
-            # so sys_readdir doesn't return them. We synthesize directory
-            # entries for immediate children of the listed path that are
-            # mount point ancestors.
-            try:
-                mount_svc = fs.service("mount")
-                if mount_svc:
-                    mount_list_result = mount_svc.list_mounts()
-                    if hasattr(mount_list_result, "__await__"):
-                        mounts_raw = await mount_list_result
-                    else:
-                        mounts_raw = mount_list_result
-                    listed_prefix = path.rstrip("/") + "/"
-                    existing_paths = {
-                        (e.get("path", "") if isinstance(e, dict) else str(e)).rstrip("/")
-                        for e in (
-                            result if isinstance(result, list) else getattr(result, "items", [])
-                        )
-                    }
-                    for m in mounts_raw:
-                        mp = (m.get("mount_point", "") if isinstance(m, dict) else str(m)).rstrip(
-                            "/"
-                        )
-                        if not mp.startswith(listed_prefix) and not (
-                            path == "/" and mp.startswith("/")
-                        ):
-                            continue
-                        # Find the immediate child segment
-                        relative = mp.lstrip("/") if path == "/" else mp[len(listed_prefix) :]
-                        child = relative.split("/")[0] if "/" in relative else relative
-                        if not child:
-                            continue
-                        child_path = f"{path.rstrip('/')}/{child}"
-                        if child_path.rstrip("/") not in existing_paths:
-                            synthetic = {
-                                "path": child_path,
-                                "name": child,
-                                "entry_type": 1,
-                                "size": 0,
-                                "is_directory": True,
-                            }
-                            if isinstance(result, list):
-                                result.append(synthetic)
-                            elif hasattr(result, "items"):
-                                result.items.append(synthetic)
-                            existing_paths.add(child_path.rstrip("/"))
-            except Exception:
-                pass  # Best effort — listing still works without mount injection
-
-            prefix = path.rstrip("/") + "/"
-            # The listed path itself (e.g. "/" → empty name) must not appear
-            # in its own listing — that causes infinite recursion in tree UIs.
-            clean_path = path.rstrip("/") or "/"
-
-            # Internal paths stored in the metastore (system config, ReBAC
-            # namespaces) must not leak into user-facing directory listings.
-            _INTERNAL_PREFIXES = ("cfg:", "ns:")
-
-            def _is_visible(entry: dict) -> bool:
-                p = entry.get("path", "")
-                name = p.lstrip("/").split("/")[0] if "/" in p else p.lstrip("/")
-                return p.rstrip("/") != clean_path.rstrip("/") and not name.startswith(
-                    _INTERNAL_PREFIXES
-                )
-
-            # Paginated path: keep advancing until the page has visible items
-            # or there are no more results. This prevents empty pages when
-            # internal entries (cfg:, ns:) consume an entire page.
-            if limit is not None:
-                file_items: list[FileItemResponse] = []
-                # sys_readdir may return a paginated object (with .items,
-                # .has_more, .next_cursor) or a plain list for connector
-                # backends. Normalize to avoid AttributeError.
-                if isinstance(result, list):
-                    _page_items = result
-                    has_more = False
-                    next_cursor_raw = None
-                else:
-                    _page_items = result.items
-                    has_more = result.has_more
-                    next_cursor_raw = result.next_cursor
-
-                # Collect visible items from current page
-                for entry in _page_items:
-                    if _is_visible(entry):
-                        file_items.append(_to_file_item(entry, prefix))
-
-                # If filtering emptied the page but more data exists, keep fetching
-                while not file_items and has_more and next_cursor_raw:
-                    result = await asyncio.to_thread(
-                        fs.sys_readdir,
+                # Issue #3266: Prefer search service for listing (metastore-first).
+                # Same pattern as the RPC list handler in filesystem.py.
+                # Note: search.list() returns plain paths for dynamic connectors,
+                # while sys_readdir(details=True) returns detail dicts. We use
+                # sys_readdir as the primary path and only fall back to search
+                # for connector mounts where metastore-first listing is needed.
+                result = await _maybe_await(
+                    fs.sys_readdir(
                         path,
                         recursive=False,
                         details=True,
                         context=context,
                         limit=limit,
-                        cursor=next_cursor_raw,
+                        cursor=cursor_path,
                     )
+                )
+
+                # Issue #3266: If sys_readdir returned nothing for a connector
+                # mount, try the search service (metastore-first listing).
+                result_items = result.items if hasattr(result, "items") else result
+                if not result_items and path.startswith("/mnt/"):
+                    search = fs.service("search")
+                    if search is not None:
+                        search_result = search.list(
+                            path=path,
+                            recursive=False,
+                            context=context,
+                        )
+                        if search_result:
+                            # Convert plain paths to detail dicts
+                            prefix = path.rstrip("/") + "/"
+                            detail_list = []
+                            for entry in search_result:
+                                entry_path = entry if isinstance(entry, str) else str(entry)
+                                entry_path = entry_path.rstrip("/")
+                                name = (
+                                    entry_path.split("/")[-1] if "/" in entry_path else entry_path
+                                )
+                                is_dir = entry.endswith("/") if isinstance(entry, str) else False
+                                detail_list.append(
+                                    {
+                                        "path": entry_path,
+                                        "name": name,
+                                        "is_directory": is_dir,
+                                        "size": 0,
+                                    }
+                                )
+                            result = detail_list
+
+                # Inject mount point parent directories into the listing.
+                # Mount points exist in the VFS router but not in the metastore,
+                # so sys_readdir doesn't return them. We synthesize directory
+                # entries for immediate children of the listed path that are
+                # mount point ancestors.
+                try:
+                    mount_svc = fs.service("mount")
+                    if mount_svc:
+                        mount_list_result = mount_svc.list_mounts()
+                        if hasattr(mount_list_result, "__await__"):
+                            mounts_raw = await mount_list_result
+                        else:
+                            mounts_raw = mount_list_result
+                        listed_prefix = path.rstrip("/") + "/"
+                        existing_paths = {
+                            (e.get("path", "") if isinstance(e, dict) else str(e)).rstrip("/")
+                            for e in (
+                                result if isinstance(result, list) else getattr(result, "items", [])
+                            )
+                        }
+                        for m in mounts_raw:
+                            mp = (
+                                m.get("mount_point", "") if isinstance(m, dict) else str(m)
+                            ).rstrip("/")
+                            if not mp.startswith(listed_prefix) and not (
+                                path == "/" and mp.startswith("/")
+                            ):
+                                continue
+                            # Find the immediate child segment
+                            relative = mp.lstrip("/") if path == "/" else mp[len(listed_prefix) :]
+                            child = relative.split("/")[0] if "/" in relative else relative
+                            if not child:
+                                continue
+                            child_path = f"{path.rstrip('/')}/{child}"
+                            if child_path.rstrip("/") not in existing_paths:
+                                synthetic = {
+                                    "path": child_path,
+                                    "name": child,
+                                    "entry_type": 1,
+                                    "size": 0,
+                                    "is_directory": True,
+                                }
+                                if isinstance(result, list):
+                                    result.append(synthetic)
+                                elif hasattr(result, "items"):
+                                    result.items.append(synthetic)
+                                existing_paths.add(child_path.rstrip("/"))
+                except Exception:
+                    pass  # Best effort — listing still works without mount injection
+
+                prefix = path.rstrip("/") + "/"
+                # The listed path itself (e.g. "/" → empty name) must not appear
+                # in its own listing — that causes infinite recursion in tree UIs.
+                clean_path = path.rstrip("/") or "/"
+
+                # Internal paths stored in the metastore (system config, ReBAC
+                # namespaces) must not leak into user-facing directory listings.
+                _INTERNAL_PREFIXES = ("cfg:", "ns:")
+
+                def _is_visible(entry: dict) -> bool:
+                    p = entry.get("path", "")
+                    name = p.lstrip("/").split("/")[0] if "/" in p else p.lstrip("/")
+                    return p.rstrip("/") != clean_path.rstrip("/") and not name.startswith(
+                        _INTERNAL_PREFIXES
+                    )
+
+                # Paginated path: keep advancing until the page has visible items
+                # or there are no more results. This prevents empty pages when
+                # internal entries (cfg:, ns:) consume an entire page.
+                if limit is not None:
+                    file_items: list[FileItemResponse] = []
+                    # sys_readdir may return a paginated object (with .items,
+                    # .has_more, .next_cursor) or a plain list for connector
+                    # backends. Normalize to avoid AttributeError.
                     if isinstance(result, list):
                         _page_items = result
                         has_more = False
@@ -1601,24 +1565,54 @@ def create_async_files_router(
                         _page_items = result.items
                         has_more = result.has_more
                         next_cursor_raw = result.next_cursor
+
+                    # Collect visible items from current page
                     for entry in _page_items:
                         if _is_visible(entry):
                             file_items.append(_to_file_item(entry, prefix))
 
-                next_cursor = (
-                    base64.b64encode(next_cursor_raw.encode("utf-8")).decode("ascii")
-                    if next_cursor_raw
-                    else None
-                )
-                return ListResponse(
-                    items=file_items,
-                    has_more=has_more,
-                    next_cursor=next_cursor,
-                )
+                    # If filtering emptied the page but more data exists, keep fetching
+                    while not file_items and has_more and next_cursor_raw:
+                        result = await _maybe_await(
+                            fs.sys_readdir(
+                                path,
+                                recursive=False,
+                                details=True,
+                                context=context,
+                                limit=limit,
+                                cursor=next_cursor_raw,
+                            )
+                        )
+                        if isinstance(result, list):
+                            _page_items = result
+                            has_more = False
+                            next_cursor_raw = None
+                        else:
+                            _page_items = result.items
+                            has_more = result.has_more
+                            next_cursor_raw = result.next_cursor
+                        for entry in _page_items:
+                            if _is_visible(entry):
+                                file_items.append(_to_file_item(entry, prefix))
 
-            # Non-paginated path (backward compat): result is list[dict]
-            file_items = [_to_file_item(entry, prefix) for entry in result if _is_visible(entry)]
-            return ListResponse(items=file_items, has_more=False)
+                    next_cursor = (
+                        base64.b64encode(next_cursor_raw.encode("utf-8")).decode("ascii")
+                        if next_cursor_raw
+                        else None
+                    )
+                    return ListResponse(
+                        items=file_items,
+                        has_more=has_more,
+                        next_cursor=next_cursor,
+                    )
+
+                # Non-paginated path (backward compat): result is list[dict]
+                file_items = [
+                    _to_file_item(entry, prefix) for entry in result if _is_visible(entry)
+                ]
+                return ListResponse(items=file_items, has_more=False)
+
+            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
         except HTTPException:
             raise
@@ -1639,10 +1633,6 @@ def create_async_files_router(
             logger.exception(f"List error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    # =============================================================================
-    # Mkdir Endpoint
-    # =============================================================================
-
     @router.post("/mkdir", status_code=status.HTTP_200_OK)
     async def create_directory(
         request: MkdirRequest,
@@ -1656,10 +1646,18 @@ def create_async_files_router(
         """Create a directory."""
         context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
-            fs = await _get_fs()
-            # fs.mkdir is async — call directly
-            fs.mkdir(request.path, parents=request.parents, context=context)
-            return {"created": True, "path": request.path}
+
+            async def _work() -> dict[str, Any]:
+                fs = await _get_fs()
+                # fs.mkdir is async — call directly
+                fs.mkdir(request.path, parents=request.parents, context=context)
+                return {"created": True, "path": request.path}
+
+            return await _run_for_context(
+                context,
+                {"path": request.path, "zone": zone},
+                _work,
+            )
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -1672,10 +1670,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Mkdir error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Metadata Endpoint
-    # =============================================================================
 
     @router.get("/metadata", response_model=MetadataResponse)
     async def get_file_metadata(
@@ -1690,12 +1684,16 @@ def create_async_files_router(
         """Get file or directory metadata."""
         context = _apply_zone_override(context, zone, auth_result)
         try:
-            fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
-            if meta is None:
-                raise NexusFileNotFoundError(path=path)
 
-            return _to_metadata_response(meta, fallback_path=path)
+            async def _work() -> MetadataResponse:
+                fs = await _get_fs()
+                meta = fs.sys_stat(path, context=context)
+                if meta is None:
+                    raise NexusFileNotFoundError(path=path)
+
+                return _to_metadata_response(meta, fallback_path=path)
+
+            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
 
         except AuthenticationError:
             # Preserve structured re-auth signal (see /list and /read handlers).
@@ -1709,10 +1707,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Metadata error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Batch Read Endpoint
-    # =============================================================================
 
     @router.post("/batch-read")
     async def batch_read_files(
@@ -1732,22 +1726,30 @@ def create_async_files_router(
         """
         context = _apply_zone_override(context, zone, auth_result)
         try:
-            fs = await _get_fs()
-            results = await asyncio.to_thread(fs.read_bulk, request.paths, context=context)
 
-            # Convert bytes to string for JSON response
-            response: dict[str, Any] = {}
-            for path, content in results.items():
-                if content is None:
-                    response[path] = None
-                elif isinstance(content, bytes):
-                    response[path] = {
-                        "content": content.decode("utf-8", errors="replace"),
-                    }
-                else:
-                    response[path] = {"content": content}
+            async def _work() -> dict[str, Any]:
+                fs = await _get_fs()
+                results = await asyncio.to_thread(fs.read_bulk, request.paths, context=context)
 
-            return response
+                # Convert bytes to string for JSON response
+                response: dict[str, Any] = {}
+                for path, content in results.items():
+                    if content is None:
+                        response[path] = None
+                    elif isinstance(content, bytes):
+                        response[path] = {
+                            "content": content.decode("utf-8", errors="replace"),
+                        }
+                    else:
+                        response[path] = {"content": content}
+
+                return response
+
+            return await _run_for_context(
+                context,
+                {"paths": request.paths, "zone": zone},
+                _work,
+            )
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -1756,10 +1758,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Batch read error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Batch Write Endpoint (Issue #3700)
-    # =============================================================================
 
     @router.post("/batch/write", response_model=BatchWriteResponse)
     async def batch_write_files(
@@ -1781,21 +1779,27 @@ def create_async_files_router(
         {_MAX_BATCH_TOTAL_BYTES // (1024*1024)} MB total decoded size per request.
         """
         try:
-            fs = await _get_fs()
-            files = [(item.path, base64.b64decode(item.content_base64)) for item in request.files]
-            raw_results = fs.write_batch(files, context=context)
-            return BatchWriteResponse(
-                results=[
-                    BatchWriteResult(
-                        path=r["path"] if "path" in r else files[i][0],
-                        content_id=r.get("content_id"),
-                        version=r.get("version", 0),
-                        modified_at=r.get("modified_at"),
-                        size=r.get("size", 0),
-                    )
-                    for i, r in enumerate(raw_results)
+
+            async def _work() -> BatchWriteResponse:
+                fs = await _get_fs()
+                files = [
+                    (item.path, base64.b64decode(item.content_base64)) for item in request.files
                 ]
-            )
+                raw_results = await _maybe_await(fs.write_batch(files, context=context))
+                return BatchWriteResponse(
+                    results=[
+                        BatchWriteResult(
+                            path=r["path"] if "path" in r else files[i][0],
+                            content_id=r.get("content_id"),
+                            version=r.get("version", 0),
+                            modified_at=r.get("modified_at"),
+                            size=r.get("size", 0),
+                        )
+                        for i, r in enumerate(raw_results)
+                    ]
+                )
+
+            return await _run_for_context(context, request, _work)
         except (NexusPermissionError, AccessDeniedError) as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
@@ -1803,10 +1807,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception("Batch write error: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Batch Read Endpoint v2 (Issue #3700)
-    # =============================================================================
 
     @router.post("/batch/read", response_model=BatchReadResponse)
     async def batch_read_files_v2(
@@ -1824,40 +1824,46 @@ def create_async_files_router(
         per-item success or error for every path.
         """
         try:
-            fs = await _get_fs()
-            raw_results = fs.read_batch(request.paths, partial=request.partial, context=context)
-            # Belt-and-suspenders aggregate size guard (Finding #3).
-            # NexusFS.read_batch() already pre-checks via metadata sizes; this
-            # post-read guard catches any content that slipped through (e.g. from
-            # external-mount fallback paths whose metadata sizes were unknown).
-            _total_read = sum(
-                len(r.get("content", b"")) for r in raw_results if isinstance(r, dict)
-            )
-            if _total_read > _MAX_BATCH_TOTAL_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=(
-                        f"Batch read response size {_total_read} bytes exceeds "
-                        f"{_MAX_BATCH_TOTAL_BYTES // (1024 * 1024)} MB limit"
-                    ),
+
+            async def _work() -> BatchReadResponse:
+                fs = await _get_fs()
+                raw_results = await _maybe_await(
+                    fs.read_batch(request.paths, partial=request.partial, context=context)
                 )
-            items: list[BatchReadSuccess | BatchReadError] = []
-            for r in raw_results:
-                if "error" in r:
-                    items.append(BatchReadError(type="error", path=r["path"], error=r["error"]))
-                else:
-                    items.append(
-                        BatchReadSuccess(
-                            type="success",
-                            path=r["path"],
-                            content_base64=base64.b64encode(r["content"]).decode(),
-                            content_id=r.get("content_id"),
-                            version=r.get("version", 0),
-                            modified_at=r.get("modified_at"),
-                            size=r.get("size", 0),
-                        )
+                # Belt-and-suspenders aggregate size guard (Finding #3).
+                # NexusFS.read_batch() already pre-checks via metadata sizes; this
+                # post-read guard catches any content that slipped through (e.g. from
+                # external-mount fallback paths whose metadata sizes were unknown).
+                _total_read = sum(
+                    len(r.get("content", b"")) for r in raw_results if isinstance(r, dict)
+                )
+                if _total_read > _MAX_BATCH_TOTAL_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"Batch read response size {_total_read} bytes exceeds "
+                            f"{_MAX_BATCH_TOTAL_BYTES // (1024 * 1024)} MB limit"
+                        ),
                     )
-            return BatchReadResponse(results=items)
+                items: list[BatchReadSuccess | BatchReadError] = []
+                for r in raw_results:
+                    if "error" in r:
+                        items.append(BatchReadError(type="error", path=r["path"], error=r["error"]))
+                    else:
+                        items.append(
+                            BatchReadSuccess(
+                                type="success",
+                                path=r["path"],
+                                content_base64=base64.b64encode(r["content"]).decode(),
+                                content_id=r.get("content_id"),
+                                version=r.get("version", 0),
+                                modified_at=r.get("modified_at"),
+                                size=r.get("size", 0),
+                            )
+                        )
+                return BatchReadResponse(results=items)
+
+            return await _run_for_context(context, request, _work)
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except (NexusPermissionError, AccessDeniedError) as e:
@@ -1876,10 +1882,6 @@ def create_async_files_router(
             logger.exception("Batch read v2 error: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    # =============================================================================
-    # Stream Endpoint
-    # =============================================================================
-
     @router.get("/stream", response_model=None)
     async def stream_file(
         request: Request,
@@ -1897,38 +1899,39 @@ def create_async_files_router(
         from nexus.server.range_utils import build_range_response
 
         try:
-            fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
-            if meta is None:
-                raise NexusFileNotFoundError(path=path)
 
-            def _range_generator(start: int, end: int, cs: int) -> Iterator[bytes]:
-                """Sync generator wrapping NexusFS.read_range()."""
-                data = fs.read_range(path, start, end, context=context)
-                if isinstance(data, bytes):
-                    for i in range(0, len(data), cs):
-                        yield data[i : i + cs]
+            async def _work() -> Response | StreamingResponse:
+                fs = await _get_fs()
+                meta = fs.sys_stat(path, context=context)
+                if meta is None:
+                    raise NexusFileNotFoundError(path=path)
 
-            async def _full_generator() -> AsyncIterator[bytes]:
-                """Sync generator wrapping NexusFS.read()."""
-                data = await asyncio.to_thread(fs.sys_read, path, context=context)
-                if isinstance(data, bytes):
-                    for i in range(0, len(data), chunk_size):
-                        yield data[i : i + chunk_size]
-                else:
-                    raw = str(data).encode("utf-8")
-                    for i in range(0, len(raw), chunk_size):
-                        yield raw[i : i + chunk_size]
+                def _chunks(data: bytes, cs: int) -> Iterator[bytes]:
+                    return (data[i : i + cs] for i in range(0, len(data), cs))
 
-            return build_range_response(
-                request_headers=request.headers,
-                content_generator=_range_generator,
-                full_generator=_full_generator,
-                total_size=meta.size,
-                etag=meta.content_id,
-                content_type=meta.mime_type or "application/octet-stream",
-                filename=path.split("/")[-1],
-            )
+                def _range_generator(start: int, end: int, cs: int) -> Iterator[bytes]:
+                    data = fs.read_range(path, start, end, context=context)
+                    if isinstance(data, bytes):
+                        return _chunks(data, cs)
+                    return iter(())
+
+                def _full_generator() -> Iterator[bytes]:
+                    data = fs.sys_read(path, context=context)
+                    if isinstance(data, bytes):
+                        return _chunks(data, chunk_size)
+                    return _chunks(str(data).encode("utf-8"), chunk_size)
+
+                return build_range_response(
+                    request_headers=request.headers,
+                    content_generator=_range_generator,
+                    full_generator=_full_generator,
+                    total_size=meta.size,
+                    etag=meta.content_id,
+                    content_type=meta.mime_type or "application/octet-stream",
+                    filename=path.split("/")[-1],
+                )
+
+            return await _run_for_context(context, {"path": path}, _work)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -1939,10 +1942,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Stream error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Rename Endpoint
-    # =============================================================================
 
     STREAMING_COPY_THRESHOLD = 10 * 1024 * 1024  # 10 MB
 
@@ -1958,15 +1957,17 @@ def create_async_files_router(
         Works instantly regardless of file size.
         """
         try:
-            fs = await _get_fs()
-            await asyncio.to_thread(
-                fs.sys_rename, request.source, request.destination, context=context
-            )
-            return RenameResponse(
-                success=True,
-                source=request.source,
-                destination=request.destination,
-            )
+
+            async def _work() -> RenameResponse:
+                fs = await _get_fs()
+                fs.sys_rename(request.source, request.destination, context=context)
+                return RenameResponse(
+                    success=True,
+                    source=request.source,
+                    destination=request.destination,
+                )
+
+            return await _run_for_context(context, request, _work)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -1980,10 +1981,6 @@ def create_async_files_router(
             logger.exception(f"Rename error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    # =============================================================================
-    # Copy Endpoint
-    # =============================================================================
-
     @router.post("/copy", response_model=CopyResponse)
     async def copy_file(
         request: CopyRequest,
@@ -1996,34 +1993,38 @@ def create_async_files_router(
         into memory. Smaller files are read/written in a single operation.
         """
         try:
-            fs = await _get_fs()
 
-            # Check source exists and get size
-            meta = await asyncio.to_thread(fs.sys_stat, request.source, context=context)
-            if meta is None:
-                raise NexusFileNotFoundError(path=request.source)
+            async def _work() -> CopyResponse:
+                fs = await _get_fs()
 
-            file_size = meta.get("size", 0) or 0
+                # Check source exists and get size
+                meta = fs.sys_stat(request.source, context=context)
+                if meta is None:
+                    raise NexusFileNotFoundError(path=request.source)
 
-            if file_size < STREAMING_COPY_THRESHOLD:
-                # Small file: read all then write all
-                content = await asyncio.to_thread(fs.sys_read, request.source, context=context)
-                await asyncio.to_thread(fs.write, request.destination, buf=content, context=context)
-                bytes_copied = len(content)
-            else:
-                # Large file: streaming copy
-                chunks = await asyncio.to_thread(fs.stream, request.source, context=context)
-                result = await asyncio.to_thread(
-                    fs.write_stream, request.destination, chunks, context=context
+                file_size = _metadata_field(meta, "size", 0) or 0
+
+                if file_size < STREAMING_COPY_THRESHOLD:
+                    # Small file: read all then write all
+                    content = fs.sys_read(request.source, context=context)
+                    fs.write(request.destination, buf=content, context=context)
+                    bytes_copied = len(content)
+                else:
+                    # Large file: streaming copy
+                    chunks = await asyncio.to_thread(fs.stream, request.source, context=context)
+                    result = await asyncio.to_thread(
+                        fs.write_stream, request.destination, chunks, context=context
+                    )
+                    bytes_copied = result.get("size", file_size)
+
+                return CopyResponse(
+                    success=True,
+                    source=request.source,
+                    destination=request.destination,
+                    bytes_copied=bytes_copied,
                 )
-                bytes_copied = result.get("size", file_size)
 
-            return CopyResponse(
-                success=True,
-                source=request.source,
-                destination=request.destination,
-                bytes_copied=bytes_copied,
-            )
+            return await _run_for_context(context, request, _work)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -2037,10 +2038,6 @@ def create_async_files_router(
             logger.exception(f"Copy error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    # =============================================================================
-    # Bulk Rename Endpoint
-    # =============================================================================
-
     @router.post("/rename-batch", response_model=RenameBatchResponse)
     async def rename_batch(
         request: RenameBatchRequest,
@@ -2053,23 +2050,27 @@ def create_async_files_router(
         affect others. Maximum 50 operations per request.
         """
         try:
-            fs = await _get_fs()
-            renames = [(op.source, op.destination) for op in request.operations]
-            raw_results = fs.rename_batch(renames, context=context)
 
-            results: list[BulkRenameResult] = []
-            for op in request.operations:
-                entry = raw_results.get(op.source, {})
-                results.append(
-                    BulkRenameResult(
-                        source=op.source,
-                        destination=op.destination,
-                        success=entry.get("success", False),
-                        error=entry.get("error"),
+            async def _work() -> RenameBatchResponse:
+                fs = await _get_fs()
+                renames = [(op.source, op.destination) for op in request.operations]
+                raw_results = fs.rename_batch(renames, context=context)
+
+                results: list[BulkRenameResult] = []
+                for op in request.operations:
+                    entry = raw_results.get(op.source, {})
+                    results.append(
+                        BulkRenameResult(
+                            source=op.source,
+                            destination=op.destination,
+                            success=entry.get("success", False),
+                            error=entry.get("error"),
+                        )
                     )
-                )
 
-            return RenameBatchResponse(results=results)
+                return RenameBatchResponse(results=results)
+
+            return await _run_for_context(context, request, _work)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -2078,10 +2079,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Bulk rename error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Bulk Copy Endpoint
-    # =============================================================================
 
     @router.post("/copy-bulk", response_model=CopyBulkResponse)
     async def copy_bulk(
@@ -2096,57 +2093,59 @@ def create_async_files_router(
         for files >= 10 MB.
         """
         try:
-            fs = await _get_fs()
-            results: list[BulkCopyResult] = []
 
-            for op in request.operations:
-                try:
-                    meta = await asyncio.to_thread(fs.sys_stat, op.source, context=context)
-                    if meta is None:
+            async def _work() -> CopyBulkResponse:
+                fs = await _get_fs()
+                results: list[BulkCopyResult] = []
+
+                for op in request.operations:
+                    try:
+                        meta = fs.sys_stat(op.source, context=context)
+                        if meta is None:
+                            results.append(
+                                BulkCopyResult(
+                                    source=op.source,
+                                    destination=op.destination,
+                                    success=False,
+                                    error=f"Source not found: {op.source}",
+                                )
+                            )
+                            continue
+
+                        file_size = _metadata_field(meta, "size", 0) or 0
+
+                        if file_size < STREAMING_COPY_THRESHOLD:
+                            content = fs.sys_read(op.source, context=context)
+                            fs.write(op.destination, buf=content, context=context)
+                            bytes_copied = len(content)
+                        else:
+                            chunks = await asyncio.to_thread(fs.stream, op.source, context=context)
+                            write_result = await asyncio.to_thread(
+                                fs.write_stream, op.destination, chunks, context=context
+                            )
+                            bytes_copied = write_result.get("size", file_size)
+
+                        results.append(
+                            BulkCopyResult(
+                                source=op.source,
+                                destination=op.destination,
+                                success=True,
+                                bytes_copied=bytes_copied,
+                            )
+                        )
+                    except Exception as e:
                         results.append(
                             BulkCopyResult(
                                 source=op.source,
                                 destination=op.destination,
                                 success=False,
-                                error=f"Source not found: {op.source}",
+                                error=str(e),
                             )
                         )
-                        continue
 
-                    file_size = meta.get("size", 0) or 0
+                return CopyBulkResponse(results=results)
 
-                    if file_size < STREAMING_COPY_THRESHOLD:
-                        content = await asyncio.to_thread(fs.sys_read, op.source, context=context)
-                        await asyncio.to_thread(
-                            fs.write, op.destination, buf=content, context=context
-                        )
-                        bytes_copied = len(content)
-                    else:
-                        chunks = await asyncio.to_thread(fs.stream, op.source, context=context)
-                        write_result = await asyncio.to_thread(
-                            fs.write_stream, op.destination, chunks, context=context
-                        )
-                        bytes_copied = write_result.get("size", file_size)
-
-                    results.append(
-                        BulkCopyResult(
-                            source=op.source,
-                            destination=op.destination,
-                            success=True,
-                            bytes_copied=bytes_copied,
-                        )
-                    )
-                except Exception as e:
-                    results.append(
-                        BulkCopyResult(
-                            source=op.source,
-                            destination=op.destination,
-                            success=False,
-                            error=str(e),
-                        )
-                    )
-
-            return CopyBulkResponse(results=results)
+            return await _run_for_context(context, request, _work)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -2155,10 +2154,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Bulk copy error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Glob Search Endpoint
-    # =============================================================================
 
     @router.get("/glob", response_model=GlobResponse)
     async def glob_search(
@@ -2174,27 +2169,34 @@ def create_async_files_router(
         fallback to Python fnmatch.
         """
         try:
-            fs = await _get_fs()
 
-            # List all files under the base path
-            all_paths = await asyncio.to_thread(
-                fs.sys_readdir, path, recursive=True, context=context
-            )
+            async def _work() -> GlobResponse:
+                fs = await _get_fs()
 
-            # Apply glob pattern filter
-            matched = await asyncio.to_thread(glob_filter, all_paths, include_patterns=[pattern])
+                # List all files under the base path
+                # sys_readdir is async — call directly, not via to_thread
+                all_paths = await _maybe_await(
+                    fs.sys_readdir(path, recursive=True, context=context)
+                )
 
-            total = len(matched)
-            truncated = total > limit
-            result_paths = matched[:limit]
+                # Apply glob pattern filter
+                matched = await asyncio.to_thread(
+                    glob_filter, all_paths, include_patterns=[pattern]
+                )
 
-            return GlobResponse(
-                matches=result_paths,
-                total=total,
-                truncated=truncated,
-                pattern=pattern,
-                base_path=path,
-            )
+                total = len(matched)
+                truncated = total > limit
+                result_paths = matched[:limit]
+
+                return GlobResponse(
+                    matches=result_paths,
+                    total=total,
+                    truncated=truncated,
+                    pattern=pattern,
+                    base_path=path,
+                )
+
+            return await _run_for_context(context, {"path": path}, _work)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -2203,10 +2205,6 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Glob error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # =============================================================================
-    # Grep Search Endpoint
-    # =============================================================================
 
     @router.get("/grep", response_model=GrepResponse)
     async def grep_search(
@@ -2225,76 +2223,81 @@ def create_async_files_router(
         import re
 
         try:
-            fs = await _get_fs()
 
-            # List all files under the base path
-            all_paths = await asyncio.to_thread(
-                fs.sys_readdir, path, recursive=True, context=context
-            )
+            async def _work() -> GrepResponse:
+                fs = await _get_fs()
 
-            # Try Rust mmap grep first
-            results = await asyncio.to_thread(
-                grep_files_mmap, pattern, all_paths, ignore_case, limit
-            )
+                # List all files under the base path
+                # sys_readdir is async — call directly, not via to_thread
+                all_paths = await _maybe_await(
+                    fs.sys_readdir(path, recursive=True, context=context)
+                )
 
-            # Fallback to Python re if Rust is unavailable
-            if results is None:
-                flags = re.IGNORECASE if ignore_case else 0
-                try:
-                    compiled = re.compile(pattern, flags)
-                except re.error as e:
-                    raise HTTPException(
-                        status_code=400, detail=f"Invalid regex pattern: {e}"
-                    ) from e
+                # Try Rust mmap grep first
+                results = await asyncio.to_thread(
+                    grep_files_mmap, pattern, all_paths, ignore_case, limit
+                )
 
-                results = []
-                for file_path in all_paths:
-                    if len(results) >= limit:
-                        break
+                # Fallback to Python re if Rust is unavailable
+                if results is None:
+                    flags = re.IGNORECASE if ignore_case else 0
                     try:
-                        content = fs.read(file_path, context=context)
-                        if isinstance(content, bytes):
-                            content = content.decode("utf-8", errors="replace")
-                        elif isinstance(content, dict):
-                            content = content.get("content", "")
+                        compiled = re.compile(pattern, flags)
+                    except re.error as e:
+                        raise HTTPException(
+                            status_code=400, detail=f"Invalid regex pattern: {e}"
+                        ) from e
+
+                    results = []
+                    for file_path in all_paths:
+                        if len(results) >= limit:
+                            break
+                        try:
+                            content = fs.read(file_path, context=context)
                             if isinstance(content, bytes):
                                 content = content.decode("utf-8", errors="replace")
-                        for line_num, line in enumerate(str(content).splitlines(), 1):
-                            m = compiled.search(line)
-                            if m:
-                                results.append(
-                                    {
-                                        "file": file_path,
-                                        "line": line_num,
-                                        "content": line,
-                                        "match": m.group(0),
-                                    }
-                                )
-                                if len(results) >= limit:
-                                    break
-                    except Exception:
-                        # Skip files that can't be read (binary, permissions, etc.)
-                        continue
+                            elif isinstance(content, dict):
+                                content = content.get("content", "")
+                                if isinstance(content, bytes):
+                                    content = content.decode("utf-8", errors="replace")
+                            for line_num, line in enumerate(str(content).splitlines(), 1):
+                                m = compiled.search(line)
+                                if m:
+                                    results.append(
+                                        {
+                                            "file": file_path,
+                                            "line": line_num,
+                                            "content": line,
+                                            "match": m.group(0),
+                                        }
+                                    )
+                                    if len(results) >= limit:
+                                        break
+                        except Exception:
+                            # Skip files that can't be read (binary, permissions, etc.)
+                            continue
 
-            total = len(results)
-            truncated = total >= limit
-            matches = [
-                GrepMatch(
-                    file=r["file"],
-                    line=r["line"],
-                    content=r["content"],
-                    match=r["match"],
+                total = len(results)
+                truncated = total >= limit
+                matches = [
+                    GrepMatch(
+                        file=r["file"],
+                        line=r["line"],
+                        content=r["content"],
+                        match=r["match"],
+                    )
+                    for r in results[:limit]
+                ]
+
+                return GrepResponse(
+                    matches=matches,
+                    total=total,
+                    truncated=truncated,
+                    pattern=pattern,
+                    base_path=path,
                 )
-                for r in results[:limit]
-            ]
 
-            return GrepResponse(
-                matches=matches,
-                total=total,
-                truncated=truncated,
-                pattern=pattern,
-                base_path=path,
-            )
+            return await _run_for_context(context, {"path": path}, _work)
 
         except HTTPException:
             raise

@@ -44,15 +44,25 @@ def zone_from_path(value: str) -> str | None:
 def zone_from_params(params: Any) -> str | None:
     if params is None:
         return None
-    for attr in _EXPLICIT_ZONE_ATTRS:
-        zone = _read_attr(params, attr)
-        if isinstance(zone, str) and zone and zone != ROOT_ZONE_ID:
-            return zone
+    explicit_zones = _explicit_zones_from_params(params)
+    if explicit_zones:
+        return next(iter(explicit_zones))
     for value in _iter_path_values(params):
         zone = zone_from_path(value)
         if zone is not None:
             return zone
     return None
+
+
+def zones_from_params(params: Any) -> frozenset[str]:
+    if params is None:
+        return frozenset()
+    zones = set(_explicit_zones_from_params(params))
+    for value in _iter_path_values(params):
+        zone = zone_from_path(value)
+        if zone is not None:
+            zones.add(zone)
+    return frozenset(zones)
 
 
 def target_zone_for_context(context: Any, params: Any | None) -> str | None:
@@ -69,6 +79,15 @@ def _read_attr(value: Any, attr: str) -> Any:
     if isinstance(value, dict):
         return value.get(attr)
     return getattr(value, attr, None)
+
+
+def _explicit_zones_from_params(params: Any) -> tuple[str, ...]:
+    zones: list[str] = []
+    for attr in _EXPLICIT_ZONE_ATTRS:
+        zone = _read_attr(params, attr)
+        if isinstance(zone, str) and zone and zone != ROOT_ZONE_ID:
+            zones.append(zone)
+    return tuple(zones)
 
 
 def _iter_path_values(params: Any) -> Iterable[str]:

@@ -6,6 +6,7 @@ from nexus.runtime.zone_resolution import (
     target_zone_for_context,
     zone_from_params,
     zone_from_path,
+    zones_from_params,
 )
 
 
@@ -89,6 +90,11 @@ def test_zone_from_params_reads_paths_container() -> None:
     assert zone_from_params(params) == "eng"
 
 
+def test_zones_from_params_collects_multiple_path_zones() -> None:
+    params = SimpleNamespace(paths=["/zone/eng/a.txt", "/zone/legal/b.txt"])
+    assert zones_from_params(params) == frozenset({"eng", "legal"})
+
+
 def test_zone_from_params_reads_later_paths_container_match() -> None:
     params = SimpleNamespace(paths=["/plain/a.txt", "/zone/legal/b.txt"])
     assert zone_from_params(params) == "legal"
@@ -102,6 +108,11 @@ def test_zone_from_params_reads_dict_paths_container() -> None:
 def test_zone_from_params_does_not_read_file_tuple_content() -> None:
     params = {"files": [("/plain/path.txt", "/zone/wrong/content")]}
     assert zone_from_params(params) is None
+
+
+def test_zones_from_params_does_not_read_batch_file_content() -> None:
+    params = {"files": [("/zone/eng/path.txt", "/zone/wrong/content")]}
+    assert zones_from_params(params) == frozenset({"eng"})
 
 
 def test_zone_from_params_prefers_file_tuple_path_over_content() -> None:

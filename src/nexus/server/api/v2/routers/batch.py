@@ -109,7 +109,7 @@ def create_batch_router(
         - 30-second timeout per operation
         """
         fs = await _get_fs()
-        executor = BatchExecutor(fs=fs)
+        executor = BatchExecutor(fs=fs, zone_registry=_get_zone_registry())
 
         logger.info(
             "Batch request: %d operations, stop_on_error=%s",

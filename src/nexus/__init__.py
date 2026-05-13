@@ -210,24 +210,29 @@ def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
         # + install the real `PeerBlobClient` (replaces the kernel's
         # boot-time Noop default).  Idempotent — no-op if the slot
         # was never stashed (federation disabled).
-        try:
-            import nexus_runtime as _nk
+        # Skip during pytest — xdist workers compete for the same gRPC
+        # port causing hangs and preventing clean process exit.
+        import os as _os_wiring
 
-            # Federation wiring runs FIRST so init_from_env can stash the
-            # raft-side `BlobFetcherSlot` into the kernel; the transport
-            # install hook below drains that slot and installs the real
-            # fetcher.  Reverse order would leave the slot empty when
-            # transport drains, falling back to "blob fetcher not installed".
-            _nk.install_federation_wiring(kernel)
-            _nk.install_transport_wiring(kernel)
-        except Exception as _wiring_exc:
-            import logging as _logging
+        if not _os_wiring.environ.get("PYTEST_CURRENT_TEST"):
+            try:
+                import nexus_runtime as _nk
 
-            _logging.getLogger(__name__).warning(
-                "install_transport_wiring/install_federation_wiring failed "
-                "(federation peer-blob fetch will fall back to Noop): %s",
-                _wiring_exc,
-            )
+                # Federation wiring runs FIRST so init_from_env can stash the
+                # raft-side `BlobFetcherSlot` into the kernel; the transport
+                # install hook below drains that slot and installs the real
+                # fetcher.  Reverse order would leave the slot empty when
+                # transport drains, falling back to "blob fetcher not installed".
+                _nk.install_federation_wiring(kernel)
+                _nk.install_transport_wiring(kernel)
+            except Exception as _wiring_exc:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "install_transport_wiring/install_federation_wiring failed "
+                    "(federation peer-blob fetch will fall back to Noop): %s",
+                    _wiring_exc,
+                )
 
     if _redb_path is None:
         return kernel
@@ -594,22 +599,28 @@ def connect(
 
             if _RUST_AVAILABLE and _Kernel is not None:
                 _early_kernel = _Kernel()
-                try:
-                    import nexus_runtime as _nk
+                # Skip federation wiring during pytest — xdist workers
+                # compete for the same gRPC port causing hangs and
+                # preventing clean process exit.
+                import os as _os_connect
 
-                    # Federation wiring first so init_from_env stashes the
-                    # blob-fetcher slot before transport drains it.
-                    _nk.install_federation_wiring(_early_kernel)
-                    _nk.install_transport_wiring(_early_kernel)
-                except Exception as _wiring_exc:
-                    import logging as _logging
+                if not _os_connect.environ.get("PYTEST_CURRENT_TEST"):
+                    try:
+                        import nexus_runtime as _nk
 
-                    _logging.getLogger(__name__).warning(
-                        "install_transport_wiring/install_federation_wiring "
-                        "failed (federation peer-blob fetch will fall back to "
-                        "Noop): %s",
-                        _wiring_exc,
-                    )
+                        # Federation wiring first so init_from_env stashes the
+                        # blob-fetcher slot before transport drains it.
+                        _nk.install_federation_wiring(_early_kernel)
+                        _nk.install_transport_wiring(_early_kernel)
+                    except Exception as _wiring_exc:
+                        import logging as _logging
+
+                        _logging.getLogger(__name__).warning(
+                            "install_transport_wiring/install_federation_wiring "
+                            "failed (federation peer-blob fetch will fall back to "
+                            "Noop): %s",
+                            _wiring_exc,
+                        )
         except Exception as _early_kernel_exc:
             import logging as _logging
 

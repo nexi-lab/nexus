@@ -3044,6 +3044,7 @@ pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
 #[cfg(test)]
 mod tests {
     use crate::abc::object_store::{ObjectStore, StorageError, WriteResult};
+    use crate::kernel::convenience::KernelConvenience;
     use parking_lot::Mutex;
     use std::collections::HashMap;
 
@@ -4389,7 +4390,8 @@ mod tests {
                 .metastore_get("/workspace/default.txt")
                 .unwrap()
                 .expect("metadata committed by default write-through policy");
-            assert_eq!(meta.version, 1);
+            // write() = setattr_update (v1) + sys_write (v2)
+            assert_eq!(meta.version, 2);
             assert_eq!(meta.size, 7);
             assert!(meta.content_id.is_some());
         }
@@ -4899,7 +4901,9 @@ mod tests {
                 .flush_write_buffer(Some("/workspace/a.txt"), Some("root"))
                 .unwrap();
             let stat = kernel.sys_stat("/workspace/a.txt", "root").unwrap();
-            assert_eq!(stat.version, 2);
+            // write() = setattr(v1) + sys_write(v2); dirty sys_write(v3 buffered)
+            // flush replaces metadata from dirty snapshot (v2) → v2+1 = 3
+            assert_eq!(stat.version, 3);
             assert_eq!(stat.content_id.as_deref(), Some("a.txt"));
         }
 

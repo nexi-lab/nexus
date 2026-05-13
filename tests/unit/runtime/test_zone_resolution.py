@@ -74,6 +74,11 @@ def test_zone_from_params_reads_operation_destination_field() -> None:
     assert zone_from_params(params) == "legal"
 
 
+def test_zone_from_params_reads_syscall_src_path_and_dst_path() -> None:
+    params = SimpleNamespace(src_path="/zone/eng/a.txt", dst_path="/zone/eng/b.txt")
+    assert zone_from_params(params) == "eng"
+
+
 def test_zone_from_params_reads_renames_container() -> None:
     params = SimpleNamespace(renames=[("/zone/legal/a.txt", "/zone/legal/b.txt")])
     assert zone_from_params(params) == "legal"
@@ -189,3 +194,14 @@ def test_target_zone_uses_embedded_path_for_root_multizone_context() -> None:
     )
     params = SimpleNamespace(path="/zone/legal/docs/a.txt")
     assert target_zone_for_context(context, params) == "legal"
+
+
+def test_target_zone_uses_syscall_src_path_for_root_multizone_context() -> None:
+    context = OperationContext(
+        user_id="alice",
+        groups=[],
+        zone_id=ROOT_ZONE_ID,
+        zone_perms=(("eng", "rw"), ("legal", "rw")),
+    )
+    params = {"src_path": "/zone/eng/a.txt", "dst_path": "/zone/eng/b.txt"}
+    assert target_zone_for_context(context, params) == "eng"

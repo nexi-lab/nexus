@@ -14,6 +14,8 @@ _PATH_ATTRS = (
     "destination",
     "old_path",
     "new_path",
+    "src_path",
+    "dst_path",
     "prefix",
 )
 _CONTAINER_ATTRS = ("files", "operations", "paths", "renames")

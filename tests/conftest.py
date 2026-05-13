@@ -13,8 +13,10 @@ Usage:
   pytest --hypothesis-profile ci ...
 """
 
+import atexit as _atexit
 import os
 import sys
+import threading as _threading
 from pathlib import Path
 
 import pytest
@@ -56,6 +58,28 @@ os.environ.setdefault("NEXUS_ENABLE_WRITE_BUFFER", "false")
 # See ``tests/unit/lib/oauth/test_crypto_fail_loud.py``.
 # ---------------------------------------------------------------------------
 os.environ.setdefault("NEXUS_ALLOW_EPHEMERAL_OAUTH_KEY", "1")
+
+# ---------------------------------------------------------------------------
+# Force-exit prevention: Rust Kernel::new() creates a tokio runtime with
+# non-daemon threads (nexus-kernel-peer). After tests complete, xdist
+# worker processes hang for 15+ min waiting for these threads to drain.
+# An atexit handler with a short grace period ensures workers exit promptly.
+# Registered at import time so every process (controller + workers) gets it.
+# ---------------------------------------------------------------------------
+
+
+def _force_exit_after_grace() -> None:
+    """Schedule hard os._exit after 10s grace period."""
+
+    def _kill() -> None:
+        os._exit(0)
+
+    t = _threading.Timer(10.0, _kill)
+    t.daemon = True
+    t.start()
+
+
+_atexit.register(_force_exit_after_grace)
 
 
 def __getattr__(name: str):
@@ -119,30 +143,6 @@ def pytest_addoption(parser):
         default=False,
         help="Run quarantined flaky tests",
     )
-
-
-def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
-    """Force-exit after test session to prevent xdist worker hang.
-
-    Rust Kernel::new() creates a tokio runtime with non-daemon worker
-    threads.  When xdist workers finish their tests, these threads keep
-    the process alive indefinitely (15+ min on macOS CI).  An explicit
-    os._exit() after a short grace period ensures clean shutdown without
-    waiting for the tokio runtime's background threads to drain.
-    """
-    import gc
-    import threading
-
-    gc.collect()  # drop Python-side kernel references → tokio Drop
-
-    def _force_exit() -> None:
-        os._exit(exitstatus if isinstance(exitstatus, int) else 0)
-
-    # Give pytest 5s for normal cleanup (coverage, result upload, etc.)
-    # then hard-exit to prevent the hang.
-    t = threading.Timer(5.0, _force_exit)
-    t.daemon = True
-    t.start()
 
 
 def pytest_collection_modifyitems(config, items):

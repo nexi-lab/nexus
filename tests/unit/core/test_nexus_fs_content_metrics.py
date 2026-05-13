@@ -62,7 +62,7 @@ class _Kernel:
             for index, _path in enumerate(paths)
         ]
 
-    def _read_batch(self, paths: list[str], _ctx: object) -> list[Any]:
+    def sys_read_batch(self, paths: list[str], _ctx: object) -> list[Any]:
         return [
             SimpleNamespace(
                 data=f"b{index}".encode(),
@@ -72,7 +72,7 @@ class _Kernel:
             for index, _path in enumerate(paths)
         ]
 
-    def _write_batch(self, files: list[tuple[str, bytes]], _ctx: object) -> list[Any]:
+    def sys_write_batch(self, files: list[tuple[str, bytes]], _ctx: object) -> list[Any]:
         return [
             SimpleNamespace(
                 hit=True,
@@ -101,7 +101,7 @@ class _ErrorKernel(_Kernel):
 
 
 class _FallbackKernel(_Kernel):
-    def _read_batch(self, paths: list[str], _ctx: object) -> list[Any]:
+    def sys_read_batch(self, paths: list[str], _ctx: object) -> list[Any]:
         return [
             SimpleNamespace(
                 data=None,

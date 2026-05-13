@@ -17,7 +17,10 @@ async def test_lifespan_shutdown_stops_started_zone_threads() -> None:
     app = SimpleNamespace(state=SimpleNamespace(zone_registry=registry))
     svc = LifespanServices(zone_registry=registry)
 
-    await shutdown_zone_runners(app, svc)
+    try:
+        await shutdown_zone_runners(app, svc)
 
-    assert not runner_a.is_alive
-    assert not runner_b.is_alive
+        assert not runner_a.is_alive
+        assert not runner_b.is_alive
+    finally:
+        registry.stop_all()

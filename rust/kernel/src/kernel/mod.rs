@@ -648,7 +648,7 @@ pub struct Kernel {
     vfs_lock_timeout_ms: AtomicU64,
     // Max in-flight backend fetches inside `sys_read` batch path. Default 16.
     read_batch_max_concurrency: AtomicUsize,
-    // Max aggregate bytes for batch reads (DoS guard). Default 100 MiB.
+    // Max aggregate bytes for batch reads (DoS guard). Default uncapped.
     read_batch_max_aggregate_bytes: AtomicUsize,
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
@@ -841,7 +841,7 @@ impl Kernel {
             boot_metastore_tempdir: parking_lot::RwLock::new(Some(boot_tempdir)),
             vfs_lock_timeout_ms: AtomicU64::new(5000),
             read_batch_max_concurrency: AtomicUsize::new(16),
-            read_batch_max_aggregate_bytes: AtomicUsize::new(100 * 1024 * 1024),
+            read_batch_max_aggregate_bytes: AtomicUsize::new(usize::MAX),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
             stat_hook_count: AtomicU64::new(0),
@@ -1016,7 +1016,7 @@ impl Kernel {
             .store(n.max(1), Ordering::Relaxed);
     }
 
-    /// Max aggregate bytes for batch reads (DoS guard). Default 100 MiB.
+    /// Max aggregate bytes for batch reads (DoS guard). Default uncapped.
     #[inline]
     pub fn read_batch_max_aggregate_bytes(&self) -> usize {
         self.read_batch_max_aggregate_bytes.load(Ordering::Relaxed)
@@ -4272,7 +4272,7 @@ mod tests {
             let (kernel, backend, ctx) = mounted_counting_kernel();
 
             let write = kernel
-                .sys_write("/workspace/default.txt", &ctx, b"visible", 0)
+                .sys_write_one("/workspace/default.txt", &ctx, b"visible", 0)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 1);
@@ -4292,14 +4292,16 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
 
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"one", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"one", 0)
                 .unwrap();
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"two", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"two", 0)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 2);
-            let read = kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).unwrap();
+            let read = kernel
+                .sys_read_one("/workspace/a.txt", &ctx, 5_000, 0)
+                .unwrap();
             assert_eq!(read.data.unwrap(), b"two");
         }
 
@@ -4311,13 +4313,13 @@ mod tests {
             for idx in 0..100 {
                 let payload = format!("payload-{idx}");
                 kernel
-                    .sys_write("/workspace/burst.txt", &ctx, payload.as_bytes(), 0)
+                    .sys_write_one("/workspace/burst.txt", &ctx, payload.as_bytes(), 0)
                     .unwrap();
             }
 
             assert_eq!(backend.write_count(), 0);
             let read = kernel
-                .sys_read("/workspace/burst.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/burst.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"payload-99");
 
@@ -4350,7 +4352,7 @@ mod tests {
             let ctx = OperationContext::new("test", "root", true, None, true);
 
             kernel
-                .sys_write("/workspace/idle.txt", &ctx, b"idle", 0)
+                .sys_write_one("/workspace/idle.txt", &ctx, b"idle", 0)
                 .unwrap();
             assert_eq!(backend.write_count(), 0);
 
@@ -4364,7 +4366,7 @@ mod tests {
             assert_eq!(backend.write_count(), 1);
             assert_eq!(kernel.write_buffer_dirty_count(), 0);
             let read = kernel
-                .sys_read("/workspace/idle.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/idle.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"idle");
         }
@@ -4375,7 +4377,7 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/new.txt", &ctx, b"new", 0)
+                .sys_write_one("/workspace/new.txt", &ctx, b"new", 0)
                 .unwrap();
             assert_eq!(backend.write_count(), 0);
 
@@ -4395,7 +4397,7 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/source.txt", &ctx, b"source", 0)
+                .sys_write_one("/workspace/source.txt", &ctx, b"source", 0)
                 .unwrap();
             assert_eq!(backend.write_count(), 0);
 
@@ -4406,7 +4408,7 @@ mod tests {
             assert!(copied.hit);
             assert_eq!(backend.write_count(), 2);
             let read = kernel
-                .sys_read("/workspace/copy.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/copy.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"source");
         }
@@ -4425,7 +4427,7 @@ mod tests {
             );
 
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 1);
@@ -4438,12 +4440,16 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
-            kernel.sys_unlink("/workspace/a.txt", &ctx, false).unwrap();
+            kernel
+                .sys_unlink_one("/workspace/a.txt", &ctx, false)
+                .unwrap();
 
             assert_eq!(backend.write_count(), 1);
-            assert!(kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).is_err());
+            assert!(kernel
+                .sys_read_one("/workspace/a.txt", &ctx, 5_000, 0)
+                .is_err());
         }
 
         #[test]
@@ -4452,7 +4458,7 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
             kernel
                 .sys_rename("/workspace/a.txt", "/workspace/b.txt", &ctx)
@@ -4460,8 +4466,12 @@ mod tests {
 
             assert_eq!(backend.write_count(), 1);
             assert_eq!(kernel.write_buffer_dirty_count(), 0);
-            assert!(kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).is_err());
-            let read = kernel.sys_read("/workspace/b.txt", &ctx, 5_000, 0).unwrap();
+            assert!(kernel
+                .sys_read_one("/workspace/a.txt", &ctx, 5_000, 0)
+                .is_err());
+            let read = kernel
+                .sys_read_one("/workspace/b.txt", &ctx, 5_000, 0)
+                .unwrap();
             assert_eq!(read.data.unwrap(), b"abc");
         }
 
@@ -4473,7 +4483,7 @@ mod tests {
                 .sys_mkdir("/workspace/dir", &ctx, true, false)
                 .unwrap();
             kernel
-                .sys_write("/workspace/dir/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/dir/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             kernel
@@ -4483,10 +4493,10 @@ mod tests {
             assert_eq!(backend.write_count(), 1);
             assert_eq!(kernel.write_buffer_dirty_count(), 0);
             assert!(kernel
-                .sys_read("/workspace/dir/a.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/dir/a.txt", &ctx, 5_000, 0)
                 .is_err());
             let read = kernel
-                .sys_read("/workspace/moved/a.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/moved/a.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"abc");
         }
@@ -4499,7 +4509,7 @@ mod tests {
                 .sys_mkdir("/workspace/dir", &ctx, true, false)
                 .unwrap();
             kernel
-                .sys_write("/workspace/dir/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/dir/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let result = kernel.sys_rmdir("/workspace/dir", &ctx, true).unwrap();
@@ -4508,7 +4518,7 @@ mod tests {
             assert_eq!(kernel.write_buffer_dirty_count(), 0);
             assert_eq!(result.children_deleted, 1);
             assert!(kernel
-                .sys_read("/workspace/dir/a.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/dir/a.txt", &ctx, 5_000, 0)
                 .is_err());
         }
 
@@ -4526,7 +4536,7 @@ mod tests {
             let ctx = OperationContext::new("test", "root", true, None, true);
 
             let result = kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             assert!(!result.hit);
@@ -4538,7 +4548,7 @@ mod tests {
             let (kernel, backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let lock_handle = kernel.lock_manager.blocking_acquire(
@@ -4567,7 +4577,7 @@ mod tests {
                 .sys_mkdir("/workspace/dir", &ctx, true, false)
                 .unwrap();
             kernel
-                .sys_write("/workspace/dir/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/dir/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let lock_handle = kernel.lock_manager.blocking_acquire(
@@ -4602,16 +4612,18 @@ mod tests {
             let (kernel, backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"seed", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"seed", 0)
                 .unwrap();
 
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"dirty", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"dirty", 0)
                 .unwrap();
             backend.set_fail_writes(true);
 
-            assert!(kernel.sys_unlink("/workspace/a.txt", &ctx, false).is_err());
+            assert!(kernel
+                .sys_unlink_one("/workspace/a.txt", &ctx, false)
+                .is_err());
 
             let lock_handle = kernel.lock_manager.blocking_acquire(
                 "/workspace/a.txt",
@@ -4627,7 +4639,7 @@ mod tests {
             let (kernel, _backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let lock_handle = kernel.lock_manager.blocking_acquire(
@@ -4667,7 +4679,7 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel.set_vfs_lock_timeout(1);
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let dirty = kernel
@@ -4706,16 +4718,18 @@ mod tests {
             let (kernel, backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"hello", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"hello", 0)
                 .unwrap();
 
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"XX", 1)
+                .sys_write_one("/workspace/a.txt", &ctx, b"XX", 1)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 1);
-            let read = kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).unwrap();
+            let read = kernel
+                .sys_read_one("/workspace/a.txt", &ctx, 5_000, 0)
+                .unwrap();
             assert_eq!(read.data.unwrap(), b"hXXlo");
         }
 
@@ -4726,12 +4740,12 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/seed.txt", &ctx, b"XX", 1)
+                .sys_write_one("/workspace/seed.txt", &ctx, b"XX", 1)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 0);
             let read = kernel
-                .sys_read("/workspace/seed.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/seed.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"hXXlo");
 
@@ -4747,12 +4761,12 @@ mod tests {
             let (kernel, _backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"hello", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"hello", 0)
                 .unwrap();
 
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"dirty", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"dirty", 0)
                 .unwrap();
 
             let route = kernel.vfs_router.route("/workspace/a.txt", "root").unwrap();
@@ -4824,10 +4838,10 @@ mod tests {
             };
 
             kernel
-                .sys_write("/workspace/a.txt", &first, b"first", 0)
+                .sys_write_one("/workspace/a.txt", &first, b"first", 0)
                 .unwrap();
             kernel
-                .sys_write("/workspace/a.txt", &second, b"second", 0)
+                .sys_write_one("/workspace/a.txt", &second, b"second", 0)
                 .unwrap();
             kernel
                 .flush_write_buffer(Some("/workspace/a.txt"), Some("root"))

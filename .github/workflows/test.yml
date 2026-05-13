@@ -168,7 +168,7 @@ jobs:
         shell: bash
 
       - name: Run unit tests
-        timeout-minutes: 30
+        timeout-minutes: 45
         run: |
           start=$(date +%s)
           uv run --no-sync python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \

@@ -826,7 +826,7 @@ def _register_routes(app: FastAPI) -> None:
     # Test hooks REST API (Issue #2) — only when NEXUS_TEST_HOOKS=true
     if os.getenv("NEXUS_TEST_HOOKS") == "true":
         try:
-            from nexus.core.test_hooks import build_test_hooks_router
+            from nexus.server.test_hooks import build_test_hooks_router
 
             app.include_router(build_test_hooks_router())
             logger.info("Test hooks routes registered (NEXUS_TEST_HOOKS=true)")

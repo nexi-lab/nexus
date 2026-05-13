@@ -8,7 +8,7 @@ from nexus.server.dependencies import require_admin
 
 
 def test_zone_runner_test_hooks_route_work_through_registry() -> None:
-    from nexus.core.test_hooks import build_test_hooks_router
+    from nexus.server.test_hooks import build_test_hooks_router
 
     app = FastAPI()
     registry = ZoneRegistry()

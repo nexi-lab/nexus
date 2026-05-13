@@ -121,6 +121,30 @@ def pytest_addoption(parser):
     )
 
 
+def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
+    """Force-exit after test session to prevent xdist worker hang.
+
+    Rust Kernel::new() creates a tokio runtime with non-daemon worker
+    threads.  When xdist workers finish their tests, these threads keep
+    the process alive indefinitely (15+ min on macOS CI).  An explicit
+    os._exit() after a short grace period ensures clean shutdown without
+    waiting for the tokio runtime's background threads to drain.
+    """
+    import gc
+    import threading
+
+    gc.collect()  # drop Python-side kernel references → tokio Drop
+
+    def _force_exit() -> None:
+        os._exit(exitstatus if isinstance(exitstatus, int) else 0)
+
+    # Give pytest 5s for normal cleanup (coverage, result upload, etc.)
+    # then hard-exit to prevent the hang.
+    t = threading.Timer(5.0, _force_exit)
+    t.daemon = True
+    t.start()
+
+
 def pytest_collection_modifyitems(config, items):
     if not config.getoption("--run-quarantine"):
         skip_quarantine = pytest.mark.skip(reason="Quarantined: use --run-quarantine to run")

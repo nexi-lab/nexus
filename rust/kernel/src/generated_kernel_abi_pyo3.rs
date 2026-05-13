@@ -1021,7 +1021,7 @@ pub struct PySysCopyResult {
 
 // ── PyBatchReadItem ──────────────────────────────────────────────
 
-/// Per-item result for `_read_batch`. `error_kind == ""` means success.
+/// Per-item result for `sys_read_batch`. `error_kind == ""` means success.
 /// On error `data` / `content_id` are `None` and counters are zero.
 #[pyclass(get_all)]
 pub struct PyBatchReadItem {
@@ -2269,7 +2269,7 @@ impl PyKernel {
 
         // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_read(path, &rust_ctx, timeout_ms, offset));
+        let result = py.detach(|| self.inner.sys_read_one(path, &rust_ctx, timeout_ms, offset));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         // 3. Convert Vec<u8> -> PyBytes
@@ -2311,7 +2311,7 @@ impl PyKernel {
         let content_owned = content.to_vec();
         let result = py.detach(|| {
             self.inner
-                .sys_write(path, &rust_ctx, &content_owned, offset)
+                .sys_write_one(path, &rust_ctx, &content_owned, offset)
         });
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
@@ -2438,7 +2438,7 @@ impl PyKernel {
 
         // 2. Call pure Rust kernel
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_unlink(path, &rust_ctx, recursive));
+        let result = py.detach(|| self.inner.sys_unlink_one(path, &rust_ctx, recursive));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysUnlinkResult {
@@ -2674,7 +2674,7 @@ impl PyKernel {
     /// have a full OperationContext handy.
     fn sys_read_raw<'py>(&self, py: Python<'py>, path: &str, zone_id: &str) -> PyResult<Py<PyAny>> {
         let ctx = OperationContext::new("system", zone_id, true, None, true);
-        let result = self.inner.sys_read(path, &ctx, 5000, 0).map_err(|e| {
+        let result = self.inner.sys_read_one(path, &ctx, 5000, 0).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("sys_read_raw: {:?}", e))
         })?;
         match result.data {
@@ -2730,34 +2730,59 @@ impl PyKernel {
             .map_err(|e| -> PyErr { e.into() })
     }
 
-    // ── Internal batch functions ──────────────────────────────────────
+    // ── Batch syscalls ─────────────────────────────────────────────────
 
     /// Batch write: validate + route + lock + write + metastore + dcache.
     /// Returns list of SysWriteResult (one per item).
     #[pyo3(signature = (items, ctx))]
-    fn _write_batch<'py>(
+    fn sys_write_batch<'py>(
         &self,
         py: Python<'py>,
         items: Vec<(String, Vec<u8>)>,
         ctx: &PyOperationContext,
     ) -> PyResult<Vec<PySysWriteResult>> {
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner._write_batch(&items, &rust_ctx));
-        let results = result.map_err(|e| -> PyErr { e.into() })?;
+        let reqs: Vec<crate::kernel::WriteRequest> = items
+            .into_iter()
+            .map(|(path, content)| crate::kernel::WriteRequest {
+                path,
+                content,
+                offset: 0,
+            })
+            .collect();
+        let results = py.detach(|| self.inner.sys_write(&reqs, &rust_ctx));
         Ok(results
             .into_iter()
-            .map(|r| PySysWriteResult {
-                hit: r.hit,
-                content_id: r.content_id,
-                post_hook_needed: r.post_hook_needed,
-                version: r.version,
-                gen: r.gen,
-                size: r.size,
-                is_new: r.is_new,
-                old_content_id: r.old_content_id,
-                old_size: r.old_size,
-                old_version: r.old_version,
-                old_modified_at_ms: r.old_modified_at_ms,
+            .map(|r| {
+                let r = match r {
+                    Ok(r) => r,
+                    Err(_) => crate::kernel::SysWriteResult {
+                        hit: false,
+                        content_id: None,
+                        post_hook_needed: false,
+                        version: 0,
+                        gen: 0,
+                        size: 0,
+                        is_new: false,
+                        old_content_id: None,
+                        old_size: None,
+                        old_version: None,
+                        old_modified_at_ms: None,
+                    },
+                };
+                PySysWriteResult {
+                    hit: r.hit,
+                    content_id: r.content_id,
+                    post_hook_needed: r.post_hook_needed,
+                    version: r.version,
+                    gen: r.gen,
+                    size: r.size,
+                    is_new: r.is_new,
+                    old_content_id: r.old_content_id,
+                    old_size: r.old_size,
+                    old_version: r.old_version,
+                    old_modified_at_ms: r.old_modified_at_ms,
+                }
             })
             .collect())
     }
@@ -2765,37 +2790,38 @@ impl PyKernel {
     /// Batch read. Accepts either `list[str]` (legacy) or
     /// `list[tuple[str, int, int | None]]`. Returns `list[PyBatchReadItem]`.
     #[pyo3(signature = (reqs, ctx))]
-    fn _read_batch<'py>(
+    fn sys_read_batch<'py>(
         &self,
         py: Python<'py>,
         reqs: Bound<'py, PyAny>,
         ctx: &PyOperationContext,
     ) -> PyResult<Vec<PyBatchReadItem>> {
         // Parse either shape: list[str] (legacy) or list[(str, int, int|None)].
-        let rust_reqs: Vec<crate::kernel::BatchReadRequest> =
+        let rust_reqs: Vec<crate::kernel::ReadRequest> =
             if let Ok(paths) = reqs.extract::<Vec<String>>() {
                 paths
                     .into_iter()
-                    .map(|p| crate::kernel::BatchReadRequest {
+                    .map(|p| crate::kernel::ReadRequest {
                         path: p,
                         offset: 0,
                         len: None,
+                        timeout_ms: 5000,
                     })
                     .collect()
             } else {
                 let tuples: Vec<(String, u64, Option<u64>)> = reqs.extract()?;
                 tuples
                     .into_iter()
-                    .map(|(p, off, len)| crate::kernel::BatchReadRequest {
+                    .map(|(p, off, len)| crate::kernel::ReadRequest {
                         path: p,
                         offset: off,
                         len,
+                        timeout_ms: 5000,
                     })
                     .collect()
             };
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner._read_batch(&rust_reqs, &rust_ctx));
-        let results = result.map_err(|e| -> PyErr { e.into() })?;
+        let results = py.detach(|| self.inner.sys_read(&rust_reqs, &rust_ctx));
         Ok(results
             .into_iter()
             .map(|r| match r {
@@ -2827,24 +2853,43 @@ impl PyKernel {
     /// Batch delete: loops sys_unlink for each path.
     /// Returns list of SysUnlinkResult (one per path).
     #[pyo3(signature = (paths, ctx))]
-    fn _delete_batch(
+    fn sys_unlink_batch(
         &self,
         py: Python<'_>,
         paths: Vec<String>,
         ctx: &PyOperationContext,
     ) -> PyResult<Vec<PySysUnlinkResult>> {
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner._delete_batch(&paths, &rust_ctx));
-        let results = result.map_err(|e| -> PyErr { e.into() })?;
+        let reqs: Vec<crate::kernel::UnlinkRequest> = paths
+            .into_iter()
+            .map(|path| crate::kernel::UnlinkRequest {
+                path,
+                recursive: false,
+            })
+            .collect();
+        let results = py.detach(|| self.inner.sys_unlink(&reqs, &rust_ctx));
         Ok(results
             .into_iter()
-            .map(|r| PySysUnlinkResult {
-                hit: r.hit,
-                entry_type: r.entry_type,
-                post_hook_needed: r.post_hook_needed,
-                path: r.path,
-                content_id: r.content_id,
-                size: r.size,
+            .map(|r| {
+                let r = match r {
+                    Ok(r) => r,
+                    Err(_) => crate::kernel::SysUnlinkResult {
+                        hit: false,
+                        entry_type: 0,
+                        post_hook_needed: false,
+                        path: String::new(),
+                        content_id: None,
+                        size: 0,
+                    },
+                };
+                PySysUnlinkResult {
+                    hit: r.hit,
+                    entry_type: r.entry_type,
+                    post_hook_needed: r.post_hook_needed,
+                    path: r.path,
+                    content_id: r.content_id,
+                    size: r.size,
+                }
             })
             .collect())
     }

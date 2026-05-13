@@ -186,13 +186,28 @@ pub struct SysReadResult {
     pub stream_next_offset: Option<usize>,
 }
 
-/// Per-request entry for `Kernel::_read_batch`.
+/// Per-request entry for `Kernel::sys_read` (batch variant).
 ///
 /// `offset` = byte offset into the file; `len = None` means "to EOF".
-pub struct BatchReadRequest {
+/// `timeout_ms` = blocking timeout for IPC types (DT_PIPE/DT_STREAM).
+pub struct ReadRequest {
     pub path: String,
     pub offset: u64,
     pub len: Option<u64>,
+    pub timeout_ms: u64,
+}
+
+/// Per-request entry for `Kernel::sys_write` (batch variant).
+pub struct WriteRequest {
+    pub path: String,
+    pub content: Vec<u8>,
+    pub offset: u64,
+}
+
+/// Per-request entry for `Kernel::sys_unlink` (batch variant).
+pub struct UnlinkRequest {
+    pub path: String,
+    pub recursive: bool,
 }
 
 pub struct SysCatResult {
@@ -631,8 +646,10 @@ pub struct Kernel {
     // VFS lock timeout for blocking acquire (ms) — ``AtomicU64`` so
     // ``set_vfs_lock_timeout`` stays ``&self``; reads are lock-free.
     vfs_lock_timeout_ms: AtomicU64,
-    // Max in-flight backend fetches inside `_read_batch`. Default 16.
+    // Max in-flight backend fetches inside `sys_read` batch path. Default 16.
     read_batch_max_concurrency: AtomicUsize,
+    // Max aggregate bytes for batch reads (DoS guard). Default uncapped.
+    read_batch_max_aggregate_bytes: AtomicUsize,
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
@@ -824,6 +841,7 @@ impl Kernel {
             boot_metastore_tempdir: parking_lot::RwLock::new(Some(boot_tempdir)),
             vfs_lock_timeout_ms: AtomicU64::new(5000),
             read_batch_max_concurrency: AtomicUsize::new(16),
+            read_batch_max_aggregate_bytes: AtomicUsize::new(usize::MAX),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
             stat_hook_count: AtomicU64::new(0),
@@ -996,6 +1014,18 @@ impl Kernel {
     pub fn set_read_batch_max_concurrency(&self, n: usize) {
         self.read_batch_max_concurrency
             .store(n.max(1), Ordering::Relaxed);
+    }
+
+    /// Max aggregate bytes for batch reads (DoS guard). Default uncapped.
+    #[inline]
+    pub fn read_batch_max_aggregate_bytes(&self) -> usize {
+        self.read_batch_max_aggregate_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Override the read-batch aggregate-bytes cap.
+    pub fn set_read_batch_max_aggregate_bytes(&self, n: usize) {
+        self.read_batch_max_aggregate_bytes
+            .store(n, Ordering::Relaxed);
     }
 
     /// Evict every entry from the in-process file cache.
@@ -1758,7 +1788,7 @@ impl Kernel {
     /// DT_LINK: create a VFS-internal symlink whose `link_target`
     /// resolves at sys_read / sys_write / sys_copy time (one hop, with
     /// cycle detection — see `Kernel::dt_link_target` and the
-    /// `max_link_hops` parameter on `sys_read_with_link_depth` etc.).
+    /// `max_link_hops` parameter on `sys_read_single` etc.).
     /// Self-loops (`link_target == path`) are rejected here so the
     /// resolver never has to handle them at lookup time. Idempotent for
     /// an existing DT_LINK at the same path with the same target.
@@ -2639,7 +2669,7 @@ impl Kernel {
                     }
                 }
             }
-            let bytes = match self.sys_read(&fpath, ctx, 5000, 0) {
+            let bytes = match self.sys_read_one(&fpath, ctx, 5000, 0) {
                 Ok(r) => r.data.unwrap_or_default(),
                 Err(_) => continue,
             };
@@ -3064,8 +3094,8 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
 
-        let first = k.sys_write("/gen.txt", &ctx, b"one", 0).unwrap();
-        let second = k.sys_write("/gen.txt", &ctx, b"two", 0).unwrap();
+        let first = k.sys_write_one("/gen.txt", &ctx, b"one", 0).unwrap();
+        let second = k.sys_write_one("/gen.txt", &ctx, b"two", 0).unwrap();
         let stat = k.sys_stat("/gen.txt", "root").unwrap();
 
         assert_eq!(first.gen, 1);
@@ -3077,7 +3107,7 @@ mod tests {
     fn sys_setattr_metadata_update_preserves_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/mime.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_one("/mime.txt", &ctx, b"body", 0).unwrap();
 
         k.sys_setattr(
             "/mime.txt",
@@ -3108,7 +3138,7 @@ mod tests {
     fn copy_uses_destination_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
 
         let copied = k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
         let dst = k.sys_stat("/dst.txt", "root").unwrap();
@@ -3127,7 +3157,7 @@ mod tests {
     fn copy_rejects_non_regular_destination() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
         k.sys_mkdir("/dst", &ctx, true, true).unwrap();
 
         match k.sys_copy("/src.txt", "/dst", &ctx) {
@@ -3149,8 +3179,8 @@ mod tests {
     fn copy_overwrite_preserves_destination_created_at() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
-        k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.created_at_ms = Some(123);
@@ -3167,8 +3197,8 @@ mod tests {
     fn copy_snapshot_failure_releases_vfs_locks() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
-        k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.content_id = Some("/missing-destination-content.txt".to_string());
@@ -3194,22 +3224,33 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
 
-        let first = k
-            ._write_batch(
-                &[
-                    ("/a.txt".to_string(), b"a1".to_vec()),
-                    ("/b.txt".to_string(), b"b1".to_vec()),
-                ],
-                &ctx,
-            )
-            .unwrap();
-        let second = k
-            ._write_batch(&[("/a.txt".to_string(), b"a2".to_vec())], &ctx)
-            .unwrap();
+        let first = k.sys_write(
+            &[
+                WriteRequest {
+                    path: "/a.txt".to_string(),
+                    content: b"a1".to_vec(),
+                    offset: 0,
+                },
+                WriteRequest {
+                    path: "/b.txt".to_string(),
+                    content: b"b1".to_vec(),
+                    offset: 0,
+                },
+            ],
+            &ctx,
+        );
+        let second = k.sys_write(
+            &[WriteRequest {
+                path: "/a.txt".to_string(),
+                content: b"a2".to_vec(),
+                offset: 0,
+            }],
+            &ctx,
+        );
 
-        assert_eq!(first[0].gen, 1);
-        assert_eq!(first[1].gen, 1);
-        assert_eq!(second[0].gen, 2);
+        assert_eq!(first[0].as_ref().unwrap().gen, 1);
+        assert_eq!(first[1].as_ref().unwrap().gen, 1);
+        assert_eq!(second[0].as_ref().unwrap().gen, 2);
         assert_eq!(k.sys_stat("/a.txt", "root").unwrap().gen, 2);
         assert_eq!(k.sys_stat("/b.txt", "root").unwrap().gen, 1);
     }
@@ -3219,10 +3260,10 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("system", "root", true, None, true);
         let write = k
-            .sys_write("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
+            .sys_write_one("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
             .unwrap();
         assert!(write.hit);
-        let raw = k.sys_read("/doc.json", &ctx, 5000, 0).unwrap();
+        let raw = k.sys_read_one("/doc.json", &ctx, 5000, 0).unwrap();
         assert_eq!(raw.data.unwrap(), br#"{"b":2,"a":1}"#);
 
         let cat = k.sys_cat("/doc.json", &ctx, true).unwrap();
@@ -3234,7 +3275,7 @@ mod tests {
     fn sys_cat_returns_raw_bytes_for_unknown_filetype() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("system", "root", true, None, true);
-        let write = k.sys_write("/plain.bin", &ctx, b"abc", 0).unwrap();
+        let write = k.sys_write_one("/plain.bin", &ctx, b"abc", 0).unwrap();
         assert!(write.hit);
 
         let cat = k.sys_cat("/plain.bin", &ctx, true).unwrap();
@@ -3262,7 +3303,7 @@ mod tests {
         .unwrap();
         let ctx = OperationContext::new("system", "root", true, None, true);
 
-        let raw = k.sys_read("/loose.json", &ctx, 5000, 0).unwrap();
+        let raw = k.sys_read_one("/loose.json", &ctx, 5000, 0).unwrap();
         assert_eq!(raw.data.unwrap(), br#"{"z":0}"#);
 
         let cat = k.sys_cat("/loose.json", &ctx, true).unwrap();
@@ -3908,7 +3949,7 @@ mod tests {
         ms.put("/mnt", mount_meta).unwrap();
 
         let ctx = OperationContext::new("test", zone, true, None, true);
-        let result = k.sys_unlink("/mnt", &ctx, false).unwrap();
+        let result = k.sys_unlink_one("/mnt", &ctx, false).unwrap();
 
         assert!(result.hit, "DT_MOUNT unlink should return hit=true");
         assert_eq!(result.entry_type, DT_MOUNT);
@@ -4030,7 +4071,7 @@ mod tests {
             );
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            let read = k.sys_read("/data/a.txt", &ctx, 5000, 0).unwrap();
+            let read = k.sys_read_one("/data/a.txt", &ctx, 5000, 0).unwrap();
 
             assert_eq!(read.data.as_deref(), Some(&b"cached"[..]));
             assert_eq!(read.content_id.as_deref(), Some("etag:1"));
@@ -4231,7 +4272,7 @@ mod tests {
             let (kernel, backend, ctx) = mounted_counting_kernel();
 
             let write = kernel
-                .sys_write("/workspace/default.txt", &ctx, b"visible", 0)
+                .sys_write_one("/workspace/default.txt", &ctx, b"visible", 0)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 1);
@@ -4251,14 +4292,16 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
 
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"one", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"one", 0)
                 .unwrap();
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"two", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"two", 0)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 2);
-            let read = kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).unwrap();
+            let read = kernel
+                .sys_read_one("/workspace/a.txt", &ctx, 5_000, 0)
+                .unwrap();
             assert_eq!(read.data.unwrap(), b"two");
         }
 
@@ -4270,13 +4313,13 @@ mod tests {
             for idx in 0..100 {
                 let payload = format!("payload-{idx}");
                 kernel
-                    .sys_write("/workspace/burst.txt", &ctx, payload.as_bytes(), 0)
+                    .sys_write_one("/workspace/burst.txt", &ctx, payload.as_bytes(), 0)
                     .unwrap();
             }
 
             assert_eq!(backend.write_count(), 0);
             let read = kernel
-                .sys_read("/workspace/burst.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/burst.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"payload-99");
 
@@ -4309,7 +4352,7 @@ mod tests {
             let ctx = OperationContext::new("test", "root", true, None, true);
 
             kernel
-                .sys_write("/workspace/idle.txt", &ctx, b"idle", 0)
+                .sys_write_one("/workspace/idle.txt", &ctx, b"idle", 0)
                 .unwrap();
             assert_eq!(backend.write_count(), 0);
 
@@ -4323,7 +4366,7 @@ mod tests {
             assert_eq!(backend.write_count(), 1);
             assert_eq!(kernel.write_buffer_dirty_count(), 0);
             let read = kernel
-                .sys_read("/workspace/idle.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/idle.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"idle");
         }
@@ -4334,7 +4377,7 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/new.txt", &ctx, b"new", 0)
+                .sys_write_one("/workspace/new.txt", &ctx, b"new", 0)
                 .unwrap();
             assert_eq!(backend.write_count(), 0);
 
@@ -4354,7 +4397,7 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/source.txt", &ctx, b"source", 0)
+                .sys_write_one("/workspace/source.txt", &ctx, b"source", 0)
                 .unwrap();
             assert_eq!(backend.write_count(), 0);
 
@@ -4365,7 +4408,7 @@ mod tests {
             assert!(copied.hit);
             assert_eq!(backend.write_count(), 2);
             let read = kernel
-                .sys_read("/workspace/copy.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/copy.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"source");
         }
@@ -4384,7 +4427,7 @@ mod tests {
             );
 
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 1);
@@ -4397,12 +4440,16 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
-            kernel.sys_unlink("/workspace/a.txt", &ctx, false).unwrap();
+            kernel
+                .sys_unlink_one("/workspace/a.txt", &ctx, false)
+                .unwrap();
 
             assert_eq!(backend.write_count(), 1);
-            assert!(kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).is_err());
+            assert!(kernel
+                .sys_read_one("/workspace/a.txt", &ctx, 5_000, 0)
+                .is_err());
         }
 
         #[test]
@@ -4411,7 +4458,7 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
             kernel
                 .sys_rename("/workspace/a.txt", "/workspace/b.txt", &ctx)
@@ -4419,8 +4466,12 @@ mod tests {
 
             assert_eq!(backend.write_count(), 1);
             assert_eq!(kernel.write_buffer_dirty_count(), 0);
-            assert!(kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).is_err());
-            let read = kernel.sys_read("/workspace/b.txt", &ctx, 5_000, 0).unwrap();
+            assert!(kernel
+                .sys_read_one("/workspace/a.txt", &ctx, 5_000, 0)
+                .is_err());
+            let read = kernel
+                .sys_read_one("/workspace/b.txt", &ctx, 5_000, 0)
+                .unwrap();
             assert_eq!(read.data.unwrap(), b"abc");
         }
 
@@ -4432,7 +4483,7 @@ mod tests {
                 .sys_mkdir("/workspace/dir", &ctx, true, false)
                 .unwrap();
             kernel
-                .sys_write("/workspace/dir/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/dir/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             kernel
@@ -4442,10 +4493,10 @@ mod tests {
             assert_eq!(backend.write_count(), 1);
             assert_eq!(kernel.write_buffer_dirty_count(), 0);
             assert!(kernel
-                .sys_read("/workspace/dir/a.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/dir/a.txt", &ctx, 5_000, 0)
                 .is_err());
             let read = kernel
-                .sys_read("/workspace/moved/a.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/moved/a.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"abc");
         }
@@ -4458,7 +4509,7 @@ mod tests {
                 .sys_mkdir("/workspace/dir", &ctx, true, false)
                 .unwrap();
             kernel
-                .sys_write("/workspace/dir/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/dir/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let result = kernel.sys_rmdir("/workspace/dir", &ctx, true).unwrap();
@@ -4467,7 +4518,7 @@ mod tests {
             assert_eq!(kernel.write_buffer_dirty_count(), 0);
             assert_eq!(result.children_deleted, 1);
             assert!(kernel
-                .sys_read("/workspace/dir/a.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/dir/a.txt", &ctx, 5_000, 0)
                 .is_err());
         }
 
@@ -4485,7 +4536,7 @@ mod tests {
             let ctx = OperationContext::new("test", "root", true, None, true);
 
             let result = kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             assert!(!result.hit);
@@ -4497,7 +4548,7 @@ mod tests {
             let (kernel, backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let lock_handle = kernel.lock_manager.blocking_acquire(
@@ -4526,7 +4577,7 @@ mod tests {
                 .sys_mkdir("/workspace/dir", &ctx, true, false)
                 .unwrap();
             kernel
-                .sys_write("/workspace/dir/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/dir/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let lock_handle = kernel.lock_manager.blocking_acquire(
@@ -4561,16 +4612,18 @@ mod tests {
             let (kernel, backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"seed", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"seed", 0)
                 .unwrap();
 
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"dirty", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"dirty", 0)
                 .unwrap();
             backend.set_fail_writes(true);
 
-            assert!(kernel.sys_unlink("/workspace/a.txt", &ctx, false).is_err());
+            assert!(kernel
+                .sys_unlink_one("/workspace/a.txt", &ctx, false)
+                .is_err());
 
             let lock_handle = kernel.lock_manager.blocking_acquire(
                 "/workspace/a.txt",
@@ -4586,7 +4639,7 @@ mod tests {
             let (kernel, _backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let lock_handle = kernel.lock_manager.blocking_acquire(
@@ -4626,7 +4679,7 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel.set_vfs_lock_timeout(1);
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"abc", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"abc", 0)
                 .unwrap();
 
             let dirty = kernel
@@ -4665,16 +4718,18 @@ mod tests {
             let (kernel, backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"hello", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"hello", 0)
                 .unwrap();
 
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"XX", 1)
+                .sys_write_one("/workspace/a.txt", &ctx, b"XX", 1)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 1);
-            let read = kernel.sys_read("/workspace/a.txt", &ctx, 5_000, 0).unwrap();
+            let read = kernel
+                .sys_read_one("/workspace/a.txt", &ctx, 5_000, 0)
+                .unwrap();
             assert_eq!(read.data.unwrap(), b"hXXlo");
         }
 
@@ -4685,12 +4740,12 @@ mod tests {
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
 
             kernel
-                .sys_write("/workspace/seed.txt", &ctx, b"XX", 1)
+                .sys_write_one("/workspace/seed.txt", &ctx, b"XX", 1)
                 .unwrap();
 
             assert_eq!(backend.write_count(), 0);
             let read = kernel
-                .sys_read("/workspace/seed.txt", &ctx, 5_000, 0)
+                .sys_read_one("/workspace/seed.txt", &ctx, 5_000, 0)
                 .unwrap();
             assert_eq!(read.data.unwrap(), b"hXXlo");
 
@@ -4706,12 +4761,12 @@ mod tests {
             let (kernel, _backend, ctx) = mounted_counting_kernel();
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::strict());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"hello", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"hello", 0)
                 .unwrap();
 
             kernel.set_write_coalescing_policy("/", contracts::WriteCoalescingPolicy::latency());
             kernel
-                .sys_write("/workspace/a.txt", &ctx, b"dirty", 0)
+                .sys_write_one("/workspace/a.txt", &ctx, b"dirty", 0)
                 .unwrap();
 
             let route = kernel.vfs_router.route("/workspace/a.txt", "root").unwrap();
@@ -4783,10 +4838,10 @@ mod tests {
             };
 
             kernel
-                .sys_write("/workspace/a.txt", &first, b"first", 0)
+                .sys_write_one("/workspace/a.txt", &first, b"first", 0)
                 .unwrap();
             kernel
-                .sys_write("/workspace/a.txt", &second, b"second", 0)
+                .sys_write_one("/workspace/a.txt", &second, b"second", 0)
                 .unwrap();
             kernel
                 .flush_write_buffer(Some("/workspace/a.txt"), Some("root"))
@@ -4917,7 +4972,7 @@ mod tests {
             }
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            match k.sys_read("/data/a", &ctx, 5000, 0) {
+            match k.sys_read_one("/data/a", &ctx, 5000, 0) {
                 Err(KernelError::PermissionDenied(msg)) => {
                     assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
                 }
@@ -4962,7 +5017,7 @@ mod tests {
             }
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            match k.sys_write("/data/a", &ctx, b"payload", 0) {
+            match k.sys_write_one("/data/a", &ctx, b"payload", 0) {
                 Err(KernelError::PermissionDenied(msg)) => {
                     assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
                 }
@@ -4994,7 +5049,7 @@ mod tests {
     //      composes a `WalStreamCore` over the test metastore + writes
     //      the inode + registers the stream — same code path
     //      production runs through.
-    //   3. `kernel.sys_write(path, …)` and `kernel.sys_read(path, …)`
+    //   3. `kernel.sys_write_one(path, …)` and `kernel.sys_read_one(path, …)`
     //      round-trip bytes through the wal stream, validating the
     //      stream is actually wal-backed (memory streams use a
     //      different backend type, so a memory-vs-wal mistake would
@@ -5179,10 +5234,10 @@ mod tests {
             // wal backend registered and the bytes flow through it.
             let ctx = OperationContext::new("test", "root", true, None, true);
             kernel
-                .sys_write(path, &ctx, b"federation hello", 0)
+                .sys_write_one(path, &ctx, b"federation hello", 0)
                 .expect("sys_write to wal stream");
             let read = kernel
-                .sys_read(path, &ctx, /* timeout_ms */ 0, 0)
+                .sys_read_one(path, &ctx, /* timeout_ms */ 0, 0)
                 .expect("sys_read from wal stream");
             let bytes = read
                 .data
@@ -5227,10 +5282,10 @@ mod tests {
                     .expect("idempotent wal sys_setattr");
             }
             kernel
-                .sys_write(path, &ctx, b"survives reopen", 0)
+                .sys_write_one(path, &ctx, b"survives reopen", 0)
                 .expect("write to reopened wal stream");
             let read = kernel
-                .sys_read(path, &ctx, 0, 0)
+                .sys_read_one(path, &ctx, 0, 0)
                 .expect("read after idempotent reopen");
             assert_eq!(
                 read.data.unwrap().as_slice(),

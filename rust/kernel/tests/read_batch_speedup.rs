@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
-use kernel::kernel::{BatchReadRequest, Kernel, OperationContext};
+use kernel::kernel::{Kernel, OperationContext, ReadRequest};
 
 // ── Helpers shared with benches/read_batch.rs ───────────────────────────────
 // Duplicated by design: benches and integration tests live in different
@@ -157,7 +157,7 @@ fn setup_kernel_with_100_files() -> Kernel {
     for i in 0..100u32 {
         let path = format!("/bench/f{i:03}.txt");
         let payload = vec![b'x'; 1024];
-        k.sys_write(&path, &ctx, &payload, 0).expect("write");
+        k.sys_write_one(&path, &ctx, &payload, 0).expect("write");
     }
 
     let frozen_map: HashMap<String, Vec<u8>> = mutable.blobs.lock().unwrap().clone();
@@ -204,18 +204,19 @@ fn read_batch_meets_3x_speedup_target() {
     k.clear_file_cache();
     for i in 0..100u32 {
         let _ = k
-            .sys_read(&format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
+            .sys_read_one(&format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
             .expect("warmup read");
     }
-    let warmup_reqs: Vec<BatchReadRequest> = (0..100u32)
-        .map(|i| BatchReadRequest {
+    let warmup_reqs: Vec<ReadRequest> = (0..100u32)
+        .map(|i| ReadRequest {
             path: format!("/bench/f{i:03}.txt"),
             offset: 0,
             len: None,
+            timeout_ms: 5000,
         })
         .collect();
     k.clear_file_cache();
-    let _ = k._read_batch(&warmup_reqs, &ctx).expect("warmup batch");
+    let _ = k.sys_read(&warmup_reqs, &ctx);
 
     // ── Sequential measurement ────────────────────────────────────────────
     let seq_iters = 5usize;
@@ -225,7 +226,7 @@ fn read_batch_meets_3x_speedup_target() {
         let t = Instant::now();
         for i in 0..100u32 {
             let _ = k
-                .sys_read(&format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
+                .sys_read_one(&format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
                 .expect("read");
         }
         seq_total += t.elapsed();
@@ -233,11 +234,12 @@ fn read_batch_meets_3x_speedup_target() {
     let seq_mean = seq_total.as_secs_f64() / seq_iters as f64;
 
     // ── Batched measurement ───────────────────────────────────────────────
-    let reqs: Vec<BatchReadRequest> = (0..100u32)
-        .map(|i| BatchReadRequest {
+    let reqs: Vec<ReadRequest> = (0..100u32)
+        .map(|i| ReadRequest {
             path: format!("/bench/f{i:03}.txt"),
             offset: 0,
             len: None,
+            timeout_ms: 5000,
         })
         .collect();
 
@@ -246,7 +248,7 @@ fn read_batch_meets_3x_speedup_target() {
     for _ in 0..batch_iters {
         k.clear_file_cache();
         let t = Instant::now();
-        let _ = k._read_batch(&reqs, &ctx).expect("batch");
+        let _ = k.sys_read(&reqs, &ctx);
         batch_total += t.elapsed();
     }
     let batch_mean = batch_total.as_secs_f64() / batch_iters as f64;

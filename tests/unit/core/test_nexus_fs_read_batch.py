@@ -225,7 +225,7 @@ class TestReadBatchPathValidation:
 
 
 class TestReadBatchTupleShape:
-    """Tests for the new _read_batch tuple-shape ABI (Issue #4058, Task 10).
+    """Tests for the new sys_read_batch tuple-shape ABI (Issue #4058, Task 10).
 
     These verify that:
     - The success-path dict shape is preserved (back-compat).

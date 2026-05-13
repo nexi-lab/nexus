@@ -640,7 +640,7 @@ fn run_unmount(common: CommonArgs, mount_point: &str) -> Result<()> {
         /* agent_id */ None, /* is_system */ true,
     );
     let res = kernel
-        .sys_unlink(mount_point, &ctx, /* recursive */ false)
+        .sys_unlink_one(mount_point, &ctx, /* recursive */ false)
         .map_err(|e| anyhow::anyhow!("unmount {mount_point}: {:?}", e))?;
     if res.hit {
         println!(

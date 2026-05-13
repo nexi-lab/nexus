@@ -121,7 +121,7 @@ fn burst_write_count(strict: bool) -> usize {
     for idx in 0..BURST_WRITES {
         let payload = format!("payload-{idx:03}");
         kernel
-            .sys_write(BURST_PATH, &ctx, payload.as_bytes(), 0)
+            .sys_write_one(BURST_PATH, &ctx, payload.as_bytes(), 0)
             .expect("burst write");
     }
 

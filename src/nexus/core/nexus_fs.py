@@ -274,6 +274,9 @@ class NexusFS(  # type: ignore[misc]
                     from nexus_runtime import PyKernel as _Kernel
 
                     self._kernel = _Kernel()
+                    # Start write-buffer background flusher (production only).
+                    # Test kernels skip this — see make_test_nexus.
+                    self._kernel.start_write_buffer_flusher(250)
                     # Phase 4 (full): drain federation's blob-fetcher
                     # slot + install real `PeerBlobClient` (idempotent).
                     # Log on failure so a stale wheel surfaces in the

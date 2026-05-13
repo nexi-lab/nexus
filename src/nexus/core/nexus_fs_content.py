@@ -886,9 +886,13 @@ class ContentMixin:
 
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
-        # Tier 2 write: Rust handles create-on-write (setattr_update +
-        # sys_write) internally — no Python fallback needed.
-        result = self._kernel.write(path, _rust_ctx, buf, offset)
+        # Tier 1 sys_write: Rust handles create-on-write (implicit create
+        # when offset==0 and entry absent), backend I/O, metadata build+put,
+        # dcache update, and OBSERVE dispatch.  Matches develop — Tier 2
+        # write() wraps sys_write with a redundant create-on-miss fallback
+        # that is never exercised under implicit-create and adds PyO3
+        # dispatch overhead on macOS CI (5× slower).
+        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
         if result.hit:
             io_metrics.record_write_backend_rpc()
 

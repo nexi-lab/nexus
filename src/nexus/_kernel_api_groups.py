@@ -163,6 +163,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "set_self_address",
         "set_vfs_lock_timeout",
         "set_xattr",
+        "start_write_buffer_flusher",
         "stat_batch",
         "stream_collect_all",
         "stream_read_at",

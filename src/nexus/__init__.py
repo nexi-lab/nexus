@@ -206,6 +206,8 @@ def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
         from nexus_runtime import PyKernel as _Kernel
 
         kernel = _Kernel()
+        # Start write-buffer background flusher (production only).
+        kernel.start_write_buffer_flusher(250)
         # Phase 4 (full): drain the federation init's blob-fetcher slot
         # + install the real `PeerBlobClient` (replaces the kernel's
         # boot-time Noop default).  Idempotent — no-op if the slot
@@ -638,6 +640,8 @@ def connect(
 
             if _RUST_AVAILABLE and _Kernel is not None:
                 _early_kernel = _Kernel()
+                # Start write-buffer background flusher (production only).
+                _early_kernel.start_write_buffer_flusher(250)
                 # Skip federation wiring during pytest — xdist workers
                 # compete for the same gRPC port causing hangs and
                 # preventing clean process exit.

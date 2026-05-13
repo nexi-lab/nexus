@@ -23,7 +23,7 @@ from typing import Any
 from nexus.contracts.auth_store_types import SystemSettingDTO
 from nexus.contracts.constants import ROOT_ZONE_ID
 
-_CFG_PREFIX = "cfg:"
+_CFG_PREFIX = "/__sys__/cfg/"
 
 
 class MetastoreSettingsStore:

@@ -85,8 +85,9 @@ class VFSCallDispatcher:
         auth_provider: Any = None,
         api_key: str | None = None,
         subscription_manager: Any = None,
-        zone_registry: Any = None,
         loop: asyncio.AbstractEventLoop | None = None,
+        *,
+        zone_registry: Any = None,
     ) -> None:
         self._nexus_fs = nexus_fs
         self._exposed_methods = exposed_methods

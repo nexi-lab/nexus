@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 from unittest.mock import MagicMock
@@ -62,3 +63,21 @@ async def test_grpc_call_dispatch_runs_in_target_zone_runner() -> None:
     assert decoded["result"]["path"] == "/zone/eng/docs/a.txt"
     assert registry.zones == ["eng"]
     assert registry.runner.calls == 1
+
+
+def test_dispatcher_preserves_legacy_positional_loop_argument() -> None:
+    loop = asyncio.new_event_loop()
+    try:
+        dispatcher = VFSCallDispatcher(
+            MagicMock(),
+            {},
+            None,
+            None,
+            None,
+            loop,
+        )
+
+        assert dispatcher._loop is loop
+        assert dispatcher._zone_registry is None
+    finally:
+        loop.close()

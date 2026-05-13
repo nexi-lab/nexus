@@ -615,10 +615,9 @@ class CopyBulkResponse(BaseModel):
 def create_async_files_router(
     nexus_fs: Any | None = None,
     get_fs: Any | None = None,
+    get_zone_registry: Any | None = None,
 ) -> APIRouter:
     """
-    Create a files router.
-
     Supports two modes:
     1. Direct: Pass nexus_fs instance (for testing)
     2. Lazy: Pass get_fs callable that returns the instance at request time
@@ -627,7 +626,6 @@ def create_async_files_router(
     Args:
         nexus_fs: Initialized NexusFS instance (direct mode)
         get_fs: Callable returning NexusFS (lazy mode)
-
     Returns:
         FastAPI router with file endpoints
     """
@@ -652,6 +650,9 @@ def create_async_files_router(
             status_code=503,
             detail="NexusFS not initialized. Server may still be starting up.",
         )
+
+    def _get_zone_registry() -> Any | None:
+        return get_zone_registry() if get_zone_registry is not None else None
 
     async def get_context(
         auth_result: dict[str, Any] | None = Depends(get_auth_result),

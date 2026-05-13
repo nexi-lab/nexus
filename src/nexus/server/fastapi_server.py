@@ -844,6 +844,7 @@ def _register_routes(app: FastAPI) -> None:
     v2_registry = build_v2_registry(
         nexus_fs_getter=lambda: app.state.nexus_fs,
         chunked_upload_service_getter=lambda: app.state.chunked_upload_service,
+        zone_registry_getter=lambda: app.state.zone_registry,
     )
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)

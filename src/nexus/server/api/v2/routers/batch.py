@@ -30,6 +30,7 @@ def create_batch_router(
     nexus_fs: Any | None = None,
     get_fs: Any | None = None,
     get_context_override: Callable[..., Any] | None = None,
+    get_zone_registry: Callable[[], Any | None] | None = None,
 ) -> APIRouter:
     """Create a batch operations router.
 
@@ -42,6 +43,7 @@ def create_batch_router(
         get_fs: Callable returning NexusFS (lazy mode).
         get_context_override: Optional context provider for testing.
             When None, imports auth from fastapi_server.
+        get_zone_registry: Callable returning ZoneRegistry (lazy mode).
 
     Returns:
         FastAPI router with the ``POST /batch`` endpoint.
@@ -60,6 +62,9 @@ def create_batch_router(
             status_code=503,
             detail="NexusFS not initialized. Server may still be starting up.",
         )
+
+    def _get_zone_registry() -> Any | None:
+        return get_zone_registry() if get_zone_registry is not None else None
 
     # Build context dependency: use override if provided, else import from server.
     if get_context_override is not None:

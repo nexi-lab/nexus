@@ -16,7 +16,7 @@ _PATH_ATTRS = (
     "new_path",
     "prefix",
 )
-_CONTAINER_ATTRS = ("files", "operations", "renames")
+_CONTAINER_ATTRS = ("files", "operations", "paths", "renames")
 _OPERATION_PATH_SLOTS = {
     "append": (1,),
     "delete": (1,),

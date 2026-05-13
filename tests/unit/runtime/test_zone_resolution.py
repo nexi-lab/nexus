@@ -79,6 +79,21 @@ def test_zone_from_params_reads_renames_container() -> None:
     assert zone_from_params(params) == "legal"
 
 
+def test_zone_from_params_reads_paths_container() -> None:
+    params = SimpleNamespace(paths=["/zone/eng/a.txt", "/zone/eng/b.txt"])
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_reads_later_paths_container_match() -> None:
+    params = SimpleNamespace(paths=["/plain/a.txt", "/zone/legal/b.txt"])
+    assert zone_from_params(params) == "legal"
+
+
+def test_zone_from_params_reads_dict_paths_container() -> None:
+    params = {"paths": ["/zone/eng/a.txt"]}
+    assert zone_from_params(params) == "eng"
+
+
 def test_zone_from_params_does_not_read_file_tuple_content() -> None:
     params = {"files": [("/plain/path.txt", "/zone/wrong/content")]}
     assert zone_from_params(params) is None

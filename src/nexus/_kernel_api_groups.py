@@ -109,6 +109,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "dispatch_pre_hooks",
         "dispatch_pre_hooks_batch_stat",
         "exists_batch",
+        "flush_due_write_buffer",
         "flush_observers",
         "flush_write_buffer",
         "get_all_hooks",

@@ -208,7 +208,6 @@ async def rpc_endpoint(
 
         # Scope paths for zone isolation (prefix with /zone/{zone_id}/)
         scope_params_for_zone(params, context.zone_id)
-        target_zone = target_zone_for_context(context, params)
 
         _setup_elapsed = (_time.time() - _rpc_start) * 1000 - _parse_elapsed
 
@@ -235,6 +234,7 @@ async def rpc_endpoint(
 
         # Dispatch method
         _dispatch_start = _time.time()
+        target_zone = target_zone_for_context(context, params)
 
         async def _work() -> Any:
             return await dispatch_method(

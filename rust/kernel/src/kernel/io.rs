@@ -916,15 +916,8 @@ impl Kernel {
             }
         }
 
-        // 3b. POSIX write(2) contract: file must exist.
-        //     File creation goes through Tier 2 write() which composes
-        //     route-scoped metastore create + sys_write.
-        if entry.is_none() && offset == 0 {
-            return miss();
-        }
-
-        // 3c. DT_PIPE / DT_STREAM: try Rust IPC registry
-        if let Some(entry) = entry {
+        // 3b. DT_PIPE / DT_STREAM: try Rust IPC registry
+        if let Some(entry) = &entry {
             if entry.entry_type == DT_PIPE {
                 if let Some(buf) = self.pipe_manager.get(path) {
                     match buf.push(effective_content) {
@@ -1187,12 +1180,10 @@ impl Kernel {
             match old_entry {
                 Some(e) => e.content_id.unwrap_or_default(),
                 None => {
-                    // Partial write to non-existent file (step 3b
-                    // already rejects offset==0 miss; this handles
-                    // the offset>0 race where the entry disappears
-                    // between step 3 and step 5).
-                    self.lock_manager.do_release(lock_handle);
-                    return Err(KernelError::FileNotFound(path.to_string()));
+                    // Partial write requires an existing file — but
+                    // `sys_write` contract says "file must exist" anyway,
+                    // so just surface that.
+                    return Err(KernelError::FileNotFound(input.path.to_string()));
                 }
             }
         };
@@ -1846,23 +1837,9 @@ impl Kernel {
                 });
             }
             // DT_EXTERNAL_STORAGE (5) — connector-backed mounts (oauth/api).
-            // Metadata delete + dcache invalidation handled here (kernel concern).
-            // Connector teardown (token revocation, etc.) stays in Python DLC
-            // via the post_hook_needed signal.
-            5 => {
-                // Metadata-first ordering: delete metadata so the entry becomes
-                // invisible immediately, then Python DLC handles connector teardown.
-                // metastore.delete owns dcache invalidation internally.
-                let _ = self.with_metastore_route(&route, |ms| ms.delete(path));
-                return Ok(SysUnlinkResult {
-                    hit: true,
-                    entry_type: 5,          // DT_EXTERNAL_STORAGE
-                    post_hook_needed: true, // always: Python DLC must unmount
-                    path: path.to_string(),
-                    content_id: entry.content_id,
-                    size: entry.size,
-                });
-            }
+            // Their lifecycle (token revocation, connector teardown) lives
+            // in Python; keep as a miss so the Python layer dispatches.
+            5 => return miss(entry.entry_type),
             _ => {}
         }
 
@@ -2849,14 +2826,11 @@ impl Kernel {
 
     // ── sys_rmdir ──────────────────────────────────────────────────────
 
-    /// Kernel-internal rmdir: full rmdir (validate -> route -> children check -> delete -> dcache).
-    ///
-    /// Only called from `sys_unlink` DT_DIR branch internally.
-    /// Not exposed to Python (removed from PyO3 surface in C21).
+    /// Rust syscall: full rmdir (validate → route → children check → delete → dcache).
     ///
     /// Returns `hit=true` when Rust completed the full operation.
-    /// Returns `hit=false` for DT_MOUNT/DT_EXTERNAL_STORAGE -> Python handles unmount.
-    pub(crate) fn sys_rmdir(
+    /// Returns `hit=false` for DT_MOUNT/DT_EXTERNAL_STORAGE → Python handles unmount.
+    pub fn sys_rmdir(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -3081,31 +3055,6 @@ impl Kernel {
             // Lock timeout check
             if lock_handles[i] == 0 {
                 results.push(Ok(write_miss()));
-                continue;
-            }
-
-            // Contract guard: sys_write_batch does NOT create new files.
-            // Same as sys_write step 3b — file must exist in metastore.
-            // Batch writes are always at offset=0; callers that need to
-            // create files must use sys_setattr(path, DT_REG) first.
-            let pre_entry_exists = self
-                .with_metastore_route(route, |ms| ms.get(path).ok().flatten())
-                .flatten()
-                .is_some();
-            if !pre_entry_exists {
-                results.push(SysWriteResult {
-                    hit: false,
-                    content_id: None,
-                    post_hook_needed: false,
-                    version: 0,
-                    gen: 0,
-                    size: 0,
-                    is_new: false,
-                    old_content_id: None,
-                    old_size: None,
-                    old_version: None,
-                    old_modified_at_ms: None,
-                });
                 continue;
             }
 
@@ -3544,19 +3493,6 @@ impl Kernel {
         if validate_path_fast(parent_path).is_err() {
             return Vec::new();
         }
-
-        // Federation procfs: /__sys__/zones/ enumerates loaded zones
-        // (read-only namespace, like Linux /proc).
-        if let Some(zones) = self.zones_procfs_readdir(parent_path) {
-            return zones
-                .into_iter()
-                .map(|z| {
-                    let path = format!("/__sys__/zones/{z}");
-                    (path, DT_DIR)
-                })
-                .collect();
-        }
-
         // Callers pass either "/local" or "/local/" — normalize the trailing
         // slash off before routing so prefix comparisons below don't produce
         // double slashes (which silently return no children).

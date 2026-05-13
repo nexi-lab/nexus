@@ -102,6 +102,10 @@ fn mounted_counting_kernel() -> (Kernel, Arc<CountingObjectStore>, OperationCont
             None,
             None,
             None,
+            None, // created_at_ms
+            None, // link_target
+            None, // source
+            None, // metastore
         )
         .expect("mount counting object store");
 

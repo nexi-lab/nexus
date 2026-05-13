@@ -163,6 +163,10 @@ fn setup() -> Kernel {
         None,
         None,
         None,
+        None, // created_at_ms
+        None, // link_target
+        None, // source
+        None, // metastore
     )
     .expect("bench setup: sys_setattr DT_MOUNT (mutable)");
 
@@ -196,6 +200,10 @@ fn setup() -> Kernel {
         None,
         None,
         None,
+        None, // created_at_ms
+        None, // link_target
+        None, // source
+        None, // metastore
     )
     .expect("bench setup: sys_setattr DT_MOUNT (latency)");
 

@@ -150,6 +150,10 @@ fn setup_kernel_with_100_files() -> Kernel {
         None,
         None,
         None,
+        None, // created_at_ms
+        None, // link_target
+        None, // source
+        None, // metastore
     )
     .expect("test setup: sys_setattr DT_MOUNT (mutable)");
 
@@ -181,6 +185,10 @@ fn setup_kernel_with_100_files() -> Kernel {
         None,
         None,
         None,
+        None, // created_at_ms
+        None, // link_target
+        None, // source
+        None, // metastore
     )
     .expect("test setup: sys_setattr DT_MOUNT (latency)");
 

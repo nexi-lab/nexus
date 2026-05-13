@@ -107,6 +107,7 @@ impl Kernel {
     /// Federation procfs: list zones for `/__sys__/zones/` directory
     /// reads.  Returns `None` for paths outside the namespace so the
     /// caller falls through to normal routing.
+    #[allow(dead_code)] // reserved for readdir `/__sys__/zones/` integration
     pub(crate) fn zones_procfs_readdir(&self, path: &str) -> Option<Vec<String>> {
         let suffix = path.strip_prefix("/__sys__/zones")?;
         if !suffix.is_empty() && suffix != "/" {

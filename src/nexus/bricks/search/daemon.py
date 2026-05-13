@@ -1511,7 +1511,7 @@ class SearchDaemon:
                 zone_id=zone_id,
             )
 
-        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+        return await run_zone_scoped(getattr(self, "_zone_registry", None), zone_id, _work)
 
     async def _search_on_current_loop(
         self,
@@ -1851,7 +1851,7 @@ class SearchDaemon:
         async def _work() -> list[list[Any]]:
             return await self._batch_search_on_current_loop(queries, zone_id=zone_id)
 
-        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+        return await run_zone_scoped(getattr(self, "_zone_registry", None), zone_id, _work)
 
     async def _batch_search_on_current_loop(
         self,
@@ -1965,7 +1965,7 @@ class SearchDaemon:
         async def _work() -> int:
             return await self._index_documents_on_current_loop(documents, zone_id=zone_id)
 
-        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+        return await run_zone_scoped(getattr(self, "_zone_registry", None), zone_id, _work)
 
     async def _index_documents_on_current_loop(
         self,

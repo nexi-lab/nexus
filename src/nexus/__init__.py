@@ -214,7 +214,7 @@ def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
         # port causing hangs and preventing clean process exit.
         import os as _os_wiring
 
-        if not _os_wiring.environ.get("PYTEST_CURRENT_TEST"):
+        if "pytest" not in __import__("sys").modules:
             try:
                 import nexus_runtime as _nk
 
@@ -643,7 +643,7 @@ def connect(
                 # preventing clean process exit.
                 import os as _os_connect
 
-                if not _os_connect.environ.get("PYTEST_CURRENT_TEST"):
+                if "pytest" not in __import__("sys").modules:
                     try:
                         import nexus_runtime as _nk
 

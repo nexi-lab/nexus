@@ -282,9 +282,7 @@ class NexusFS(  # type: ignore[misc]
                     # workers compete for the same gRPC port causing 8+ min
                     # hangs. Federation is an integration-level concern; unit
                     # tests pass a pre-built kernel via _provided_kernel instead.
-                    import os as _os
-
-                    if not _os.environ.get("PYTEST_CURRENT_TEST"):
+                    if "pytest" not in __import__("sys").modules:
                         try:
                             import nexus_runtime as _nk
 

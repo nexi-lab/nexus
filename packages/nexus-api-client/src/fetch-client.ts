@@ -23,6 +23,7 @@ import type {
   AspectEnvelope,
   CatalogSchemaResponse,
   ColumnSearchResponse,
+  InitializeResponse,
   NexusClientOptions,
   ReplayResponse,
   RequestOptions,
@@ -85,6 +86,10 @@ export class FetchClient {
 
   async deleteNoContent(path: string, options?: RequestOptions): Promise<void> {
     await this.requestRaw("DELETE", path, undefined, options);
+  }
+
+  async initialize(options?: RequestOptions): Promise<InitializeResponse> {
+    return this.get<InitializeResponse>("/api/vfs/initialize", options);
   }
 
   /**

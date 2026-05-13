@@ -9,6 +9,7 @@ Choose this path when you need to understand how the kernel, storage pillars, se
 - [Kernel Architecture](../architecture/KERNEL-ARCHITECTURE.md)
 - [Backend Architecture](../architecture/backend-architecture.md)
 - [CLI Design](../architecture/cli-design.md)
+- [VFS Capability Discovery](../architecture/vfs-capability-discovery.md)
 
 ## For Deeper Context
 

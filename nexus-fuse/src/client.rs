@@ -17,6 +17,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, IF_NO
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -71,6 +72,125 @@ pub struct FileMetadata {
     pub modified_at: Option<String>,
     #[serde(default)]
     pub is_directory: bool,
+}
+
+/// POSIX-style filesystem capabilities advertised by `/api/vfs/initialize`.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct PosixCapabilities {
+    #[serde(default)]
+    pub read: Option<bool>,
+    #[serde(default)]
+    pub readdir: Option<bool>,
+    #[serde(default)]
+    pub stat: Option<bool>,
+    #[serde(default)]
+    pub write: Option<bool>,
+    #[serde(default)]
+    pub unlink: Option<bool>,
+    #[serde(default)]
+    pub mkdir: Option<bool>,
+    #[serde(default)]
+    pub rmdir: Option<bool>,
+    #[serde(default)]
+    pub rename: Option<bool>,
+    #[serde(default)]
+    pub glob: Option<bool>,
+}
+
+impl PosixCapabilities {
+    fn capability(&self, capability: &str) -> Option<bool> {
+        match capability {
+            "read" => self.read,
+            "readdir" => self.readdir,
+            "stat" => self.stat,
+            "write" => self.write,
+            "unlink" => self.unlink,
+            "mkdir" => self.mkdir,
+            "rmdir" => self.rmdir,
+            "rename" => self.rename,
+            "glob" => self.glob,
+            _ => None,
+        }
+    }
+}
+
+/// Per-mount backend capability metadata.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct BackendCapabilities {
+    #[serde(default)]
+    pub backend_name: String,
+    #[serde(default)]
+    pub backend_type: String,
+    #[serde(default)]
+    pub posix: PosixCapabilities,
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    #[serde(default)]
+    pub rust_native: bool,
+    #[serde(default)]
+    pub external: bool,
+}
+
+/// VFS capabilities advertised by the Nexus server.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct VfsCapabilities {
+    #[serde(default)]
+    pub posix: PosixCapabilities,
+    #[serde(default)]
+    pub backends: HashMap<String, BackendCapabilities>,
+}
+
+impl VfsCapabilities {
+    pub fn capability_for_path(&self, path: &str, capability: &str) -> Option<bool> {
+        let normalized = normalize_path(path);
+        let mut best: Option<(usize, &PosixCapabilities)> = None;
+
+        for (mount_point, backend) in &self.backends {
+            let mount = normalize_path(mount_point);
+            if path_is_within_mount(&normalized, &mount) {
+                let replace = best
+                    .map(|(best_len, _)| mount.len() > best_len)
+                    .unwrap_or(true);
+                if replace {
+                    best = Some((mount.len(), &backend.posix));
+                }
+            }
+        }
+
+        if let Some((_, posix)) = best {
+            return posix.capability(capability);
+        }
+
+        self.posix.capability(capability)
+    }
+}
+
+/// Initialize response returned by `/api/vfs/initialize`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct InitializeResponse {
+    pub server_name: String,
+    pub server_version: String,
+    pub protocol_version: String,
+    pub capabilities: VfsCapabilities,
+}
+
+fn normalize_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return "/".to_string();
+    }
+    let with_root = if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{}", trimmed)
+    };
+    with_root.trim_end_matches('/').to_string()
+}
+
+fn path_is_within_mount(path: &str, mount: &str) -> bool {
+    mount == "/" || path == mount || path.starts_with(&format!("{}/", mount.trim_end_matches('/')))
 }
 
 /// JSON-RPC response wrapper.
@@ -348,6 +468,29 @@ impl NexusClient {
     /// Get current user info.
     pub fn whoami(&self) -> Result<UserInfo, NexusClientError> {
         self.block_on(self.whoami_async())
+    }
+
+    /// Async core: discover VFS capabilities from servers that support initialize.
+    pub async fn capabilities_async(&self) -> Result<Option<InitializeResponse>, NexusClientError> {
+        let url = format!("{}/api/vfs/initialize", self.base_url);
+        debug!("GET {}", url);
+
+        let resp = self.client.get(&url).headers(self.headers()).send().await?;
+        if resp.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Self::status_to_error(status, text));
+        }
+
+        Ok(Some(resp.json().await?))
+    }
+
+    /// Discover VFS capabilities from servers that support the initialize endpoint.
+    pub fn capabilities(&self) -> Result<Option<InitializeResponse>, NexusClientError> {
+        self.block_on(self.capabilities_async())
     }
 
     /// Async core: list.

@@ -180,6 +180,31 @@ class VFSCallDispatcher:
             logger.exception("dispatch_call_sync: unexpected error")
             return True, _error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {exc}")
 
+    def initialize_sync(
+        self,
+        request_dict: dict[str, Any],
+        auth_dict: dict[str, Any],
+        rust_mounts: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Build the VFS Initialize response payload for the Rust gRPC server."""
+        del request_dict, auth_dict
+
+        try:
+            from importlib.metadata import version as _version
+
+            server_version = _version("nexus-ai-fs")
+        except Exception:
+            server_version = "unknown"
+
+        from nexus.grpc.capability_discovery import build_initialize_response_dict
+
+        return build_initialize_response_dict(
+            nexus_fs=self._nexus_fs,
+            exposed_methods=self._exposed_methods,
+            server_version=server_version,
+            rust_mounts=rust_mounts or {},
+        )
+
     async def _dispatch_async(
         self,
         method: str,

@@ -5,28 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import grpc
 import pytest
 
 import nexus
-from nexus.raft import zone_manager
+from nexus.grpc import initialize_pb2
 
 
-@pytest.mark.asyncio
-async def test_local_connect_falls_back_when_full_federation_build_is_unavailable(
+def test_local_connect_source_checkout_quickstart(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     """A source checkout should still support the local SDK quickstart."""
 
-    def _raise_missing_full_build(*args, **kwargs):
-        raise RuntimeError(
-            "ZoneManager requires PyO3 build with --features full. "
-            "Build with: maturin develop -m rust/raft/Cargo.toml --features full"
-        )
-
-    monkeypatch.setattr(zone_manager, "ZoneManager", _raise_missing_full_build)
-
-    nx = await nexus.connect(
+    nx = nexus.connect(
         config={
             "profile": "embedded",
             "data_dir": str(tmp_path / "nexus-data"),
@@ -39,8 +30,7 @@ async def test_local_connect_falls_back_when_full_federation_build_is_unavailabl
         nx.close()
 
 
-@pytest.mark.asyncio
-async def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
+def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
     monkeypatch,
 ) -> None:
     """Remote clients should avoid local parser bootstrap and mount writes.
@@ -55,14 +45,20 @@ async def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
     brick-layer registries.
     """
     mock_channel = MagicMock()
+    mock_stub = MagicMock()
+    rpc_error = grpc.RpcError()
+    rpc_error.code = lambda: grpc.StatusCode.UNIMPLEMENTED
+    rpc_error.details = lambda: "Method not found"
+    mock_stub.Initialize.side_effect = rpc_error
 
     with (
         patch("nexus.remote.rpc_transport.grpc.insecure_channel", return_value=mock_channel),
         patch(
-            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub", return_value=MagicMock()
+            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub",
+            return_value=mock_stub,
         ),
     ):
-        nx = await nexus.connect(
+        nx = nexus.connect(
             config={
                 "profile": "remote",
                 "url": "http://127.0.0.1:2027",
@@ -75,23 +71,64 @@ async def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
             # Kernel handle must be a Rust ``PyKernel``.
             assert nx._kernel is not None
             assert nx._kernel.__class__.__name__ == "PyKernel"
+            assert nx.capabilities is None
+            mock_stub.Initialize.assert_called_once()
         finally:
             nx.close()
 
 
-@pytest.mark.asyncio
-async def test_remote_connect_closes_shared_rpc_transport() -> None:
-    """Remote quickstart should close the shared gRPC transport on nx.close()."""
+def test_remote_connect_attaches_discovered_capabilities() -> None:
+    """Remote quickstart should expose Initialize capabilities on NexusFS."""
     mock_channel = MagicMock()
+    mock_stub = MagicMock()
+    response = initialize_pb2.InitializeResponse(
+        server_name="nexus",
+        server_version="test",
+        protocol_version="0.1.0",
+    )
+    response.capabilities.posix.read = True
+    response.capabilities.commands.grep.supported = True
+    mock_stub.Initialize.return_value = response
 
     with (
         patch("nexus.remote.rpc_transport.grpc.insecure_channel", return_value=mock_channel),
         patch(
-            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub", return_value=MagicMock()
+            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub",
+            return_value=mock_stub,
+        ),
+    ):
+        nx = nexus.connect(
+            config={
+                "profile": "remote",
+                "url": "http://127.0.0.1:2027",
+            }
+        )
+        try:
+            assert nx.capabilities["posix"]["read"] is True
+            assert nx.capabilities["commands"]["grep"]["supported"] is True
+            mock_stub.Initialize.assert_called_once()
+        finally:
+            nx.close()
+
+
+def test_remote_connect_closes_shared_rpc_transport() -> None:
+    """Remote quickstart should close the shared gRPC transport on nx.close()."""
+    mock_channel = MagicMock()
+    mock_stub = MagicMock()
+    rpc_error = grpc.RpcError()
+    rpc_error.code = lambda: grpc.StatusCode.UNIMPLEMENTED
+    rpc_error.details = lambda: "Method not found"
+    mock_stub.Initialize.side_effect = rpc_error
+
+    with (
+        patch("nexus.remote.rpc_transport.grpc.insecure_channel", return_value=mock_channel),
+        patch(
+            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub",
+            return_value=mock_stub,
         ),
         patch("nexus.security.tls.config.ZoneTlsConfig.from_env", return_value=None),
     ):
-        nx = await nexus.connect(
+        nx = nexus.connect(
             config={
                 "profile": "remote",
                 "url": "http://127.0.0.1:2027",
@@ -99,4 +136,31 @@ async def test_remote_connect_closes_shared_rpc_transport() -> None:
         )
         nx.close()
 
+    mock_stub.Initialize.assert_called_once()
+    mock_channel.close.assert_called_once()
+
+
+def test_remote_connect_preserves_initialize_failure_when_close_fails() -> None:
+    """Connection cleanup should not mask the Initialize error."""
+    mock_channel = MagicMock()
+    mock_channel.close.side_effect = RuntimeError("close failed")
+    mock_stub = MagicMock()
+    mock_stub.Initialize.side_effect = ValueError("initialize failed")
+
+    with (
+        patch("nexus.remote.rpc_transport.grpc.insecure_channel", return_value=mock_channel),
+        patch(
+            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub",
+            return_value=mock_stub,
+        ),
+        pytest.raises(ValueError, match="initialize failed"),
+    ):
+        nexus.connect(
+            config={
+                "profile": "remote",
+                "url": "http://127.0.0.1:2027",
+            }
+        )
+
+    mock_stub.Initialize.assert_called_once()
     mock_channel.close.assert_called_once()

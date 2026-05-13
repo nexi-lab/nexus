@@ -2,7 +2,8 @@
 
 use crate::cache::FileCache;
 use crate::cached_read::{read_with_cache, CachedReadResult};
-use crate::client::{FileEntry, NexusClient};
+use crate::client::{FileEntry, InitializeResponse, NexusClient};
+use crate::error::NexusClientError;
 use crate::metrics;
 use crate::passthrough::{ActivePassthrough, OpenAccess, PassthroughDecision, PassthroughManager};
 use fuser::{
@@ -269,6 +270,8 @@ pub struct NexusFs {
     file_cache: Option<Arc<FileCache>>,
     /// Optional kernel passthrough manager for large read-only file opens.
     passthrough: Option<Arc<PassthroughManager>>,
+    /// Server-advertised capabilities. Missing means legacy behavior: ask the server.
+    capabilities: Option<InitializeResponse>,
     /// Per-open file content cache for range reads that bypass persistent cache size limits.
     open_file_cache: Mutex<OpenFileCache>,
     next_file_handle: Mutex<u64>,
@@ -281,19 +284,39 @@ impl NexusFs {
         file_cache: Option<Arc<FileCache>>,
         passthrough: Option<Arc<PassthroughManager>>,
     ) -> Self {
-        Self {
+        Self::try_new(client, file_cache, passthrough)
+            .expect("failed to initialize Nexus FUSE filesystem")
+    }
+
+    /// Create a new NexusFs instance, preserving legacy behavior only for
+    /// servers that do not expose capability discovery.
+    pub fn try_new(
+        client: NexusClient,
+        file_cache: Option<Arc<FileCache>>,
+        passthrough: Option<Arc<PassthroughManager>>,
+    ) -> Result<Self, NexusClientError> {
+        let capabilities = client.capabilities()?;
+        Ok(Self {
             client: Arc::new(client),
             inodes: Mutex::new(InodeTable::new()),
             attr_cache: Mutex::new(LruCache::new(NonZeroUsize::new(10000).unwrap())),
             dir_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
             file_cache,
             passthrough,
+            capabilities,
             open_file_cache: Mutex::new(OpenFileCache::new(
                 NonZeroUsize::new(MAX_OPEN_FILE_HANDLES).unwrap(),
                 MAX_OPEN_FILE_CACHE_BYTES,
             )),
             next_file_handle: Mutex::new(1),
-        }
+        })
+    }
+
+    fn capability_allowed(&self, path: &str, capability: &str) -> bool {
+        self.capabilities
+            .as_ref()
+            .and_then(|response| response.capabilities.capability_for_path(path, capability))
+            .unwrap_or(true)
     }
 
     #[cfg(test)]
@@ -1032,6 +1055,11 @@ impl Filesystem for NexusFs {
 
         let path = Self::join_path(&parent_path, &name);
 
+        if !self.capability_allowed(&path, "write") {
+            reply.error(Errno::EOPNOTSUPP);
+            return;
+        }
+
         // Create empty file
         match self.client.write(&path, &[]) {
             Ok(_) => {
@@ -1073,6 +1101,11 @@ impl Filesystem for NexusFs {
 
         let path = Self::join_path(&parent_path, &name);
 
+        if !self.capability_allowed(&path, "mkdir") {
+            reply.error(Errno::EOPNOTSUPP);
+            return;
+        }
+
         match self.client.mkdir(&path) {
             Ok(_) => {
                 let inode = self.inodes.lock().unwrap().get_or_create(&path);
@@ -1098,6 +1131,11 @@ impl Filesystem for NexusFs {
 
         let path = Self::join_path(&parent_path, &name);
 
+        if !self.capability_allowed(&path, "unlink") {
+            reply.error(Errno::EOPNOTSUPP);
+            return;
+        }
+
         match self.client.delete(&path) {
             Ok(_) => {
                 self.invalidate_path(&path);
@@ -1119,6 +1157,11 @@ impl Filesystem for NexusFs {
         let parent_path = resolve_path!(self, parent.0, reply);
 
         let path = Self::join_path(&parent_path, &name);
+
+        if !self.capability_allowed(&path, "rmdir") {
+            reply.error(Errno::EOPNOTSUPP);
+            return;
+        }
 
         // Check if directory is empty
         match self.client.list(&path) {
@@ -1172,6 +1215,13 @@ impl Filesystem for NexusFs {
 
         let old_path = Self::join_path(&parent_path, &name);
         let new_path = Self::join_path(&new_parent_path, &newname);
+
+        if !self.capability_allowed(&old_path, "rename")
+            || !self.capability_allowed(&new_path, "rename")
+        {
+            reply.error(Errno::EOPNOTSUPP);
+            return;
+        }
 
         // Issue 16A: Let server handle POSIX replace semantics instead of
         // making client-side exists() + delete() calls (2-3 extra HTTP RPCs).
@@ -1229,6 +1279,10 @@ impl Filesystem for NexusFs {
 
         // Handle truncate
         if let Some(new_size) = size {
+            if !self.capability_allowed(&path, "write") {
+                reply.error(Errno::EOPNOTSUPP);
+                return;
+            }
             if new_size == 0 {
                 // Truncate to empty
                 match self.client.write(&path, &[]) {
@@ -1612,9 +1666,15 @@ mod tests {
     fn nexus_fs_with_passthrough_required(require: bool) -> NexusFs {
         use crate::passthrough::{PassthroughConfig, PassthroughManager};
 
-        let client = NexusClient::new("http://localhost:2026", "test-key", None).expect("client");
+        let mut server = Server::new();
+        let _capabilities_mock = server
+            .mock("GET", "/api/vfs/initialize")
+            .with_status(404)
+            .create();
+        let url = server.url();
+        let client = NexusClient::new(&url, "test-key", None).expect("client");
         let manager = PassthroughManager::new(
-            "http://localhost:2026".to_string(),
+            url,
             PassthroughConfig {
                 enabled: true,
                 allow_patterns: vec!["/data/**".to_string()],
@@ -1679,6 +1739,10 @@ mod tests {
         cache.backdate_for_test("/stale.txt", 3601);
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+        let _capabilities_mock = server
+            .mock("GET", "/api/vfs/initialize")
+            .with_status(404)
+            .create();
         let fs = NexusFs::new(client, Some(cache), None);
 
         let result = fs.read_cached("/stale.txt", 0).unwrap();
@@ -1712,6 +1776,10 @@ mod tests {
         cache.backdate_for_test("/not-modified.txt", 3601);
 
         let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+        let _capabilities_mock = server
+            .mock("GET", "/api/vfs/initialize")
+            .with_status(404)
+            .create();
         let fs = NexusFs::new(client, Some(cache), None);
 
         let result = fs.read_cached("/not-modified.txt", 0).unwrap();
@@ -1933,6 +2001,10 @@ mod tests {
         // through it).
         cache.put("/rmw.txt", b"STALE-CACHED", Some("stale-etag"), 0);
 
+        let _capabilities_mock = server
+            .mock("GET", "/api/vfs/initialize")
+            .with_status(404)
+            .create();
         let fs = NexusFs::new(client, Some(cache.clone()), None);
         let bytes = fs.rmw_read("/rmw.txt").expect("rmw_read");
         assert_eq!(

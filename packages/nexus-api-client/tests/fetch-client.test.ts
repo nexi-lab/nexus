@@ -520,4 +520,88 @@ describe("FetchClient", () => {
       expect(url).toBe("http://localhost:2026/test");
     });
   });
+
+  describe("initialize", () => {
+    it("fetches VFS capabilities", async () => {
+      const fetchFn = mockFetch([
+        {
+          status: 200,
+          body: {
+            server_name: "nexus",
+            server_version: "0.10.0",
+            protocol_version: "0.1.0",
+            capabilities: {
+              posix: {
+                read: true,
+                readdir: true,
+                stat: true,
+                write: false,
+                unlink: false,
+                mkdir: false,
+                rmdir: false,
+                rename: false,
+                glob: false,
+              },
+              commands: {
+                grep: { supported: true, filetype: { allow: [], deny: [] } },
+                glob: { supported: true, filetype: { allow: [], deny: [] } },
+              },
+              workspace: { snapshot: true, restore: false, watch: false },
+              backends: {},
+              extensions: ["x-nexus:versioning"],
+            },
+          },
+        },
+      ]);
+      client = new FetchClient({
+        apiKey: "test-key",
+        baseUrl: "http://localhost",
+        fetch: fetchFn,
+        maxRetries: 0,
+      });
+
+      const result = await client.initialize();
+
+      expect(result.serverName).toBe("nexus");
+      expect(result.capabilities.posix.write).toBe(false);
+      expect(result.capabilities.commands.grep.supported).toBe(true);
+      const [url, init] = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(url).toBe("http://localhost/api/vfs/initialize");
+      expect(init.method).toBe("GET");
+    });
+
+    it("preserves missing POSIX capability keys as unknown", async () => {
+      const fetchFn = mockFetch([
+        {
+          status: 200,
+          body: {
+            server_name: "nexus",
+            server_version: "0.10.0",
+            protocol_version: "0.1.0",
+            capabilities: {
+              posix: { read: true },
+              commands: {
+                grep: { supported: false, filetype: { allow: [], deny: [] } },
+                glob: { supported: false, filetype: { allow: [], deny: [] } },
+              },
+              workspace: { snapshot: false, restore: false, watch: false },
+              backends: {},
+              extensions: [],
+            },
+          },
+        },
+      ]);
+      client = new FetchClient({
+        apiKey: "test-key",
+        baseUrl: "http://localhost",
+        fetch: fetchFn,
+        maxRetries: 0,
+      });
+
+      const result = await client.initialize();
+
+      expect(result.capabilities.posix.read).toBe(true);
+      expect(result.capabilities.posix.write).toBeUndefined();
+    });
+  });
 });

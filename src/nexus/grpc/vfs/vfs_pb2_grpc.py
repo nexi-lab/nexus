@@ -3,6 +3,7 @@
 import grpc
 import warnings
 
+from nexus.grpc import initialize_pb2 as nexus_dot_grpc_dot_initialize__pb2
 from nexus.grpc.vfs import vfs_pb2 as nexus_dot_grpc_dot_vfs_dot_vfs__pb2
 
 GRPC_GENERATED_VERSION = '1.80.0'
@@ -34,6 +35,11 @@ class NexusVFSServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.Initialize = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Initialize',
+                request_serializer=nexus_dot_grpc_dot_initialize__pb2.InitializeRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_initialize__pb2.InitializeResponse.FromString,
+                _registered_method=True)
         self.Call = channel.unary_unary(
                 '/nexus.grpc.vfs.NexusVFSService/Call',
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CallRequest.SerializeToString,
@@ -68,6 +74,12 @@ class NexusVFSServiceStub(object):
 
 class NexusVFSServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
+
+    def Initialize(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def Call(self, request, context):
         """Generic dispatch RPC — method name + JSON-encoded params.
@@ -114,6 +126,11 @@ class NexusVFSServiceServicer(object):
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'Initialize': grpc.unary_unary_rpc_method_handler(
+                    servicer.Initialize,
+                    request_deserializer=nexus_dot_grpc_dot_initialize__pb2.InitializeRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_initialize__pb2.InitializeResponse.SerializeToString,
+            ),
             'Call': grpc.unary_unary_rpc_method_handler(
                     servicer.Call,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.CallRequest.FromString,
@@ -154,6 +171,33 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class NexusVFSService(object):
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def Initialize(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Initialize',
+            nexus_dot_grpc_dot_initialize__pb2.InitializeRequest.SerializeToString,
+            nexus_dot_grpc_dot_initialize__pb2.InitializeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def Call(request,

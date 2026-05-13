@@ -218,6 +218,8 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
         tests can drive admin-gated HTTP endpoints (e.g.
         ``POST /api/v2/auth/keys``) and exercise the ReBACCapabilityAuth
         is_admin bypass on the gRPC path.
+      - ``NEXUS_TEST_HOOKS=true`` — enables admin-only diagnostic routes used
+        by live E2E tests to inspect per-zone runner state.
     """
     if not _docker_available():
         pytest.skip("nexus up requires docker")
@@ -313,6 +315,7 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     up_env["NEXUS_APPROVALS_ADMIN_TOKEN"] = admin_token
     up_env["NEXUS_APPROVALS_DIAG_TOKEN"] = diag_token
     up_env["NEXUS_APPROVALS_GRPC_PORT"] = str(grpc_port)
+    up_env["NEXUS_TEST_HOOKS"] = "true"
     # Mirror the pinned api_key into NEXUS_API_KEY for the docker compose
     # subprocess. ``nexus up`` already derives this from nexus.yaml's
     # ``api_key`` field, but setting it explicitly guards against future

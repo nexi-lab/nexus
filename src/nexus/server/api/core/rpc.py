@@ -23,6 +23,7 @@ from nexus.contracts.exceptions import (
 from nexus.core.hash_fast import hash_content
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
+from nexus.runtime.zone_resolution import target_zone_for_context
 from nexus.server.dependencies import require_auth
 from nexus.server.protocol import (
     RPCErrorCode,
@@ -30,6 +31,7 @@ from nexus.server.protocol import (
     parse_method_params,
 )
 from nexus.server.rate_limiting import RATE_LIMIT_AUTHENTICATED, limiter
+from nexus.server.zone_execution import context_for_target_zone, run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +129,8 @@ async def rpc_endpoint(
             _params_ns = SimpleNamespace(**raw_params)
             scope_params_for_zone(_params_ns, context.zone_id)
             raw_params = vars(_params_ns)
+            target_zone = target_zone_for_context(context, raw_params)
+            context = context_for_target_zone(context, target_zone)
             state = request.app.state
 
             # #4005 round-5: NO early 304 in the kernel branch.
@@ -138,12 +142,19 @@ async def rpc_endpoint(
             # succeed first, and matching ETags then suppress the body.
             if_none_match = request.headers.get("If-None-Match")
 
-            _dispatch_coro = dispatch_kernel_syscall(
-                state.nexus_fs,
-                method,
-                raw_params,
-                context,
-                subscription_manager=state.subscription_manager,
+            async def _work() -> Any:
+                return await dispatch_kernel_syscall(
+                    state.nexus_fs,
+                    method,
+                    raw_params,
+                    context,
+                    subscription_manager=state.subscription_manager,
+                )
+
+            _dispatch_coro = run_zone_scoped(
+                getattr(state, "zone_registry", None),
+                target_zone,
+                _work,
             )
             if method in _HTTP_TIMEOUT_SAFE_SYSCALLS:
                 _timeout = getattr(state, "operation_timeout", 30.0)
@@ -224,14 +235,24 @@ async def rpc_endpoint(
 
         # Dispatch method
         _dispatch_start = _time.time()
-        result = await dispatch_method(
-            method,
-            params,
-            context,
-            nexus_fs=state.nexus_fs,
-            exposed_methods=state.exposed_methods,
-            auth_provider=state.auth_provider,
-            subscription_manager=state.subscription_manager,
+        target_zone = target_zone_for_context(context, params)
+        context = context_for_target_zone(context, target_zone)
+
+        async def _work() -> Any:
+            return await dispatch_method(
+                method,
+                params,
+                context,
+                nexus_fs=state.nexus_fs,
+                exposed_methods=state.exposed_methods,
+                auth_provider=state.auth_provider,
+                subscription_manager=state.subscription_manager,
+            )
+
+        result = await run_zone_scoped(
+            getattr(state, "zone_registry", None),
+            target_zone,
+            _work,
         )
         _dispatch_elapsed = (_time.time() - _dispatch_start) * 1000
 

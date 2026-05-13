@@ -35,7 +35,9 @@ from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
+from nexus.runtime.zone_resolution import target_zone_for_context
 from nexus.server.dependencies import require_auth
+from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +96,17 @@ def _get_async_read_session_factory(request: Request) -> Any:
             detail="Async session factory not available (RecordStore not configured)",
         )
     return factory
+
+
+def _get_zone_registry(request: Request) -> Any | None:
+    return getattr(request.app.state, "zone_registry", None)
+
+
+def _auth_target_zone(auth_result: dict[str, Any]) -> str | None:
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    return zone_id if zone_id != ROOT_ZONE_ID else None
 
 
 # ReBAC filtering helpers are in nexus.lib.rebac_filter (#3731).
@@ -184,7 +197,6 @@ async def search_query(
     record_store: Any = Depends(_get_record_store),
 ) -> dict[str, Any]:
     """Execute a fast search query using the search daemon."""
-    from nexus.bricks.search.query_router import QueryRouter
     from nexus.contracts.constants import ROOT_ZONE_ID
 
     start_time = time.perf_counter()
@@ -219,20 +231,63 @@ async def search_query(
             detail=f"Invalid graph_mode: {graph_mode}. Must be 'none', 'low', 'high', 'dual', or 'auto'",
         )
 
-    # --- Federated search path (Issue #3147) ---
-    if federated:
-        return await _handle_federated_search(
+    target_zone = zone_id if zone_id != ROOT_ZONE_ID else None
+
+    async def _work() -> dict[str, Any]:
+        # --- Federated search path (Issue #3147) ---
+        if federated:
+            return await _handle_federated_search(
+                q=q,
+                search_type=type,
+                limit=limit,
+                path_filter=path,
+                alpha=alpha,
+                fusion_method=fusion,
+                auth_result=auth_result,
+                search_daemon=search_daemon,
+                request=request,
+                zone_filter=frozenset(zone_set) if len(zone_set) > 1 else None,
+            )
+
+        return await _handle_single_zone_search(
+            request=request,
             q=q,
             search_type=type,
             limit=limit,
             path_filter=path,
             alpha=alpha,
             fusion_method=fusion,
+            graph_mode=graph_mode,
             auth_result=auth_result,
             search_daemon=search_daemon,
-            request=request,
-            zone_filter=frozenset(zone_set) if len(zone_set) > 1 else None,
+            async_session_factory=async_session_factory,
+            record_store=record_store,
+            zone_id=zone_id,
+            start_time=start_time,
         )
+
+    return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
+
+
+async def _handle_single_zone_search(
+    *,
+    request: Request,
+    q: str,
+    search_type: str,
+    limit: int,
+    path_filter: str | None,
+    alpha: float,
+    fusion_method: str,
+    graph_mode: str,
+    auth_result: dict[str, Any],
+    search_daemon: Any,
+    async_session_factory: Any,
+    record_store: Any,
+    zone_id: str,
+    start_time: float,
+) -> dict[str, Any]:
+    """Handle the non-federated search branch."""
+    from nexus.bricks.search.query_router import QueryRouter
 
     # --- Standard single-zone search path ---
     # ReBAC file-level permission enforcer (Decision #17)
@@ -289,9 +344,9 @@ async def search_query(
 
             results = await graph_enhanced_search(
                 query=q,
-                search_type=type,
+                search_type=search_type,
                 limit=fetch_limit,
-                path_filter=path,
+                path_filter=path_filter,
                 alpha=alpha,
                 graph_mode=effective_graph_mode,
                 record_store=record_store,
@@ -312,7 +367,7 @@ async def search_query(
 
             response: dict[str, Any] = {
                 "query": q,
-                "search_type": type,
+                "search_type": search_type,
                 "graph_mode": effective_graph_mode,
                 "results": [_serialize_search_result(r) for r in results],
                 "total": len(results),
@@ -329,11 +384,11 @@ async def search_query(
 
         results = await search_daemon.search(
             query=q,
-            search_type=type,
+            search_type=search_type,
             limit=fetch_limit,
-            path_filter=path,
+            path_filter=path_filter,
             alpha=alpha,
-            fusion_method=fusion,
+            fusion_method=fusion_method,
             zone_id=zone_id,
         )
 
@@ -352,7 +407,7 @@ async def search_query(
 
         response = {
             "query": q,
-            "search_type": type,
+            "search_type": search_type,
             "graph_mode": "none",
             "results": [_serialize_search_result(r) for r in results],
             "total": len(results),
@@ -693,109 +748,116 @@ async def _do_grep_operation(
         sentinel_window, has_enforcer=permission_enforcer is not None
     )
 
-    try:
-        grep_kwargs: dict[str, Any] = {
-            "pattern": pattern,
-            "path": path,
-            "ignore_case": ignore_case,
-            "max_results": fetch_limit,
-            "context": op_context,
-            "before_context": before_context,
-            "after_context": after_context,
-            "invert_match": invert_match,
-            "files": files,
+    target_zone = target_zone_for_context(op_context, {"path": path, "files": files})
+
+    async def _work() -> dict[str, Any]:
+        try:
+            grep_kwargs: dict[str, Any] = {
+                "pattern": pattern,
+                "path": path,
+                "ignore_case": ignore_case,
+                "max_results": fetch_limit,
+                "context": op_context,
+                "before_context": before_context,
+                "after_context": after_context,
+                "invert_match": invert_match,
+                "files": files,
+            }
+            # Issue #3720: only forward block_type when set (backward compat).
+            if block_type is not None:
+                grep_kwargs["block_type"] = block_type
+            raw_results = await search_service.grep(**grep_kwargs)
+        except (ValueError, InvalidPathError) as exc:
+            # Client errors from SearchService:
+            #  * ValueError — invalid regex, size cap exceeded, cross-zone entry
+            #  * InvalidPathError — path traversal segment in ``path`` or ``files``
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.error("grep failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=500, detail=f"grep failed: {type(exc).__name__}"
+            ) from exc
+
+        # ReBAC file-level filtering, reusing the same helper as search_query.
+        # SearchService already filters by zone/path via context, so this is
+        # a second-layer guarantee for the HTTP surface.
+        pre_filter_count = len(raw_results)
+
+        # #3731: path_extractor eliminates the _GrepResultShim shim class.
+        filtered_results, filter_ms = _apply_rebac_filter(
+            raw_results,
+            permission_enforcer,
+            auth_result,
+            zone_id,
+            path_extractor=lambda r: r.get("file", ""),
+        )
+        post_filter_count = len(filtered_results)
+
+        # Sentinel detection: if we got at least one result beyond the
+        # window, there's a next page. The sentinel row is not included in
+        # the items we return to the caller.
+        has_more = post_filter_count > window_size
+        # ``total`` reports the best-known count. When has_more is true,
+        # we know at least ``window_size + 1`` exist but the true total
+        # may be larger; we report the observed post-filter count as a
+        # floor. When has_more is false, post_filter_count is the true
+        # total of matches visible to this caller.
+        total = post_filter_count
+        paginated = filtered_results[offset : offset + limit]
+
+        # Codex review of #3701 (review #2 finding #2 + review #3 finding #3):
+        # unscope every result entry's ``file`` so the HTTP response surfaces
+        # user-facing paths (``/docs/a.py``) instead of leaking the internal
+        # zone-scoped storage path (``/zone/<tenant>/docs/a.py``), but ALSO
+        # attach a ``zone_id`` on each item whenever we recovered one from
+        # the internal path. A caller with multi-zone visibility (admin or
+        # cross-zone share recipient) can then distinguish two results that
+        # would otherwise collide onto the same unscoped ``file`` — e.g.
+        # ``/zone/acme/src/x.py`` and ``/zone/beta/src/x.py`` both unscope
+        # to ``/src/x.py``. Without ``zone_id`` the caller cannot safely
+        # round-trip a result back through ``files=[...]``.
+        from nexus.core.path_utils import split_zone_from_internal_path
+
+        annotated: list[dict[str, Any]] = []
+        for r in paginated:
+            out = dict(r)
+            raw_file = r.get("file", "")
+            zone, unscoped = split_zone_from_internal_path(raw_file)
+            out["file"] = unscoped
+            if zone is not None:
+                out["zone_id"] = zone
+            annotated.append(out)
+        paginated = annotated
+
+        # Detect residual ambiguity: if two distinct raw paths collapse to
+        # the same (file, zone_id) tuple we have a lossy response and
+        # surface it in the envelope so callers know round-trip safety is
+        # degraded. This is defence-in-depth — the zone_id fix above
+        # should already disambiguate every normal multi-zone case.
+        _keys = [(it["file"], it.get("zone_id")) for it in paginated]
+        multi_zone_ambiguous = len(set(_keys)) < len(_keys)
+        latency_ms = (time.perf_counter() - start_time) * 1000
+
+        extras: dict[str, Any] = {
+            "latency_ms": round(latency_ms, 2),
+            "latency_breakdown": {
+                "total_ms": round(latency_ms, 2),
+                "permission_filter_ms": round(filter_ms, 2),
+            },
+            **_rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
         }
-        # Issue #3720: only forward block_type when set (backward compat).
-        if block_type is not None:
-            grep_kwargs["block_type"] = block_type
-        raw_results = await search_service.grep(**grep_kwargs)
-    except (ValueError, InvalidPathError) as exc:
-        # Client errors from SearchService:
-        #  * ValueError — invalid regex, size cap exceeded, cross-zone entry
-        #  * InvalidPathError — path traversal segment in ``path`` or ``files``
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.error("grep failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"grep failed: {type(exc).__name__}") from exc
+        if multi_zone_ambiguous:
+            extras["multi_zone_ambiguous"] = True
+        return build_paginated_list_response(
+            items=paginated,
+            total=total,
+            offset=offset,
+            limit=limit,
+            extras=extras,
+            has_more=has_more,
+        )
 
-    # ReBAC file-level filtering, reusing the same helper as search_query.
-    # SearchService already filters by zone/path via context, so this is
-    # a second-layer guarantee for the HTTP surface.
-    pre_filter_count = len(raw_results)
-
-    # #3731: path_extractor eliminates the _GrepResultShim shim class.
-    filtered_results, filter_ms = _apply_rebac_filter(
-        raw_results,
-        permission_enforcer,
-        auth_result,
-        zone_id,
-        path_extractor=lambda r: r.get("file", ""),
-    )
-    post_filter_count = len(filtered_results)
-
-    # Sentinel detection: if we got at least one result beyond the
-    # window, there's a next page. The sentinel row is not included in
-    # the items we return to the caller.
-    has_more = post_filter_count > window_size
-    # ``total`` reports the best-known count. When has_more is true,
-    # we know at least ``window_size + 1`` exist but the true total
-    # may be larger; we report the observed post-filter count as a
-    # floor. When has_more is false, post_filter_count is the true
-    # total of matches visible to this caller.
-    total = post_filter_count
-    paginated = filtered_results[offset : offset + limit]
-
-    # Codex review of #3701 (review #2 finding #2 + review #3 finding #3):
-    # unscope every result entry's ``file`` so the HTTP response surfaces
-    # user-facing paths (``/docs/a.py``) instead of leaking the internal
-    # zone-scoped storage path (``/zone/<tenant>/docs/a.py``), but ALSO
-    # attach a ``zone_id`` on each item whenever we recovered one from
-    # the internal path. A caller with multi-zone visibility (admin or
-    # cross-zone share recipient) can then distinguish two results that
-    # would otherwise collide onto the same unscoped ``file`` — e.g.
-    # ``/zone/acme/src/x.py`` and ``/zone/beta/src/x.py`` both unscope
-    # to ``/src/x.py``. Without ``zone_id`` the caller cannot safely
-    # round-trip a result back through ``files=[...]``.
-    from nexus.core.path_utils import split_zone_from_internal_path
-
-    annotated: list[dict[str, Any]] = []
-    for r in paginated:
-        out = dict(r)
-        raw_file = r.get("file", "")
-        zone, unscoped = split_zone_from_internal_path(raw_file)
-        out["file"] = unscoped
-        if zone is not None:
-            out["zone_id"] = zone
-        annotated.append(out)
-    paginated = annotated
-
-    # Detect residual ambiguity: if two distinct raw paths collapse to
-    # the same (file, zone_id) tuple we have a lossy response and
-    # surface it in the envelope so callers know round-trip safety is
-    # degraded. This is defence-in-depth — the zone_id fix above
-    # should already disambiguate every normal multi-zone case.
-    _keys = [(it["file"], it.get("zone_id")) for it in paginated]
-    multi_zone_ambiguous = len(set(_keys)) < len(_keys)
-    latency_ms = (time.perf_counter() - start_time) * 1000
-
-    extras: dict[str, Any] = {
-        "latency_ms": round(latency_ms, 2),
-        "latency_breakdown": {
-            "total_ms": round(latency_ms, 2),
-            "permission_filter_ms": round(filter_ms, 2),
-        },
-        **_rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
-    }
-    if multi_zone_ambiguous:
-        extras["multi_zone_ambiguous"] = True
-    return build_paginated_list_response(
-        items=paginated,
-        total=total,
-        offset=offset,
-        limit=limit,
-        extras=extras,
-        has_more=has_more,
-    )
+    return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
 
 
 async def _do_glob_operation(
@@ -827,75 +889,82 @@ async def _do_glob_operation(
     op_context = get_operation_context(auth_result)
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
 
-    try:
-        all_matches: list[str] = search_service.glob(
-            pattern=pattern, path=path, context=op_context, files=files
+    target_zone = target_zone_for_context(op_context, {"path": path, "files": files})
+
+    async def _work() -> dict[str, Any]:
+        try:
+            all_matches: list[str] = search_service.glob(
+                pattern=pattern, path=path, context=op_context, files=files
+            )
+        except (ValueError, InvalidPathError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.error("glob failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=500, detail=f"glob failed: {type(exc).__name__}"
+            ) from exc
+
+        # #3731: path_extractor=identity eliminates the _GlobResultShim shim class.
+        pre_filter_count = len(all_matches)
+        filtered_paths, filter_ms = _apply_rebac_filter(
+            all_matches,
+            permission_enforcer,
+            auth_result,
+            zone_id,
+            path_extractor=lambda p: p,
         )
-    except (ValueError, InvalidPathError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.error("glob failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"glob failed: {type(exc).__name__}") from exc
+        post_filter_count = len(filtered_paths)
 
-    # #3731: path_extractor=identity eliminates the _GlobResultShim shim class.
-    pre_filter_count = len(all_matches)
-    filtered_paths, filter_ms = _apply_rebac_filter(
-        all_matches,
-        permission_enforcer,
-        auth_result,
-        zone_id,
-        path_extractor=lambda p: p,
-    )
-    post_filter_count = len(filtered_paths)
+        total = len(filtered_paths)
+        paginated = filtered_paths[offset : offset + limit]
 
-    total = len(filtered_paths)
-    paginated = filtered_paths[offset : offset + limit]
+        # Codex review of #3701 (review #2 finding #2 + review #3 finding #3):
+        # unscope every glob path so the HTTP response surfaces user-facing
+        # paths and never leaks the internal ``/zone/<tenant>/...`` form,
+        # but also compute a parallel ``item_zones`` list so multi-zone
+        # callers can distinguish colliding unscoped paths (e.g.
+        # ``/zone/acme/src/x.py`` and ``/zone/beta/src/x.py`` both
+        # unscope to ``/src/x.py`` — the zone id is the only round-trip
+        # disambiguator). ``item_zones[i]`` is the zone of ``items[i]``
+        # when one was recovered from the internal prefix, otherwise
+        # ``None``.
+        from nexus.core.path_utils import split_zone_from_internal_path
 
-    # Codex review of #3701 (review #2 finding #2 + review #3 finding #3):
-    # unscope every glob path so the HTTP response surfaces user-facing
-    # paths and never leaks the internal ``/zone/<tenant>/...`` form,
-    # but also compute a parallel ``item_zones`` list so multi-zone
-    # callers can distinguish colliding unscoped paths (e.g.
-    # ``/zone/acme/src/x.py`` and ``/zone/beta/src/x.py`` both
-    # unscope to ``/src/x.py`` — the zone id is the only round-trip
-    # disambiguator). ``item_zones[i]`` is the zone of ``items[i]``
-    # when one was recovered from the internal prefix, otherwise
-    # ``None``.
-    from nexus.core.path_utils import split_zone_from_internal_path
+        item_zones: list[str | None] = []
+        unscoped_items: list[str] = []
+        for p in paginated:
+            zone, unscoped = split_zone_from_internal_path(p)
+            unscoped_items.append(unscoped)
+            item_zones.append(zone)
+        paginated = unscoped_items
 
-    item_zones: list[str | None] = []
-    unscoped_items: list[str] = []
-    for p in paginated:
-        zone, unscoped = split_zone_from_internal_path(p)
-        unscoped_items.append(unscoped)
-        item_zones.append(zone)
-    paginated = unscoped_items
+        # Detect residual ambiguity (two results collapsing onto the same
+        # (path, zone_id) after unscoping) and surface it in the envelope
+        # so callers know round-trip safety is degraded.
+        _keys = list(zip(paginated, item_zones, strict=False))
+        glob_multi_zone_ambiguous = len(set(_keys)) < len(_keys)
+        latency_ms = (time.perf_counter() - start_time) * 1000
 
-    # Detect residual ambiguity (two results collapsing onto the same
-    # (path, zone_id) after unscoping) and surface it in the envelope
-    # so callers know round-trip safety is degraded.
-    _keys = list(zip(paginated, item_zones, strict=False))
-    glob_multi_zone_ambiguous = len(set(_keys)) < len(_keys)
-    latency_ms = (time.perf_counter() - start_time) * 1000
+        extras: dict[str, Any] = {
+            "latency_ms": round(latency_ms, 2),
+            "latency_breakdown": {
+                "total_ms": round(latency_ms, 2),
+                "permission_filter_ms": round(filter_ms, 2),
+            },
+            **_rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
+            # Codex review #3 finding #3: parallel zone disambiguation.
+            # ``item_zones[i]`` is the zone id of ``items[i]`` (may be
+            # ``None`` for root-zone paths). Multi-zone callers use this
+            # to round-trip results back through ``files=[...]``.
+            "item_zones": item_zones,
+        }
+        if glob_multi_zone_ambiguous:
+            extras["multi_zone_ambiguous"] = True
+        return build_paginated_list_response(
+            items=paginated, total=total, offset=offset, limit=limit, extras=extras
+        )
 
-    extras: dict[str, Any] = {
-        "latency_ms": round(latency_ms, 2),
-        "latency_breakdown": {
-            "total_ms": round(latency_ms, 2),
-            "permission_filter_ms": round(filter_ms, 2),
-        },
-        **_rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
-        # Codex review #3 finding #3: parallel zone disambiguation.
-        # ``item_zones[i]`` is the zone id of ``items[i]`` (may be
-        # ``None`` for root-zone paths). Multi-zone callers use this
-        # to round-trip results back through ``files=[...]``.
-        "item_zones": item_zones,
-    }
-    if glob_multi_zone_ambiguous:
-        extras["multi_zone_ambiguous"] = True
-    return build_paginated_list_response(
-        items=paginated, total=total, offset=offset, limit=limit, extras=extras
-    )
+    return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
 
 
 def _body_get_int(body: dict[str, Any], key: str, default: int, *, ge: int | None = None) -> int:
@@ -1206,38 +1275,51 @@ async def search_index_documents(
     if not documents:
         raise HTTPException(status_code=400, detail="No documents provided")
 
-    try:
-        count = await search_daemon.index_documents(documents, zone_id=zone_id)
-    except Exception as exc:
-        logger.error("index_documents failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Index persistence failed: {type(exc).__name__}: {exc}",
-        ) from exc
-    return {"status": "indexed", "count": count, "zone_id": zone_id}
+    async def _work() -> dict[str, Any]:
+        try:
+            count = await search_daemon.index_documents(documents, zone_id=zone_id)
+        except Exception as exc:
+            logger.error("index_documents failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Index persistence failed: {type(exc).__name__}: {exc}",
+            ) from exc
+        return {"status": "indexed", "count": count, "zone_id": zone_id}
+
+    return await run_zone_scoped(_get_zone_registry(request), _auth_target_zone(auth_result), _work)
 
 
 @router.post("/refresh")
 async def search_refresh_notify(
+    request: Request,
     path: str = Query(..., description="Path of the changed file"),
     change_type: str = Query("update", description="Type of change: create, update, delete"),
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
     """Notify the search daemon of a file change for index refresh."""
-    await search_daemon.notify_file_change(path, change_type)
-    return {"status": "accepted", "path": path, "change_type": change_type}
+    from nexus.server.dependencies import get_operation_context
+
+    op_context = get_operation_context(auth_result)
+    target_zone = target_zone_for_context(op_context, {"path": path})
+
+    async def _work() -> dict[str, Any]:
+        await search_daemon.notify_file_change(path, change_type)
+        return {"status": "accepted", "path": path, "change_type": change_type}
+
+    return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
 
 
 @router.post("/expand")
 async def search_expand(
+    request: Request,
     q: str = Query(..., description="Query to expand", min_length=1),
     context: str | None = Query(None, description="Optional context about the collection"),
     model: str = Query("deepseek/deepseek-chat", description="LLM model to use"),
     max_lex: int = Query(2, description="Max lexical variants", ge=0, le=5),
     max_vec: int = Query(2, description="Max vector variants", ge=0, le=5),
     max_hyde: int = Query(2, description="Max HyDE passages", ge=0, le=5),
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     """Expand a search query using LLM-based query expansion."""
     import os
@@ -1257,50 +1339,53 @@ async def search_expand(
             detail="No API key configured for query expansion (need OPENROUTER_API_KEY or OPENAI_API_KEY)",
         )
 
-    start_time = time.perf_counter()
+    async def _work() -> dict[str, Any]:
+        start_time = time.perf_counter()
 
-    try:
-        if openrouter_key:
-            config = QueryExpansionConfig(
-                model=model,
-                max_lex_variants=max_lex,
-                max_vec_variants=max_vec,
-                max_hyde_passages=max_hyde,
-                timeout=15.0,
-            )
-            expander = OpenRouterQueryExpander(config=config, api_key=openrouter_key)
-        else:
-            # Use OpenAI directly with gpt-4o-mini
-            openai_model = model if "/" not in model else "gpt-4o-mini"
-            config = QueryExpansionConfig(
-                model=openai_model,
-                max_lex_variants=max_lex,
-                max_vec_variants=max_vec,
-                max_hyde_passages=max_hyde,
-                timeout=15.0,
-                fallback_models=[],
-            )
-            expander = OpenAIQueryExpander(config=config, api_key=openai_key)
-        expansions = await expander.expand(q, context=context)
-        await expander.close()
+        try:
+            if openrouter_key:
+                config = QueryExpansionConfig(
+                    model=model,
+                    max_lex_variants=max_lex,
+                    max_vec_variants=max_vec,
+                    max_hyde_passages=max_hyde,
+                    timeout=15.0,
+                )
+                expander = OpenRouterQueryExpander(config=config, api_key=openrouter_key)
+            else:
+                # Use OpenAI directly with gpt-4o-mini
+                openai_model = model if "/" not in model else "gpt-4o-mini"
+                config = QueryExpansionConfig(
+                    model=openai_model,
+                    max_lex_variants=max_lex,
+                    max_vec_variants=max_vec,
+                    max_hyde_passages=max_hyde,
+                    timeout=15.0,
+                    fallback_models=[],
+                )
+                expander = OpenAIQueryExpander(config=config, api_key=openai_key)
+            expansions = await expander.expand(q, context=context)
+            await expander.close()
 
-        latency_ms = (time.perf_counter() - start_time) * 1000
+            latency_ms = (time.perf_counter() - start_time) * 1000
 
-        return {
-            "query": q,
-            "context": context,
-            "model": model,
-            "expansions": [
-                {"type": e.expansion_type.value, "text": e.text, "weight": e.weight}
-                for e in expansions
-            ],
-            "total": len(expansions),
-            "latency_ms": round(latency_ms, 2),
-        }
+            return {
+                "query": q,
+                "context": context,
+                "model": model,
+                "expansions": [
+                    {"type": e.expansion_type.value, "text": e.text, "weight": e.weight}
+                    for e in expansions
+                ],
+                "total": len(expansions),
+                "latency_ms": round(latency_ms, 2),
+            }
 
-    except Exception as e:
-        logger.error("Query expansion error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Query expansion failed") from e
+        except Exception as e:
+            logger.error("Query expansion error: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Query expansion failed") from e
+
+    return await run_zone_scoped(_get_zone_registry(request), _auth_target_zone(auth_result), _work)
 
 
 # =============================================================================

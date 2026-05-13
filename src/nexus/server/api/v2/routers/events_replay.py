@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.server.dependencies import get_operation_context, require_auth
+from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,12 @@ def _get_replay_service(request: Request) -> Any:
 
     record_store = getattr(request.app.state, "record_store", None)
     if record_store is None:
-        raise HTTPException(status_code=503, detail="Database not configured")
+        session_factory = getattr(request.app.state, "session_factory", None)
+        if session_factory is None:
+            raise HTTPException(status_code=503, detail="Database not configured")
+        record_store = type(
+            "_SessionFactoryRecordStore", (), {"session_factory": session_factory}
+        )()
 
     from nexus.services.event_log.replay import EventReplayService
 
@@ -73,6 +79,10 @@ def _get_replay_service(request: Request) -> Any:
     return service
 
 
+def _get_zone_registry(request: Request) -> Any | None:
+    return getattr(request.app.state, "zone_registry", None)
+
+
 def _get_stream_config(request: Request) -> dict[str, Any]:  # noqa: ARG001
     """Get SSE configuration from app state or env."""
     import os
@@ -82,6 +92,19 @@ def _get_stream_config(request: Request) -> dict[str, Any]:  # noqa: ARG001
         "idle_timeout": float(os.getenv("NEXUS_SSE_IDLE_TIMEOUT", "300")),
         "keepalive_s": float(os.getenv("NEXUS_SSE_KEEPALIVE", "15")),
     }
+
+
+def _schedule_queue_put(request_loop: Any, queue: asyncio.Queue[Any], item: Any) -> None:
+    """Schedule a queue put on the request loop from a zone runner loop."""
+    if request_loop.is_closed():
+        return
+
+    def _put_nowait() -> None:
+        with contextlib.suppress(asyncio.QueueFull):
+            queue.put_nowait(item)
+
+    with contextlib.suppress(RuntimeError):
+        request_loop.call_soon_threadsafe(_put_nowait)
 
 
 # =============================================================================
@@ -125,25 +148,28 @@ async def replay_events(
     if event_types:
         parsed_types = [t.strip() for t in event_types.split(",") if t.strip()]
 
-    try:
-        result = service.replay(
-            zone_id=effective_zone,
-            since_revision=since_revision,
-            since_timestamp=since_timestamp,
-            event_types=parsed_types,
-            path_pattern=path_pattern,
-            agent_id=agent_id,
-            limit=limit,
-            cursor=cursor,
-        )
-        return {
-            "events": [ev.to_dict() for ev in result.events],
-            "next_cursor": result.next_cursor,
-            "has_more": result.has_more,
-        }
-    except Exception as e:
-        logger.error("Event replay query error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to replay events") from e
+    async def _replay() -> dict[str, Any]:
+        try:
+            result = service.replay(
+                zone_id=effective_zone,
+                since_revision=since_revision,
+                since_timestamp=since_timestamp,
+                event_types=parsed_types,
+                path_pattern=path_pattern,
+                agent_id=agent_id,
+                limit=limit,
+                cursor=cursor,
+            )
+            return {
+                "events": [ev.to_dict() for ev in result.events],
+                "next_cursor": result.next_cursor,
+                "has_more": result.has_more,
+            }
+        except Exception as e:
+            logger.error("Event replay query error: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to replay events") from e
+
+    return await run_zone_scoped(_get_zone_registry(request), effective_zone, _replay)
 
 
 # =============================================================================
@@ -213,24 +239,29 @@ async def stream_events(
             idle_timeout = config["idle_timeout"]
 
             queue: asyncio.Queue[Any] = asyncio.Queue()
+            request_loop = asyncio.get_running_loop()
 
             async def _pump_events() -> None:
                 """Background task: pump events from stream into queue."""
                 try:
-                    stream = service.stream(
-                        zone_id=effective_zone,
-                        since_revision=since_revision,
-                        since_timestamp=since_timestamp,
-                        event_types=parsed_types,
-                        path_pattern=path_pattern,
-                        agent_id=agent_id,
-                        poll_interval=1.0,
-                        idle_timeout=idle_timeout,
-                    )
-                    async for event in stream:
-                        await queue.put(event)
+
+                    async def _stream() -> None:
+                        stream = service.stream(
+                            zone_id=effective_zone,
+                            since_revision=since_revision,
+                            since_timestamp=since_timestamp,
+                            event_types=parsed_types,
+                            path_pattern=path_pattern,
+                            agent_id=agent_id,
+                            poll_interval=1.0,
+                            idle_timeout=idle_timeout,
+                        )
+                        async for event in stream:
+                            _schedule_queue_put(request_loop, queue, event)
+
+                    await run_zone_scoped(_get_zone_registry(request), effective_zone, _stream)
                 finally:
-                    await queue.put(None)  # sentinel
+                    _schedule_queue_put(request_loop, queue, None)  # sentinel
 
             pump_task = asyncio.create_task(_pump_events())
 
@@ -308,42 +339,45 @@ async def list_events(
     if (not is_admin and auth_zone) or effective_zone is None:
         effective_zone = auth_zone
 
-    try:
-        result = service.list_v1(
-            zone_id=effective_zone,
-            agent_id=agent_id,
-            operation_type=operation_type,
-            path_prefix=path_prefix,
-            since=since,
-            until=until,
-            limit=limit,
-            cursor=cursor,
-        )
+    async def _list() -> dict[str, Any]:
+        try:
+            result = service.list_v1(
+                zone_id=effective_zone,
+                agent_id=agent_id,
+                operation_type=operation_type,
+                path_prefix=path_prefix,
+                since=since,
+                until=until,
+                limit=limit,
+                cursor=cursor,
+            )
 
-        events = [
-            {
-                "event_id": ev.event_id,
-                "type": ev.type,
-                "path": ev.path,
-                "new_path": ev.new_path,
-                "zone_id": ev.zone_id,
-                "agent_id": ev.agent_id,
-                "status": ev.status,
-                "delivered": ev.delivered,
-                "timestamp": ev.timestamp or None,
+            events = [
+                {
+                    "event_id": ev.event_id,
+                    "type": ev.type,
+                    "path": ev.path,
+                    "new_path": ev.new_path,
+                    "zone_id": ev.zone_id,
+                    "agent_id": ev.agent_id,
+                    "status": ev.status,
+                    "delivered": ev.delivered,
+                    "timestamp": ev.timestamp or None,
+                }
+                for ev in result.events
+            ]
+
+            return {
+                "events": events,
+                "next_cursor": result.next_cursor,
+                "has_more": result.has_more,
             }
-            for ev in result.events
-        ]
 
-        return {
-            "events": events,
-            "next_cursor": result.next_cursor,
-            "has_more": result.has_more,
-        }
+        except Exception as e:
+            logger.error("Event log query error: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to query events") from e
 
-    except Exception as e:
-        logger.error("Event log query error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to query events") from e
+    return await run_zone_scoped(_get_zone_registry(request), effective_zone, _list)
 
 
 # =============================================================================
@@ -375,9 +409,13 @@ async def watch_for_changes(
     context = get_operation_context(auth_result)
 
     try:
-        change = await asyncio.to_thread(
-            nexus_fs.sys_watch, path, timeout, recursive=False, context=context
-        )
+
+        async def _work() -> Any:
+            return await asyncio.to_thread(
+                nexus_fs.sys_watch, path, timeout, recursive=False, context=context
+            )
+
+        change = await run_zone_scoped(_get_zone_registry(request), context.zone_id, _work)
         if change is None:
             return {"changes": [], "timeout": True}
         return {"changes": [change], "timeout": False}

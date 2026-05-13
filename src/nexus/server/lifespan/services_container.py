@@ -40,6 +40,7 @@ class LifespanServices:
     database_url: str | None = None
     record_store: Any = None
     zone_id: str | None = None
+    zone_registry: Any = None
 
     # --- Configuration ---------------------------------------------------
     deployment_profile: str = "full"
@@ -111,6 +112,7 @@ class LifespanServices:
             database_url=getattr(app.state, "database_url", None),
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
+            zone_registry=getattr(app.state, "zone_registry", None),
             agent_registry=(
                 # AgentRegistry is the kernel SSOT — fetch through the
                 # kernel handle when nx is wired; fall back to app.state

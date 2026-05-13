@@ -258,6 +258,10 @@ def create_app(
         data_dir=data_dir,
     )
 
+    from nexus.runtime.zone_runner import ZoneRegistry
+
+    app.state.zone_registry = ZoneRegistry()
+
     # Issue #1399: BrickContainer for DI (auth brick + future bricks)
     from nexus.lib.brick_container import BrickContainer
 
@@ -822,7 +826,7 @@ def _register_routes(app: FastAPI) -> None:
     # Test hooks REST API (Issue #2) — only when NEXUS_TEST_HOOKS=true
     if os.getenv("NEXUS_TEST_HOOKS") == "true":
         try:
-            from nexus.core.test_hooks import build_test_hooks_router
+            from nexus.server.test_hooks import build_test_hooks_router
 
             app.include_router(build_test_hooks_router())
             logger.info("Test hooks routes registered (NEXUS_TEST_HOOKS=true)")
@@ -840,6 +844,7 @@ def _register_routes(app: FastAPI) -> None:
     v2_registry = build_v2_registry(
         nexus_fs_getter=lambda: app.state.nexus_fs,
         chunked_upload_service_getter=lambda: app.state.chunked_upload_service,
+        zone_registry_getter=lambda: app.state.zone_registry,
     )
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)

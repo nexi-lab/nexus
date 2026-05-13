@@ -16,6 +16,7 @@ References:
 
 import asyncio
 import base64
+import functools
 import logging
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -27,6 +28,8 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.runtime.zone_resolution import target_zone_for_context
+from nexus.server.zone_execution import run_zone_scoped
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -208,9 +211,11 @@ class BatchExecutor:
         self,
         fs: Any,
         operation_timeout: float = DEFAULT_OPERATION_TIMEOUT,
+        zone_registry: Any | None = None,
     ) -> None:
         self._fs = fs
         self._timeout = operation_timeout
+        self._zone_registry = zone_registry
 
     async def execute(
         self,
@@ -226,8 +231,11 @@ class BatchExecutor:
 
         for i, op in enumerate(request.operations):
             try:
+                target_zone = target_zone_for_context(context, op)
+                work = functools.partial(self._dispatch, op, context)
+
                 result = await asyncio.wait_for(
-                    self._dispatch(op, context),
+                    run_zone_scoped(self._zone_registry, target_zone, work),
                     timeout=self._timeout,
                 )
                 result.index = i

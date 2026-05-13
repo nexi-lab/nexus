@@ -41,11 +41,13 @@ from nexus.contracts.exceptions import NexusError, NexusPermissionError
 from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
+from nexus.runtime.zone_resolution import target_zone_for_context
 from nexus.server._kernel_syscall_dispatch import (
     KERNEL_SYSCALL_NAMES,
     dispatch_kernel_syscall,
 )
 from nexus.server.protocol import parse_method_params
+from nexus.server.zone_execution import context_for_target_zone, run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +86,15 @@ class VFSCallDispatcher:
         api_key: str | None = None,
         subscription_manager: Any = None,
         loop: asyncio.AbstractEventLoop | None = None,
+        *,
+        zone_registry: Any = None,
     ) -> None:
         self._nexus_fs = nexus_fs
         self._exposed_methods = exposed_methods
         self._auth_provider = auth_provider
         self._api_key = api_key
         self._subscription_manager = subscription_manager
+        self._zone_registry = zone_registry
         self._loop = loop or asyncio.get_event_loop()
 
     # ------------------------------------------------------------------
@@ -251,12 +256,22 @@ class VFSCallDispatcher:
                     params_dict.get("path"),
                     op_context.zone_id if op_context else None,
                 )
-                result = await dispatch_kernel_syscall(
-                    self._nexus_fs,
-                    method,
-                    params_dict,
-                    op_context,
-                    subscription_manager=self._subscription_manager,
+                target_zone = target_zone_for_context(op_context, params_dict)
+                op_context = context_for_target_zone(op_context, target_zone)
+
+                async def _work() -> Any:
+                    return await dispatch_kernel_syscall(
+                        self._nexus_fs,
+                        method,
+                        params_dict,
+                        op_context,
+                        subscription_manager=self._subscription_manager,
+                    )
+
+                result = await run_zone_scoped(
+                    self._zone_registry,
+                    target_zone,
+                    _work,
                 )
                 return False, encode_rpc_message({"result": result})
 
@@ -286,14 +301,24 @@ class VFSCallDispatcher:
             else:
                 scope_params_for_zone(params, op_context.zone_id)
 
-            result = await dispatch_method(
-                method,
-                params,
-                op_context,
-                nexus_fs=self._nexus_fs,
-                exposed_methods=self._exposed_methods,
-                auth_provider=self._auth_provider,
-                subscription_manager=self._subscription_manager,
+            target_zone = target_zone_for_context(op_context, params)
+            op_context = context_for_target_zone(op_context, target_zone)
+
+            async def _work() -> Any:
+                return await dispatch_method(
+                    method,
+                    params,
+                    op_context,
+                    nexus_fs=self._nexus_fs,
+                    exposed_methods=self._exposed_methods,
+                    auth_provider=self._auth_provider,
+                    subscription_manager=self._subscription_manager,
+                )
+
+            result = await run_zone_scoped(
+                self._zone_registry,
+                target_zone,
+                _work,
             )
             return False, encode_rpc_message({"result": result})
 

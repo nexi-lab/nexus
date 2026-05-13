@@ -37,6 +37,7 @@ class NexusAppState:
     auth_provider: Any = None
     data_dir: str | None = None
     brick_container: Any = None
+    zone_registry: Any = None
 
     # === Deployment config ===
     deployment_profile: str = "full"

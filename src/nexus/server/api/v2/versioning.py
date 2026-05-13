@@ -11,9 +11,10 @@ Issue #995: API versioning strategy for breaking changes.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -76,6 +77,7 @@ def build_v2_registry(
     *,
     nexus_fs_getter: object | None = None,
     chunked_upload_service_getter: object | None = None,
+    zone_registry_getter: object | None = None,
 ) -> RouterRegistry:
     """Import all v2 routers and return a populated registry.
 
@@ -85,6 +87,8 @@ def build_v2_registry(
     Args:
         nexus_fs_getter: Optional callable returning the NexusFS
             instance (used by the async_files factory router).
+        zone_registry_getter: Optional callable returning the ZoneRegistry
+            instance (used by factory routers).
     """
     registry = RouterRegistry()
 
@@ -132,7 +136,10 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.async_files import create_async_files_router
 
-        async_files_router = create_async_files_router(get_fs=nexus_fs_getter)
+        async_files_router = create_async_files_router(
+            get_fs=nexus_fs_getter,
+            get_zone_registry=zone_registry_getter,
+        )
         registry.add(
             RouterEntry(
                 router=async_files_router,
@@ -270,7 +277,10 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.batch import create_batch_router
 
-        batch_router = create_batch_router(get_fs=nexus_fs_getter)
+        batch_router = create_batch_router(
+            get_fs=nexus_fs_getter,
+            get_zone_registry=cast("Callable[[], Any | None] | None", zone_registry_getter),
+        )
         registry.add(
             RouterEntry(
                 router=batch_router,

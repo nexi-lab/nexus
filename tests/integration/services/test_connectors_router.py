@@ -30,7 +30,7 @@ def _make_connector_info(
     name: str,
     description: str = "",
     category: str = "storage",
-    capabilities: frozenset[BackendFeature] | None = None,
+    backend_features: frozenset[BackendFeature] | None = None,
     user_scoped: bool = False,
 ) -> ConnectorInfo:
     """Create a minimal ConnectorInfo for testing."""
@@ -42,7 +42,7 @@ def _make_connector_info(
         description=description,
         category=category,
         user_scoped=user_scoped,
-        capabilities=capabilities or frozenset(),
+        backend_features=backend_features or frozenset(),
         service_name=name,
     )
 

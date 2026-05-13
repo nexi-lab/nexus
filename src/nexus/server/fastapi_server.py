@@ -258,6 +258,10 @@ def create_app(
         data_dir=data_dir,
     )
 
+    from nexus.runtime.zone_runner import ZoneRegistry
+
+    app.state.zone_registry = ZoneRegistry()
+
     # Issue #1399: BrickContainer for DI (auth brick + future bricks)
     from nexus.lib.brick_container import BrickContainer
 

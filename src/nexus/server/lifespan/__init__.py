@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
 from nexus.server.lifespan.services_container import LifespanServices
+from nexus.server.lifespan.zone_runners import shutdown_zone_runners
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -328,6 +329,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     await shutdown_search(app, svc)
     await shutdown_services(app, svc)
     await shutdown_realtime(app, svc)
+    await shutdown_zone_runners(app, svc)
 
     # Stop durable invalidation stream (Issue #3396) — before NexusFS close
     _durable = getattr(app.state, "durable_stream", None)

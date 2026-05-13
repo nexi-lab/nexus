@@ -574,7 +574,7 @@ impl NexusVfsService for VfsServiceImpl {
         // will honor `req.content_id` too.
         match self
             .kernel
-            .sys_write(&req.path, &ctx, &req.content, /* offset */ 0)
+            .sys_write_one(&req.path, &ctx, &req.content, /* offset */ 0)
         {
             Ok(result) => Ok(Response::new(WriteResponse {
                 content_id: result.content_id.unwrap_or_default(),
@@ -610,7 +610,7 @@ impl NexusVfsService for VfsServiceImpl {
                 "federation token: use Call dispatch (sys_unlink RPC) — typed Delete bypasses zone authorization",
             ))));
         }
-        match self.kernel.sys_unlink(&req.path, &ctx, req.recursive) {
+        match self.kernel.sys_unlink_one(&req.path, &ctx, req.recursive) {
             Ok(result) => Ok(Response::new(DeleteResponse {
                 success: result.hit,
                 is_error: false,
@@ -1555,7 +1555,7 @@ mod tests {
         let kernel = std::sync::Arc::new(kernel_with_mem_backend());
         let ctx = OperationContext::new("test", "root", true, None, true);
         kernel
-            .sys_write("/x.txt", &ctx, b"hello", 0)
+            .sys_write_one("/x.txt", &ctx, b"hello", 0)
             .expect("write");
 
         let svc = VfsServiceImpl::for_test(kernel.clone());

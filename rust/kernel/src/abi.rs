@@ -186,7 +186,7 @@ impl KernelAbi for crate::kernel::Kernel {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
-        Self::sys_write(self, path, ctx, content, offset)
+        Self::sys_write_one(self, path, ctx, content, offset)
     }
 
     fn flush_write_buffer(
@@ -207,7 +207,7 @@ impl KernelAbi for crate::kernel::Kernel {
         ctx: &OperationContext,
         recursive: bool,
     ) -> Result<SysUnlinkResult, KernelError> {
-        Self::sys_unlink(self, path, ctx, recursive)
+        Self::sys_unlink_one(self, path, ctx, recursive)
     }
 
     fn sys_setattr(

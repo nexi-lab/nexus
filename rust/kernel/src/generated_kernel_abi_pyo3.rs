@@ -2311,7 +2311,7 @@ impl PyKernel {
         let content_owned = content.to_vec();
         let result = py.detach(|| {
             self.inner
-                .sys_write(path, &rust_ctx, &content_owned, offset)
+                .sys_write_one(path, &rust_ctx, &content_owned, offset)
         });
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
@@ -2438,7 +2438,7 @@ impl PyKernel {
 
         // 2. Call pure Rust kernel
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_unlink(path, &rust_ctx, recursive));
+        let result = py.detach(|| self.inner.sys_unlink_one(path, &rust_ctx, recursive));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysUnlinkResult {
@@ -2742,22 +2742,47 @@ impl PyKernel {
         ctx: &PyOperationContext,
     ) -> PyResult<Vec<PySysWriteResult>> {
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner._write_batch(&items, &rust_ctx));
-        let results = result.map_err(|e| -> PyErr { e.into() })?;
+        let reqs: Vec<crate::kernel::WriteRequest> = items
+            .into_iter()
+            .map(|(path, content)| crate::kernel::WriteRequest {
+                path,
+                content,
+                offset: 0,
+            })
+            .collect();
+        let results = py.detach(|| self.inner.sys_write(&reqs, &rust_ctx));
         Ok(results
             .into_iter()
-            .map(|r| PySysWriteResult {
-                hit: r.hit,
-                content_id: r.content_id,
-                post_hook_needed: r.post_hook_needed,
-                version: r.version,
-                gen: r.gen,
-                size: r.size,
-                is_new: r.is_new,
-                old_content_id: r.old_content_id,
-                old_size: r.old_size,
-                old_version: r.old_version,
-                old_modified_at_ms: r.old_modified_at_ms,
+            .map(|r| {
+                let r = match r {
+                    Ok(r) => r,
+                    Err(_) => crate::kernel::SysWriteResult {
+                        hit: false,
+                        content_id: None,
+                        post_hook_needed: false,
+                        version: 0,
+                        gen: 0,
+                        size: 0,
+                        is_new: false,
+                        old_content_id: None,
+                        old_size: None,
+                        old_version: None,
+                        old_modified_at_ms: None,
+                    },
+                };
+                PySysWriteResult {
+                    hit: r.hit,
+                    content_id: r.content_id,
+                    post_hook_needed: r.post_hook_needed,
+                    version: r.version,
+                    gen: r.gen,
+                    size: r.size,
+                    is_new: r.is_new,
+                    old_content_id: r.old_content_id,
+                    old_size: r.old_size,
+                    old_version: r.old_version,
+                    old_modified_at_ms: r.old_modified_at_ms,
+                }
             })
             .collect())
     }
@@ -2835,17 +2860,36 @@ impl PyKernel {
         ctx: &PyOperationContext,
     ) -> PyResult<Vec<PySysUnlinkResult>> {
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner._delete_batch(&paths, &rust_ctx));
-        let results = result.map_err(|e| -> PyErr { e.into() })?;
+        let reqs: Vec<crate::kernel::UnlinkRequest> = paths
+            .into_iter()
+            .map(|path| crate::kernel::UnlinkRequest {
+                path,
+                recursive: false,
+            })
+            .collect();
+        let results = py.detach(|| self.inner.sys_unlink(&reqs, &rust_ctx));
         Ok(results
             .into_iter()
-            .map(|r| PySysUnlinkResult {
-                hit: r.hit,
-                entry_type: r.entry_type,
-                post_hook_needed: r.post_hook_needed,
-                path: r.path,
-                content_id: r.content_id,
-                size: r.size,
+            .map(|r| {
+                let r = match r {
+                    Ok(r) => r,
+                    Err(_) => crate::kernel::SysUnlinkResult {
+                        hit: false,
+                        entry_type: 0,
+                        post_hook_needed: false,
+                        path: String::new(),
+                        content_id: None,
+                        size: 0,
+                    },
+                };
+                PySysUnlinkResult {
+                    hit: r.hit,
+                    entry_type: r.entry_type,
+                    post_hook_needed: r.post_hook_needed,
+                    path: r.path,
+                    content_id: r.content_id,
+                    size: r.size,
+                }
             })
             .collect())
     }

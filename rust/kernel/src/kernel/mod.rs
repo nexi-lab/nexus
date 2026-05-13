@@ -3097,8 +3097,8 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
 
-        let first = k.sys_write("/gen.txt", &ctx, b"one", 0).unwrap();
-        let second = k.sys_write("/gen.txt", &ctx, b"two", 0).unwrap();
+        let first = k.sys_write_one("/gen.txt", &ctx, b"one", 0).unwrap();
+        let second = k.sys_write_one("/gen.txt", &ctx, b"two", 0).unwrap();
         let stat = k.sys_stat("/gen.txt", "root").unwrap();
 
         assert_eq!(first.gen, 1);
@@ -3110,7 +3110,7 @@ mod tests {
     fn sys_setattr_metadata_update_preserves_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/mime.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_one("/mime.txt", &ctx, b"body", 0).unwrap();
 
         k.sys_setattr(
             "/mime.txt",
@@ -3141,7 +3141,7 @@ mod tests {
     fn copy_uses_destination_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
 
         let copied = k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
         let dst = k.sys_stat("/dst.txt", "root").unwrap();
@@ -3160,7 +3160,7 @@ mod tests {
     fn copy_rejects_non_regular_destination() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
         k.sys_mkdir("/dst", &ctx, true, true).unwrap();
 
         match k.sys_copy("/src.txt", "/dst", &ctx) {
@@ -3182,8 +3182,8 @@ mod tests {
     fn copy_overwrite_preserves_destination_created_at() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
-        k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.created_at_ms = Some(123);
@@ -3200,8 +3200,8 @@ mod tests {
     fn copy_snapshot_failure_releases_vfs_locks() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
-        k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
-        k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.content_id = Some("/missing-destination-content.txt".to_string());
@@ -3227,22 +3227,33 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
 
-        let first = k
-            ._write_batch(
-                &[
-                    ("/a.txt".to_string(), b"a1".to_vec()),
-                    ("/b.txt".to_string(), b"b1".to_vec()),
-                ],
-                &ctx,
-            )
-            .unwrap();
-        let second = k
-            ._write_batch(&[("/a.txt".to_string(), b"a2".to_vec())], &ctx)
-            .unwrap();
+        let first = k.sys_write(
+            &[
+                WriteRequest {
+                    path: "/a.txt".to_string(),
+                    content: b"a1".to_vec(),
+                    offset: 0,
+                },
+                WriteRequest {
+                    path: "/b.txt".to_string(),
+                    content: b"b1".to_vec(),
+                    offset: 0,
+                },
+            ],
+            &ctx,
+        );
+        let second = k.sys_write(
+            &[WriteRequest {
+                path: "/a.txt".to_string(),
+                content: b"a2".to_vec(),
+                offset: 0,
+            }],
+            &ctx,
+        );
 
-        assert_eq!(first[0].gen, 1);
-        assert_eq!(first[1].gen, 1);
-        assert_eq!(second[0].gen, 2);
+        assert_eq!(first[0].as_ref().unwrap().gen, 1);
+        assert_eq!(first[1].as_ref().unwrap().gen, 1);
+        assert_eq!(second[0].as_ref().unwrap().gen, 2);
         assert_eq!(k.sys_stat("/a.txt", "root").unwrap().gen, 2);
         assert_eq!(k.sys_stat("/b.txt", "root").unwrap().gen, 1);
     }
@@ -3252,7 +3263,7 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("system", "root", true, None, true);
         let write = k
-            .sys_write("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
+            .sys_write_one("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
             .unwrap();
         assert!(write.hit);
         let raw = k.sys_read_one("/doc.json", &ctx, 5000, 0).unwrap();
@@ -3267,7 +3278,7 @@ mod tests {
     fn sys_cat_returns_raw_bytes_for_unknown_filetype() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("system", "root", true, None, true);
-        let write = k.sys_write("/plain.bin", &ctx, b"abc", 0).unwrap();
+        let write = k.sys_write_one("/plain.bin", &ctx, b"abc", 0).unwrap();
         assert!(write.hit);
 
         let cat = k.sys_cat("/plain.bin", &ctx, true).unwrap();
@@ -3941,7 +3952,7 @@ mod tests {
         ms.put("/mnt", mount_meta).unwrap();
 
         let ctx = OperationContext::new("test", zone, true, None, true);
-        let result = k.sys_unlink("/mnt", &ctx, false).unwrap();
+        let result = k.sys_unlink_one("/mnt", &ctx, false).unwrap();
 
         assert!(result.hit, "DT_MOUNT unlink should return hit=true");
         assert_eq!(result.entry_type, DT_MOUNT);
@@ -4995,7 +5006,7 @@ mod tests {
             }
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            match k.sys_write("/data/a", &ctx, b"payload", 0) {
+            match k.sys_write_one("/data/a", &ctx, b"payload", 0) {
                 Err(KernelError::PermissionDenied(msg)) => {
                     assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
                 }
@@ -5027,7 +5038,7 @@ mod tests {
     //      composes a `WalStreamCore` over the test metastore + writes
     //      the inode + registers the stream — same code path
     //      production runs through.
-    //   3. `kernel.sys_write(path, …)` and `kernel.sys_read_one(path, …)`
+    //   3. `kernel.sys_write_one(path, …)` and `kernel.sys_read_one(path, …)`
     //      round-trip bytes through the wal stream, validating the
     //      stream is actually wal-backed (memory streams use a
     //      different backend type, so a memory-vs-wal mistake would
@@ -5212,7 +5223,7 @@ mod tests {
             // wal backend registered and the bytes flow through it.
             let ctx = OperationContext::new("test", "root", true, None, true);
             kernel
-                .sys_write(path, &ctx, b"federation hello", 0)
+                .sys_write_one(path, &ctx, b"federation hello", 0)
                 .expect("sys_write to wal stream");
             let read = kernel
                 .sys_read_one(path, &ctx, /* timeout_ms */ 0, 0)
@@ -5260,7 +5271,7 @@ mod tests {
                     .expect("idempotent wal sys_setattr");
             }
             kernel
-                .sys_write(path, &ctx, b"survives reopen", 0)
+                .sys_write_one(path, &ctx, b"survives reopen", 0)
                 .expect("write to reopened wal stream");
             let read = kernel
                 .sys_read_one(path, &ctx, 0, 0)

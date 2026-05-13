@@ -774,25 +774,41 @@ struct WriteCommitInput<'a> {
 impl Kernel {
     // ── sys_write ──────────────────────────────────────────────────────
 
-    /// Rust syscall: write file content (pure Rust, no GIL).
+    /// Unified sys_write — accepts single or batch requests.
     ///
-    /// validate -> route -> VFS lock -> CAS write -> metadata build -> metastore.put
-    /// -> dcache update -> return.
-    ///
-    /// Hooks are NOT dispatched here — wrapper handles PRE-INTERCEPT.
+    /// Returns one `Result` per input request, preserving input order.
+    /// `reqs.len() == 1` → fast path via `sys_write_single()`.
+    /// `reqs.len() > 1` → batch write with sorted VFS lock acquisition.
     pub fn sys_write(
+        &self,
+        reqs: &[crate::kernel::WriteRequest],
+        ctx: &OperationContext,
+    ) -> Vec<Result<SysWriteResult, KernelError>> {
+        if reqs.is_empty() {
+            return Vec::new();
+        }
+        if reqs.len() == 1 {
+            let req = &reqs[0];
+            return vec![self.sys_write_single(&req.path, ctx, &req.content, req.offset, 1)];
+        }
+        self.sys_write_batch_impl(reqs, ctx)
+    }
+
+    /// Convenience wrapper for single-path writes.
+    ///
+    /// Kernel-internal callers (tests, services) and external callers
+    /// (gRPC, PyO3) use this for the familiar single-path API.
+    pub fn sys_write_one(
         &self,
         path: &str,
         ctx: &OperationContext,
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
-        // Outer entry point — one DT_LINK follow allowed (max_link_hops=1).
-        // The recursive call below passes 0 so a chained link rejects.
-        self.sys_write_with_link_depth(path, ctx, content, offset, 1)
+        self.sys_write_single(path, ctx, content, offset, 1)
     }
 
-    fn sys_write_with_link_depth(
+    fn sys_write_single(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -887,7 +903,7 @@ impl Kernel {
                         "DT_LINK chain rejected (ELOOP) at {path}"
                     )));
                 }
-                return self.sys_write_with_link_depth(
+                return self.sys_write_single(
                     target,
                     ctx,
                     effective_content,
@@ -1609,13 +1625,60 @@ impl Kernel {
 
     // ── sys_unlink ────────────────────────────────────────────────────
 
-    /// Rust syscall: full unlink (validate → route → metastore → backend → dcache).
+    /// Unified sys_unlink — accepts single or batch requests.
+    ///
+    /// Returns one `Result` per input request, preserving input order.
+    /// `reqs.len() == 1` → fast path via `sys_unlink_single()`.
+    /// `reqs.len() > 1` → loops `sys_unlink_single` per item.
+    pub fn sys_unlink(
+        &self,
+        reqs: &[crate::kernel::UnlinkRequest],
+        ctx: &OperationContext,
+    ) -> Vec<Result<SysUnlinkResult, KernelError>> {
+        if reqs.is_empty() {
+            return Vec::new();
+        }
+        if reqs.len() == 1 {
+            let req = &reqs[0];
+            return vec![self.sys_unlink_single(&req.path, ctx, req.recursive)];
+        }
+        reqs.iter()
+            .map(
+                |req| match self.sys_unlink_single(&req.path, ctx, req.recursive) {
+                    Ok(r) => Ok(r),
+                    Err(_) => Ok(SysUnlinkResult {
+                        hit: false,
+                        entry_type: 0,
+                        post_hook_needed: false,
+                        path: req.path.clone(),
+                        content_id: None,
+                        size: 0,
+                    }),
+                },
+            )
+            .collect()
+    }
+
+    /// Convenience wrapper for single-path unlinks.
+    ///
+    /// Kernel-internal callers (tests, services) and external callers
+    /// (gRPC, PyO3) use this for the familiar single-path API.
+    pub fn sys_unlink_one(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        recursive: bool,
+    ) -> Result<SysUnlinkResult, KernelError> {
+        self.sys_unlink_single(path, ctx, recursive)
+    }
+
+    /// Single-path unlink implementation.
     ///
     /// Returns `hit=true` when Rust completed the full operation. Python only
     /// dispatches event notify + POST hooks.
     /// Returns `hit=false` for DT_EXTERNAL_STORAGE (5) → Python handles connector teardown.
     /// DT_DIR is handled inline via sys_rmdir (§12e).
-    pub fn sys_unlink(
+    fn sys_unlink_single(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -2906,42 +2969,62 @@ impl Kernel {
 
     // ── Internal batch functions (not Tier 1 syscalls) ────────────────
 
-    /// Internal: batch write — loops sys_write logic for each item.
+    /// Batch write implementation — sorted VFS lock acquisition,
+    /// per-item backend write, grouped metastore commit.
     ///
-    /// NOT a syscall — prefixed with `_`. Called by Python `write_batch` method.
-    /// Each item is (path, content). Returns Vec<SysWriteResult> with per-item results.
-    /// Sorted VFS lock acquisition to avoid deadlocks.
+    /// Called by `sys_write` when `reqs.len() > 1`.
+    /// Returns `Vec<Result<SysWriteResult, KernelError>>` with per-item results.
     /// PRE-hooks are NOT dispatched here (caller handles batch pre-hooks).
-    pub fn _write_batch(
+    fn sys_write_batch_impl(
         &self,
-        items: &[(String, Vec<u8>)],
+        reqs: &[crate::kernel::WriteRequest],
         ctx: &OperationContext,
-    ) -> Result<Vec<SysWriteResult>, KernelError> {
-        let mut results = Vec::with_capacity(items.len());
+    ) -> Vec<Result<SysWriteResult, KernelError>> {
+        let n = reqs.len();
+        let mut results: Vec<Result<SysWriteResult, KernelError>> = Vec::with_capacity(n);
+
+        let write_miss = || SysWriteResult {
+            hit: false,
+            content_id: None,
+            post_hook_needed: false,
+            version: 0,
+            gen: 0,
+            size: 0,
+            is_new: false,
+            old_content_id: None,
+            old_size: None,
+            old_version: None,
+            old_modified_at_ms: None,
+        };
 
         // 1. Validate all paths (fail-fast)
-        for (path, _) in items {
-            validate_path_fast(path)?;
+        for req in reqs {
+            if validate_path_fast(&req.path).is_err() {
+                return reqs
+                    .iter()
+                    .map(|r| Err(KernelError::InvalidPath(r.path.clone())))
+                    .collect();
+            }
         }
 
         // 2. Route all paths (single lock acquisition on mount table via read lock)
-        let mut routes = Vec::with_capacity(items.len());
-        for (path, _) in items {
-            let route = self.vfs_router.route(path, &ctx.zone_id).ok();
+        let mut routes = Vec::with_capacity(n);
+        for req in reqs {
+            let route = self.vfs_router.route(&req.path, &ctx.zone_id).ok();
             routes.push(route);
         }
 
         // 3. Sorted VFS lock acquisition for all paths
-        let mut lock_handles: Vec<u64> = vec![0; items.len()];
+        let mut lock_handles: Vec<u64> = vec![0; n];
         {
             // Sort indices by path to avoid deadlock
-            let mut indices: Vec<usize> = (0..items.len()).collect();
-            indices.sort_by(|a, b| items[*a].0.cmp(&items[*b].0));
+            let mut indices: Vec<usize> = (0..n).collect();
+            indices.sort_by(|a, b| reqs[*a].path.cmp(&reqs[*b].path));
 
             for idx in indices {
                 if routes[idx].is_some() {
                     lock_handles[idx] = self.lock_manager.blocking_acquire(
-                        &items[idx].0,
+                        &reqs[idx].path,
                         LockMode::Write,
                         self.vfs_lock_timeout_ms(),
                     );
@@ -2953,63 +3036,32 @@ impl Kernel {
         // Tuple: (mount_point, path, FileMetadata) for per-mount metastore support
         let mut batch_meta: Vec<(String, String, crate::meta_store::FileMetadata)> = Vec::new();
 
-        for (i, ((path, content), route_opt)) in items.iter().zip(routes.iter()).enumerate() {
+        for (i, (req, route_opt)) in reqs.iter().zip(routes.iter()).enumerate() {
             let route = match route_opt {
                 Some(r) => r,
                 None => {
-                    results.push(SysWriteResult {
-                        hit: false,
-                        content_id: None,
-                        post_hook_needed: false,
-                        version: 0,
-                        gen: 0,
-                        size: 0,
-                        is_new: false,
-                        old_content_id: None,
-                        old_size: None,
-                        old_version: None,
-                        old_modified_at_ms: None,
-                    });
+                    results.push(Ok(write_miss()));
                     continue;
                 }
             };
 
             // Lock timeout check
             if lock_handles[i] == 0 {
-                results.push(SysWriteResult {
-                    hit: false,
-                    content_id: None,
-                    post_hook_needed: false,
-                    version: 0,
-                    gen: 0,
-                    size: 0,
-                    is_new: false,
-                    old_content_id: None,
-                    old_size: None,
-                    old_version: None,
-                    old_modified_at_ms: None,
-                });
+                results.push(Ok(write_miss()));
                 continue;
             }
 
-            // Backend write. ``sys_write_batch`` keeps per-item error
-            // semantics: a failure only taints that item's result, not the
-            // whole batch. We still surface the full error to the caller by
-            // synthesising a backend-error result via ``hit=false`` so the
-            // observer/post-hook path doesn't fire. The per-item error is
-            // logged for observability but not hoisted to ``Result<..>``.
-            // Backend write error (batch variant): collapse to None so the
-            // per-item result surfaces as hit=false (observer + post-hook
-            // path skipped). Caller inspects ``SysWriteResult.hit`` + retries.
-            let write_result = route
-                .backend
-                .as_ref()
-                .and_then(|b| b.write_content(content, &route.backend_path, ctx, 0).ok());
+            // Backend write. Per-item error semantics: a failure only taints
+            // that item's result, not the whole batch.
+            let write_result = route.backend.as_ref().and_then(|b| {
+                b.write_content(&req.content, &route.backend_path, ctx, 0)
+                    .ok()
+            });
 
             match write_result {
                 Some(wr) => {
                     let batch_old_entry: Option<FileMetadata> = self
-                        .with_metastore_route(route, |ms| ms.get(path).ok().flatten())
+                        .with_metastore_route(route, |ms| ms.get(&req.path).ok().flatten())
                         .flatten();
                     let old_version = batch_old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                     let old_gen = batch_old_entry.as_ref().map(|e| e.gen).unwrap_or(0);
@@ -3018,7 +3070,7 @@ impl Kernel {
 
                     // Collect metadata for batch put (instead of N individual puts)
                     let meta = self.build_metadata(
-                        path,
+                        &req.path,
                         &route.zone_id,
                         DT_REG,
                         wr.size,
@@ -3033,9 +3085,9 @@ impl Kernel {
                     // we can group raft proposes per mount and mark
                     // each result hit/miss based on the actual
                     // commit outcome rather than eagerly lying.
-                    batch_meta.push((route.mount_point.clone(), path.to_string(), meta));
+                    batch_meta.push((route.mount_point.clone(), req.path.to_string(), meta));
 
-                    results.push(SysWriteResult {
+                    results.push(Ok(SysWriteResult {
                         hit: true,
                         content_id: Some(wr.content_id),
                         post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0
@@ -3048,22 +3100,10 @@ impl Kernel {
                         old_size: batch_old_entry.as_ref().map(|e| e.size),
                         old_version: batch_old_entry.as_ref().map(|e| e.version),
                         old_modified_at_ms: batch_old_entry.as_ref().and_then(|e| e.modified_at_ms),
-                    });
+                    }));
                 }
                 None => {
-                    results.push(SysWriteResult {
-                        hit: false,
-                        content_id: None,
-                        post_hook_needed: false,
-                        version: 0,
-                        gen: 0,
-                        size: 0,
-                        is_new: false,
-                        old_content_id: None,
-                        old_size: None,
-                        old_version: None,
-                        old_modified_at_ms: None,
-                    });
+                    results.push(Ok(write_miss()));
                 }
             }
         }
@@ -3091,7 +3131,7 @@ impl Kernel {
                     if let Err(_e) = put_res {
                         // Mark this batch entry as not-hit so the
                         // caller knows the propose didn't commit.
-                        if let Some(r) = results.get_mut(idx) {
+                        if let Some(Ok(r)) = results.get_mut(idx) {
                             r.hit = false;
                         }
                     }
@@ -3109,7 +3149,7 @@ impl Kernel {
                     .unwrap_or(false);
                 if !put_ok {
                     for idx in global_idx {
-                        if let Some(r) = results.get_mut(idx) {
+                        if let Some(Ok(r)) = results.get_mut(idx) {
                             r.hit = false;
                         }
                     }
@@ -3124,7 +3164,7 @@ impl Kernel {
             }
         }
 
-        Ok(results)
+        results
     }
 
     /// Batch read implementation — Phase A (per-item auth + hooks)
@@ -3432,35 +3472,6 @@ impl Kernel {
         }
 
         results.into_iter().map(|o| o.unwrap()).collect()
-    }
-
-    /// Internal: batch delete — full Rust + batch metastore.
-    ///
-    /// NOT a syscall — prefixed with `_`. Called by Python batch delete.
-    /// Returns Vec<SysUnlinkResult> with per-path results.
-    /// Collects hit=true paths for a single metastore.delete_batch() call.
-    pub fn _delete_batch(
-        &self,
-        paths: &[String],
-        ctx: &OperationContext,
-    ) -> Result<Vec<SysUnlinkResult>, KernelError> {
-        let mut results = Vec::with_capacity(paths.len());
-
-        for path in paths {
-            match self.sys_unlink(path, ctx, false) {
-                Ok(r) => results.push(r),
-                Err(_) => results.push(SysUnlinkResult {
-                    hit: false,
-                    entry_type: 0,
-                    post_hook_needed: false,
-                    path: path.clone(),
-                    content_id: None,
-                    size: 0,
-                }),
-            }
-        }
-
-        Ok(results)
     }
 
     /// List immediate children of a directory path via the routed metastore.
@@ -3897,7 +3908,8 @@ mod read_batch_tests {
     fn read_batch_single_file_round_trip() {
         let k = kernel_with_backend();
         let c = ctx();
-        k.sys_write("/r3.txt", &c, b"hi there", 0).expect("write");
+        k.sys_write_one("/r3.txt", &c, b"hi there", 0)
+            .expect("write");
         let reqs = vec![rreq("/r3.txt", 0, None)];
         let out = k.sys_read(&reqs, &c);
         assert_eq!(out.len(), 1);
@@ -3910,7 +3922,7 @@ mod read_batch_tests {
         let k = kernel_with_backend();
         let c = ctx();
         let payload = b"hello vectored world".to_vec();
-        k.sys_write("/coalesce.txt", &c, &payload, 0)
+        k.sys_write_one("/coalesce.txt", &c, &payload, 0)
             .expect("write");
         let reqs: Vec<_> = (0..5).map(|_| rreq("/coalesce.txt", 0, None)).collect();
         let out = k.sys_read(&reqs, &c);
@@ -3929,7 +3941,7 @@ mod read_batch_tests {
         for i in 0..100u32 {
             let path = format!("/p{i:03}.txt");
             let payload = format!("payload-{i}").into_bytes();
-            k.sys_write(&path, &c, &payload, 0).expect("write");
+            k.sys_write_one(&path, &c, &payload, 0).expect("write");
             reqs.push(rreq(&path, 0, None));
         }
         let out = k.sys_read(&reqs, &c);
@@ -3946,10 +3958,10 @@ mod read_batch_tests {
         let k = kernel_with_backend();
         let c = ctx();
         let payload = b"0123456789".to_vec(); // 10 bytes
-        k.sys_write("/r.txt", &c, &payload, 0).unwrap();
+        k.sys_write_one("/r.txt", &c, &payload, 0).unwrap();
 
         for letter in ["a", "b", "c", "d"] {
-            k.sys_write(&format!("/r_{letter}.txt"), &c, &payload, 0)
+            k.sys_write_one(&format!("/r_{letter}.txt"), &c, &payload, 0)
                 .unwrap();
         }
 
@@ -3997,7 +4009,7 @@ mod read_batch_tests {
         k.set_read_batch_max_concurrency(1);
         let c = ctx();
         for i in 0..10 {
-            k.sys_write(&format!("/x{i}.txt"), &c, &format!("v{i}").into_bytes(), 0)
+            k.sys_write_one(&format!("/x{i}.txt"), &c, &format!("v{i}").into_bytes(), 0)
                 .unwrap();
         }
         let reqs: Vec<_> = (0..10)

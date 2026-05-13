@@ -180,7 +180,7 @@ pub fn send_message(
 
     // 1. Write to recipient inbox.
     let inbox = format!("{}/{filename}", inbox_path(&envelope.to));
-    let wr = kernel.sys_write(&inbox, ctx, &json, 0)?;
+    let wr = kernel.sys_write_one(&inbox, ctx, &json, 0)?;
     if !wr.hit {
         return Err(IpcError::Kernel(KernelError::IOError(format!(
             "sys_write missed on inbox path {inbox}"
@@ -189,11 +189,11 @@ pub fn send_message(
 
     // 2. DT_PIPE wakeup — best-effort (no pipe = silent no-op).
     let notify = notify_pipe_path(&envelope.to);
-    let _ = kernel.sys_write(&notify, ctx, b"\x01", 0);
+    let _ = kernel.sys_write_one(&notify, ctx, b"\x01", 0);
 
     // 3. Outbox copy (audit trail) — best-effort.
     let outbox = format!("{}/{filename}", outbox_path(&envelope.from));
-    let _ = kernel.sys_write(&outbox, ctx, &json, 0);
+    let _ = kernel.sys_write_one(&outbox, ctx, &json, 0);
 
     Ok(inbox)
 }

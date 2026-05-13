@@ -18,6 +18,10 @@ _PATH_ATTRS = (
 )
 _CONTAINER_ATTRS = ("files", "operations", "renames")
 _OPERATION_PATH_SLOTS = {
+    "append": (1,),
+    "delete": (1,),
+    "read": (1,),
+    "stat": (1,),
     "write": (1,),
     "rename": (1, 2),
 }
@@ -107,7 +111,8 @@ def _paths_from_value(value: Any, seen: set[int], *, container: str | None = Non
                             yield from _paths_from_value(value[index], seen)
                     return
                 for item in value[1:]:
-                    yield from _paths_from_value(item, seen, container=container)
+                    if not isinstance(item, str):
+                        yield from _paths_from_value(item, seen, container=container)
                 return
         for item in value:
             yield from _paths_from_value(item, seen, container=container)

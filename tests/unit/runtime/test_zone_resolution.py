@@ -109,6 +109,16 @@ def test_zone_from_params_prefers_write_operation_path_over_content() -> None:
     assert zone_from_params(params) == "eng"
 
 
+def test_zone_from_params_does_not_read_append_operation_content() -> None:
+    params = {"operations": [("append", "/plain/path.txt", "/zone/wrong/content")]}
+    assert zone_from_params(params) is None
+
+
+def test_zone_from_params_prefers_append_operation_path_over_content() -> None:
+    params = {"operations": [("append", "/zone/eng/path.txt", "/zone/wrong/content")]}
+    assert zone_from_params(params) == "eng"
+
+
 def test_zone_from_params_reads_generic_tagged_operation_dict_payload() -> None:
     params = {"operations": [("read", {"path": "/zone/eng/a.txt"})]}
     assert zone_from_params(params) == "eng"

@@ -525,7 +525,7 @@ impl NexusVfsService for VfsServiceImpl {
                 "federation token: use Call dispatch (sys_read RPC) — typed Read bypasses zone authorization",
             ))));
         }
-        match self.kernel.sys_read(&req.path, &ctx, 5000, 0) {
+        match self.kernel.sys_read_one(&req.path, &ctx, 5000, 0) {
             Ok(result) => {
                 // `sys_read.data` is `Option<Vec<u8>>` because the kernel
                 // returns `None` for trie-resolved paths / IPC misses
@@ -659,46 +659,36 @@ impl NexusVfsService for VfsServiceImpl {
         // proto3 `optional uint64 length` lands as `Option<u64>` on the
         // generated struct, so callers can distinguish "absent" (whole
         // file from offset) from `Some(0)` (zero-byte slice).
-        let rust_reqs: Vec<kernel::kernel::BatchReadRequest> = req
+        let rust_reqs: Vec<kernel::kernel::ReadRequest> = req
             .items
             .into_iter()
-            .map(|it| kernel::kernel::BatchReadRequest {
+            .map(|it| kernel::kernel::ReadRequest {
                 path: it.path,
                 offset: it.offset,
                 len: it.length,
+                timeout_ms: 5000,
             })
             .collect();
 
-        // Per-call aggregate-bytes cap — passed directly into the kernel
-        // so concurrent BatchRead calls (and the Python wrapper, which
-        // passes None) never race on shared state. The cap is enforced
-        // inside _read_batch AFTER Phase A authorization, so denied
-        // paths contribute 0 and cannot be probed via resource_exhausted.
-        const MAX_AGG: usize = 100 * 1024 * 1024;
-
-        let outcome = self
-            .kernel
-            ._read_batch_with_cap(&rust_reqs, &ctx, Some(MAX_AGG));
-        let results = match outcome {
-            Ok(v) => v,
-            Err(KernelError::IOError(msg)) if msg.starts_with("read_batch declared aggregate") => {
-                return Err(Status::resource_exhausted(msg));
-            }
-            Err(e) => return Err(Status::internal(format!("{:?}", e))),
-        };
+        // Aggregate-bytes cap is now a kernel config (default 100 MiB).
+        // The cap is enforced inside sys_read AFTER Phase A authorization,
+        // so denied paths contribute 0 and cannot be probed via
+        // resource_exhausted.
+        let results = self.kernel.sys_read(&rust_reqs, &ctx);
 
         // Post-read defense-in-depth — catches paths whose metadata wasn't
         // present in the upfront estimate (cold PAS, virtual resolver,
         // external connector). Reads have already completed; we still
         // refuse to serialize the response over the wire.
+        let max_agg = self.kernel.read_batch_max_aggregate_bytes();
         let mut total = 0usize;
         for r in results.iter().filter_map(|r| r.as_ref().ok()) {
             total = total.saturating_add(r.data.as_ref().map(|b| b.len()).unwrap_or(0));
-            if total > MAX_AGG {
+            if total > max_agg {
                 return Err(Status::resource_exhausted(format!(
                     "batch read response {} bytes exceeds {} MB",
                     total,
-                    MAX_AGG / (1024 * 1024)
+                    max_agg / (1024 * 1024)
                 )));
             }
         }

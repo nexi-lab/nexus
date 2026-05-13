@@ -2269,7 +2269,7 @@ impl PyKernel {
 
         // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_read(path, &rust_ctx, timeout_ms, offset));
+        let result = py.detach(|| self.inner.sys_read_one(path, &rust_ctx, timeout_ms, offset));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         // 3. Convert Vec<u8> -> PyBytes
@@ -2674,7 +2674,7 @@ impl PyKernel {
     /// have a full OperationContext handy.
     fn sys_read_raw<'py>(&self, py: Python<'py>, path: &str, zone_id: &str) -> PyResult<Py<PyAny>> {
         let ctx = OperationContext::new("system", zone_id, true, None, true);
-        let result = self.inner.sys_read(path, &ctx, 5000, 0).map_err(|e| {
+        let result = self.inner.sys_read_one(path, &ctx, 5000, 0).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("sys_read_raw: {:?}", e))
         })?;
         match result.data {
@@ -2772,30 +2772,31 @@ impl PyKernel {
         ctx: &PyOperationContext,
     ) -> PyResult<Vec<PyBatchReadItem>> {
         // Parse either shape: list[str] (legacy) or list[(str, int, int|None)].
-        let rust_reqs: Vec<crate::kernel::BatchReadRequest> =
+        let rust_reqs: Vec<crate::kernel::ReadRequest> =
             if let Ok(paths) = reqs.extract::<Vec<String>>() {
                 paths
                     .into_iter()
-                    .map(|p| crate::kernel::BatchReadRequest {
+                    .map(|p| crate::kernel::ReadRequest {
                         path: p,
                         offset: 0,
                         len: None,
+                        timeout_ms: 5000,
                     })
                     .collect()
             } else {
                 let tuples: Vec<(String, u64, Option<u64>)> = reqs.extract()?;
                 tuples
                     .into_iter()
-                    .map(|(p, off, len)| crate::kernel::BatchReadRequest {
+                    .map(|(p, off, len)| crate::kernel::ReadRequest {
                         path: p,
                         offset: off,
                         len,
+                        timeout_ms: 5000,
                     })
                     .collect()
             };
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner._read_batch(&rust_reqs, &rust_ctx));
-        let results = result.map_err(|e| -> PyErr { e.into() })?;
+        let results = py.detach(|| self.inner.sys_read(&rust_reqs, &rust_ctx));
         Ok(results
             .into_iter()
             .map(|r| match r {

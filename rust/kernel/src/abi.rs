@@ -176,7 +176,7 @@ impl KernelAbi for crate::kernel::Kernel {
         timeout_ms: u64,
         offset: u64,
     ) -> Result<SysReadResult, KernelError> {
-        Self::sys_read(self, path, ctx, timeout_ms, offset)
+        Self::sys_read_one(self, path, ctx, timeout_ms, offset)
     }
 
     fn sys_write(

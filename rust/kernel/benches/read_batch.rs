@@ -1,9 +1,9 @@
-//! Criterion bench for vectored _read_batch (Issue #4058).
+//! Criterion bench for vectored sys_read batch (Issue #4058).
 //!
 //! Run: cd rust/kernel && cargo bench read_batch
 //!
-//! Demonstrates the parallelism benefit of `_read_batch` over sequential
-//! `sys_read` calls when the backend has I/O latency. The bench uses a
+//! Demonstrates the parallelism benefit of `sys_read` batch over sequential
+//! `sys_read_one` calls when the backend has I/O latency. The bench uses a
 //! latency-simulating in-memory backend and clears the file cache before
 //! each measurement so reads reach the backend (cache-cold path).
 //!
@@ -17,7 +17,7 @@ use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use std::hint::black_box;
 
 use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
-use kernel::kernel::{BatchReadRequest, Kernel, OperationContext};
+use kernel::kernel::{Kernel, OperationContext, ReadRequest};
 
 // ── Latency-simulating in-memory ObjectStore ────────────────────────────────
 // Copied (not shared via feature) to keep kernel's public surface clean.
@@ -217,7 +217,7 @@ fn bench_sequential(c: &mut Criterion) {
             |_| {
                 for i in 0..100u32 {
                     let path = format!("/bench/f{i:03}.txt");
-                    let r = k.sys_read(&path, &ctx, 5000, 0).expect("read");
+                    let r = k.sys_read_one(&path, &ctx, 5000, 0).expect("read");
                     black_box(r);
                 }
             },
@@ -226,17 +226,18 @@ fn bench_sequential(c: &mut Criterion) {
     });
 }
 
-// ── Batched _read_batch ─────────────────────────────────────────────────────
+// ── Batched sys_read ─────────────────────────────────────────────────────
 
 fn bench_batched(c: &mut Criterion) {
     let k = setup();
     let ctx = OperationContext::new("bench", "root", true, None, true);
 
-    let reqs: Vec<BatchReadRequest> = (0..100u32)
-        .map(|i| BatchReadRequest {
+    let reqs: Vec<ReadRequest> = (0..100u32)
+        .map(|i| ReadRequest {
             path: format!("/bench/f{i:03}.txt"),
             offset: 0,
             len: None,
+            timeout_ms: 5000,
         })
         .collect();
 
@@ -244,7 +245,7 @@ fn bench_batched(c: &mut Criterion) {
         b.iter_batched(
             || k.clear_file_cache(), // setup: flush cache before each sample
             |_| {
-                let out = k._read_batch(&reqs, &ctx).expect("batch");
+                let out = k.sys_read(&reqs, &ctx);
                 black_box(out);
             },
             BatchSize::PerIteration,

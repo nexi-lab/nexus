@@ -28,10 +28,10 @@ use super::{
     SysUnlinkResult, SysWriteResult,
 };
 
-/// Per-request resolved state produced by Phase A of `_read_batch`.
+/// Per-request resolved state produced by Phase A of `sys_read` (batch path).
 /// Kept file-private; callers only see the final `Vec<Result<…>>`.
 /// `entry` is `None` when the metastore has no record yet; Phase B
-/// falls back to `sys_read` which retries the backend directly.
+/// falls back to `sys_read_one` which retries the backend directly.
 ///
 /// Fields are consumed by Task 4 coalescing; allow dead_code until then.
 #[allow(dead_code)]
@@ -41,7 +41,7 @@ struct ResolvedRead {
 }
 
 /// Produce a cheap structural clone of a `KernelError` for fan-out in
-/// `_read_batch`.  `KernelError` is `!Clone` (its `Route` variant holds a
+/// `sys_read` batch path.  `KernelError` is `!Clone` (its `Route` variant holds a
 /// non-Clone `RouteError`), so we collapse that variant to its `Debug` repr.
 fn clone_kernel_err(e: &KernelError) -> KernelError {
     match e {
@@ -86,7 +86,7 @@ fn clone_kernel_err(e: &KernelError) -> KernelError {
 /// lead's. The shared payload is the only thing borrowed from the lead.
 fn clone_read_result(
     shared: &Result<SysReadResult, KernelError>,
-    req: &crate::kernel::BatchReadRequest,
+    req: &crate::kernel::ReadRequest,
     consumer_meta: Option<&FileMetadata>,
 ) -> Result<SysReadResult, KernelError> {
     match shared {
@@ -129,7 +129,7 @@ fn clone_read_result(
 
 fn slice_read_result(
     r: Result<SysReadResult, KernelError>,
-    req: &crate::kernel::BatchReadRequest,
+    req: &crate::kernel::ReadRequest,
 ) -> Result<SysReadResult, KernelError> {
     let mut r = r?;
     if let Some(bytes) = r.data.as_ref() {
@@ -144,16 +144,39 @@ fn slice_read_result(
 }
 
 impl Kernel {
+    /// Unified sys_read — accepts single or batch requests.
+    ///
+    /// Returns one `Result` per input request, preserving input order.
+    /// `reqs.len() == 1` → fast path via `sys_read_single()`.
+    /// `reqs.len() > 1` → Phase A (per-item auth + hooks) → Phase B (coalesce + rayon).
     pub fn sys_read(
+        &self,
+        reqs: &[crate::kernel::ReadRequest],
+        ctx: &OperationContext,
+    ) -> Vec<Result<SysReadResult, KernelError>> {
+        if reqs.is_empty() {
+            return Vec::new();
+        }
+        if reqs.len() == 1 {
+            let req = &reqs[0];
+            return vec![self.sys_read_single(&req.path, ctx, 1, req.timeout_ms, req.offset)];
+        }
+        self.sys_read_batch_impl(reqs, ctx)
+    }
+
+    /// Convenience wrapper for single-path reads.
+    ///
+    /// Kernel-internal callers (sys_cat, grep, etc.) and external callers
+    /// (gRPC, PyO3, services) use this for the familiar single-path API.
+    /// Will be removed once all callers migrate to the batch-capable `sys_read`.
+    pub fn sys_read_one(
         &self,
         path: &str,
         ctx: &OperationContext,
         timeout_ms: u64,
         offset: u64,
     ) -> Result<SysReadResult, KernelError> {
-        // Outer entry point — one DT_LINK follow allowed (max_link_hops=1).
-        // The recursive call below passes 0 so a chained link rejects.
-        self.sys_read_with_link_depth(path, ctx, 1, timeout_ms, offset)
+        self.sys_read_single(path, ctx, 1, timeout_ms, offset)
     }
 
     pub fn op_metadata_for_path(
@@ -196,7 +219,7 @@ impl Kernel {
         strict_json: bool,
     ) -> Result<SysCatResult, KernelError> {
         let metadata = self.op_metadata_for_path(path, ctx)?;
-        let read = self.sys_read(path, ctx, 5000, 0)?;
+        let read = self.sys_read_one(path, ctx, 5000, 0)?;
         let data = read
             .data
             .ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
@@ -256,38 +279,14 @@ impl Kernel {
         }
     }
 
-    fn sys_read_with_link_depth(
+    /// Full single-read with auth + hooks + DT_LINK follow.
+    fn sys_read_single(
         &self,
         path: &str,
         ctx: &OperationContext,
         max_link_hops: u8,
         timeout_ms: u64,
         offset: u64,
-    ) -> Result<SysReadResult, KernelError> {
-        self.sys_read_inner(path, ctx, max_link_hops, timeout_ms, offset, false)
-    }
-
-    /// Read variant that skips the §13 permission gate AND §11 native
-    /// PRE-read hook. Used only by `_read_batch`'s Phase B fan-out, which
-    /// has already run both checks in Phase A. Calling normal `sys_read`
-    /// from Phase B would double-dispatch hooks (singletons + group leads)
-    /// and risk double-firing audit/permission side effects.
-    fn sys_read_for_batch(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-    ) -> Result<SysReadResult, KernelError> {
-        self.sys_read_inner(path, ctx, 1, 5000, 0, true)
-    }
-
-    fn sys_read_inner(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        max_link_hops: u8,
-        timeout_ms: u64,
-        offset: u64,
-        skip_authz: bool,
     ) -> Result<SysReadResult, KernelError> {
         let not_found = || KernelError::FileNotFound(path.to_string());
 
@@ -297,44 +296,80 @@ impl Kernel {
         let _ = self.flush_due_write_buffer();
 
         // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
-        // Short-circuits to metastore get_file_metadata without hooks/routing.
         if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
             return self.handle_xattr_read(rest);
         }
 
-        // 1b. Trie-resolved virtual paths (§11 trie resolution) — Python's resolve_read
-        // should have handled these before reaching us; treat as missing.
+        // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
             return Err(not_found());
         }
 
-        if !skip_authz {
-            // 1c. Permission gate (§13) — BEFORE native hooks.
-            self.check_permission(path, Permission::Read, ctx)?;
+        // 1c. Permission gate (§13) — BEFORE native hooks.
+        self.check_permission(path, Permission::Read, ctx)?;
 
-            // 1d. Native INTERCEPT PRE hooks (§11 native hooks) — audit etc.
-            let hook_id = HookIdentity {
-                user_id: ctx.user_id.clone(),
-                zone_id: ctx.zone_id.clone(),
-                agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                is_admin: ctx.is_admin,
-            };
-            self.dispatch_native_pre(&HookContext::Read(ReadHookCtx {
-                path: path.to_string(),
-                identity: hook_id,
-                content: None,
-                content_id: None,
-            }))?;
+        // 1d. Native INTERCEPT PRE hooks (§11 native hooks) — audit etc.
+        let hook_id = HookIdentity {
+            user_id: ctx.user_id.clone(),
+            zone_id: ctx.zone_id.clone(),
+            agent_id: ctx.agent_id.clone().unwrap_or_default(),
+            is_admin: ctx.is_admin,
+        };
+        self.dispatch_native_pre(&HookContext::Read(ReadHookCtx {
+            path: path.to_string(),
+            identity: hook_id,
+            content: None,
+            content_id: None,
+        }))?;
+
+        // Route → metastore → backend (shared logic)
+        self.sys_read_after_auth(path, ctx, max_link_hops, timeout_ms, offset)
+    }
+
+    /// Phase B fan-out read — routing + metastore + backend, no auth/hooks.
+    ///
+    /// Auth was already done in Phase A. DT_LINK targets force re-auth
+    /// via `sys_read_single`.
+    fn sys_read_content_only(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysReadResult, KernelError> {
+        let not_found = || KernelError::FileNotFound(path.to_string());
+
+        validate_path_fast(path)?;
+
+        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
+            return self.handle_xattr_read(rest);
         }
+
+        if self.trie.lookup(path).is_some() {
+            return Err(not_found());
+        }
+
+        // No permission check or hooks — Phase B fan-out, auth already done.
+        self.sys_read_after_auth(path, ctx, 1, 5000, 0)
+    }
+
+    /// Shared read logic: route → metastore → DT_LINK follow → backend.
+    ///
+    /// Must be called after auth/hooks are resolved. DT_LINK targets
+    /// re-enter via `sys_read_single` (forces auth on target).
+    fn sys_read_after_auth(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        max_link_hops: u8,
+        timeout_ms: u64,
+        offset: u64,
+    ) -> Result<SysReadResult, KernelError> {
+        let not_found = || KernelError::FileNotFound(path.to_string());
 
         // 2. Route (pure Rust LPM)
         let route = match self.vfs_router.route(path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return Err(not_found()),
         };
-
-        // External mounts now fall through to the normal backend read path
-        // — Rust-registered ObjectStore handles all connectors natively.
 
         // 3. MetaStore lookup. The metastore impl serves cache hits from
         // its own internal `DashMap` projection (see
@@ -359,17 +394,13 @@ impl Kernel {
                     });
                 }
                 // MetaStore miss → try backend directly (all backend types
-                // uniformly).  CAS backends return Err for path-based reads
-                // (hash-addressed).  Path-local/external backends serve the
-                // file if it exists on disk / via API.  No ABC leak: kernel
-                // treats every backend the same through ObjectStore trait.
+                // uniformly).
                 if let Some(data) = route
                     .backend
                     .as_ref()
                     .and_then(|b| b.read_content(&route.backend_path, ctx).ok())
                 {
                     // §4057: emit prefetch hint after successful DT_REG read.
-                    // Compute `data.len()` before the move into SysReadResult.
                     {
                         let size = data.len() as u32;
                         let sink = self.prefetch_sink.read().clone();
@@ -389,34 +420,19 @@ impl Kernel {
         };
 
         // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
-        // Resolution runs AFTER routing + dcache+metastore populate so
-        // cold-cache and cross-mount links resolve against authoritative
-        // metadata instead of the hot dcache. Recursive call with
-        // `max_link_hops=0` rejects chained links via this same branch.
+        // DT_LINK target requires its own §13 permission gate +
+        // §11 native PRE-read hook. Always enters via `sys_read_single`
+        // so auth fires on the target path.
         if let Some(target) = Self::dt_link_target(path, &entry)? {
             if max_link_hops == 0 {
                 return Err(KernelError::PermissionDenied(format!(
                     "DT_LINK chain rejected (ELOOP) at {path}"
                 )));
             }
-            // DT_LINK target requires its own §13 permission gate +
-            // §11 native PRE-read hook (the link path's authorization
-            // does NOT grant access to the target). Force authz on the
-            // recursive call even when the outer batch caller set
-            // skip_authz=true.
-            return self.sys_read_inner(
-                target,
-                ctx,
-                max_link_hops - 1,
-                timeout_ms,
-                offset,
-                /* skip_authz */ false,
-            );
+            return self.sys_read_single(target, ctx, max_link_hops - 1, timeout_ms, offset);
         }
 
         // DT_PIPE — Rust IPC registry: nowait pop, then optional blocking wait.
-        // timeout_ms == 0 → O_NONBLOCK: return data or None immediately.
-        // timeout_ms > 0  → POSIX blocking: wait for data or timeout.
         if entry.entry_type == DT_PIPE {
             match self.pipe_read_nowait(path) {
                 Ok(Some(data)) => {
@@ -440,7 +456,6 @@ impl Kernel {
                             stream_next_offset: None,
                         });
                     }
-                    // Blocking: wait for data with timeout (GIL released by wrapper)
                     match self.pipe_read_blocking(path, timeout_ms) {
                         Ok(data) => {
                             return Ok(SysReadResult {
@@ -453,7 +468,6 @@ impl Kernel {
                             });
                         }
                         Err(KernelError::WouldBlock(_)) => {
-                            // Timeout — return None (no data within deadline)
                             return Ok(SysReadResult {
                                 data: None,
                                 post_hook_needed: false,
@@ -494,7 +508,6 @@ impl Kernel {
                             stream_next_offset: None,
                         });
                     }
-                    // Blocking: wait for new data at offset
                     match self.stream_read_at_blocking(path, offset as usize, timeout_ms) {
                         Ok((data, next_offset)) => {
                             return Ok(SysReadResult {
@@ -3114,41 +3127,16 @@ impl Kernel {
         Ok(results)
     }
 
-    /// Internal: batch read. Accepts `(path, offset, len)` requests.
+    /// Batch read implementation — Phase A (per-item auth + hooks)
+    /// → Phase B (coalesce + rayon parallel fetch).
     ///
-    /// Returns per-request `Result` in input order. The outer `Err` is
-    /// reserved for kernel-wide setup failure (e.g. no metastore wired)
-    /// or an authorized-aggregate cap violation (see `max_aggregate_bytes`).
-    /// Per-request failures are inner `Err` and do NOT abort the batch.
-    ///
-    /// Coalesces same-`content_id` requests into one backend fetch;
-    /// bounded parallelism per `Kernel::read_batch_max_concurrency`.
-    ///
-    /// The convenience wrapper passes `None` for `max_aggregate_bytes`
-    /// (uncapped — callers like the Python wrapper do their own DoS
-    /// guarding). The gRPC `BatchRead` handler passes `Some(100 MiB)` so
-    /// the kernel rejects oversized authorized batches before Phase B
-    /// fetches any backend bytes. The cap is a *per-call* argument: it
-    /// never mutates shared kernel state and so concurrent callers do
-    /// not clobber each other.
-    pub fn _read_batch(
+    /// Called by `sys_read` when `reqs.len() > 1`. Uses
+    /// `read_batch_max_aggregate_bytes` from kernel config as the DoS cap.
+    fn sys_read_batch_impl(
         &self,
-        reqs: &[crate::kernel::BatchReadRequest],
+        reqs: &[crate::kernel::ReadRequest],
         ctx: &OperationContext,
-    ) -> Result<Vec<Result<SysReadResult, KernelError>>, KernelError> {
-        self._read_batch_with_cap(reqs, ctx, None)
-    }
-
-    pub fn _read_batch_with_cap(
-        &self,
-        reqs: &[crate::kernel::BatchReadRequest],
-        ctx: &OperationContext,
-        max_aggregate_bytes: Option<usize>,
-    ) -> Result<Vec<Result<SysReadResult, KernelError>>, KernelError> {
-        if reqs.is_empty() {
-            return Ok(Vec::new());
-        }
-
+    ) -> Vec<Result<SysReadResult, KernelError>> {
         let n = reqs.len();
         let mut results: Vec<Option<Result<SysReadResult, KernelError>>> =
             (0..n).map(|_| None).collect();
@@ -3175,14 +3163,13 @@ impl Kernel {
                 }
             };
             // 4. Metadata lookup (best-effort; None means cold-cache /
-            //    backend-only file — Phase B falls through to sys_read
+            //    backend-only file — Phase B falls through to sys_read_one
             //    which has its own backend fallback path).
             let entry = self
                 .with_metastore_route(&route, |ms| ms.get(&req.path).ok().flatten())
                 .flatten();
             // Reject pipe/stream — they have blocking IPC semantics that
-            // don't belong in batch reads. Per-item Err so the rest of
-            // the batch keeps going.
+            // don't belong in batch reads.
             if let Some(m) = entry.as_ref() {
                 if m.entry_type == crate::meta_store::DT_PIPE
                     || m.entry_type == crate::meta_store::DT_STREAM
@@ -3197,11 +3184,7 @@ impl Kernel {
             // Native INTERCEPT PRE hooks (§11 native hooks) — must fire
             // PER PATH before coalescing so ReBAC permission_hook and
             // audit hooks see every request's identity, not just the
-            // lead's. (Coalescing in Phase B would otherwise let a
-            // CAS-deduplicated path share bytes with a path the hook
-            // would have denied.) The lead path's sys_read will dispatch
-            // this hook again — minor double-firing tax, but the hook
-            // chain is required to be idempotent.
+            // lead's.
             let hook_id = HookIdentity {
                 user_id: ctx.user_id.clone(),
                 zone_id: ctx.zone_id.clone(),
@@ -3222,15 +3205,6 @@ impl Kernel {
             // file. Phase A has already run §13 permission + §11 native
             // PRE-read hook for this path, so returning empty bytes for
             // a proven-existing DT_REG file is authoritative.
-            //
-            // Explicit exclusions:
-            //   • entry is None — path may not exist; falling through
-            //     lets Phase B return FileNotFound rather than fake
-            //     success.
-            //   • DT_LINK — the link target still needs its own
-            //     permission/hook chain; Phase B routes through
-            //     sys_read_inner which follows the link with authz.
-            //   • DT_PIPE / DT_STREAM — already rejected above.
             if req.len == Some(0) {
                 if let Some(m) = entry.as_ref() {
                     if m.entry_type != crate::meta_store::DT_LINK {
@@ -3245,93 +3219,47 @@ impl Kernel {
                         continue;
                     }
                 }
-                // Fall through to Phase B — entry==None or DT_LINK both
-                // need the regular read path to resolve correctly.
             }
             resolved[i] = Some(ResolvedRead { route, entry });
         }
 
-        // Aggregate-bytes cap — only authorized paths (those that survived
-        // Phase A's permission + native PRE-read hook) contribute. We
-        // count actual fetched bytes, not response window bytes: Phase B
-        // fetches whole blobs and slices in-kernel, so a request reading
-        // `(/big, off=0, len=1)` from a 100 GB file costs ~100 GB of
-        // backend bandwidth + cache fill, not 1 byte. Coalescing by
-        // (mount, content_id) means one fetch per distinct blob;
-        // singletons (no content_id) each fetch their own file.
-        //
-        // When `max_aggregate_bytes` is `Some(cap)` AND an authorized path
-        // has no metadata, we cannot bound its fetch cost upfront, so we
-        // reject the whole batch (fail-closed) rather than let cold PAS /
-        // virtual-resolver paths bypass the DoS guard.
-        //
-        // `None` (default) disables the cap so the Python wrapper's own
-        // DoS guard stays in charge.
-        if let Some(cap) = max_aggregate_bytes {
+        // Aggregate-bytes cap from kernel config.
+        let cap = self.read_batch_max_aggregate_bytes();
+        if cap < usize::MAX {
             use std::collections::HashMap;
-            // Per-(mount, content_id) running max-size table. We charge
-            // the *maximum* declared size seen across rows that share a
-            // content_id, so a stale-small metadata row cannot understate
-            // the actual fetched blob size.
-            //
-            // Race note: the cap is computed from Phase A metadata, but
-            // Phase B can fetch newer bytes after a concurrent rewrite.
-            // The post-read defense-in-depth in the transport handler
-            // catches genuinely-oversized responses; a true
-            // pre-fetch-under-lock cap would require per-path VFS read
-            // locks (defeating coalescing). The Phase A→B window is
-            // narrow enough that the post-read guard is acceptable as
-            // the final ceiling.
             let mut sizes: HashMap<(String, String), usize> = HashMap::new();
             let mut declared: usize = 0;
-            for (i, slot) in resolved.iter().enumerate() {
-                let r = match slot {
+            // Indices to clear from `resolved` after the scan.
+            let mut reject: Vec<usize> = Vec::new();
+            for i in 0..n {
+                let r = match resolved[i].as_ref() {
                     Some(r) => r,
                     None => continue,
                 };
                 let meta = match r.entry.as_ref() {
                     Some(m) => m,
-                    // No metastore entry under a cap is ambiguous: it
-                    // might be a normal missing file (Phase B returns
-                    // per-item FileNotFound) OR an external-connector
-                    // / virtual-resolver path with bytes produced
-                    // lazily by the backend. To prevent capped callers
-                    // from bypassing the DoS guard via metadata-less
-                    // external mounts, we don't outer-Err the whole
-                    // batch any more; instead we mark this path with a
-                    // per-item Err so Phase B never fetches its bytes.
-                    // Genuine missing files would receive FileNotFound
-                    // from Phase B anyway, so the user-visible result
-                    // is the same.
                     None => {
                         results[i] = Some(Err(KernelError::IOError(format!(
-                            "read_batch cannot bound metadata-less path under cap (cap={} bytes)",
+                            "sys_read cannot bound metadata-less path under cap (cap={} bytes)",
                             cap
                         ))));
+                        reject.push(i);
                         continue;
                     }
                 };
-                // DT_LINK metadata is size=0 / content_id=None at the
-                // link itself; the actual fetch follows the link to a
-                // target whose size we have not bounded here. Fail-
-                // closed under the cap rather than let a 0-byte
-                // accounting row hide a multi-GB target.
                 if meta.entry_type == crate::meta_store::DT_LINK {
-                    return Err(KernelError::IOError(format!(
-                        "read_batch cannot pre-bound DT_LINK target size; \
-                         refusing under aggregate cap (cap={} bytes)",
+                    results[i] = Some(Err(KernelError::IOError(format!(
+                        "sys_read cannot pre-bound DT_LINK target size (cap={} bytes)",
                         cap
-                    )));
+                    ))));
+                    reject.push(i);
+                    continue;
                 }
                 let cid = meta.content_id.clone().unwrap_or_default();
                 let blob_size = meta.size as usize;
                 if cid.is_empty() {
-                    // Singleton — distinct fetch per request.
                     declared = declared.saturating_add(blob_size);
                 } else {
-                    // Track per-(mount, content_id) max-size. New rows
-                    // only increase the charge; smaller stale rows are
-                    // ignored.
                     let key = (r.route.mount_point.clone(), cid);
                     let prev = sizes.entry(key).or_insert(0);
                     if blob_size > *prev {
@@ -3340,17 +3268,24 @@ impl Kernel {
                     }
                 }
                 if declared > cap {
-                    return Err(KernelError::IOError(format!(
-                        "read_batch declared aggregate {} bytes exceeds {} bytes cap",
-                        declared, cap
-                    )));
+                    for j in i..n {
+                        if results[j].is_none() && resolved[j].is_some() {
+                            results[j] = Some(Err(KernelError::IOError(format!(
+                                "sys_read declared aggregate {} bytes exceeds {} bytes cap",
+                                declared, cap
+                            ))));
+                            reject.push(j);
+                        }
+                    }
+                    break;
                 }
+            }
+            for idx in reject {
+                resolved[idx] = None;
             }
         }
 
         // Phase B — group surviving requests by (mount_point, content_id).
-        // Requests whose `entry.content_id` is None or empty become
-        // singleton groups (no coalescing benefit).
         use std::collections::HashMap;
         let mut groups: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut singletons: Vec<usize> = Vec::new();
@@ -3378,10 +3313,6 @@ impl Kernel {
         }
 
         // Phase B fan-out — bounded parallelism over distinct work units.
-        // Each unit is either a coalesced group (one sys_read + N slices)
-        // or a singleton. Cap in-flight units at `read_batch_max_concurrency`
-        // via rayon::par_chunks so we never spin up more than the configured
-        // number of concurrent backend fetches.
         use rayon::prelude::*;
 
         enum Unit {
@@ -3412,10 +3343,11 @@ impl Kernel {
                             let lead = indices[0];
                             let req = &reqs[lead];
                             // Route stability check — if the lead's mount has
-                            // shifted since Phase A, fall back to full sys_read
-                            // so authz + hooks run against the *current* mount.
-                            // Otherwise use the no-authz variant since Phase A
-                            // already authorized this exact route.
+                            // shifted since Phase A, fall back to full
+                            // sys_read_one so authz + hooks run against the
+                            // *current* mount. Otherwise use
+                            // sys_read_content_only since Phase A already
+                            // authorized this exact route.
                             let phase_a_mount = resolved
                                 .get(lead)
                                 .and_then(|o| o.as_ref())
@@ -3427,40 +3359,24 @@ impl Kernel {
                                 .map(|r| r.mount_point == phase_a_mount)
                                 .unwrap_or(false);
                             let shared = if route_stable {
-                                self.sys_read_for_batch(&req.path, ctx)
+                                self.sys_read_content_only(&req.path, ctx)
                             } else {
-                                self.sys_read(&req.path, ctx, 5000, 0)
+                                self.sys_read_one(&req.path, ctx, 5000, 0)
                             };
-                            // Anchor for staleness check: the content_id the read
-                            // bytes actually came from. Re-fetched per-consumer
-                            // metadata MUST agree, or that consumer falls back
-                            // to its own read (rewrite race: file changed between
-                            // Phase A snapshot and the lead's sys_read).
                             let lead_cid = shared.as_ref().ok().and_then(|r| r.content_id.clone());
                             for &i in indices.iter() {
-                                // Re-fetch each consumer's current metadata to
-                                // close the Phase-A→Phase-B race window. If the
-                                // consumer's content_id no longer matches what
-                                // the lead actually read, fall back to a fresh
-                                // per-consumer read so bytes and gen/content_id
-                                // stay consistent.
                                 let consumer_route = resolved
                                     .get(i)
                                     .and_then(|o| o.as_ref())
                                     .map(|r| &r.route)
                                     .expect("resolved set in Phase A");
-                                // Per-consumer route stability check. A mount
-                                // change can shadow / remap a consumer path
-                                // even when the lead's mount looks stable.
                                 let consumer_route_stable = self
                                     .vfs_router
                                     .route(&reqs[i].path, &ctx.zone_id)
                                     .map(|r| r.mount_point == consumer_route.mount_point)
                                     .unwrap_or(false);
                                 if !consumer_route_stable {
-                                    // Re-run full sys_read so authz + hooks
-                                    // run against the current mount.
-                                    let r = self.sys_read(&reqs[i].path, ctx, 5000, 0);
+                                    let r = self.sys_read_one(&reqs[i].path, ctx, 5000, 0);
                                     local.push((i, slice_read_result(r, &reqs[i])));
                                     continue;
                                 }
@@ -3481,16 +3397,13 @@ impl Kernel {
                                         clone_read_result(&shared, &reqs[i], fresh_meta.as_ref()),
                                     ));
                                 } else {
-                                    // Rewrite race or lead error → fall back to
-                                    // this consumer's own read.
-                                    let r = self.sys_read_for_batch(&reqs[i].path, ctx);
+                                    let r = self.sys_read_content_only(&reqs[i].path, ctx);
                                     local.push((i, slice_read_result(r, &reqs[i])));
                                 }
                             }
                         }
                         Unit::Singleton { idx } => {
                             let req = &reqs[*idx];
-                            // Same route-stability check as the Group arm.
                             let phase_a_mount = resolved
                                 .get(*idx)
                                 .and_then(|o| o.as_ref())
@@ -3502,9 +3415,9 @@ impl Kernel {
                                 .map(|r| r.mount_point == phase_a_mount)
                                 .unwrap_or(false);
                             let r = if route_stable {
-                                self.sys_read_for_batch(&req.path, ctx)
+                                self.sys_read_content_only(&req.path, ctx)
                             } else {
-                                self.sys_read(&req.path, ctx, 5000, 0)
+                                self.sys_read_one(&req.path, ctx, 5000, 0)
                             };
                             local.push((*idx, slice_read_result(r, req)));
                         }
@@ -3518,7 +3431,7 @@ impl Kernel {
             results[i] = Some(r);
         }
 
-        Ok(results.into_iter().map(|o| o.unwrap()).collect())
+        results.into_iter().map(|o| o.unwrap()).collect()
     }
 
     /// Internal: batch delete — full Rust + batch metastore.
@@ -3950,10 +3863,20 @@ mod read_batch_tests {
         k
     }
 
+    /// Helper to build a ReadRequest with default timeout.
+    fn rreq(path: &str, offset: u64, len: Option<u64>) -> crate::kernel::ReadRequest {
+        crate::kernel::ReadRequest {
+            path: path.into(),
+            offset,
+            len,
+            timeout_ms: 5000,
+        }
+    }
+
     #[test]
     fn read_batch_empty_input_returns_empty_vec() {
         let k = Kernel::new();
-        let out = k._read_batch(&[], &ctx()).expect("ok");
+        let out = k.sys_read(&[], &ctx());
         assert_eq!(out.len(), 0);
     }
 
@@ -3961,18 +3884,10 @@ mod read_batch_tests {
     fn read_batch_invalid_path_yields_per_item_err() {
         let k = Kernel::new();
         let reqs = vec![
-            crate::kernel::BatchReadRequest {
-                path: "".into(), // invalid
-                offset: 0,
-                len: None,
-            },
-            crate::kernel::BatchReadRequest {
-                path: "/definitely/does/not/exist".into(),
-                offset: 0,
-                len: None,
-            },
+            rreq("", 0, None),
+            rreq("/definitely/does/not/exist", 0, None),
         ];
-        let out = k._read_batch(&reqs, &ctx()).expect("outer ok");
+        let out = k.sys_read(&reqs, &ctx());
         assert_eq!(out.len(), 2);
         assert!(matches!(out[0], Err(KernelError::InvalidPath(_))));
         assert!(matches!(out[1], Err(KernelError::FileNotFound(_))));
@@ -3983,12 +3898,8 @@ mod read_batch_tests {
         let k = kernel_with_backend();
         let c = ctx();
         k.sys_write("/r3.txt", &c, b"hi there", 0).expect("write");
-        let reqs = vec![crate::kernel::BatchReadRequest {
-            path: "/r3.txt".into(),
-            offset: 0,
-            len: None,
-        }];
-        let out = k._read_batch(&reqs, &c).expect("ok");
+        let reqs = vec![rreq("/r3.txt", 0, None)];
+        let out = k.sys_read(&reqs, &c);
         assert_eq!(out.len(), 1);
         let r = out[0].as_ref().expect("inner ok");
         assert_eq!(r.data.as_deref().unwrap(), b"hi there");
@@ -4001,14 +3912,8 @@ mod read_batch_tests {
         let payload = b"hello vectored world".to_vec();
         k.sys_write("/coalesce.txt", &c, &payload, 0)
             .expect("write");
-        let reqs: Vec<_> = (0..5)
-            .map(|_| crate::kernel::BatchReadRequest {
-                path: "/coalesce.txt".into(),
-                offset: 0,
-                len: None,
-            })
-            .collect();
-        let out = k._read_batch(&reqs, &c).expect("outer ok");
+        let reqs: Vec<_> = (0..5).map(|_| rreq("/coalesce.txt", 0, None)).collect();
+        let out = k.sys_read(&reqs, &c);
         assert_eq!(out.len(), 5);
         for r in &out {
             let r = r.as_ref().expect("ok");
@@ -4025,13 +3930,9 @@ mod read_batch_tests {
             let path = format!("/p{i:03}.txt");
             let payload = format!("payload-{i}").into_bytes();
             k.sys_write(&path, &c, &payload, 0).expect("write");
-            reqs.push(crate::kernel::BatchReadRequest {
-                path,
-                offset: 0,
-                len: None,
-            });
+            reqs.push(rreq(&path, 0, None));
         }
-        let out = k._read_batch(&reqs, &c).expect("outer ok");
+        let out = k.sys_read(&reqs, &c);
         assert_eq!(out.len(), 100);
         for (i, r) in out.iter().enumerate() {
             let r = r.as_ref().expect("ok");
@@ -4047,42 +3948,18 @@ mod read_batch_tests {
         let payload = b"0123456789".to_vec(); // 10 bytes
         k.sys_write("/r.txt", &c, &payload, 0).unwrap();
 
-        // Distinct paths so each request is a singleton (no coalescing).
-        // Need separate paths to force singletons; reuse same content via
-        // multiple writes.
         for letter in ["a", "b", "c", "d"] {
             k.sys_write(&format!("/r_{letter}.txt"), &c, &payload, 0)
                 .unwrap();
         }
 
         let reqs = vec![
-            // Whole file (coalesce-able with itself if duplicated, but
-            // single request → singleton path).
-            crate::kernel::BatchReadRequest {
-                path: "/r_a.txt".into(),
-                offset: 0,
-                len: None,
-            },
-            // Middle slice
-            crate::kernel::BatchReadRequest {
-                path: "/r_b.txt".into(),
-                offset: 3,
-                len: Some(4),
-            },
-            // Offset == size (empty)
-            crate::kernel::BatchReadRequest {
-                path: "/r_c.txt".into(),
-                offset: 10,
-                len: Some(5),
-            },
-            // Overshoot — truncated
-            crate::kernel::BatchReadRequest {
-                path: "/r_d.txt".into(),
-                offset: 8,
-                len: Some(50),
-            },
+            rreq("/r_a.txt", 0, None),
+            rreq("/r_b.txt", 3, Some(4)),
+            rreq("/r_c.txt", 10, Some(5)),
+            rreq("/r_d.txt", 8, Some(50)),
         ];
-        let out = k._read_batch(&reqs, &c).expect("ok");
+        let out = k.sys_read(&reqs, &c);
         assert_eq!(
             out[0].as_ref().unwrap().data.as_deref().unwrap(),
             b"0123456789"
@@ -4095,23 +3972,16 @@ mod read_batch_tests {
     #[test]
     fn read_batch_rejects_pipe_entry() {
         use crate::meta_store::{FileMetadata, DT_PIPE};
-        // kernel_with_backend registers a "/" mount so vfs_router.route succeeds.
         let k = kernel_with_backend();
         let c = ctx();
-        // Inject a DT_PIPE metadata row directly into the boot metastore.
-        // This bypasses the full pipe-creation pipeline and exercises
-        // exactly the guard we are testing.
         let meta = FileMetadata {
             entry_type: DT_PIPE,
             ..FileMetadata::default()
         };
         k.metastore_put("/fake_pipe", meta).expect("put");
-        let reqs = vec![crate::kernel::BatchReadRequest {
-            path: "/fake_pipe".into(),
-            offset: 0,
-            len: None,
-        }];
-        let out = k._read_batch(&reqs, &c).expect("outer ok");
+        // Need 2+ reqs to hit batch path (single req goes through sys_read_single)
+        let reqs2 = vec![rreq("/fake_pipe", 0, None), rreq("/fake_pipe", 0, None)];
+        let out = k.sys_read(&reqs2, &c);
         match &out[0] {
             Err(KernelError::IOError(m)) => {
                 assert!(m.contains("pipe") || m.contains("stream"), "got: {m}");
@@ -4131,13 +4001,9 @@ mod read_batch_tests {
                 .unwrap();
         }
         let reqs: Vec<_> = (0..10)
-            .map(|i| crate::kernel::BatchReadRequest {
-                path: format!("/x{i}.txt"),
-                offset: 0,
-                len: None,
-            })
+            .map(|i| rreq(&format!("/x{i}.txt"), 0, None))
             .collect();
-        let out = k._read_batch(&reqs, &c).expect("ok");
+        let out = k.sys_read(&reqs, &c);
         for (i, r) in out.iter().enumerate() {
             assert_eq!(
                 r.as_ref().unwrap().data.as_deref().unwrap(),

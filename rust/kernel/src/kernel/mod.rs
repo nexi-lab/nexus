@@ -186,14 +186,32 @@ pub struct SysReadResult {
     pub stream_next_offset: Option<usize>,
 }
 
-/// Per-request entry for `Kernel::_read_batch`.
+/// Per-request entry for `Kernel::sys_read` (batch variant).
 ///
 /// `offset` = byte offset into the file; `len = None` means "to EOF".
-pub struct BatchReadRequest {
+/// `timeout_ms` = blocking timeout for IPC types (DT_PIPE/DT_STREAM).
+pub struct ReadRequest {
     pub path: String,
     pub offset: u64,
     pub len: Option<u64>,
+    pub timeout_ms: u64,
 }
+
+/// Per-request entry for `Kernel::sys_write` (batch variant).
+pub struct WriteRequest {
+    pub path: String,
+    pub content: Vec<u8>,
+    pub offset: u64,
+}
+
+/// Per-request entry for `Kernel::sys_unlink` (batch variant).
+pub struct UnlinkRequest {
+    pub path: String,
+    pub recursive: bool,
+}
+
+/// Temporary compatibility alias — will be removed after callers migrate.
+pub type BatchReadRequest = ReadRequest;
 
 pub struct SysCatResult {
     pub data: Vec<u8>,
@@ -631,8 +649,10 @@ pub struct Kernel {
     // VFS lock timeout for blocking acquire (ms) — ``AtomicU64`` so
     // ``set_vfs_lock_timeout`` stays ``&self``; reads are lock-free.
     vfs_lock_timeout_ms: AtomicU64,
-    // Max in-flight backend fetches inside `_read_batch`. Default 16.
+    // Max in-flight backend fetches inside `sys_read` batch path. Default 16.
     read_batch_max_concurrency: AtomicUsize,
+    // Max aggregate bytes for batch reads (DoS guard). Default 100 MiB.
+    read_batch_max_aggregate_bytes: AtomicUsize,
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
@@ -824,6 +844,7 @@ impl Kernel {
             boot_metastore_tempdir: parking_lot::RwLock::new(Some(boot_tempdir)),
             vfs_lock_timeout_ms: AtomicU64::new(5000),
             read_batch_max_concurrency: AtomicUsize::new(16),
+            read_batch_max_aggregate_bytes: AtomicUsize::new(100 * 1024 * 1024),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
             stat_hook_count: AtomicU64::new(0),
@@ -996,6 +1017,18 @@ impl Kernel {
     pub fn set_read_batch_max_concurrency(&self, n: usize) {
         self.read_batch_max_concurrency
             .store(n.max(1), Ordering::Relaxed);
+    }
+
+    /// Max aggregate bytes for batch reads (DoS guard). Default 100 MiB.
+    #[inline]
+    pub fn read_batch_max_aggregate_bytes(&self) -> usize {
+        self.read_batch_max_aggregate_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Override the read-batch aggregate-bytes cap.
+    pub fn set_read_batch_max_aggregate_bytes(&self, n: usize) {
+        self.read_batch_max_aggregate_bytes
+            .store(n, Ordering::Relaxed);
     }
 
     /// Evict every entry from the in-process file cache.
@@ -1758,7 +1791,7 @@ impl Kernel {
     /// DT_LINK: create a VFS-internal symlink whose `link_target`
     /// resolves at sys_read / sys_write / sys_copy time (one hop, with
     /// cycle detection — see `Kernel::dt_link_target` and the
-    /// `max_link_hops` parameter on `sys_read_with_link_depth` etc.).
+    /// `max_link_hops` parameter on `sys_read_single` etc.).
     /// Self-loops (`link_target == path`) are rejected here so the
     /// resolver never has to handle them at lookup time. Idempotent for
     /// an existing DT_LINK at the same path with the same target.
@@ -2639,7 +2672,7 @@ impl Kernel {
                     }
                 }
             }
-            let bytes = match self.sys_read(&fpath, ctx, 5000, 0) {
+            let bytes = match self.sys_read_one(&fpath, ctx, 5000, 0) {
                 Ok(r) => r.data.unwrap_or_default(),
                 Err(_) => continue,
             };
@@ -3222,7 +3255,7 @@ mod tests {
             .sys_write("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
             .unwrap();
         assert!(write.hit);
-        let raw = k.sys_read("/doc.json", &ctx, 5000, 0).unwrap();
+        let raw = k.sys_read_one("/doc.json", &ctx, 5000, 0).unwrap();
         assert_eq!(raw.data.unwrap(), br#"{"b":2,"a":1}"#);
 
         let cat = k.sys_cat("/doc.json", &ctx, true).unwrap();
@@ -3262,7 +3295,7 @@ mod tests {
         .unwrap();
         let ctx = OperationContext::new("system", "root", true, None, true);
 
-        let raw = k.sys_read("/loose.json", &ctx, 5000, 0).unwrap();
+        let raw = k.sys_read_one("/loose.json", &ctx, 5000, 0).unwrap();
         assert_eq!(raw.data.unwrap(), br#"{"z":0}"#);
 
         let cat = k.sys_cat("/loose.json", &ctx, true).unwrap();
@@ -4030,7 +4063,7 @@ mod tests {
             );
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            let read = k.sys_read("/data/a.txt", &ctx, 5000, 0).unwrap();
+            let read = k.sys_read_one("/data/a.txt", &ctx, 5000, 0).unwrap();
 
             assert_eq!(read.data.as_deref(), Some(&b"cached"[..]));
             assert_eq!(read.content_id.as_deref(), Some("etag:1"));
@@ -4917,7 +4950,7 @@ mod tests {
             }
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            match k.sys_read("/data/a", &ctx, 5000, 0) {
+            match k.sys_read_one("/data/a", &ctx, 5000, 0) {
                 Err(KernelError::PermissionDenied(msg)) => {
                     assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
                 }
@@ -4994,7 +5027,7 @@ mod tests {
     //      composes a `WalStreamCore` over the test metastore + writes
     //      the inode + registers the stream — same code path
     //      production runs through.
-    //   3. `kernel.sys_write(path, …)` and `kernel.sys_read(path, …)`
+    //   3. `kernel.sys_write(path, …)` and `kernel.sys_read_one(path, …)`
     //      round-trip bytes through the wal stream, validating the
     //      stream is actually wal-backed (memory streams use a
     //      different backend type, so a memory-vs-wal mistake would
@@ -5182,7 +5215,7 @@ mod tests {
                 .sys_write(path, &ctx, b"federation hello", 0)
                 .expect("sys_write to wal stream");
             let read = kernel
-                .sys_read(path, &ctx, /* timeout_ms */ 0, 0)
+                .sys_read_one(path, &ctx, /* timeout_ms */ 0, 0)
                 .expect("sys_read from wal stream");
             let bytes = read
                 .data
@@ -5230,7 +5263,7 @@ mod tests {
                 .sys_write(path, &ctx, b"survives reopen", 0)
                 .expect("write to reopened wal stream");
             let read = kernel
-                .sys_read(path, &ctx, 0, 0)
+                .sys_read_one(path, &ctx, 0, 0)
                 .expect("read after idempotent reopen");
             assert_eq!(
                 read.data.unwrap().as_slice(),

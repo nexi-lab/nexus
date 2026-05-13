@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -16,7 +17,7 @@ async def shutdown_zone_runners(app: "FastAPI", svc: "LifespanServices") -> None
     if registry is None:
         return
     try:
-        registry.stop_all()
+        await asyncio.to_thread(registry.stop_all)
         logger.info("Zone runners stopped")
     except Exception:
         logger.exception("Failed to stop zone runners")

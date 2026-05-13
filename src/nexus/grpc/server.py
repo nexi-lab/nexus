@@ -164,6 +164,7 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
         server_version,
         dispatcher.authenticate_sync,
         dispatcher.dispatch_call_sync,
+        dispatcher.initialize_sync,
     )
 
     if tls_config is not None:

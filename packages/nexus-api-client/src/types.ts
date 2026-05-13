@@ -65,6 +65,68 @@ export interface SseEvent {
 }
 
 // =============================================================================
+// VFS capability discovery (Issue #4085)
+// =============================================================================
+
+export interface PosixCapabilities {
+  readonly read?: boolean;
+  readonly readdir?: boolean;
+  readonly stat?: boolean;
+  readonly write?: boolean;
+  readonly unlink?: boolean;
+  readonly mkdir?: boolean;
+  readonly rmdir?: boolean;
+  readonly rename?: boolean;
+  readonly glob?: boolean;
+}
+
+export interface StringFilter {
+  readonly allow: readonly string[];
+  readonly deny: readonly string[];
+}
+
+export interface CommandSupport {
+  readonly supported: boolean;
+  readonly filetype: StringFilter;
+}
+
+export interface CommandCapabilities {
+  readonly grep: CommandSupport;
+  readonly glob: CommandSupport;
+}
+
+export interface WorkspaceCapabilities {
+  readonly snapshot: boolean;
+  readonly restore: boolean;
+  readonly watch: boolean;
+}
+
+export interface BackendCapabilities {
+  readonly backendName: string;
+  readonly backendType: string;
+  readonly posix: PosixCapabilities;
+  readonly features: readonly string[];
+  readonly extensions: readonly string[];
+  readonly rustNative: boolean;
+  readonly external: boolean;
+}
+
+export interface VfsCapabilities {
+  readonly posix: PosixCapabilities;
+  readonly commands: CommandCapabilities;
+  readonly workspace: WorkspaceCapabilities;
+  readonly backends: Readonly<Record<string, BackendCapabilities>>;
+  readonly extensions: readonly string[];
+}
+
+export interface InitializeResponse {
+  readonly serverName: string;
+  readonly serverVersion: string;
+  readonly protocolVersion: string;
+  readonly capabilities: VfsCapabilities;
+}
+
+// =============================================================================
 // Knowledge platform types (Issue #2930)
 // =============================================================================
 

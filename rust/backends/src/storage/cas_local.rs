@@ -9,7 +9,9 @@
 use std::io;
 use std::path::Path;
 
-use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+use kernel::abc::object_store::{
+    ObjectStore, ObjectStorePosixCapabilities, StorageError, WriteResult,
+};
 use kernel::cas_engine::CASEngine;
 use kernel::cas_transport::LocalCASTransport;
 
@@ -48,6 +50,10 @@ impl ObjectStore for CasLocalBackend {
     #[allow(private_interfaces)]
     fn as_cas(&self) -> Option<&CASEngine> {
         Some(&self.0)
+    }
+
+    fn posix_capabilities(&self) -> ObjectStorePosixCapabilities {
+        ObjectStorePosixCapabilities::writable()
     }
 
     fn read_content(

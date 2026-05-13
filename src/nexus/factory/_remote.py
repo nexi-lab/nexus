@@ -69,6 +69,15 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
             params["offset"] = offset
         return params
 
+    def _ensure_capability(_self: Any, path: str, capability: str) -> None:
+        from nexus.contracts.exceptions import RemoteCapabilityUnsupportedError
+        from nexus.grpc.capability_discovery import capability_for_path
+
+        capabilities = getattr(_self, "capabilities", None)
+        allowed = capability_for_path(capabilities, path, capability)
+        if allowed is False:
+            raise RemoteCapabilityUnsupportedError(capability, path=path)
+
     def _remote_sys_read(
         _self: Any,
         path: str,
@@ -97,6 +106,7 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         offset: int = 0,
         context: Any = None,  # noqa: ARG001
     ) -> dict[str, Any]:
+        _ensure_capability(_self, path, "write")
         return cast(
             dict[str, Any],
             transport.call_rpc("sys_write", _write_params(path, buf, count=count, offset=offset)),
@@ -121,6 +131,7 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         context: Any = None,  # noqa: ARG001
         ttl: float | None = None,  # noqa: ARG001
     ) -> dict[str, Any]:
+        _ensure_capability(_self, path, "write")
         return cast(
             dict[str, Any],
             transport.call_rpc("write", _write_params(path, buf, count=count, offset=offset)),
@@ -134,10 +145,45 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         force: bool = False,
         **_: Any,
     ) -> dict[str, Any]:
+        _ensure_capability(_self, old_path, "rename")
+        _ensure_capability(_self, new_path, "rename")
         transport.call_rpc(
             "sys_rename", {"old_path": old_path, "new_path": new_path, "force": force}
         )
         return {}
+
+    def _remote_sys_unlink(
+        _self: Any,
+        path: str,
+        *,
+        recursive: bool = False,
+        context: Any = None,  # noqa: ARG001
+    ) -> dict[str, Any]:
+        _ensure_capability(_self, path, "unlink")
+        return cast(
+            dict[str, Any],
+            transport.call_rpc("sys_unlink", {"path": path, "recursive": recursive}),
+        )
+
+    def _remote_mkdir(
+        _self: Any,
+        path: str,
+        parents: bool = True,
+        exist_ok: bool = True,
+        *,
+        context: Any = None,  # noqa: ARG001
+    ) -> None:
+        _ensure_capability(_self, path, "mkdir")
+        transport.call_rpc("mkdir", {"path": path, "parents": parents, "exist_ok": exist_ok})
+
+    def _remote_rmdir(
+        _self: Any,
+        path: str,
+        recursive: bool = True,
+        context: Any = None,  # noqa: ARG001
+    ) -> None:
+        _ensure_capability(_self, path, "rmdir")
+        transport.call_rpc("rmdir", {"path": path, "recursive": recursive})
 
     def _remote_sys_readdir(
         _self: Any,
@@ -178,6 +224,9 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
     cast(Any, nfs).sys_stat = types.MethodType(_remote_sys_stat, nfs)
     cast(Any, nfs).write = types.MethodType(_remote_write, nfs)
     cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)
+    cast(Any, nfs).sys_unlink = types.MethodType(_remote_sys_unlink, nfs)
+    cast(Any, nfs).mkdir = types.MethodType(_remote_mkdir, nfs)
+    cast(Any, nfs).rmdir = types.MethodType(_remote_rmdir, nfs)
     cast(Any, nfs).sys_readdir = types.MethodType(_remote_sys_readdir, nfs)
 
 

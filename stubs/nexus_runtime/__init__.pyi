@@ -165,6 +165,7 @@ def start_vfs_grpc_server(
     server_version: str,
     authenticate: Any,
     dispatch_call: Any,
+    initialize: Any,
 ) -> Any: ...
 
 # ---------------------------------------------------------------------------

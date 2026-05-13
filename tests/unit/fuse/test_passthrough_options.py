@@ -438,6 +438,14 @@ def test_remote_connect_persists_passthrough_credentials(monkeypatch):
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.call_rpc = MagicMock()
+            self.closed = False
+
+        def initialize(self, **kwargs):
+            self.initialize_kwargs = kwargs
+            return {"capabilities": {}}
+
+        def close(self):
+            self.closed = True
 
     class FakeNexusFS:
         def __init__(self, **kwargs):
@@ -489,6 +497,7 @@ def test_remote_connect_persists_passthrough_credentials(monkeypatch):
 
     assert nfs._remote_base_url == "http://configured.example:2026"
     assert nfs._remote_api_key == "sk-config"
+    assert nfs.capabilities == {}
 
 
 def test_nexus_fuse_falls_back_when_passthrough_not_safe(tmp_path: Path, monkeypatch):

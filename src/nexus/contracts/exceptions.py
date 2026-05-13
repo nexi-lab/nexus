@@ -334,6 +334,26 @@ class RemoteTimeoutError(RemoteFilesystemError):
     pass
 
 
+class RemoteCapabilityUnsupportedError(RemoteFilesystemError):
+    """Remote server declared that a filesystem capability is unsupported."""
+
+    is_expected = True
+    status_code = 501
+    error_type = "Not Implemented"
+
+    def __init__(self, capability: str, path: str | None = None):
+        self.capability = capability
+        self.path = path
+        details = {"capability": capability}
+        if path is not None:
+            details["path"] = path
+        message = f"Remote mount does not declare {capability}"
+        if path:
+            message = f"{message}: {path}"
+        super().__init__(message, status_code=self.status_code, details=details)
+        self.is_expected = True
+
+
 class ConfigurationError(NexusError):
     """Raised when a required service or provider is not configured.
 

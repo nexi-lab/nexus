@@ -46,6 +46,46 @@ pub struct WriteResult {
     pub size: u64,
 }
 
+/// POSIX-style capability metadata exposed by object stores.
+///
+/// This is advisory discovery metadata only. Syscall behavior remains
+/// controlled by each ObjectStore method implementation and the kernel's
+/// routing/permission layers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ObjectStorePosixCapabilities {
+    pub read: bool,
+    pub readdir: bool,
+    pub stat: bool,
+    pub write: bool,
+    pub unlink: bool,
+    pub mkdir: bool,
+    pub rmdir: bool,
+    pub rename: bool,
+    pub glob: bool,
+}
+
+impl ObjectStorePosixCapabilities {
+    pub fn readonly() -> Self {
+        Self {
+            read: true,
+            readdir: true,
+            stat: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn writable() -> Self {
+        Self {
+            write: true,
+            unlink: true,
+            mkdir: true,
+            rmdir: true,
+            rename: true,
+            ..Self::readonly()
+        }
+    }
+}
+
 // ── ExternalTransport ──────────────────────────────────────────
 // Transport-layer capability for backends that can generate direct-access
 // URLs (presigned/signed). Separate from ObjectStore: not all storage
@@ -109,6 +149,14 @@ pub trait ObjectStore: Send + Sync {
     /// `backends::transports::api::ai::*`.
     fn as_llm_streaming(&self) -> Option<&dyn crate::llm_streaming::LlmStreamingBackend> {
         None
+    }
+
+    /// Advertise POSIX-style support for capability discovery.
+    ///
+    /// Defaults to read-only so unknown ObjectStore implementations do
+    /// not overclaim mutation support in the VFS Initialize handshake.
+    fn posix_capabilities(&self) -> ObjectStorePosixCapabilities {
+        ObjectStorePosixCapabilities::readonly()
     }
 
     /// Write content to storage and return a `WriteResult`.

@@ -22,18 +22,23 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyString};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyList, PyString};
+use pyo3::IntoPyObjectExt;
+use serde_json::Value as JsonValue;
 use tokio::sync::oneshot;
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::TlsConfig;
+use kernel::abc::object_store::ObjectStorePosixCapabilities;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
-    BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest, CallResponse,
-    DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse,
-    WriteRequest, WriteResponse,
+    BackendCapabilities, BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest,
+    CallResponse, Capabilities, CommandCapabilities, CommandSupport, DeleteRequest, DeleteResponse,
+    InitializeRequest, InitializeResponse, PingRequest, PingResponse, PosixCapabilities,
+    ReadRequest, ReadResponse, StringFilter, WorkspaceCapabilities, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
+use kernel::vfs_router::extract_zone_from_canonical;
 
 /// Configuration for the VFS gRPC server.
 #[derive(Clone)]
@@ -64,6 +69,9 @@ pub struct PyBridge {
     /// loop and blocks for the JSON-encoded response (success or error
     /// payload). Synchronous from Rust's view.
     pub dispatch_call: Py<pyo3::PyAny>,
+    /// `(request: dict, auth: dict, rust_mounts: dict) -> dict`.
+    /// Builds the capability-discovery response for `Initialize`.
+    pub initialize: Py<pyo3::PyAny>,
 }
 
 /// Handle returned to Python at startup. Dropping it (or calling
@@ -188,6 +196,54 @@ impl VfsServiceImpl {
         }
     }
 
+    fn rust_mounts_for_initialize(&self) -> serde_json::Map<String, JsonValue> {
+        let mut mounts = serde_json::Map::new();
+        for canonical in self.kernel.get_mount_points() {
+            let (zone_id, mount_point) = extract_zone_from_canonical(&canonical);
+            let route = match self.kernel.route(&mount_point, &zone_id) {
+                Ok(route) => route,
+                Err(err) => {
+                    tracing::warn!(
+                        "Initialize skipped unroutable mount canonical={} mount_point={} zone_id={}: {:?}",
+                        canonical,
+                        mount_point,
+                        zone_id,
+                        err
+                    );
+                    continue;
+                }
+            };
+            let backend_name = route
+                .backend
+                .as_ref()
+                .map(|backend| backend.name().to_string())
+                .unwrap_or_default();
+            let rust_native = route.backend.is_some();
+            let posix = if route.is_external {
+                ObjectStorePosixCapabilities::readonly()
+            } else {
+                route
+                    .backend
+                    .as_ref()
+                    .map(|backend| backend.posix_capabilities())
+                    .unwrap_or_else(ObjectStorePosixCapabilities::readonly)
+            };
+            mounts.insert(
+                mount_point,
+                serde_json::json!({
+                    "backend_name": backend_name,
+                    "backend_type": backend_name,
+                    "posix": posix_capability_json(posix),
+                    "features": [],
+                    "extensions": [],
+                    "rust_native": rust_native,
+                    "external": route.is_external,
+                }),
+            );
+        }
+        mounts
+    }
+
     /// Test-only constructor: bypasses the `PyBridge` requirement.
     /// The instance uses the API-key fast-path exclusively — Python is
     /// never invoked. The token `"test-key"` is hard-coded so test
@@ -205,8 +261,254 @@ impl VfsServiceImpl {
     }
 }
 
+fn py_bool(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<bool> {
+    Ok(dict
+        .get_item(key)?
+        .map(|v| v.extract::<bool>())
+        .transpose()?
+        .unwrap_or(false))
+}
+
+fn py_optional_bool(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<bool>> {
+    dict.get_item(key)?.map(|v| v.extract::<bool>()).transpose()
+}
+
+fn py_string(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
+    Ok(dict
+        .get_item(key)?
+        .map(|v| v.extract::<String>())
+        .transpose()?
+        .unwrap_or_default())
+}
+
+fn py_string_list(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<String>> {
+    Ok(dict
+        .get_item(key)?
+        .map(|v| v.extract::<Vec<String>>())
+        .transpose()?
+        .unwrap_or_default())
+}
+
+fn py_posix(value: Option<Bound<'_, PyAny>>) -> PyResult<Option<PosixCapabilities>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let dict = value.cast::<PyDict>()?;
+    Ok(Some(PosixCapabilities {
+        read: py_optional_bool(dict, "read")?,
+        readdir: py_optional_bool(dict, "readdir")?,
+        stat: py_optional_bool(dict, "stat")?,
+        write: py_optional_bool(dict, "write")?,
+        unlink: py_optional_bool(dict, "unlink")?,
+        mkdir: py_optional_bool(dict, "mkdir")?,
+        rmdir: py_optional_bool(dict, "rmdir")?,
+        rename: py_optional_bool(dict, "rename")?,
+        glob: py_optional_bool(dict, "glob")?,
+    }))
+}
+
+fn py_string_filter(value: Option<Bound<'_, PyAny>>) -> PyResult<Option<StringFilter>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let dict = value.cast::<PyDict>()?;
+    Ok(Some(StringFilter {
+        allow: py_string_list(dict, "allow")?,
+        deny: py_string_list(dict, "deny")?,
+    }))
+}
+
+fn py_command_support(value: Option<Bound<'_, PyAny>>) -> PyResult<Option<CommandSupport>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let dict = value.cast::<PyDict>()?;
+    Ok(Some(CommandSupport {
+        supported: py_bool(dict, "supported")?,
+        filetype: py_string_filter(dict.get_item("filetype")?)?,
+    }))
+}
+
+fn py_command_capabilities(
+    value: Option<Bound<'_, PyAny>>,
+) -> PyResult<Option<CommandCapabilities>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let dict = value.cast::<PyDict>()?;
+    Ok(Some(CommandCapabilities {
+        grep: py_command_support(dict.get_item("grep")?)?,
+        glob: py_command_support(dict.get_item("glob")?)?,
+    }))
+}
+
+fn py_workspace_capabilities(
+    value: Option<Bound<'_, PyAny>>,
+) -> PyResult<Option<WorkspaceCapabilities>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let dict = value.cast::<PyDict>()?;
+    Ok(Some(WorkspaceCapabilities {
+        snapshot: py_bool(dict, "snapshot")?,
+        restore: py_bool(dict, "restore")?,
+        watch: py_bool(dict, "watch")?,
+    }))
+}
+
+fn py_backend_capabilities(value: Bound<'_, PyAny>) -> PyResult<BackendCapabilities> {
+    let dict = value.cast::<PyDict>()?;
+    Ok(BackendCapabilities {
+        backend_name: py_string(dict, "backend_name")?,
+        backend_type: py_string(dict, "backend_type")?,
+        posix: py_posix(dict.get_item("posix")?)?,
+        features: py_string_list(dict, "features")?,
+        extensions: py_string_list(dict, "extensions")?,
+        rust_native: py_bool(dict, "rust_native")?,
+        external: py_bool(dict, "external")?,
+    })
+}
+
+fn py_capabilities(value: Option<Bound<'_, PyAny>>) -> PyResult<Option<Capabilities>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let dict = value.cast::<PyDict>()?;
+    let mut backends = std::collections::HashMap::new();
+    if let Some(raw_backends) = dict.get_item("backends")? {
+        let backend_dict = raw_backends.cast::<PyDict>()?;
+        for (key, value) in backend_dict.iter() {
+            let mount_point = key.extract::<String>()?;
+            backends.insert(mount_point, py_backend_capabilities(value)?);
+        }
+    }
+    Ok(Some(Capabilities {
+        posix: py_posix(dict.get_item("posix")?)?,
+        commands: py_command_capabilities(dict.get_item("commands")?)?,
+        workspace: py_workspace_capabilities(dict.get_item("workspace")?)?,
+        backends,
+        extensions: py_string_list(dict, "extensions")?,
+    }))
+}
+
+fn initialize_response_from_py(value: &Bound<'_, PyAny>) -> PyResult<InitializeResponse> {
+    let dict = value.cast::<PyDict>()?;
+    Ok(InitializeResponse {
+        server_name: py_string(dict, "server_name")?,
+        server_version: py_string(dict, "server_version")?,
+        protocol_version: py_string(dict, "protocol_version")?,
+        capabilities: py_capabilities(dict.get_item("capabilities")?)?,
+    })
+}
+
+fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
+    let obj = match value {
+        JsonValue::Null => py.None().into_bound(py),
+        JsonValue::Bool(b) => PyBool::new(py, *b).to_owned().into_any(),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                i.into_bound_py_any(py)?
+            } else if let Some(u) = n.as_u64() {
+                u.into_bound_py_any(py)?
+            } else if let Some(f) = n.as_f64() {
+                PyFloat::new(py, f).into_any()
+            } else {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "JSON number not representable: {n}"
+                )));
+            }
+        }
+        JsonValue::String(s) => PyString::new(py, s).into_any(),
+        JsonValue::Array(items) => {
+            let list = PyList::empty(py);
+            for item in items {
+                list.append(json_to_py(py, item)?)?;
+            }
+            list.into_any()
+        }
+        JsonValue::Object(map) => {
+            let dict = PyDict::new(py);
+            for (key, item) in map {
+                dict.set_item(key, json_to_py(py, item)?)?;
+            }
+            dict.into_any()
+        }
+    };
+    Ok(obj.unbind())
+}
+
+fn posix_capability_json(caps: ObjectStorePosixCapabilities) -> JsonValue {
+    serde_json::json!({
+        "read": caps.read,
+        "readdir": caps.readdir,
+        "stat": caps.stat,
+        "write": caps.write,
+        "unlink": caps.unlink,
+        "mkdir": caps.mkdir,
+        "rmdir": caps.rmdir,
+        "rename": caps.rename,
+        "glob": caps.glob,
+    })
+}
+
+fn auth_json_from_context(ctx: &OperationContext) -> JsonValue {
+    let subject_id = ctx
+        .subject_id
+        .clone()
+        .unwrap_or_else(|| ctx.user_id.clone());
+    serde_json::json!({
+        "authenticated": true,
+        "subject_type": ctx.subject_type.clone(),
+        "subject_id": subject_id,
+        "zone_id": ctx.zone_id.clone(),
+        "is_admin": ctx.is_admin,
+        "x_agent_id": ctx.agent_id.clone(),
+        "zone_perms": ctx.zone_perms.clone(),
+    })
+}
+
 #[tonic::async_trait]
 impl NexusVfsService for VfsServiceImpl {
+    async fn initialize(
+        &self,
+        req: Request<InitializeRequest>,
+    ) -> Result<Response<InitializeResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = self.resolve_context(&req.auth_token).await?;
+        let request_json = serde_json::json!({
+            "client_name": req.client_name,
+            "client_version": req.client_version,
+            "protocol_version": req.protocol_version,
+        });
+        let auth_json = auth_json_from_context(&ctx);
+        let rust_mounts_json = JsonValue::Object(self.rust_mounts_for_initialize());
+        let bridge = match self.bridge.clone() {
+            Some(bridge) => bridge,
+            None => {
+                return Err(Status::internal(
+                    "Initialize RPC requires Python bridge (not configured)",
+                ))
+            }
+        };
+
+        let response = tokio::task::spawn_blocking(move || {
+            Python::attach(|py| -> PyResult<InitializeResponse> {
+                let request_py = json_to_py(py, &request_json)?;
+                let auth_py = json_to_py(py, &auth_json)?;
+                let rust_mounts_py = json_to_py(py, &rust_mounts_json)?;
+                let response = bridge
+                    .initialize
+                    .call1(py, (request_py, auth_py, rust_mounts_py))?;
+                initialize_response_from_py(response.bind(py))
+            })
+        })
+        .await
+        .map_err(|e| Status::internal(format!("initialize task: {e}")))?
+        .map_err(|e| Status::internal(format!("Initialize dispatch: {e}")))?;
+
+        Ok(Response::new(response))
+    }
+
     async fn read(&self, req: Request<ReadRequest>) -> Result<Response<ReadResponse>, Status> {
         let req = req.into_inner();
         let ctx = match self.resolve_context(&req.auth_token).await {
@@ -919,6 +1221,9 @@ impl PyVfsGrpcServerHandle {
 ///                    `(method: str, payload: bytes, auth: dict) -> (is_error: bool, payload: bytes)`.
 ///                    Bridges the generic `Call` RPC to Python's
 ///                    `dispatch_method` until the 195 services migrate.
+///     initialize: Python sync callable
+///                 `(request: dict, auth: dict, rust_mounts: dict) -> dict`.
+///                 Bridges the `Initialize` capability handshake to Python.
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 #[pyo3(signature = (
@@ -931,6 +1236,7 @@ impl PyVfsGrpcServerHandle {
     server_version,
     authenticate,
     dispatch_call,
+    initialize,
 ))]
 pub fn start_vfs_grpc_server(
     kernel: &Bound<'_, PyKernel>,
@@ -942,6 +1248,7 @@ pub fn start_vfs_grpc_server(
     server_version: String,
     authenticate: Py<pyo3::PyAny>,
     dispatch_call: Py<pyo3::PyAny>,
+    initialize: Py<pyo3::PyAny>,
 ) -> PyResult<PyVfsGrpcServerHandle> {
     let parsed: SocketAddr = bind_addr
         .parse()
@@ -975,6 +1282,7 @@ pub fn start_vfs_grpc_server(
     let bridge = PyBridge {
         authenticate,
         dispatch_call,
+        initialize,
     };
 
     // `kernel.inner` is `pub(crate)`; the `kernel_arc()` accessor
@@ -1048,6 +1356,108 @@ mod tests {
         assert_eq!(resolve_rust_dispatch("get_capabilities"), None);
         assert_eq!(resolve_rust_dispatch("ping"), None);
         assert_eq!(resolve_rust_dispatch(""), None);
+    }
+
+    #[test]
+    fn initialize_response_from_py_maps_capability_payload() {
+        Python::initialize();
+        Python::attach(|py| {
+            let root_posix = PyDict::new(py);
+            root_posix.set_item("read", true).unwrap();
+            root_posix.set_item("readdir", true).unwrap();
+            root_posix.set_item("stat", true).unwrap();
+            root_posix.set_item("write", true).unwrap();
+
+            let backend_posix = PyDict::new(py);
+            backend_posix.set_item("read", true).unwrap();
+            backend_posix.set_item("readdir", true).unwrap();
+            backend_posix.set_item("stat", true).unwrap();
+            backend_posix.set_item("write", false).unwrap();
+
+            let backend = PyDict::new(py);
+            backend.set_item("backend_name", "local").unwrap();
+            backend.set_item("backend_type", "local").unwrap();
+            backend.set_item("posix", &backend_posix).unwrap();
+            backend
+                .set_item("features", vec!["directory_listing"])
+                .unwrap();
+            backend.set_item("extensions", PyList::empty(py)).unwrap();
+            backend.set_item("rust_native", true).unwrap();
+            backend.set_item("external", false).unwrap();
+
+            let backends = PyDict::new(py);
+            backends.set_item("/", &backend).unwrap();
+
+            let capabilities = PyDict::new(py);
+            capabilities.set_item("posix", &root_posix).unwrap();
+            capabilities.set_item("backends", &backends).unwrap();
+            capabilities
+                .set_item("extensions", PyList::empty(py))
+                .unwrap();
+
+            let payload = PyDict::new(py);
+            payload.set_item("server_name", "nexus").unwrap();
+            payload.set_item("server_version", "0.0").unwrap();
+            payload.set_item("protocol_version", "0.1.0").unwrap();
+            payload.set_item("capabilities", &capabilities).unwrap();
+
+            let payload_any = payload.into_any();
+            let response = initialize_response_from_py(&payload_any).unwrap();
+            assert_eq!(response.server_name, "nexus");
+            let capabilities = response.capabilities.unwrap();
+            assert_eq!(capabilities.posix.unwrap().write, Some(true));
+            let backend = capabilities.backends.get("/").unwrap();
+            let backend_posix = backend.posix.as_ref().unwrap();
+            assert_eq!(backend_posix.read, Some(true));
+            assert_eq!(backend_posix.readdir, Some(true));
+            assert_eq!(backend_posix.stat, Some(true));
+            assert_eq!(backend_posix.write, Some(false));
+        });
+    }
+
+    #[test]
+    fn initialize_response_from_py_preserves_missing_capability_sections() {
+        Python::initialize();
+        Python::attach(|py| {
+            let backend = PyDict::new(py);
+            backend.set_item("backend_name", "legacy").unwrap();
+
+            let backends = PyDict::new(py);
+            backends.set_item("/", &backend).unwrap();
+
+            let capabilities = PyDict::new(py);
+            capabilities.set_item("backends", &backends).unwrap();
+
+            let payload = PyDict::new(py);
+            payload.set_item("server_name", "nexus").unwrap();
+            payload.set_item("server_version", "0.0").unwrap();
+            payload.set_item("protocol_version", "0.1.0").unwrap();
+            payload.set_item("capabilities", &capabilities).unwrap();
+
+            let payload_any = payload.into_any();
+            let response = initialize_response_from_py(&payload_any).unwrap();
+            let capabilities = response.capabilities.unwrap();
+            assert!(capabilities.posix.is_none());
+            assert!(capabilities.commands.is_none());
+            assert!(capabilities.workspace.is_none());
+            assert!(capabilities.backends.get("/").unwrap().posix.is_none());
+        });
+    }
+
+    #[test]
+    fn initialize_response_from_py_rejects_malformed_backends() {
+        Python::initialize();
+        Python::attach(|py| {
+            let capabilities = PyDict::new(py);
+            capabilities.set_item("backends", "not-a-dict").unwrap();
+
+            let payload = PyDict::new(py);
+            payload.set_item("server_name", "nexus").unwrap();
+            payload.set_item("capabilities", &capabilities).unwrap();
+
+            let payload_any = payload.into_any();
+            assert!(initialize_response_from_py(&payload_any).is_err());
+        });
     }
 
     // ── BatchRead integration ──────────────────────────────────────────

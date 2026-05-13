@@ -405,6 +405,20 @@ def connect(
             connect_timeout=float(connect_timeout),
             tls_config=_tls_config,
         )
+        try:
+            initialize_payload = transport.initialize(
+                client_name="nexus-python",
+                client_version=__version__,
+            )
+        except Exception:
+            try:
+                transport.close()
+            except Exception as close_error:
+                logger.debug(
+                    "Failed to close remote transport after initialize failure: %s",
+                    close_error,
+                )
+            raise
 
         # Rust-native remote wiring (Issue #1134 Phase 4, a803a9d63):
         # the root mount carries backend_type="remote" + connection params,
@@ -450,6 +464,9 @@ def connect(
         # NexusFUSEOperations (see operations.py: `context is not None`).
         nfs._base_url = server_url  # noqa: SLF001
         nfs._api_key = api_key  # noqa: SLF001
+        nfs.capabilities = (
+            initialize_payload.get("capabilities") if initialize_payload is not None else None
+        )
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards

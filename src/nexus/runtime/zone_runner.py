@@ -400,13 +400,20 @@ class ZoneRegistry:
 
     def stop_all(self) -> None:
         with self._lock:
-            runners = tuple(self._runners.values())
-            self._runners.clear()
+            runners = tuple(self._runners.items())
         errors: list[Exception] = []
-        for runner in runners:
+        stopped: list[tuple[str, ZoneRunner]] = []
+        for zone_id, runner in runners:
             try:
                 runner.stop()
             except Exception as exc:
                 errors.append(exc)
+                continue
+            if not runner.is_alive:
+                stopped.append((zone_id, runner))
+        with self._lock:
+            for zone_id, runner in stopped:
+                if self._runners.get(zone_id) is runner:
+                    del self._runners[zone_id]
         if errors:
             raise ExceptionGroup("Failed to stop zone runners", errors)

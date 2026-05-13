@@ -1,3 +1,4 @@
+import logging
 import threading
 from types import SimpleNamespace
 
@@ -14,6 +15,11 @@ class RecordingRegistry:
 
     def stop_all(self) -> None:
         self.stopped = True
+
+
+class RaisingRegistry:
+    def stop_all(self) -> None:
+        raise RuntimeError("stop failed")
 
 
 async def _zone_work() -> str:
@@ -86,3 +92,17 @@ async def test_shutdown_zone_runners_leaves_registry_reusable() -> None:
         assert await new_runner.call(_zone_work) == "ok"
     finally:
         registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_zone_runners_logs_and_continues_when_stop_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app = SimpleNamespace(state=SimpleNamespace(zone_registry=RaisingRegistry()))
+    svc = LifespanServices()
+
+    with caplog.at_level(logging.ERROR):
+        await shutdown_zone_runners(app, svc)
+
+    assert "Failed to stop zone runners" in caplog.text
+    assert "stop failed" in caplog.text

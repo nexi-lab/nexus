@@ -134,6 +134,21 @@ def test_zone_from_params_reads_generic_tagged_operation_object_payload() -> Non
     assert zone_from_params(params) == "legal"
 
 
+def test_zone_from_params_does_not_read_unknown_tagged_operation_strings() -> None:
+    params = {"operations": [("custom", "/plain/path.txt", "/zone/wrong/content")]}
+    assert zone_from_params(params) is None
+
+
+def test_zone_from_params_reads_unknown_tagged_operation_dict_payload() -> None:
+    params = {"operations": [("custom", {"path": "/zone/eng/a.txt"})]}
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_reads_unknown_tagged_operation_object_payload() -> None:
+    params = {"operations": [("custom", SimpleNamespace(path="/zone/legal/a.txt"))]}
+    assert zone_from_params(params) == "legal"
+
+
 def test_zone_from_params_handles_cyclic_containers() -> None:
     operations: list[object] = []
     operations.append(operations)

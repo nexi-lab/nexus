@@ -47,7 +47,7 @@ from nexus.server._kernel_syscall_dispatch import (
     dispatch_kernel_syscall,
 )
 from nexus.server.protocol import parse_method_params
-from nexus.server.zone_execution import run_zone_scoped
+from nexus.server.zone_execution import context_for_target_zone, run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +257,7 @@ class VFSCallDispatcher:
                     op_context.zone_id if op_context else None,
                 )
                 target_zone = target_zone_for_context(op_context, params_dict)
+                op_context = context_for_target_zone(op_context, target_zone)
 
                 async def _work() -> Any:
                     return await dispatch_kernel_syscall(
@@ -301,6 +302,7 @@ class VFSCallDispatcher:
                 scope_params_for_zone(params, op_context.zone_id)
 
             target_zone = target_zone_for_context(op_context, params)
+            op_context = context_for_target_zone(op_context, target_zone)
 
             async def _work() -> Any:
                 return await dispatch_method(

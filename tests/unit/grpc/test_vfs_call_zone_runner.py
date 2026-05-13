@@ -61,6 +61,7 @@ async def test_grpc_call_dispatch_runs_in_target_zone_runner() -> None:
     assert is_error is False
     decoded = decode_rpc_message(payload)
     assert decoded["result"]["path"] == "/zone/eng/docs/a.txt"
+    assert decoded["result"]["zone"] == "eng"
     assert registry.zones == ["eng"]
     assert registry.runner.calls == 1
 

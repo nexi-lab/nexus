@@ -544,11 +544,7 @@ class SearchDaemon:
 
         Returns ``(canonical_path, BackfillResult)``.
         """
-
-        async def _work() -> Any:
-            return await self._add_indexed_directory_on_current_loop(zone_id, directory_path)
-
-        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+        return await self._add_indexed_directory_on_current_loop(zone_id, directory_path)
 
     async def _add_indexed_directory_on_current_loop(
         self, zone_id: str, directory_path: str
@@ -563,11 +559,7 @@ class SearchDaemon:
         Used by the registration recovery path so an operator who hit a
         backfill failure can retry without unregister + re-register.
         """
-
-        async def _work() -> Any:
-            return await self._rerun_backfill_for_directory_on_current_loop(zone_id, directory_path)
-
-        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+        return await self._rerun_backfill_for_directory_on_current_loop(zone_id, directory_path)
 
     async def _rerun_backfill_for_directory_on_current_loop(
         self, zone_id: str, directory_path: str
@@ -578,11 +570,7 @@ class SearchDaemon:
 
     async def remove_indexed_directory(self, zone_id: str, directory_path: str) -> str:
         """Unregister ``directory_path`` from scoped indexing. See scope_ops."""
-
-        async def _work() -> str:
-            return await self._remove_indexed_directory_on_current_loop(zone_id, directory_path)
-
-        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+        return await self._remove_indexed_directory_on_current_loop(zone_id, directory_path)
 
     async def _remove_indexed_directory_on_current_loop(
         self, zone_id: str, directory_path: str
@@ -599,13 +587,7 @@ class SearchDaemon:
 
     async def purge_unscoped_embeddings(self, zone_id: str | None = None) -> dict[str, int]:
         """Delete stored embeddings for out-of-scope files. See scope_ops."""
-        if zone_id is None:
-            return await self._purge_unscoped_embeddings_on_current_loop(zone_id)
-
-        async def _work() -> dict[str, int]:
-            return await self._purge_unscoped_embeddings_on_current_loop(zone_id)
-
-        return await run_zone_scoped(self._zone_registry, zone_id, _work)
+        return await self._purge_unscoped_embeddings_on_current_loop(zone_id)
 
     async def _purge_unscoped_embeddings_on_current_loop(
         self, zone_id: str | None = None

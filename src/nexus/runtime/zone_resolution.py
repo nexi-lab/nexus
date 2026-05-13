@@ -100,9 +100,14 @@ def _paths_from_value(value: Any, seen: set[int], *, container: str | None = Non
         if container == "operations" and value:
             first = value[0]
             if isinstance(first, str):
-                for index in _OPERATION_PATH_SLOTS.get(first, ()):
-                    if index < len(value):
-                        yield from _paths_from_value(value[index], seen)
+                path_slots = _OPERATION_PATH_SLOTS.get(first)
+                if path_slots is not None:
+                    for index in path_slots:
+                        if index < len(value):
+                            yield from _paths_from_value(value[index], seen)
+                    return
+                for item in value[1:]:
+                    yield from _paths_from_value(item, seen, container=container)
                 return
         for item in value:
             yield from _paths_from_value(item, seen, container=container)

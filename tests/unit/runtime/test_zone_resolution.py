@@ -109,6 +109,21 @@ def test_zone_from_params_prefers_write_operation_path_over_content() -> None:
     assert zone_from_params(params) == "eng"
 
 
+def test_zone_from_params_reads_generic_tagged_operation_dict_payload() -> None:
+    params = {"operations": [("read", {"path": "/zone/eng/a.txt"})]}
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_reads_generic_tagged_operation_path_payload() -> None:
+    params = {"operations": [("delete", "/zone/eng/a.txt")]}
+    assert zone_from_params(params) == "eng"
+
+
+def test_zone_from_params_reads_generic_tagged_operation_object_payload() -> None:
+    params = {"operations": [("stat", SimpleNamespace(path="/zone/legal/a.txt"))]}
+    assert zone_from_params(params) == "legal"
+
+
 def test_zone_from_params_handles_cyclic_containers() -> None:
     operations: list[object] = []
     operations.append(operations)

@@ -399,5 +399,14 @@ class ZoneRegistry:
             return tuple(self._runners.values())
 
     def stop_all(self) -> None:
-        for runner in self.all():
-            runner.stop()
+        with self._lock:
+            runners = tuple(self._runners.values())
+            self._runners.clear()
+        errors: list[Exception] = []
+        for runner in runners:
+            try:
+                runner.stop()
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("Failed to stop zone runners", errors)

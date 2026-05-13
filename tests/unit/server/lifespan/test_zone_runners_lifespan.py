@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from nexus.runtime.zone_runner import ZoneRegistry
 from nexus.server.lifespan.services_container import LifespanServices
 from nexus.server.lifespan.zone_runners import shutdown_zone_runners
 
@@ -13,6 +14,10 @@ class RecordingRegistry:
 
     def stop_all(self) -> None:
         self.stopped = True
+
+
+async def _zone_work() -> str:
+    return "ok"
 
 
 @pytest.mark.asyncio
@@ -64,3 +69,20 @@ async def test_shutdown_zone_runners_uses_service_registry_fallback() -> None:
     await shutdown_zone_runners(app, svc)
 
     assert registry.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_shutdown_zone_runners_leaves_registry_reusable() -> None:
+    registry = ZoneRegistry()
+    old_runner = registry.runner_for("eng")
+    old_runner.start()
+    app = SimpleNamespace(state=SimpleNamespace(zone_registry=registry))
+    svc = LifespanServices(zone_registry=registry)
+
+    await shutdown_zone_runners(app, svc)
+    new_runner = registry.runner_for("eng")
+    try:
+        assert new_runner is not old_runner
+        assert await new_runner.call(_zone_work) == "ok"
+    finally:
+        registry.stop_all()

@@ -35,3 +35,21 @@ def test_stop_all_stops_every_runner_and_is_idempotent() -> None:
 
     assert not runner_a.is_alive
     assert not runner_b.is_alive
+
+
+async def _zone_work() -> str:
+    return "ok"
+
+
+def test_stop_all_clears_stopped_runners_for_reuse() -> None:
+    registry = ZoneRegistry()
+    old_runner = registry.runner_for("zone-a")
+    old_runner.start()
+
+    registry.stop_all()
+    new_runner = registry.runner_for("zone-a")
+    try:
+        assert new_runner is not old_runner
+        assert new_runner.call_sync(_zone_work) == "ok"
+    finally:
+        registry.stop_all()

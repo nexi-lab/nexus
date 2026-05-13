@@ -141,6 +141,8 @@ services:
       NEXUS_TOKEN_EXCHANGE_ENABLED: ${NEXUS_TOKEN_EXCHANGE_ENABLED:-}
       # Config
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
+      # Disabled-by-default admin-only test hooks for live E2E verification.
+      NEXUS_TEST_HOOKS: ${NEXUS_TEST_HOOKS:-false}
       # Cache
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}

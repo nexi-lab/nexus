@@ -4390,8 +4390,8 @@ mod tests {
                 .metastore_get("/workspace/default.txt")
                 .unwrap()
                 .expect("metadata committed by default write-through policy");
-            // write() = setattr_update (v1) + sys_write (v2)
-            assert_eq!(meta.version, 2);
+            // sys_write with implicit create = v1
+            assert_eq!(meta.version, 1);
             assert_eq!(meta.size, 7);
             assert!(meta.content_id.is_some());
         }
@@ -4901,9 +4901,9 @@ mod tests {
                 .flush_write_buffer(Some("/workspace/a.txt"), Some("root"))
                 .unwrap();
             let stat = kernel.sys_stat("/workspace/a.txt", "root").unwrap();
-            // write() = setattr(v1) + sys_write(v2); dirty sys_write(v3 buffered)
-            // flush replaces metadata from dirty snapshot (v2) → v2+1 = 3
-            assert_eq!(stat.version, 3);
+            // sys_write implicit create (v1); dirty sys_write(v2 buffered)
+            // flush replaces metadata from dirty snapshot (v1) → v1+1 = 2
+            assert_eq!(stat.version, 2);
             assert_eq!(stat.content_id.as_deref(), Some("a.txt"));
         }
 

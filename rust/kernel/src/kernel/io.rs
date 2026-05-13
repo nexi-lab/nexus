@@ -916,14 +916,7 @@ impl Kernel {
             }
         }
 
-        // 3b. POSIX write(2) contract: file must exist.
-        //     File creation goes through Tier 2 write() which composes
-        //     route-scoped metastore create + sys_write.
-        if entry.is_none() && offset == 0 {
-            return miss();
-        }
-
-        // 3c. DT_PIPE / DT_STREAM: try Rust IPC registry
+        // 3b. DT_PIPE / DT_STREAM: try Rust IPC registry
         if let Some(entry) = &entry {
             if entry.entry_type == DT_PIPE {
                 if let Some(buf) = self.pipe_manager.get(path) {

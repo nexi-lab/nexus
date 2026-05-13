@@ -122,12 +122,8 @@ class TestWriteConsistency:
             assert fp.virtual_path == meta["path"]
             assert fp.content_id == meta["content_id"]
             assert fp.size_bytes == meta["size"]
-            # Kernel version and RecordStore version are independent counters:
-            # Kernel convenience write() does create(v=1) + sys_write(v=2),
-            # while RecordStore initializes current_version=1 on first create.
-            # Verify each is internally consistent rather than cross-comparing.
-            assert meta["version"] == 2  # kernel: create(1) + write(2)
-            assert fp.current_version == 1  # RecordStore: initial create
+            assert meta["version"] == 1
+            assert fp.current_version == 1
 
     @pytest.mark.asyncio
     async def test_update_version_consistency(
@@ -140,9 +136,7 @@ class TestWriteConsistency:
 
         meta = nx._kernel.sys_stat("/ver.txt", "root")
         assert meta is not None
-        # Kernel convenience write() does create(v=1) + sys_write(v=2) on
-        # first write, then v=3 and v=4 on subsequent writes.
-        assert meta["version"] == 4
+        assert meta["version"] == 3
 
         with record_store.session_factory() as session:
             fp = (

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from nexus.server.api.v2.routers.credentials import router as credentials_router
 from nexus.server.api.v2.routers.events_replay import router as events_router
+from nexus.server.api.v2.routers.events_replay import watch_router
 from nexus.server.api.v2.routers.subscriptions import router as subscriptions_router
 from nexus.server.dependencies import require_auth
 
@@ -61,6 +62,17 @@ class FakeReplayService:
     def replay(self, **kwargs: Any) -> _ReplayResult:
         assert kwargs["zone_id"] == "eng"
         return _ReplayResult()
+
+
+class FakeWatchFs:
+    def sys_watch(
+        self, path: str, timeout: float, *, recursive: bool, context: Any
+    ) -> dict[str, Any]:
+        assert path == "/workspace"
+        assert timeout == 0.1
+        assert recursive is False
+        assert context.zone_id == "eng"
+        return {"path": path, "type": "write"}
 
 
 class _CredentialStatus:
@@ -126,6 +138,25 @@ def test_replay_events_runs_in_requested_zone_runner() -> None:
 
     assert response.status_code == 200
     assert response.json()["events"] == [{"event_id": "evt-1", "zone_id": "eng"}]
+    assert registry.zones == ["eng"]
+
+
+def test_watch_for_changes_runs_in_auth_zone_runner() -> None:
+    registry = RecordingRegistry()
+    app = FastAPI()
+    app.state.nexus_fs = FakeWatchFs()
+    app.state.zone_registry = registry
+    app.dependency_overrides[require_auth] = _auth
+    app.include_router(watch_router)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v2/watch", params={"path": "/workspace", "timeout": 0.1})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "changes": [{"path": "/workspace", "type": "write"}],
+        "timeout": False,
+    }
     assert registry.zones == ["eng"]
 
 

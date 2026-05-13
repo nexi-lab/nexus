@@ -395,9 +395,13 @@ async def watch_for_changes(
     context = get_operation_context(auth_result)
 
     try:
-        change = await asyncio.to_thread(
-            nexus_fs.sys_watch, path, timeout, recursive=False, context=context
-        )
+
+        async def _work() -> Any:
+            return await asyncio.to_thread(
+                nexus_fs.sys_watch, path, timeout, recursive=False, context=context
+            )
+
+        change = await run_zone_scoped(_get_zone_registry(request), context.zone_id, _work)
         if change is None:
             return {"changes": [], "timeout": True}
         return {"changes": [change], "timeout": False}

@@ -139,6 +139,7 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
         auth_provider=getattr(app.state, "auth_provider", None),
         api_key=api_key,
         subscription_manager=getattr(app.state, "subscription_manager", None),
+        zone_registry=getattr(app.state, "zone_registry", None),
         loop=asyncio.get_running_loop(),
     )
 

@@ -32,17 +32,26 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 
 | # | Plane | Syscall | Signature | POSIX Ref |
 |---|-------|---------|-----------|-----------|
-| 1 | Content | `sys_read` | `(path, count=None, offset=0) → bytes` | `pread(2)` |
-| 2 | Content | `sys_write` | `(path, buf, count=None, offset=0) → dict` | `write(2)` |
+| 1 | Content | `sys_read` | `(&[ReadRequest], ctx) → Vec<Result<SysReadResult, KernelError>>` | `pread(2)` / `readv(2)` — vectored |
+| 2 | Content | `sys_write` | `(&[WriteRequest], ctx) → Vec<Result<SysWriteResult, KernelError>>` | `write(2)` / `writev(2)` — vectored |
 | 3 | Metadata | `sys_stat` | `(path, include_lock=False) → dict \| None` | `stat(2)` — include_lock=True appends advisory lock state (zero cost when False) |
 | 4 | Metadata | `sys_setattr` | `(path, **attrs) → dict` | `chmod/chown/utimes` + `mknod` (DT_DIR, DT_PIPE, DT_STREAM, DT_MOUNT) |
-| 5 | Namespace | `sys_unlink` | `(path, recursive=False) → dict` | `unlink(2)` |
+| 5 | Namespace | `sys_unlink` | `(&[UnlinkRequest], ctx) → Vec<Result<SysUnlinkResult, KernelError>>` | `unlink(2)` — vectored |
 | 6 | Namespace | `sys_rename` | `(old, new) → dict` | `rename(2)` |
 | 7 | Namespace | `sys_copy` | `(src, dst) → dict` | — (server-side copy, Issue #3329) |
 | 8 | Directory | `sys_readdir` | `(path, recursive=True, limit=None) → list` | `readdir(3)` — `/__sys__/locks/` returns active locks (like `/proc/locks`) |
 | 9 | Locking | `sys_lock` | `(path, mode, ttl, max_holders, lock_id=None) → str \| None` | `fcntl(F_SETLK)` — acquire (lock_id=None) or extend TTL (lock_id=existing) |
 | 10 | Locking | `sys_unlock` | `(path, lock_id=None, force=False) → bool` | `flock(LOCK_UN)` — release by lock_id, or force-release all holders |
 | 11 | Watch | `sys_watch` | `(path, timeout, recursive) → dict \| None` | `inotify(7)` |
+
+**Vectored syscall semantics (sys_read, sys_write, sys_unlink):**
+
+- `reqs.len() == 1` → fast path: dispatches to single-item implementation (`sys_read_single`, `sys_write_single`, `sys_unlink_single`) with zero batch overhead.
+- `reqs.len() > 1` → batch path: per-item auth + hooks in Phase A, then coalesced I/O in Phase B (sys_read uses rayon parallelism; sys_write uses sorted VFS lock acquisition to avoid deadlocks; sys_unlink loops sequentially).
+- Each item in the result `Vec` corresponds positionally to its request. Per-item errors are isolated — one failing path does not abort the batch.
+- `sys_read_one` / `sys_write_one` / `sys_unlink_one` are convenience wrappers for single-path callers.
+- The former `_read_batch` / `_write_batch` / `_delete_batch` internal methods are deleted — the vectored `sys_*` signatures subsume them entirely.
+- The `skip_authz` hack (which bypassed permission checks for batch-internal items) is eliminated — every item in the batch goes through the full permission gate individually.
 
 ### Tier 2 — Concrete Convenience (not abstract, composing Tier 1)
 
@@ -114,7 +123,12 @@ NexusFS inherits them — callers use `nx.read(path)` directly.
 
 ## 4. Key Design Decisions
 
-### 4.1 sys_read / sys_write: Content-only (POSIX pread/pwrite)
+### 4.1 sys_read / sys_write: Vectored, Content-only (POSIX preadv/pwritev)
+
+`sys_read` and `sys_write` accept a slice of request structs and return a
+`Vec<Result<..., KernelError>>` — one result per request, positionally matched.
+Single-item calls (`reqs.len() == 1`) take a zero-overhead fast path that
+dispatches directly to the single-item implementation.
 
 `sys_write` is content-only (SRP). Metadata updates are handled by `sys_setattr`
 or Tier 2 `write()`. File must exist — `sys_write` to a non-existent path raises
@@ -200,10 +214,10 @@ between DataNodes — separate from NameNode API).
 | `sys_setattr` | ✅ | Bundles chmod/chown/utimes + mknod (DT_DIR, DT_PIPE, DT_STREAM, DT_MOUNT) |
 | `sys_readdir` | ✅ | No opendir/closedir (acceptable simplification), supports pagination |
 | `sys_rename` | ✅ | — |
-| `sys_unlink` | ✅ | Unified delete (files + dirs), metadata-only (CAS GC pattern) |
+| `sys_unlink` | ✅ | Vectored (`&[UnlinkRequest]`), unified delete (files + dirs), metadata-only (CAS GC pattern) |
 | `sys_copy` | ✅ | No direct POSIX equivalent; server-side optimization |
-| `sys_read` | ✅ | count/offset (pread semantics) |
-| `sys_write` | ✅ | count/offset, content-only (SRP) |
+| `sys_read` | ✅ | Vectored (`&[ReadRequest]`), count/offset (preadv semantics) |
+| `sys_write` | ✅ | Vectored (`&[WriteRequest]`), count/offset, content-only (SRP) |
 | `sys_lock` | ✅ | fcntl(F_SETLK) — acquire + extend (lock_id param) |
 | `sys_unlock` | ✅ | flock(LOCK_UN) — release + force (force param) |
 | `sys_watch` | ✅ | inotify(7) equivalent |
@@ -361,23 +375,29 @@ Key design decisions:
 ### 7.4 Concrete code shape
 
 ```rust
-// kernel/mod.rs — THE kernel. Not a trait, just functions.
-pub fn sys_read(ctx: &KernelCtx, path: &str, offset: u64, count: Option<u64>) -> Result<Bytes> {
-    // validate → route → dcache → vfs_lock → CAS/backend read → unlock
-    // This is what Kernel.sys_read() does today, minus the FFI wrapper.
+// kernel/io.rs — THE kernel. Not a trait, just functions.
+// Vectored: accepts &[ReadRequest], returns Vec<Result<...>>.
+// reqs.len() == 1 → fast path; reqs.len() > 1 → batch with rayon.
+pub fn sys_read(
+    &self,
+    reqs: &[ReadRequest],
+    ctx: &OperationContext,
+) -> Vec<Result<SysReadResult, KernelError>> {
+    if reqs.len() == 1 { return vec![self.sys_read_single(...)]; }
+    self.sys_read_batch_impl(reqs, ctx)
 }
 
 // grpc/vfs_service.rs — thin tonic adapter
 async fn read(&self, req: Request<ReadRequest>) -> Result<Response<ReadResponse>> {
-    let data = kernel::sys_read(&self.ctx, &req.path, req.offset, req.count)?;
-    Ok(Response::new(ReadResponse { data }))
+    let results = kernel.sys_read(&[req.into()], &ctx);
+    Ok(Response::new(results[0].clone()?.into()))
 }
 
 // python/mod.rs — thin PyO3 adapter (for nexus-fs embed, FUSE, tests)
+// sys_read_one convenience wrapper for single-path callers.
 #[pyfunction]
-fn sys_read(ctx: &PyKernelCtx, path: &str, offset: u64, count: Option<u64>) -> PyResult<Py<PyBytes>> {
-    let data = kernel::sys_read(&ctx.inner, path, offset, count)?;
-    Ok(PyBytes::new(py, &data))
+fn sys_read_one(kernel: &PyKernel, path: &str, offset: u64, timeout_ms: u64) -> PyResult<...> {
+    kernel.sys_read_one(path, &ctx, timeout_ms, offset)
 }
 ```
 
@@ -441,3 +461,4 @@ collapse is a **refactoring** that changes the boundary, not the logic.
 | §11 | 2026-04-10 | KERNEL-ARCHITECTURE.md §2.4.1: formal 4 dispatch contracts (RESOLVE, INTERCEPT PRE, INTERCEPT POST, OBSERVE) with ordering, error semantics, and zero-overhead invariant. Phase 18 docs. |
 | §7.3, §7.6 | 2026-04-23 | §7 collapse roadmap fully completed: `_backend_read` deleted, sys_write metadata in Rust, PIPE/STREAM dispatched in Rust, advisory locks in Rust, connectors via gRPC. All "Remaining" items → Done (#1817, #1960). |
 | §6.1 | 2026-04-26 | Rust/Python boundary status: hook dispatch (2+N crossings), service lifecycle (4 crossings, stdlib-only), zero-crossing syscalls, pure Rust pillar dispatch. Eliminated: sys_write IPC pre-check (redundant metadata.get), sys_stat py.import("datetime") → chrono. |
+| §2, §4.1, §5, §7.4 | 2026-05-13 | Vectored syscall signatures: sys_read, sys_write, sys_unlink accept `&[Request]` and return `Vec<Result<...>>`. `_read_batch`/`_write_batch`/`_delete_batch` deleted — subsumed by vectored `sys_*`. `skip_authz` hack eliminated. |

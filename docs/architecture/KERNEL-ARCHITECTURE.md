@@ -196,10 +196,20 @@ Kernel syscalls, all POSIX-aligned, all path-addressed:
 
 | Plane | Syscalls |
 |-------|----------|
-| **Metadata** | `sys_stat`, `sys_setattr`, `sys_rename`, `sys_unlink`, `sys_readdir` |
-| **Content** | `sys_read` (pread), `sys_write` (pwrite), `sys_copy` |
+| **Metadata** | `sys_stat`, `sys_setattr`, `sys_rename`, `sys_unlink`\*, `sys_readdir` |
+| **Content** | `sys_read`\* (preadv), `sys_write`\* (pwritev), `sys_copy` |
 | **Locking** | `sys_lock` (acquire + extend), `sys_unlock` (release + force) |
 | **Watch** | `sys_watch` (inotify) |
+
+\* **Vectored syscalls:** `sys_read`, `sys_write`, and `sys_unlink` accept a
+slice of request structs (`&[ReadRequest]`, `&[WriteRequest]`, `&[UnlinkRequest]`)
+and return `Vec<Result<Sys*Result, KernelError>>` — one result per request,
+positionally matched. `reqs.len() == 1` takes a zero-overhead fast path;
+`reqs.len() > 1` takes the batch path (rayon parallel read, sorted-lock write,
+sequential unlink). Per-item errors are isolated. The former `_read_batch` /
+`_write_batch` / `_delete_batch` internal methods and the `skip_authz` hack are
+deleted — the vectored signatures subsume all batch functionality with
+per-item permission enforcement.
 
 `sys_setattr` is the universal creation/management syscall:
 `mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
@@ -875,7 +885,7 @@ syscall implementations across per-family submodules:
 | File                | Owns                                                                           |
 |---------------------|--------------------------------------------------------------------------------|
 | `kernel/mod.rs`     | `Kernel` struct, constructor, wiring, MetaStore + Router proxies, syscall-shaped helpers (`lookup_content_id`, `with_metastore_route`, `commit_metadata`, `commit_delete`). |
-| `kernel/io.rs`      | `sys_read` / `sys_write` / `sys_stat` / `sys_unlink` / `sys_rename` / `sys_copy` / `sys_mkdir` / `sys_rmdir`. |
+| `kernel/io.rs`      | `sys_read` / `sys_write` / `sys_unlink` (all vectored: `&[Request] → Vec<Result>`) / `sys_stat` / `sys_rename` / `sys_copy` / `sys_mkdir` / `sys_rmdir`. |
 | `kernel/ipc.rs`     | Pipe + stream registries (`create_pipe`, `pipe_write_nowait`, `stream_read_at`, …). |
 | `kernel/locks.rs`   | Advisory-lock syscalls (`sys_lock`, `sys_unlock`, `metastore_list_locks`, `install_federation_locks`). |
 | `kernel/dispatch.rs`| Native INTERCEPT hook dispatch (`dispatch_native_pre`, `dispatch_native_post`, `register_native_hook`). |

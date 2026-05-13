@@ -210,9 +210,6 @@ pub struct UnlinkRequest {
     pub recursive: bool,
 }
 
-/// Temporary compatibility alias — will be removed after callers migrate.
-pub type BatchReadRequest = ReadRequest;
-
 pub struct SysCatResult {
     pub data: Vec<u8>,
     pub handler: String,

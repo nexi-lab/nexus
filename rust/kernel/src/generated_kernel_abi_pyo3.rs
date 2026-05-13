@@ -1021,7 +1021,7 @@ pub struct PySysCopyResult {
 
 // ── PyBatchReadItem ──────────────────────────────────────────────
 
-/// Per-item result for `_read_batch`. `error_kind == ""` means success.
+/// Per-item result for `sys_read_batch`. `error_kind == ""` means success.
 /// On error `data` / `content_id` are `None` and counters are zero.
 #[pyclass(get_all)]
 pub struct PyBatchReadItem {
@@ -2730,12 +2730,12 @@ impl PyKernel {
             .map_err(|e| -> PyErr { e.into() })
     }
 
-    // ── Internal batch functions ──────────────────────────────────────
+    // ── Batch syscalls ─────────────────────────────────────────────────
 
     /// Batch write: validate + route + lock + write + metastore + dcache.
     /// Returns list of SysWriteResult (one per item).
     #[pyo3(signature = (items, ctx))]
-    fn _write_batch<'py>(
+    fn sys_write_batch<'py>(
         &self,
         py: Python<'py>,
         items: Vec<(String, Vec<u8>)>,
@@ -2790,7 +2790,7 @@ impl PyKernel {
     /// Batch read. Accepts either `list[str]` (legacy) or
     /// `list[tuple[str, int, int | None]]`. Returns `list[PyBatchReadItem]`.
     #[pyo3(signature = (reqs, ctx))]
-    fn _read_batch<'py>(
+    fn sys_read_batch<'py>(
         &self,
         py: Python<'py>,
         reqs: Bound<'py, PyAny>,
@@ -2853,7 +2853,7 @@ impl PyKernel {
     /// Batch delete: loops sys_unlink for each path.
     /// Returns list of SysUnlinkResult (one per path).
     #[pyo3(signature = (paths, ctx))]
-    fn _delete_batch(
+    fn sys_unlink_batch(
         &self,
         py: Python<'_>,
         paths: Vec<String>,

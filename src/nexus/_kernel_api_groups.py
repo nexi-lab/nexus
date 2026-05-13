@@ -78,9 +78,6 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
 # A stale binary missing any of these triggers an actionable ImportError.
 KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
     {
-        "_delete_batch",
-        "_read_batch",
-        "_write_batch",
         "access",
         "agent_count",
         "agent_get",
@@ -184,6 +181,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "sys_lock",
         "sys_mkdir",
         "sys_read",
+        "sys_read_batch",
         "sys_read_raw",
         "sys_readdir_backend",
         "sys_rename",
@@ -191,9 +189,11 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "sys_setattr",
         "sys_stat",
         "sys_unlink",
+        "sys_unlink_batch",
         "sys_unlock",
         "sys_watch",
         "sys_write",
+        "sys_write_batch",
         "trie_len",
         "trie_lookup",
         "trie_register",

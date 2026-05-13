@@ -1,4 +1,8 @@
-"""Shared NexusFS factory for tests."""
+"""Shared NexusFS factory for tests.
+
+Federation wiring is intentionally omitted — unit tests must not start
+gRPC servers (port contention with xdist workers).
+"""
 
 from __future__ import annotations
 

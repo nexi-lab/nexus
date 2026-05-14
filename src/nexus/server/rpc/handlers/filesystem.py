@@ -100,11 +100,10 @@ def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
 async def handle_semantic_search_index(
     nexus_fs: "NexusFS", params: Any, _context: Any
 ) -> dict[str, Any]:
-    """Index documents for semantic search via the SearchDaemon's txtai backend.
+    """Index documents for semantic search via the SearchDaemon indexing pipeline.
 
     Single indexing path: reads files via NexusFS, upserts through the daemon's
-    txtai backend which stores embeddings + BM25 tokens in pgvector. No separate
-    document_chunks table needed — txtai is the single source of truth.
+    IndexingPipeline, and persists chunks into the active search stores.
 
     Falls back to the SearchService pipeline if the daemon is unavailable.
     """
@@ -119,9 +118,12 @@ async def handle_semantic_search_index(
     if search is None:
         raise ValueError("SearchService required for semantic search")
 
-    # Prefer single-path indexing through the SearchDaemon's txtai backend.
+    # Prefer single-path indexing through the current SearchDaemon pipeline.
+    # The legacy txtai-era ``_backend`` field was removed when pg_fts/pgvector
+    # became the canonical backend stack; ``_indexing_pipeline`` is now the
+    # readiness signal for explicit RPC indexing.
     daemon = getattr(search, "_search_daemon", None)
-    if daemon is not None and getattr(daemon, "_backend", None) is not None:
+    if daemon is not None and getattr(daemon, "_indexing_pipeline", None) is not None:
         context = _context
         zone_id = getattr(context, "zone_id", None) or "root"
 

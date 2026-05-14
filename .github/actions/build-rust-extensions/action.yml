@@ -32,10 +32,11 @@ runs:
       # as a 3-part semver.  Post-21 protoc releases report 2-part versions
       # ("libprotoc 27.5"), which the parser rejects as "No suitable protoc
       # (>= 3.1.0) found in PATH" even though 27.x is newer than 3.1.
-      # Download the last 3.x-style release (3.20.3) directly from GitHub
-      # and prepend it to PATH.  arduino/setup-protoc@v3 can't find 3.x
-      # releases (fails with "unable to get latest version"), so we do it
-      # manually.  Idempotent: if protoc 3.x is already on PATH we skip.
+      # Download 3.20.3 where a native asset exists.  Protobuf never shipped
+      # a 3.x macOS arm64 asset, so macOS-ARM64 uses grpcio-tools' native
+      # bundled compiler with a tiny --version wrapper that keeps
+      # protobuf-build on its legacy parser path while all real invocations
+      # execute the native compiler.
       run: |
         set -euo pipefail
         if protoc --version 2>/dev/null | grep -qE 'libprotoc 3\.[0-9]+\.[0-9]+'; then
@@ -43,25 +44,39 @@ runs:
           protoc --version
           exit 0
         fi
+        PROTOC_VERSION="3.20.3"
+        USE_GRPC_TOOLS_PROTOC=""
         case "${{ runner.os }}-${{ runner.arch }}" in
           Linux-X64)   ASSET="protoc-3.20.3-linux-x86_64.zip" ;;
           Linux-ARM64) ASSET="protoc-3.20.3-linux-aarch_64.zip" ;;
           macOS-X64)   ASSET="protoc-3.20.3-osx-x86_64.zip" ;;
-          # No osx-aarch_64 asset in 3.x releases — fall back to the
-          # x86_64 build, which runs under Rosetta2 (enabled by default
-          # on macos-latest / M1 runners).
-          macOS-ARM64) ASSET="protoc-3.20.3-osx-x86_64.zip" ;;
+          macOS-ARM64) USE_GRPC_TOOLS_PROTOC="1" ;;
           *) echo "Unsupported: ${{ runner.os }}-${{ runner.arch }}" && exit 1 ;;
         esac
-        curl --fail --show-error --silent --location \
-          --retry 5 --retry-all-errors --retry-delay 2 \
-          -o /tmp/protoc.zip \
-          "https://github.com/protocolbuffers/protobuf/releases/download/v3.20.3/${ASSET}"
-        mkdir -p "${RUNNER_TOOL_CACHE}/protoc/3.20.3"
-        unzip -q /tmp/protoc.zip -d "${RUNNER_TOOL_CACHE}/protoc/3.20.3"
-        chmod +x "${RUNNER_TOOL_CACHE}/protoc/3.20.3/bin/protoc"
-        echo "${RUNNER_TOOL_CACHE}/protoc/3.20.3/bin" >> "${GITHUB_PATH}"
-        "${RUNNER_TOOL_CACHE}/protoc/3.20.3/bin/protoc" --version
+        TOOL_DIR="${RUNNER_TOOL_CACHE}/protoc/${PROTOC_VERSION}/${{ runner.os }}-${{ runner.arch }}"
+        mkdir -p "${TOOL_DIR}"
+        if [ -n "${USE_GRPC_TOOLS_PROTOC}" ]; then
+          python -m pip install "grpcio-tools>=1.80,<2"
+          mkdir -p "${TOOL_DIR}/bin"
+          cat > "${TOOL_DIR}/bin/protoc" <<'EOF'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [ "${1:-}" = "--version" ]; then
+          echo "libprotoc 3.20.3"
+          exit 0
+        fi
+        exec python -m grpc_tools.protoc "$@"
+        EOF
+        else
+          curl --fail --show-error --silent --location \
+            --retry 5 --retry-all-errors --retry-delay 2 \
+            -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${ASSET}"
+          unzip -q /tmp/protoc.zip -d "${TOOL_DIR}"
+        fi
+        chmod +x "${TOOL_DIR}/bin/protoc"
+        echo "${TOOL_DIR}/bin" >> "${GITHUB_PATH}"
+        "${TOOL_DIR}/bin/protoc" --version
       shell: bash
 
     - name: Install Rust toolchain

@@ -8,6 +8,7 @@ callbacks, lifecycle, stats, and the service wrapper.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -34,8 +35,12 @@ def clock() -> ManualClock:
 
 
 @pytest.fixture()
-def mgr(clock: ManualClock) -> LocalLeaseManager:
-    return LocalLeaseManager(zone_id="test", clock=clock, sweep_interval=999.0)
+async def mgr(clock: ManualClock) -> AsyncIterator[LocalLeaseManager]:
+    manager = LocalLeaseManager(zone_id="test", clock=clock, sweep_interval=999.0)
+    try:
+        yield manager
+    finally:
+        await manager.close()
 
 
 # ---------------------------------------------------------------------------

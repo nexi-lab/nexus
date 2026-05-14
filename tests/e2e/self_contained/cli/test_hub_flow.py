@@ -176,6 +176,32 @@ def test_hub_end_to_end_token_lifecycle(hub_cli_env: dict[str, str]) -> None:
         _run(["hub", "token", "revoke", token_name], env=hub_cli_env)
 
 
+def test_hub_remote_token_list_over_mcp(hub_cli_env: dict[str, str]) -> None:
+    """List hub tokens remotely through the MCP admin tool (#3872)."""
+    admin_token = _require("NEXUS_ADMIN_KEY")
+    mcp_base_url = _mcp_url()
+    env = dict(hub_cli_env)
+    env.pop("NEXUS_DATABASE_URL", None)
+
+    result = _run(
+        [
+            "hub",
+            "token",
+            "list",
+            "--remote",
+            mcp_base_url,
+            "--admin-token",
+            admin_token,
+            "--json",
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert "tokens" in payload
+
+
 def test_hub_multi_zone_token_lifecycle(hub_cli_env: dict[str, str]) -> None:
     """e2e: create multi-zone token, list, mutate zones, refuse last-zone removal (#3785).
 

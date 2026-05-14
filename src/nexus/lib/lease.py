@@ -591,6 +591,8 @@ class LocalLeaseManager:
         self._closed = True
         if self._sweep_task is not None and not self._sweep_task.done():
             try:
+                if hasattr(self._sweep_task, "_log_destroy_pending"):
+                    self._sweep_task._log_destroy_pending = False
                 self._sweep_task.cancel()
                 await self._sweep_task
             except (asyncio.CancelledError, RuntimeError):

@@ -259,6 +259,10 @@ async def create_mcp_server(
     # Create FastMCP server
     mcp = FastMCP(name)
 
+    from nexus.bricks.mcp.hub_admin_tool import register_hub_admin_tool
+
+    register_hub_admin_tool(mcp, _get_nexus_instance)
+
     # Add health check endpoint for HTTP transports
     # This is added here so it's available when the server is created via create_mcp_server()
     # The CLI command will also add it, but having it here ensures it works in all cases

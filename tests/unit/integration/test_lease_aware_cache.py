@@ -9,6 +9,7 @@ Tests the interaction between LeaseManager and cache layers:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -38,8 +39,12 @@ def clock() -> ManualClock:
 
 
 @pytest.fixture()
-def mgr(clock: ManualClock) -> LocalLeaseManager:
-    return LocalLeaseManager(zone_id=ZONE, clock=clock, sweep_interval=999.0)
+async def mgr(clock: ManualClock) -> AsyncIterator[LocalLeaseManager]:
+    manager = LocalLeaseManager(zone_id=ZONE, clock=clock, sweep_interval=999.0)
+    try:
+        yield manager
+    finally:
+        await manager.close()
 
 
 @pytest.fixture()

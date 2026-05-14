@@ -57,19 +57,38 @@ reverse proxy before exposing it to the internet (see §6).
 
 ## 2. Token lifecycle
 
-- **Create** — `nexus hub token create --name <name> --zone <zone> [--admin] [--expires 90d]`.
-  The raw token (`sk-…`) is printed once.
-- **List** — `nexus hub token list [--show-revoked] [--json]`.
-- **Revoke** — `nexus hub token revoke <name|key_id>` (soft-delete).
+- **Create locally** — `nexus hub token create --name <name> --zone <zone> [--admin] [--expires 90d]`.
+  Use `--zones eng:rw,ops:r` for multi-zone tokens or `--zones-glob 'team-*'`
+  to resolve active zones at mint time. The raw token (`sk-…`) is printed once.
+- **List locally** — `nexus hub token list [--show-revoked] [--json]`.
+- **Revoke locally** — `nexus hub token revoke <name|key_id>` (soft-delete).
+- **Remote admin** — after creating a bootstrap admin token on the hub host,
+  pass `--remote <hub-url>` and `--admin-token <sk-admin>` to `token create`,
+  `token list`, `token revoke`, or `status`. Host URLs are normalized to
+  `/mcp`, so `https://nexus.example.com` and `https://nexus.example.com/mcp`
+  both work. `NEXUS_HUB_ADMIN_TOKEN` may be used instead of repeating
+  `--admin-token`.
 
 The auth identity cache has a 60-second TTL, so a revoked token may remain
 usable for up to 60 seconds. Plan rotations around this window.
 
+Example remote flow:
+
+```bash
+# On the hub host:
+nexus hub token create --name root --admin --zone root
+
+# From an operator workstation:
+export NEXUS_HUB_ADMIN_TOKEN=sk-...
+nexus hub token list --remote https://nexus.example.com --json
+nexus hub status --remote https://nexus.example.com
+```
+
 ## 3. Zone model (MVP)
 
-Each token is scoped to **one** zone (`--zone`). Requests made with the
-token only see files and indexes in that zone. Multi-zone-per-token is
-tracked as a follow-up to #3784.
+Each token is scoped to one or more zones. Requests made with the token
+only see files and indexes in its allowed zones. `--zone` is kept as a
+single-zone alias; prefer `--zones <zone[:perms],...>` for new scripts.
 
 List zones: `nexus hub zone list`.
 
@@ -156,7 +175,6 @@ with any standard volume backup tool.
 
 Tracked as follow-up issues to #3784:
 
-- Multi-zone tokens
-- Remote admin CLI (admin over MCP with a bootstrap token)
+- Prometheus `/metrics` endpoint
 - Richer `hub status` (Zoekt/txtai queue depth, per-zone breakdown)
 - Kubernetes/Helm deploy

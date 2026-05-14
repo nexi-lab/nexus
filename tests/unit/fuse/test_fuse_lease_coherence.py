@@ -6,6 +6,9 @@ mutations occur.  Uses SystemClock for real-time coordination since
 the coordinator's validity cache uses time.monotonic() directly.
 """
 
+import asyncio
+from collections.abc import Iterator
+
 import pytest
 
 from nexus.fuse.cache import FUSECacheManager
@@ -14,13 +17,17 @@ from nexus.lib.lease import LocalLeaseManager, SystemClock
 
 
 @pytest.fixture()
-def shared_lease_manager() -> LocalLeaseManager:
+def shared_lease_manager() -> Iterator[LocalLeaseManager]:
     """Shared lease manager used by both mounts.
 
     Uses SystemClock (not ManualClock) because the coordinator's local
     validity cache compares against time.monotonic() directly.
     """
-    return LocalLeaseManager(zone_id="test-zone", clock=SystemClock(), sweep_interval=3600.0)
+    manager = LocalLeaseManager(zone_id="test-zone", clock=SystemClock(), sweep_interval=3600.0)
+    try:
+        yield manager
+    finally:
+        asyncio.run(manager.close())
 
 
 def _make_coordinator(

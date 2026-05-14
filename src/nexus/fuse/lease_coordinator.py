@@ -62,6 +62,9 @@ _DEFAULT_LEASE_TTL = 30.0
 # Default timeout for lease acquisition (non-blocking for hot path)
 _LEASE_ACQUIRE_TIMEOUT = 5.0
 
+# Maximum time to wait for coordinator-owned background tasks to acknowledge close.
+_LOOP_SHUTDOWN_TIMEOUT = 2.0
+
 
 class FUSELeaseCoordinator:
     """Lease-aware cache coordinator for FUSE operations.
@@ -137,14 +140,45 @@ class FUSELeaseCoordinator:
         ready = threading.Event()
 
         def _run_loop() -> None:
-            self._lease_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._lease_loop)
+            loop = asyncio.new_event_loop()
+            self._lease_loop = loop
+            asyncio.set_event_loop(loop)
             ready.set()
-            self._lease_loop.run_forever()
+            try:
+                loop.run_forever()
+            finally:
+                self._cancel_pending_loop_tasks(loop)
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
 
         self._lease_thread = threading.Thread(target=_run_loop, daemon=True, name="fuse-lease-loop")
         self._lease_thread.start()
         ready.wait(timeout=2.0)
+
+    @staticmethod
+    def _cancel_pending_loop_tasks(loop: asyncio.AbstractEventLoop) -> None:
+        """Cancel tasks spawned on the coordinator-owned event loop before close."""
+        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        if not pending:
+            return
+
+        for task in pending:
+            task.cancel()
+
+        done, still_pending = loop.run_until_complete(
+            asyncio.wait(pending, timeout=_LOOP_SHUTDOWN_TIMEOUT)
+        )
+        for task in done:
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        for task in still_pending:
+            if hasattr(task, "_log_destroy_pending"):
+                task._log_destroy_pending = False
+            logger.debug("[FUSE-LEASE] Pending task suppressed during close: %r", task)
 
     def _register_revocation_callback(self) -> None:
         """Register callback so lease revocations clear our validity cache + L1 cache.
@@ -556,5 +590,5 @@ class FUSELeaseCoordinator:
         if self._lease_loop is not None and not self._lease_loop.is_closed():
             self._lease_loop.call_soon_threadsafe(self._lease_loop.stop)
         if self._lease_thread is not None:
-            self._lease_thread.join(timeout=2.0)
+            self._lease_thread.join(timeout=_LOOP_SHUTDOWN_TIMEOUT + 1.0)
         logger.debug("[FUSE-LEASE] Coordinator closed (holder=%s)", self._holder_id)

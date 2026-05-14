@@ -13,6 +13,7 @@ import pytest
 from nexus.contracts.protocols.lease import Lease, LeaseState
 from nexus.fuse.cache import FUSECacheManager
 from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
+from nexus.lib.lease import LocalLeaseManager, SystemClock
 
 
 @pytest.fixture()
@@ -377,6 +378,34 @@ class TestCoordinatorWithLeaseManager:
 
 class TestCoordinatorLifecycle:
     """Tests for event loop thread lifecycle."""
+
+    def test_close_cancels_tasks_owned_by_lease_loop(self, bare_cache: FUSECacheManager) -> None:
+        lease_manager = LocalLeaseManager(
+            zone_id="test",
+            clock=SystemClock(),
+            sweep_interval=3600.0,
+        )
+        coord = FUSELeaseCoordinator(
+            cache=bare_cache,
+            lease_manager=lease_manager,
+            holder_id="mount-x",
+        )
+
+        coord.lease_gated_get(
+            path="/file.txt",
+            cache_get=lambda: coord.get_attr("/file.txt"),
+            cache_set=lambda value: coord.cache_attr("/file.txt", value),
+            fetch_fn=lambda: {"st_size": 1},
+        )
+        sweep_task = lease_manager._sweep_task
+        assert sweep_task is not None
+        assert not sweep_task.done()
+
+        coord.close()
+
+        assert sweep_task.done()
+        assert coord._lease_loop is not None
+        assert coord._lease_loop.is_closed()
 
     def test_close_is_idempotent(self, bare_cache: FUSECacheManager) -> None:
         mock_mgr = MagicMock()

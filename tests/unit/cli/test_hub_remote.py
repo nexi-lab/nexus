@@ -23,6 +23,88 @@ def test_normalize_remote_url_appends_mcp_path():
     )
 
 
+def test_call_hub_admin_tool_stops_after_initialize_data_event(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, *, headers=None, lines=None, fail_on_extra_iter=False):
+            self.headers = headers or {}
+            self._lines = lines or []
+            self._fail_on_extra_iter = fail_on_extra_iter
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_lines(self):
+            yield from self._lines
+            if self._fail_on_extra_iter:
+                raise AssertionError("initialize stream was drained past the data event")
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def stream(self, method, url, headers, json):
+            calls.append((method, json["method"]))
+            if json["method"] == "initialize":
+                return FakeResponse(
+                    headers={"mcp-session-id": "session-1"},
+                    lines=[
+                        'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}}'
+                    ],
+                    fail_on_extra_iter=True,
+                )
+            return FakeResponse(
+                lines=[
+                    "data: "
+                    + json_module.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 2,
+                            "result": {
+                                "content": [
+                                    {"type": "text", "text": json_module.dumps({"tokens": []})}
+                                ]
+                            },
+                        }
+                    )
+                ]
+            )
+
+        def post(self, url, headers, json):
+            calls.append(("POST", json["method"]))
+            return FakeResponse()
+
+    json_module = json
+    monkeypatch.setattr(_hub_remote.httpx, "Client", FakeClient)
+
+    result = _hub_remote.call_hub_admin_tool(
+        "https://nexus.example.com",
+        "sk-admin",
+        "nexus_hub_token_list",
+        {"show_revoked": False},
+    )
+
+    assert result == {"tokens": []}
+    assert calls == [
+        ("POST", "initialize"),
+        ("POST", "notifications/initialized"),
+        ("POST", "tools/call"),
+    ]
+
+
 def test_remote_list_requires_admin_token(monkeypatch):
     monkeypatch.delenv("NEXUS_HUB_ADMIN_TOKEN", raising=False)
 

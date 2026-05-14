@@ -83,8 +83,9 @@ def _initialize(client: httpx.Client, url: str, headers: dict[str, str]) -> str:
         session_id_raw = response.headers.get("mcp-session-id") or response.headers.get(
             "Mcp-Session-Id"
         )
-        for _line in response.iter_lines():
-            pass
+        payload = _read_json_rpc_data_event(response, expected_id=1)
+        if payload is not None and payload.get("error") is not None:
+            raise HubRemoteError(_json_rpc_error_message(payload["error"]))
     if not isinstance(session_id_raw, str) or not session_id_raw:
         raise HubRemoteError("remote hub MCP initialize did not return a session id")
     return session_id_raw
@@ -107,10 +108,24 @@ def _post_json_rpc(
 ) -> dict[str, Any]:
     with client.stream("POST", url, headers=headers, json=envelope) as response:
         response.raise_for_status()
-        for line in response.iter_lines():
-            if line.startswith("data: "):
-                return _decode_sse_json(line)
+        payload = _read_json_rpc_data_event(response, expected_id=envelope.get("id"))
+        if payload is not None:
+            return payload
     raise HubRemoteError("remote hub MCP response did not include a data event")
+
+
+def _read_json_rpc_data_event(
+    response: httpx.Response,
+    *,
+    expected_id: Any,
+) -> dict[str, Any] | None:
+    for line in response.iter_lines():
+        if not line.startswith("data: "):
+            continue
+        payload = _decode_sse_json(line)
+        if payload.get("error") is not None or payload.get("id") == expected_id:
+            return payload
+    return None
 
 
 def _decode_sse_json(line: str) -> dict[str, Any]:
@@ -125,9 +140,7 @@ def _decode_sse_json(line: str) -> dict[str, Any]:
 
 def _extract_tool_payload(envelope: dict[str, Any]) -> dict[str, Any]:
     if envelope.get("error") is not None:
-        error = envelope["error"]
-        message = (error.get("message") or str(error)) if isinstance(error, dict) else str(error)
-        raise HubRemoteError(message)
+        raise HubRemoteError(_json_rpc_error_message(envelope["error"]))
 
     result = envelope.get("result")
     if not isinstance(result, dict):
@@ -154,3 +167,7 @@ def _extract_tool_payload(envelope: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HubRemoteError("remote hub MCP tool returned non-object JSON")
     return payload
+
+
+def _json_rpc_error_message(error: Any) -> str:
+    return (error.get("message") or str(error)) if isinstance(error, dict) else str(error)

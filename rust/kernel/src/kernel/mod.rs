@@ -3039,6 +3039,31 @@ pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
     Ok(())
 }
 
+// ── Drop ────────────────────────────────────────────────────────────────
+
+impl Drop for Kernel {
+    fn drop(&mut self) {
+        // Shut down the kernel-owned tokio runtime so its worker threads
+        // exit promptly. Without this, the two `nexus-kernel-peer` threads
+        // survive past Python process exit and keep xdist worker processes
+        // alive indefinitely (~39 min hang on macOS CI).
+        //
+        // We replace the Arc with a dummy single-threaded runtime, then
+        // drop the original. When the last Arc ref drops, tokio's own
+        // Drop impl shuts down the worker threads. The swap ensures this
+        // Kernel's drop triggers the shutdown even if other Arcs exist
+        // (they'd hold the dummy, which is cheap to drop).
+        let dummy = std::sync::Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("dummy runtime for Kernel::drop"),
+        );
+        let old = std::mem::replace(&mut self.runtime, dummy);
+        // Explicitly drop — if this is the last Arc, tokio shuts down workers.
+        drop(old);
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]

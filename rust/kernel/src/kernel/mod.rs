@@ -1638,39 +1638,6 @@ impl Kernel {
         // registration so remote reads resolve through the correct metastore.
         remote_metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
     ) -> Result<SysSetAttrResult, KernelError> {
-        // /__sys__/cfg/{key}: shortcut to metastore cfg: namespace.
-        // Settings store uses sys_setattr(path, 0, content_id=json) to
-        // persist system settings without going through VFS routing.
-        if let Some(key) = path.strip_prefix(contracts::CFG_PATH_PREFIX) {
-            if !key.is_empty() {
-                let cfg_key = format!("cfg:{key}");
-                let meta = self.build_metadata(
-                    &cfg_key,
-                    zone_id,
-                    crate::meta_store::DT_REG,
-                    size.unwrap_or(0),
-                    content_id.map(str::to_string),
-                    0,
-                    1,
-                    None,
-                    None,
-                    None,
-                );
-                self.metastore_put(&cfg_key, meta)?;
-                return Ok(SysSetAttrResult {
-                    path: format!("{}{}", contracts::CFG_PATH_PREFIX, key),
-                    created: true,
-                    entry_type: crate::meta_store::DT_REG as i32,
-                    backend_name: None,
-                    capacity: None,
-                    updated: vec![],
-                    shm_path: None,
-                    data_rd_fd: None,
-                    space_rd_fd: None,
-                });
-            }
-        }
-
         match entry_type {
             2 => {
                 // DT_MOUNT — full mount lifecycle via DLC.

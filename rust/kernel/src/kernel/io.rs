@@ -303,11 +303,6 @@ impl Kernel {
             return self.handle_xattr_read(rest);
         }
 
-        // 1a-cfg. Config virtual path interception: /__sys__/cfg/{key}
-        if let Some(key) = path.strip_prefix(contracts::CFG_PATH_PREFIX) {
-            return self.handle_cfg_read(key);
-        }
-
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
             return Err(not_found());
@@ -349,10 +344,6 @@ impl Kernel {
 
         if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
             return self.handle_xattr_read(rest);
-        }
-
-        if let Some(key) = path.strip_prefix(contracts::CFG_PATH_PREFIX) {
-            return self.handle_cfg_read(key);
         }
 
         if self.trie.lookup(path).is_some() {
@@ -859,12 +850,6 @@ impl Kernel {
         // Short-circuits to metastore set_file_metadata without hooks/routing.
         if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
             return self.handle_xattr_write(rest, content);
-        }
-
-        // 1a-cfg. Config virtual path interception: /__sys__/cfg/{key}
-        // Short-circuits to metastore put("cfg:{key}") with content in content_id.
-        if let Some(key) = path.strip_prefix(contracts::CFG_PATH_PREFIX) {
-            return self.handle_cfg_write(key, content);
         }
 
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
@@ -1512,12 +1497,6 @@ impl Kernel {
         // 2. Trie-resolved paths -> wrapper handles
         if self.trie.lookup(path).is_some() {
             return None;
-        }
-
-        // 2a. Config virtual path interception: /__sys__/cfg/{key}
-        // Short-circuits to metastore get("cfg:{key}") and returns content_id.
-        if let Some(key) = path.strip_prefix(contracts::CFG_PATH_PREFIX) {
-            return self.handle_cfg_stat(key);
         }
 
         // 2.5 Federation procfs: /__sys__/zones/<id> exposes raft cluster
@@ -3717,111 +3696,6 @@ impl Kernel {
             next_cursor,
             has_more,
         }
-    }
-
-    // ── Cfg virtual path handlers (/__sys__/cfg/) ─────────────────────
-
-    /// Read a `cfg:{key}` entry from the root-zone metastore.
-    /// Returns the `content_id` field as the read payload (bytes).
-    fn handle_cfg_read(&self, key: &str) -> Result<SysReadResult, KernelError> {
-        if key.is_empty() {
-            return Err(KernelError::InvalidPath(
-                "cfg path must be /__sys__/cfg/{key}".into(),
-            ));
-        }
-        let cfg_key = format!("cfg:{key}");
-        let entry = self
-            .metastore_get(&cfg_key)?
-            .ok_or_else(|| KernelError::FileNotFound(cfg_key.clone()))?;
-        let data = entry.content_id.unwrap_or_default();
-        Ok(SysReadResult {
-            data: Some(data.into_bytes()),
-            post_hook_needed: false,
-            content_id: None,
-            gen: entry.gen,
-            entry_type: DT_REG,
-            stream_next_offset: None,
-        })
-    }
-
-    /// Write a `cfg:{key}` entry to the root-zone metastore.
-    /// Content bytes are stored in the `content_id` field of FileMetadata.
-    fn handle_cfg_write(&self, key: &str, content: &[u8]) -> Result<SysWriteResult, KernelError> {
-        if key.is_empty() {
-            return Err(KernelError::InvalidPath(
-                "cfg path must be /__sys__/cfg/{key}".into(),
-            ));
-        }
-        let cfg_key = format!("cfg:{key}");
-        let value = std::str::from_utf8(content)
-            .map_err(|e| KernelError::IOError(format!("cfg value not utf-8: {e}")))?
-            .to_string();
-
-        // Upsert: load existing or build new FileMetadata.
-        let meta = match self.metastore_get(&cfg_key)? {
-            Some(mut existing) => {
-                existing.content_id = Some(value);
-                existing
-            }
-            None => {
-                let mut m = self.build_metadata(
-                    &cfg_key,
-                    contracts::ROOT_ZONE_ID,
-                    DT_REG,
-                    0,
-                    Some(value),
-                    0,
-                    1,
-                    None,
-                    None,
-                    None,
-                );
-                m.path = cfg_key.clone();
-                m
-            }
-        };
-        self.metastore_put(&cfg_key, meta)?;
-        Ok(SysWriteResult {
-            hit: true,
-            content_id: None,
-            post_hook_needed: false,
-            version: 0,
-            gen: 0,
-            size: content.len() as u64,
-            is_new: false,
-            old_content_id: None,
-            old_size: None,
-            old_version: None,
-            old_modified_at_ms: None,
-        })
-    }
-
-    /// Stat a `cfg:{key}` entry from the root-zone metastore.
-    /// Returns a StatResult with the JSON payload in `content_id`.
-    fn handle_cfg_stat(&self, key: &str) -> Option<StatResult> {
-        if key.is_empty() {
-            return None;
-        }
-        let cfg_key = format!("cfg:{key}");
-        let entry = self.metastore_get(&cfg_key).ok()??;
-        Some(StatResult {
-            path: format!("{}{}", contracts::CFG_PATH_PREFIX, key),
-            size: 0,
-            content_id: entry.content_id,
-            mime_type: "application/json".to_string(),
-            is_directory: false,
-            entry_type: DT_REG,
-            mode: 0o644,
-            version: entry.version,
-            gen: entry.gen,
-            zone_id: entry.zone_id,
-            created_at_ms: entry.created_at_ms,
-            modified_at_ms: entry.modified_at_ms,
-            last_writer_address: None,
-            lock: None,
-            link_target: None,
-            owner_id: None,
-        })
     }
 
     // ── Xattr virtual path handlers ──────────────────────────────────

@@ -6,12 +6,12 @@ Issue #184: Migrate SystemSettingsModel from RecordStore to Metastore.
 
 Storage layout
 --------------
-Each setting is accessed through the ``/__sys__/cfg/{key}`` virtual path.
-The kernel intercepts this prefix in sys_stat/sys_write and maps it to
-the metastore entry ``cfg:{key}``.  The JSON envelope
-``{"v": value, "d": description?}`` is stored in the ``content_id`` field.
-Service layer uses sys_stat to read and sys_setattr to write — no
-raw metastore access.
+Each setting is stored at the VFS path ``/settings/{key}`` in the global
+(root-zone) metastore.  No kernel special-casing — ``/settings/`` is a
+legitimate VFS namespace that routes through standard syscalls.
+The JSON envelope ``{"v": value, "d": description?}`` is stored in the
+``content_id`` field.  Service layer uses sys_stat to read and sys_write
+to write.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import Any
 from nexus.contracts.auth_store_types import SystemSettingDTO
 from nexus.contracts.constants import ROOT_ZONE_ID
 
-_CFG_PREFIX = "/__sys__/cfg/"
+_CFG_PREFIX = "/settings/"
 
 
 class MetastoreSettingsStore:

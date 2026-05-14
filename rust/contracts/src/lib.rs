@@ -12,9 +12,8 @@ pub mod rust_service;
 pub mod write_coalescing;
 
 pub use constants::{
-    env, is_system_path, BLAKE3_EMPTY, CFG_PATH_PREFIX, LOCKS_PATH_PREFIX,
-    MAX_GRPC_MESSAGE_BYTES, ROOT_ZONE_ID, SHARE_REGISTRY_PREFIX, SYSTEM_PATH_PREFIX, VFS_ROOT,
-    XATTR_PATH_PREFIX,
+    env, is_system_path, BLAKE3_EMPTY, LOCKS_PATH_PREFIX, MAX_GRPC_MESSAGE_BYTES, ROOT_ZONE_ID,
+    SHARE_REGISTRY_PREFIX, SYSTEM_PATH_PREFIX, VFS_ROOT, XATTR_PATH_PREFIX,
 };
 pub use lock_state::{
     HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState, Locks,

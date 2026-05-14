@@ -67,6 +67,16 @@ pub const XATTR_PATH_PREFIX: &str = "/__xattr__/";
 /// `LockManager::list_locks` — admin-only, analogous to `/proc/locks`.
 pub const LOCKS_PATH_PREFIX: &str = "/__sys__/locks";
 
+/// Kernel-reserved virtual path prefix for `cfg:*` metastore entries.
+///
+/// `sys_stat("/__sys__/cfg/foo")` reads `cfg:foo` from the root-zone
+/// metastore; `sys_write("/__sys__/cfg/foo", payload)` stores the payload
+/// in `content_id`; `sys_read("/__sys__/cfg/foo")` returns `content_id`
+/// as bytes. Service-tier code (e.g. `MetastoreSettingsStore`) accesses
+/// config entries through proper VFS syscalls instead of raw metastore
+/// key manipulation.
+pub const CFG_PATH_PREFIX: &str = "/__sys__/cfg/";
+
 /// Path prefix used in the root zone's state machine to hold the
 /// federation share registry (SSOT for `origin_path → zone_id`).
 ///

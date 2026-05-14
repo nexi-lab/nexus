@@ -1,18 +1,17 @@
 """Metastore-backed implementation of SystemSettingsStoreProtocol.
 
-Stores system settings as FileMetadata entries in the metastore (redb)
-under the reserved ``cfg:`` path prefix.
+Stores system settings in the metastore (redb) via kernel syscalls.
 
 Issue #184: Migrate SystemSettingsModel from RecordStore to Metastore.
 
 Storage layout
 --------------
-Each setting reuses the file-metadata KV slot keyed by ``cfg:{key}``.
-The ``cfg:`` path prefix uniquely identifies these synthetic records —
-no per-record discriminator field is required.  The JSON envelope
-``{"v": value, "d": description?}`` is stashed in ``content_id`` (a Nullable
-string slot the metastore already round-trips).  Mirrors the pattern
-used by :mod:`nexus.bricks.mount.metastore_mount_store`.
+Each setting is accessed through the ``/__sys__/cfg/{key}`` virtual path.
+The kernel intercepts this prefix in sys_stat/sys_write and maps it to
+the metastore entry ``cfg:{key}``.  The JSON envelope
+``{"v": value, "d": description?}`` is stored in the ``content_id`` field.
+Service layer uses sys_stat to read and sys_setattr to write — no
+raw metastore access.
 """
 
 from __future__ import annotations
@@ -64,11 +63,6 @@ class MetastoreSettingsStore:
         payload: dict[str, str | None] = {"v": value}
         if description is not None:
             payload["d"] = description
-        json_payload = json.dumps(payload)
-        self._kernel.sys_setattr(
-            f"{_CFG_PREFIX}{key}",
-            0,  # DT_REG upsert
-            content_id=json_payload,
-            size=0,
-            zone_id=ROOT_ZONE_ID,
-        )
+        json_bytes = json.dumps(payload).encode("utf-8")
+        ctx = {"user_id": "system", "zone_id": ROOT_ZONE_ID, "is_admin": True}
+        self._kernel.sys_write(f"{_CFG_PREFIX}{key}", ctx, json_bytes, 0)

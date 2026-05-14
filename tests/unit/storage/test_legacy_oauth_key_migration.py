@@ -213,7 +213,7 @@ class TestExistingMetastore:
         candidate = tmp_path / "metastore.redb"
         candidate.touch()
 
-        fake_ms = _FakeMetastore({f"cfg:{OAUTH_ENCRYPTION_KEY_NAME}": "existing-ms-key"})
+        fake_ms = _FakeMetastore({f"/settings/{OAUTH_ENCRYPTION_KEY_NAME}": "existing-ms-key"})
         _patch_candidates(monkeypatch, [candidate])
         # Do NOT patch _read_oauth_key_from_redb — exercise the real fast path.
 

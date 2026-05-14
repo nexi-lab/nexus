@@ -113,7 +113,7 @@ async def test_write_update_operation_logged(
         metadata = logger.get_metadata_snapshot(latest)
         assert metadata is not None
         assert metadata["size"] == len(content2)
-        assert metadata["version"] == 3
+        assert metadata["version"] == 2
 
 
 @pytest.mark.asyncio

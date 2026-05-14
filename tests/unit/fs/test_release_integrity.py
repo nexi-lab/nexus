@@ -198,11 +198,13 @@ class TestConcurrentMetastore:
 
         assert not errors, "Concurrency errors:\n" + "\n".join(errors)
 
-        # Verify all entries were written
+        # Verify all entries were written.  sys_setattr may create
+        # implicit parent directories (e.g. /thread0/) so total items
+        # includes those — assert file entries >= expected.
         verify = create_kernel(db_path)
-        total = len(verify.metastore_list_paginated("/", True, 100000, None)["items"])
-        pass  # kernel manages redb lifecycle
-        assert total == n_threads * n_ops
+        items = verify.metastore_list_paginated("/", True, 100000, None)["items"]
+        file_entries = [it for it in items if not it.get("is_directory", False)]
+        assert len(file_entries) == n_threads * n_ops
 
 
 # =========================================================================

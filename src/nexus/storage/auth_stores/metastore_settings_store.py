@@ -10,8 +10,8 @@ Each setting is stored at the VFS path ``/settings/{key}`` in the global
 (root-zone) metastore.  No kernel special-casing — ``/settings/`` is a
 legitimate VFS namespace that routes through standard syscalls.
 The JSON envelope ``{"v": value, "d": description?}`` is stored in the
-``content_id`` field.  Service layer uses sys_stat to read and sys_write
-to write.
+``content_id`` field.  Service layer uses sys_stat to read and sys_setattr
+to write (DT_REG upsert with content_id).
 """
 
 from __future__ import annotations
@@ -63,6 +63,11 @@ class MetastoreSettingsStore:
         payload: dict[str, str | None] = {"v": value}
         if description is not None:
             payload["d"] = description
-        json_bytes = json.dumps(payload).encode("utf-8")
-        ctx = {"user_id": "system", "zone_id": ROOT_ZONE_ID, "is_admin": True}
-        self._kernel.sys_write(f"{_CFG_PREFIX}{key}", ctx, json_bytes, 0)
+        json_payload = json.dumps(payload)
+        self._kernel.sys_setattr(
+            f"{_CFG_PREFIX}{key}",
+            0,  # DT_REG upsert
+            content_id=json_payload,
+            size=0,
+            zone_id=ROOT_ZONE_ID,
+        )

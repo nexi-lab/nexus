@@ -36,10 +36,11 @@ import json
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from sqlalchemy import text as sa_text
 
@@ -54,7 +55,8 @@ from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMuta
 from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.env import get_database_url
-from nexus.server.zone_execution import run_zone_scoped
+
+T = TypeVar("T")
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -251,6 +253,7 @@ class SearchDaemon:
         self._embedding_provider: Any = None
         self._record_store: Any | None = None  # SQLAlchemyRecordStore fallback
         self._owns_engine = False  # True only when we created the engine ourselves
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
 
         # Accept injected session factory from RecordStoreABC
         if async_session_factory is not None:
@@ -699,6 +702,7 @@ class SearchDaemon:
 
         start_time = time.perf_counter()
         logger.info("Starting SearchDaemon - pre-warming indexes...")
+        self._owner_loop = asyncio.get_running_loop()
 
         # Initialize database pool
         await self._init_database_pool()
@@ -940,6 +944,7 @@ class SearchDaemon:
                     )
         self._async_engine = None
         self._async_session = None
+        self._owner_loop = None
 
         # Dispose loop-local path-context engines we created lazily. Only
         # engines whose origin loop is the current running loop can actually
@@ -1511,7 +1516,7 @@ class SearchDaemon:
                 zone_id=zone_id,
             )
 
-        return await run_zone_scoped(getattr(self, "_zone_registry", None), zone_id, _work)
+        return await self._run_on_owner_loop(_work)
 
     async def _search_on_current_loop(
         self,
@@ -1851,7 +1856,7 @@ class SearchDaemon:
         async def _work() -> list[list[Any]]:
             return await self._batch_search_on_current_loop(queries, zone_id=zone_id)
 
-        return await run_zone_scoped(getattr(self, "_zone_registry", None), zone_id, _work)
+        return await self._run_on_owner_loop(_work)
 
     async def _batch_search_on_current_loop(
         self,
@@ -1965,7 +1970,29 @@ class SearchDaemon:
         async def _work() -> int:
             return await self._index_documents_on_current_loop(documents, zone_id=zone_id)
 
-        return await run_zone_scoped(getattr(self, "_zone_registry", None), zone_id, _work)
+        return await self._run_on_owner_loop(_work)
+
+    async def _run_on_owner_loop(self, work: Callable[[], Awaitable[T]]) -> T:
+        """Run DB-backed daemon work on the loop that owns asyncpg resources."""
+        owner_loop = getattr(self, "_owner_loop", None)
+        current_loop = asyncio.get_running_loop()
+        if (
+            owner_loop is None
+            or owner_loop is current_loop
+            or not owner_loop.is_running()
+            or owner_loop.is_closed()
+        ):
+            return await work()
+
+        async def _invoke() -> T:
+            return await work()
+
+        submitted = asyncio.run_coroutine_threadsafe(_invoke(), owner_loop)
+        try:
+            return await asyncio.wrap_future(submitted)
+        except asyncio.CancelledError:
+            submitted.cancel()
+            raise
 
     async def _index_documents_on_current_loop(
         self,

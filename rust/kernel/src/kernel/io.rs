@@ -792,7 +792,13 @@ impl Kernel {
         }
         if reqs.len() == 1 {
             let req = &reqs[0];
-            return vec![self.sys_write_single(&req.path, ctx, &req.content, req.offset, 1)];
+            return vec![self.sys_write_with_link_depth(
+                &req.path,
+                ctx,
+                &req.content,
+                req.offset,
+                1,
+            )];
         }
         self.sys_write_batch_impl(reqs, ctx)
     }
@@ -808,7 +814,7 @@ impl Kernel {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
-        self.sys_write_single(path, ctx, content, offset, 1)
+        self.sys_write_with_link_depth(path, ctx, content, offset, 1)
     }
 
     pub(crate) fn sys_write_with_link_depth(
@@ -906,7 +912,7 @@ impl Kernel {
                         "DT_LINK chain rejected (ELOOP) at {path}"
                     )));
                 }
-                return self.sys_write_single(
+                return self.sys_write_with_link_depth(
                     target,
                     ctx,
                     effective_content,
@@ -3061,10 +3067,10 @@ impl Kernel {
             // Backend write. ``sys_write_batch`` keeps per-item error
             // semantics: a failure only taints that item's result, not the
             // whole batch.
-            let write_result = route
-                .backend
-                .as_ref()
-                .and_then(|b| b.write_content(content, &route.backend_path, ctx, 0).ok());
+            let write_result = route.backend.as_ref().and_then(|b| {
+                b.write_content(&req.content, &route.backend_path, ctx, 0)
+                    .ok()
+            });
 
             match write_result {
                 Some(wr) => {
@@ -3777,7 +3783,6 @@ impl Kernel {
 #[cfg(test)]
 mod read_batch_tests {
     use crate::abc::object_store::{ObjectStore, StorageError, WriteResult};
-    use crate::kernel::convenience::KernelConvenience;
     use crate::kernel::{Kernel, KernelError};
     use contracts::OperationContext;
     use parking_lot::Mutex;

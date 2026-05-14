@@ -3044,7 +3044,6 @@ pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
 #[cfg(test)]
 mod tests {
     use crate::abc::object_store::{ObjectStore, StorageError, WriteResult};
-    use crate::kernel::convenience::KernelConvenience;
     use parking_lot::Mutex;
     use std::collections::HashMap;
 
@@ -3182,7 +3181,7 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/mime.txt", DT_REG as i32).unwrap();
-        k.sys_write("/mime.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_one("/mime.txt", &ctx, b"body", 0).unwrap();
 
         k.sys_setattr(
             "/mime.txt",
@@ -3218,7 +3217,7 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
 
         let copied = k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
         let dst = k.sys_stat("/dst.txt", "root").unwrap();
@@ -3238,7 +3237,7 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
         k.sys_mkdir("/dst", &ctx, true, true).unwrap();
 
         match k.sys_copy("/src.txt", "/dst", &ctx) {
@@ -3261,9 +3260,9 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
         setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
-        k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.created_at_ms = Some(123);
@@ -3281,9 +3280,9 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
         setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
-        k.sys_write("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.content_id = Some("/missing-destination-content.txt".to_string());
@@ -3364,7 +3363,7 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("system", "root", true, None, true);
         setattr(&k, "/plain.bin", DT_REG as i32).unwrap();
-        let write = k.sys_write("/plain.bin", &ctx, b"abc", 0).unwrap();
+        let write = k.sys_write_one("/plain.bin", &ctx, b"abc", 0).unwrap();
         assert!(write.hit);
 
         let cat = k.sys_cat("/plain.bin", &ctx, true).unwrap();

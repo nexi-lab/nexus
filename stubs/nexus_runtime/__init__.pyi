@@ -682,34 +682,3 @@ def nx_acp_register_on_terminate(py_kernel: Any, callback_id: str, callback: Any
 def nx_kernel_dispatch_rust_call(
     py_kernel: Any, service: str, method: str, payload: bytes
 ) -> bytes | None: ...
-
-# ---------------------------------------------------------------------------
-# PrefetchEngine PyO3 surface (rust/nexus-prefetch/src/pyo3_bindings.rs)
-# Issue #4057 — adaptive prefetcher exposed to Python via cdylib.  Manually
-# maintained: the codegen at scripts/codegen_kernel_abi.py only scans
-# rust/kernel/src; PrefetchEngine lives in rust/nexus-prefetch.
-# ---------------------------------------------------------------------------
-
-class PrefetchEngine:
-    def __init__(
-        self,
-        read_callable: Any,
-        block_size: int,
-        initial_window: int,
-        max_window: int,
-        max_workers: int,
-        queue_capacity: int,
-        max_blocks_per_trigger: int,
-        sequential_tolerance: int,
-        min_sequential_count: int,
-        detector: str = "sequential",
-        shutdown_timeout_ms: int = 2000,
-        max_buffer_bytes: int = 134217728,
-    ) -> None: ...
-    def on_open(self, fh: int, path: str, file_size: int | None) -> None: ...
-    def on_read(self, fh: int, offset: int, size: int) -> bytes | None: ...
-    def on_release(self, fh: int) -> None: ...
-    def invalidate_fh(self, fh: int) -> None: ...
-    def invalidate_path(self, path: str) -> None: ...
-    def metrics(self) -> tuple[int, int, int, int, int]: ...
-    def shutdown(self) -> None: ...

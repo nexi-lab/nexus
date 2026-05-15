@@ -336,6 +336,25 @@ Source of truth: `rust/kernel/src/kernel/dispatch.rs` (gate),
 `rust/kernel/src/core/permission_cache.rs` (lease cache),
 `rust/kernel/src/core/dispatch/mod.rs` (trait + enums).
 
+**Why separate the Permission Gate from INTERCEPT PRE?** The gate runs in
+~100-200ns pure Rust (AtomicBool + DashMap lease cache); full ReBAC evaluation
+in INTERCEPT PRE requires metadata access and GIL crossing. Separating them
+lets cached grants bypass INTERCEPT entirely.
+
+**Per-syscall dispatch matrix** (source of truth: `io.rs`):
+
+| Syscall | Permission Gate | INTERCEPT PRE | INTERCEPT POST | OBSERVE |
+|---------|:---:|:---:|:---:|:---:|
+| `sys_read` | Read | ReadHookCtx | — | — |
+| `sys_write` | Write | WriteHookCtx | WriteHookCtx | FileWrite |
+| `sys_write_batch` | Write (per-item) | — | — | FileWrite (per-item) |
+| `sys_unlink` | Write | DeleteHookCtx | DeleteHookCtx | FileDelete / DirDelete |
+| `sys_rename` | Write (both) | RenameHookCtx | RenameHookCtx | FileRename |
+| `sys_copy` | Read + Write | — | — | FileCopy |
+| `sys_mkdir` | Write | — | — | DirCreate |
+| `sys_setattr` | Write | — | — | MetadataChange |
+| `sys_stat` | — | — | — | — |
+
 **Zero-overhead invariant:** Empty callback list = no-op dispatch = zero overhead
 when no services are registered.
 

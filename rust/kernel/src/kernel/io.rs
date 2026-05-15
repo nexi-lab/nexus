@@ -2267,6 +2267,16 @@ impl Kernel {
         // 10. Release VFS locks
         release_locks(&self.lock_manager, lock1, lock2);
 
+        // OBSERVE-phase dispatch (§11 OBSERVE): queue FileCopy to
+        // the kernel observer ThreadPool. Returns immediately —
+        // observer callbacks run off the syscall hot path.
+        self.dispatch_mutation(FileEventType::FileCopy, dst_path, ctx, |ev| {
+            ev.size = Some(size);
+            ev.content_id = Some(content_id.clone());
+            ev.version = Some(new_version);
+            ev.gen = Some(new_gen);
+        });
+
         Ok(SysCopyResult {
             hit: true,
             post_hook_needed: self.copy_hook_count.load(Ordering::Relaxed) > 0,

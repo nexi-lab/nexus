@@ -28,7 +28,7 @@ Nexus:   Client      → nx.read()    →                  → NexusFS.sys_read(
 
 All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern).
 
-### Tier 1 — Abstract Syscalls (13)
+### Tier 1 — Abstract Syscalls (11)
 
 | # | Plane | Syscall | Signature | POSIX Ref |
 |---|-------|---------|-----------|-----------|
@@ -43,8 +43,6 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 | 9 | Locking | `sys_lock` | `(path, mode, ttl, max_holders, lock_id=None) → str \| None` | `fcntl(F_SETLK)` — acquire (lock_id=None) or extend TTL (lock_id=existing) |
 | 10 | Locking | `sys_unlock` | `(path, lock_id=None, force=False) → bool` | `flock(LOCK_UN)` — release by lock_id, or force-release all holders |
 | 11 | Watch | `sys_watch` | `(path, timeout, recursive) → dict \| None` | `inotify(7)` |
-| 12 | Search | `sys_glob` | `(pattern, prefix) → list[str]` | `glob(3)` — metadata-only: walks metastore prefix scan, applies `globset` pattern matching. Pure Rust kernel implementation (PR #3921) |
-| 13 | Search | `sys_grep` | `(pattern, prefix, ignore_case, max_results, disk_paths) → list[GrepMatch]` | `grep(1)` — reads file content via `sys_read`, applies `lib::search` regex. Supports disk-path fast path for search-tier cache hits (PR #3921) |
 
 **Vectored syscall semantics (sys_read, sys_write, sys_unlink):**
 
@@ -62,6 +60,8 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 | `rmdir` | 2 | `sys_unlink(recursive=)` | Thin delegation, overridable |
 | `access` | 2 | `sys_stat` | Returns `True` if stat succeeds |
 | `is_directory` | 2 | `sys_stat` | Checks `is_directory` field |
+| `glob` | 2 | `sys_readdir` + filter | Pattern matching over directory listing (PR #3921). **Boundary leak**: current Rust impl uses `metastore_list_paginated` directly instead of `sys_readdir` |
+| `grep` | 2 | `sys_readdir` + `sys_read` + regex | Content search across files (PR #3921). **Boundary leak**: current Rust impl uses `std::fs::read()` directly instead of `sys_read` |
 
 `sys_setattr` is the universal creation/management syscall:
 - `create(path)` = `sys_setattr(path, entry_type=DT_REG)` — upsert: creates regular file if absent, updates metadata if present. Accepts `content_id`, `size`, `version`, `created_at_ms`, `owner_id`.
@@ -220,14 +220,14 @@ between DataNodes — separate from NameNode API).
 | `sys_lock` | ✅ | fcntl(F_SETLK) — acquire + extend (lock_id param) |
 | `sys_unlock` | ✅ | flock(LOCK_UN) — release + force (force param) |
 | `sys_watch` | ✅ | inotify(7) equivalent |
-| `sys_glob` | ✅ | `glob(3)` — metadata-only pattern matching via metastore prefix scan + globset |
-| `sys_grep` | ✅ | `grep(1)` — content search via `sys_read` + `lib::search` regex |
 
 Tier 2 convenience (not kernel syscalls):
 - `access` → Tier 2 (derives from `sys_stat`)
 - `is_directory` → Tier 2 (derives from `sys_stat`)
 - `rmdir` → Tier 2 (delegates to `sys_unlink`)
 - `get_xattr(path, key)` / `set_xattr(path, key, value)` / `get_xattr_bulk(paths, key)` → Tier 2 (Rust `KernelConvenience` trait, direct metastore — no hooks, no permission gate)
+- `glob` → Tier 2 (composes `sys_readdir` + filter). Search-tier logic (PR #3921). **Boundary leak**: needs fix to use `sys_readdir`
+- `grep` → Tier 2 (composes `sys_readdir` + `sys_read` + regex). Search-tier logic (PR #3921). **Boundary leak**: needs fix to use `sys_read`
 
 ---
 
@@ -465,4 +465,4 @@ collapse is a **refactoring** that changes the boundary, not the logic.
 | §6.1 | 2026-04-26 | Rust/Python boundary status: hook dispatch (2+N crossings), service lifecycle (4 crossings, stdlib-only), zero-crossing syscalls, pure Rust pillar dispatch. Eliminated: sys_write IPC pre-check (redundant metadata.get), sys_stat py.import("datetime") → chrono. |
 | §2, §4, §5 | 2026-05-07 | sys_setattr: DT_REG create (upsert) + content_id/size/version/created_at_ms/owner_id params. sys_stat: owner_id in StatResult. sys_write: file-must-exist contract. glob/grep: Tier 2 convenience (search-tier, PR #3921). Tier 1 surface: 8 syscalls (read, write, stat, setattr, unlink, rename, copy, readdir). |
 | §5 | 2026-05-15 | Delete `/__xattr__/` path intercept from sys_read/sys_write — redundant with Tier 2 `get_xattr`/`set_xattr` (KernelConvenience). Document xattr as Tier 2 convenience. |
-| §2, §3, §5 | 2026-05-15 | Promote `sys_glob`/`sys_grep` from Tier 2 to Tier 1 — formalize existing Rust kernel implementations (PR #3921). Tier 1 surface: 13 syscalls. |
+| §2, §5 | 2026-05-15 | Revert `sys_glob`/`sys_grep` Tier 1 promotion — stay Tier 2. Flag boundary leaks: impl uses metastore/disk directly instead of composing Tier 1 syscalls. |

@@ -66,9 +66,9 @@ class TestPerformanceTuningOnAppState:
     def test_full_profile_tuning_set(self, app_full_profile: FastAPI) -> None:
         tuning = app_full_profile.state.profile_tuning
         assert tuning.concurrency.default_workers == 4
-        assert tuning.concurrency.thread_pool_size == 200
+        assert tuning.concurrency.thread_pool_size == 40
         assert tuning.network.default_http_timeout == 30.0
-        assert tuning.storage.db_pool_size == 20
+        assert tuning.storage.db_pool_size == 5
 
     def test_full_profile_new_slices(self, app_full_profile: FastAPI) -> None:
         tuning = app_full_profile.state.profile_tuning
@@ -107,11 +107,11 @@ class TestFeaturesEndpointWithTuning:
         assert "performance_tuning" in data
         pt = data["performance_tuning"]
         assert pt is not None
-        assert pt["thread_pool_size"] == 200
+        assert pt["thread_pool_size"] == 40
         assert pt["default_workers"] == 4
         assert pt["task_runner_workers"] == 4
         assert pt["default_http_timeout"] == 30.0
-        assert pt["db_pool_size"] == 20
+        assert pt["db_pool_size"] == 5
         assert pt["search_max_concurrency"] == 10
 
     def test_full_features_includes_new_slices(self, app_full_profile: FastAPI) -> None:
@@ -212,7 +212,7 @@ class TestBackwardCompatibility:
         assert GREP_PARALLEL_WORKERS == 4  # FULL profile default
 
     def test_list_parallel_workers_constant(self) -> None:
-        from nexus.services.search.search_service import LIST_PARALLEL_WORKERS
+        from nexus.bricks.search.search_service import LIST_PARALLEL_WORKERS
 
         assert LIST_PARALLEL_WORKERS == 10  # FULL profile default
 
@@ -243,7 +243,7 @@ class TestDIWiring:
         """SearchService constructor accepts custom parallel worker counts."""
         from unittest.mock import MagicMock
 
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         svc = SearchService(
             metadata_store=MagicMock(),
@@ -257,7 +257,7 @@ class TestDIWiring:
         """TigerCache constructor accepts custom l2_max_workers."""
         from unittest.mock import MagicMock
 
-        from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
+        from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
         cache = TigerCache(engine=MagicMock(), l2_max_workers=8)
         assert cache._l2_max_workers == 8

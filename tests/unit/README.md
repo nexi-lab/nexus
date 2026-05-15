@@ -34,3 +34,10 @@ We do **not** enforce timeouts in CI (they cause flaky failures on busy runners)
 3. **Kernel tests are mandatory** — never delete a kernel invariant test without replacing it.
 4. **One assertion per concern** — test names should read as specifications.
 5. **No feature creep** — adding a new feature module? Its tests go in `tests/integration/` or `tests/e2e/`, not here, unless it's a new kernel/service/storage component.
+
+## Shared Test Helpers
+
+Use `tests.testkit` for reusable fake backends, record stores, operation
+contexts, profile matrices, and assertion helpers. Optional service helpers are
+for integration and e2e suites, not unit tests. See
+`docs/contributing/testing-testkit.md`.

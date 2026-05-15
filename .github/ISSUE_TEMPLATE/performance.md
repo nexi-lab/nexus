@@ -47,7 +47,7 @@ print(f"Operation took {duration:.2f} seconds")
 ## Environment
 
 - **Nexus Version:** [e.g., 0.1.0]
-- **Python Version:** [e.g., 3.11.5]
+- **Python Version:** [e.g., 3.14.1]
 - **OS:** [e.g., Ubuntu 22.04]
 - **Deployment Mode:** [embedded/monolithic/distributed]
 - **Hardware:** [e.g., 4 CPU cores, 16GB RAM, SSD]

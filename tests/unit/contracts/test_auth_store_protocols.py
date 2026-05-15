@@ -153,7 +153,7 @@ class TestProtocolConformance:
 
     @pytest.fixture()
     def session_factory(self):
-        from tests.helpers.in_memory_record_store import InMemoryRecordStore
+        from tests.testkit.records import InMemoryRecordStore
 
         store = InMemoryRecordStore()
         yield store.session_factory
@@ -189,10 +189,11 @@ class TestProtocolConformance:
         store = SQLAlchemyZoneStore(session_factory)
         assert isinstance(store, ZoneStoreProtocol)
 
-    def test_settings_store_satisfies_protocol(self, session_factory):
-        from nexus.storage.auth_stores import SQLAlchemySettingsStore
+    def test_settings_store_satisfies_protocol(self):
+        from nexus.storage.auth_stores import MetastoreSettingsStore
+        from tests.testkit.metadata import DictMetastore
 
-        store = SQLAlchemySettingsStore(session_factory)
+        store = MetastoreSettingsStore(DictMetastore())
         assert isinstance(store, SystemSettingsStoreProtocol)
 
     def test_session_factory_satisfies_protocol(self, session_factory):

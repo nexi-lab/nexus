@@ -1,0 +1,1945 @@
+"""MetadataMixin — metadata operations (sys_stat, sys_setattr, sys_unlink, sys_rename, sys_copy, sys_readdir).
+
+Extracts all file metadata operations from NexusFS. Depends on
+InternalMixin (context helpers, .readme overlay) and DispatchMixin
+(resolve_delete, dispatch hooks) via MRO.
+
+Mixin rules (Phase 6 established):
+  * ``from __future__ import annotations`` + TYPE_CHECKING stubs
+  * Single stub: ``_kernel: Any`` — other NexusFS attrs accessed via MRO
+  * Listed BEFORE NexusFilesystemABC in MRO
+  * @rpc_expose decorators stay on mixin methods
+  * No new ``type: ignore``
+"""
+
+from __future__ import annotations
+
+import builtins
+import logging
+import time
+from typing import TYPE_CHECKING, Any
+
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import (
+    BackendError,
+    InvalidPathError,
+    NexusFileNotFoundError,
+)
+from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
+from nexus.contracts.types import OperationContext
+from nexus.core.nexus_fs_content import emit_op_completed
+from nexus.kernel_helpers import metastore_list_iter
+from nexus.lib.rpc_decorator import rpc_expose
+
+if TYPE_CHECKING:
+    pass
+
+logger = logging.getLogger(__name__)
+
+_SENTINEL = object()  # default for _meta param in _check_is_directory
+
+
+class MetadataMixin:
+    """Metadata operations: sys_stat, sys_setattr, sys_unlink, sys_rename, sys_copy, sys_readdir."""
+
+    _kernel: Any  # Rust Kernel
+    _zone_id: str
+    _hook_specs: dict  # Hook specs stored on NexusFS
+    metadata: Any
+    _driver_coordinator: Any
+
+    # ── Internal helpers ──────────────────────────────────────────────
+
+    def _forget_mounted_backend_instance(self, path: str) -> None:
+        mounted = getattr(self, "_mounted_backend_instances", None)
+        if not isinstance(mounted, dict):
+            return
+        normalized = "/" + str(path).strip("/")
+        mounted.pop(normalized, None)
+
+    @staticmethod
+    def _extract_rust_backend_params(backend: Any, cls_name: str) -> dict[str, Any] | None:
+        """Extract typed params for Rust native backend construction.
+
+        Returns a dict of kwargs for kernel.sys_setattr if the backend has
+        a Rust-native equivalent, or None when the backend type is not recognized.
+        """
+        # S3 backends (PathS3Backend, CASS3Backend)
+        if "S3" in cls_name:
+            return {
+                "backend_type": "s3",
+                "s3_bucket": getattr(backend, "bucket_name", None) or "",
+                "s3_prefix": getattr(backend, "prefix", None) or "",
+                "aws_region": getattr(backend, "region_name", None),
+                "aws_access_key": getattr(backend, "_access_key_id", None)
+                or getattr(backend, "access_key_id", None),
+                "aws_secret_key": getattr(backend, "_secret_access_key", None)
+                or getattr(backend, "secret_access_key", None),
+                "s3_endpoint": getattr(backend, "endpoint_url", None),
+            }
+        # GCS backends (PathGCSBackend, CASGCSBackend)
+        if "GCS" in cls_name:
+            return {
+                "backend_type": "gcs",
+                "gcs_bucket": getattr(backend, "bucket_name", None) or "",
+                "gcs_prefix": getattr(backend, "prefix", None) or "",
+                "access_token": getattr(backend, "access_token", None),
+            }
+        # GDrive connector
+        if "GDrive" in cls_name or "Gdrive" in cls_name:
+            token = getattr(backend, "_access_token", None) or getattr(
+                backend, "access_token", None
+            )
+            if token:
+                return {
+                    "backend_type": "gdrive",
+                    "access_token": token,
+                    "root_folder_id": getattr(backend, "root_folder_id", None) or "root",
+                }
+        # Gmail connector
+        if "Gmail" in cls_name:
+            token = getattr(backend, "_access_token", None) or getattr(
+                backend, "access_token", None
+            )
+            if token:
+                return {
+                    "backend_type": "gmail",
+                    "access_token": token,
+                }
+        # Slack connector
+        if "Slack" in cls_name:
+            token = getattr(backend, "bot_token", None) or getattr(backend, "_bot_token", None)
+            if token:
+                return {
+                    "backend_type": "slack",
+                    "bot_token": token,
+                    "default_channel": getattr(backend, "default_channel", None) or "",
+                }
+        # HN connector (PathHNBackend)
+        if "HN" in cls_name and "Backend" in cls_name:
+            return {
+                "backend_type": "hn",
+                "hn_stories_per_feed": getattr(backend, "stories_per_feed", 10),
+                "hn_include_comments": getattr(backend, "include_comments", True),
+            }
+        # X/Twitter connector (PathXBackend)
+        if cls_name == "PathXBackend":
+            # X uses OAuth — extract token from transport if available
+            transport = getattr(backend, "_transport", None) or getattr(
+                backend, "_hn_transport", None
+            )
+            token = getattr(transport, "_bearer_token", None) if transport else None
+            return {
+                "backend_type": "x",
+                "x_bearer_token": token or "",
+            }
+        # Calendar OAuth connector (PathCalendarBackend) → route through CLI "gws calendar"
+        if "Calendar" in cls_name and "Backend" in cls_name:
+            import json as _json
+
+            token = getattr(backend, "_access_token", None) or getattr(
+                backend, "access_token", None
+            )
+            auth_env: dict[str, str] = {}
+            if token:
+                auth_env["GWS_ACCESS_TOKEN"] = token
+            return {
+                "backend_type": "cli",
+                "cli_command": "gws",
+                "cli_service": "calendar",
+                "cli_auth_env_json": _json.dumps(auth_env) if auth_env else "",
+            }
+        # CLI-based connectors (GitHubConnector, SheetsConnector, DocsConnector, etc.)
+        cli_name = getattr(backend, "CLI_NAME", None)
+        if isinstance(cli_name, str) and cli_name:
+            import json as _json
+
+            cli_service = getattr(backend, "CLI_SERVICE", "") or ""
+            # Build auth env from token if available
+            cli_auth: dict[str, str] = {}
+            env_key = f"{cli_name.upper().replace('-', '_')}_ACCESS_TOKEN"
+            # Try to get token from backend's token manager
+            _tm = getattr(backend, "_token_manager", None)
+            if _tm:
+                try:
+                    _tok = _tm.get_cached_token(provider=cli_name)
+                    if _tok:
+                        cli_auth[env_key] = _tok
+                except Exception:
+                    pass
+            return {
+                "backend_type": "cli",
+                "cli_command": cli_name,
+                "cli_service": cli_service,
+                "cli_auth_env_json": _json.dumps(cli_auth) if cli_auth else "",
+            }
+        return None
+
+    def _get_parent_path(self, path: str) -> str | None:
+        """Get parent directory path, or None if root."""
+        if path == "/":
+            return None
+
+        # Remove trailing slash if present
+        path = path.rstrip("/")
+
+        # Find last slash
+        last_slash = path.rfind("/")
+        if last_slash == 0:
+            # Parent is root
+            return "/"
+        elif last_slash > 0:
+            return path[:last_slash]
+        else:
+            # No parent (shouldn't happen for valid paths)
+            return None
+
+    def _ensure_parent_directories(self, path: str, ctx: OperationContext) -> None:
+        """Create metadata entries for all parent directories that don't exist.
+
+        Walks from the immediate parent of *path* upward toward ``/``, collecting
+        every path that has no metastore entry, then creates directory metadata
+        entries from top to bottom (shallowest first) so that ``sys_readdir``
+        lists them correctly.
+
+        This is factored out of ``mkdir`` so it can be called both on the
+        normal code-path *and* on the early-return path when the target path
+        already exists (e.g. a DT_MOUNT entry written by ``MountTable.add()``).
+        """
+        parent_path = self._get_parent_path(path)
+        parents_to_create: list[str] = []
+
+        while parent_path and parent_path != "/":
+            if not self._kernel.access(parent_path, ROOT_ZONE_ID):
+                parents_to_create.append(parent_path)
+            else:
+                break
+            parent_path = self._get_parent_path(parent_path)
+
+        for parent_dir in reversed(parents_to_create):
+            self._kernel.sys_setattr(
+                parent_dir,
+                DT_DIR,
+                zone_id=ctx.zone_id or ROOT_ZONE_ID,
+            )
+
+    def _check_is_directory(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+        _meta: Any = _SENTINEL,
+    ) -> bool:
+        """Internal: check if path is a directory (explicit or implicit).
+
+        Args:
+            _meta: Pre-fetched FileMetadata from caller (avoids redundant
+                fetch). Pass ``None`` to indicate "already looked up,
+                not found". Omit to let this method use sys_stat.
+        """
+        try:
+            path = self._validate_path(path)
+            # Fast-path: use pre-fetched meta if caller provided it
+            if _meta is not _SENTINEL:
+                if _meta is not None and (
+                    _meta.is_dir or _meta.is_mount or _meta.is_external_storage
+                ):
+                    return True
+                _stat = self._kernel.sys_stat(path, ROOT_ZONE_ID)
+                return _stat is not None and _stat.get("is_directory", False)
+            # Single Rust round-trip: dcache → metastore → implicit directory
+            stat = self.sys_stat(path, context=context)
+            return stat is not None and stat.get("is_directory", False)
+        except (InvalidPathError, NexusFileNotFoundError):
+            return False
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def is_directory(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> bool:
+        """Tier 2: convenience wrapper — derives from sys_stat."""
+        return self._kernel.is_directory(path, self._zone_id)
+
+    # ── Tier 1 syscalls ───────────────────────────────────────────────
+
+    @rpc_expose(description="Get available namespaces")
+    def get_top_level_mounts(self, context: OperationContext | None = None) -> builtins.list[str]:  # noqa: ARG002
+        """Return top-level mount names visible to the current user."""
+        return self._kernel.get_top_level_mounts(self._zone_id)
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def sys_stat(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any] | None:
+        """Get file metadata without reading content (FUSE getattr).
+
+        Lock info is always included (Rust LockManager lookup is free).
+        ``include_lock`` kwarg accepted for backward compat but ignored.
+        """
+        ctx = self._resolve_cred(context)
+
+        # Dispatch the stat permission hook before reading kernel metadata
+        # so federation tokens cannot probe paths outside their zone allow-list.
+        from nexus.contracts.exceptions import PermissionDeniedError as _PDE
+        from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+
+        try:
+            self._kernel.dispatch_pre_hooks(
+                "stat",
+                _SHC(path=path, context=ctx, permission="READ"),
+            )
+        except (_PDE, PermissionError):
+            # Codex Round 9 finding #2: PermissionChecker.check raises
+            # the builtin PermissionError on normal denials.  Re-raise both
+            # so denial is honoured.
+            raise
+
+        # Build the base stat via a single code path. F3 C1 guarantees a
+        # metastore is always wired (``Kernel::new()`` installs
+        # ``MemoryMetastore`` by default), so the Rust kernel is the
+        # authoritative source for explicit entries — a second
+        # ``self.metadata.get`` would be a TOCTOU duplicate with a
+        # different view of the per-mount ``ZoneMetastore`` in
+        # federation mode. The two ``None``-returning cases handled
+        # after the kernel call are the ones the kernel cannot see:
+        # implicit directories (paths with children but no explicit
+        # entry) and the Python-side ``.readme/`` virtual-doc overlay
+        # (Issue #3728).
+        # PRE-DISPATCH: virtual resolvers (e.g., ``.readme/`` overlay)
+        # advertise paths that have no kernel-side metastore entry, so we
+        # let them synthesize stat first. Mirrors the read/list pre-hook
+        # so listed virtual entries are also stat-visible.
+        if hasattr(self, "resolve_stat"):
+            _handled, _virt = self.resolve_stat(path, context=context)
+            if _handled and _virt is not None:
+                _virt.setdefault("owner", ctx.user_id)
+                _virt.setdefault("group", ctx.user_id)
+                _virt.setdefault("gen", 0)
+                return _virt
+
+        # Rust sys_stat handles: dcache → metastore → implicit directory.
+        result = self._kernel.sys_stat(path, self._zone_id)
+        if result is not None:
+            result["owner"] = ctx.user_id
+            result["group"] = ctx.user_id
+        else:
+            return None
+
+        return result
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def sys_setattr(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+        **attrs: Any,
+    ) -> dict[str, Any]:
+        """Upsert file metadata (chmod/chown/utimensat + mknod analog).
+
+        Rust kernel handles ALL filesystem entry types. Python dispatches
+        ``/__sys__/`` (ServiceRegistry) before the Rust call.
+
+        Upsert semantics — create-on-write for metadata:
+        - Path missing + entry_type provided → CREATE inode
+        - Path missing + no entry_type → NexusFileNotFoundError
+        - Path exists + no entry_type → UPDATE mutable fields
+        - Path exists + same entry_type (DT_PIPE/DT_STREAM) → IDEMPOTENT OPEN (recover buffer)
+        - Path exists + different entry_type → PermissionDenied (immutable after creation)
+
+        Args:
+            path: Virtual file path. Paths under ``/__sys__/`` are kernel
+            management operations (service/hook registration), not filesystem
+            metadata.
+            context: Operation context.
+            **attrs: Metadata attributes. Include ``entry_type`` to create.
+
+        Returns:
+            Dict with path, created flag, and type-specific fields.
+        """
+        # ── Authorization gate (Issue #3786 / Codex Round 7 finding #2) ──
+        # NexusFS.sys_setattr is the underlying primitive used by mounts,
+        # service registration, and metadata mutation.  Without an
+        # in-class gate, in-process callers (and any future RPC handler
+        # that forgot to gate) could poison metadata under /zone/X for a
+        # token without WRITE there.  This is the only enforcement layer
+        # for sys_setattr now that the kernel-syscall thin dispatcher
+        # routes wire-form `sys_setattr` straight here without a per-RPC
+        # handler.
+        _entry_type = attrs.get("entry_type", 0)
+        if context is not None and not getattr(context, "is_system", False):
+            from nexus.contracts.exceptions import PermissionDeniedError as _PDE
+
+            _is_admin_caller = bool(getattr(context, "is_admin", False))
+
+            # /__sys__/ and DT_MOUNT are kernel-management primitives —
+            # require admin (matches the tests/api_server gating that
+            # already enforces this via separate channels).
+            if path.startswith("/__sys__/") or _entry_type == DT_MOUNT:
+                if not _is_admin_caller:
+                    raise _PDE(
+                        f"sys_setattr denied: {path!r} requires admin privileges",
+                        path=path,
+                    )
+            else:
+                # Regular metadata path — require WRITE under the
+                # request scope so federation tokens can't mutate
+                # metadata outside their zone allow-list.
+                enforcer = self.service("permission_enforcer") if hasattr(self, "service") else None
+                if enforcer is not None:
+                    from nexus.contracts.types import Permission as _P
+
+                    _allowed = enforcer.check(path, _P.WRITE, context)
+                    if not _allowed:
+                        raise _PDE(
+                            f"sys_setattr denied: WRITE not granted for {path!r}",
+                            path=path,
+                        )
+
+        # ── /__sys__/ kernel management dispatch ──────────────────────
+        # Service registration via syscall. These paths bypass the normal
+        # metastore path — kernel routes them to ServiceRegistry.
+        if path.startswith("/__sys__/services/"):
+            name = path.rsplit("/", 1)[-1]
+            service = attrs.get("service")
+            if service is None:
+                raise ValueError(
+                    f"sys_setattr(/__sys__/services/{name}) requires 'service' attribute"
+                )
+            exports = attrs.get("exports", ())
+            allow_overwrite = attrs.get("allow_overwrite", False)
+            self._kernel.service_enlist(name, service, list(exports), allow_overwrite)
+            # Auto-capture hooks via duck-typed hook_spec()
+            from nexus.core.nexus_fs import _declares_hook_spec, _register_hooks_for_spec
+
+            if _declares_hook_spec(service):
+                spec = service.hook_spec()
+                if spec is not None and not spec.is_empty:
+                    self._hook_specs[name] = spec
+                    _register_hooks_for_spec(self, spec)
+            return {"path": path, "registered": True, "service": name}
+
+        entry_type = attrs.get("entry_type", 0)
+        # DT_MOUNT allows root "/" (root mount); other types don't.
+        path = self._validate_path(path, allow_root=(entry_type == DT_MOUNT))
+
+        # ── DT_MOUNT: resolve backend params for Rust kernel ─────────
+        if entry_type == DT_MOUNT:
+            backend_type = attrs.get("backend_type", "cas-local")
+            backend = attrs.get("backend")
+            zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
+            metastore = attrs.get("metastore")
+
+            # Rust-native backends — Rust owns the ObjectStore; no Python shim.
+            # `backend_type="openai"` / `"anthropic"` / `"remote"` triggers
+            # the native construction path in `PyKernel::sys_setattr` via
+            # the typed kwarg passthrough below.
+            if backend_type == "remote" and backend is None:
+                _backend_name = attrs.get("backend_name", "remote")
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    backend_type="remote",
+                    server_address=attrs.get("server_address"),
+                    remote_auth_token=attrs.get("remote_auth_token"),
+                    remote_ca_pem=attrs.get("remote_ca_pem"),
+                    remote_cert_pem=attrs.get("remote_cert_pem"),
+                    remote_key_pem=attrs.get("remote_key_pem"),
+                    remote_timeout=float(attrs.get("remote_timeout", 90.0)),
+                    zone_id=zone_id,
+                )
+                return result
+
+            # LLM backends — Rust owns the ObjectStore; no Python shim.
+            if backend_type in ("openai", "anthropic") and backend is None:
+                _backend_name = attrs.get("backend_name", backend_type)
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    backend_type=backend_type,
+                    openai_base_url=attrs.get("openai_base_url"),
+                    openai_api_key=attrs.get("openai_api_key"),
+                    openai_model=attrs.get("openai_model"),
+                    openai_blob_root=attrs.get("openai_blob_root"),
+                    anthropic_base_url=attrs.get("anthropic_base_url"),
+                    anthropic_api_key=attrs.get("anthropic_api_key"),
+                    anthropic_model=attrs.get("anthropic_model"),
+                    anthropic_blob_root=attrs.get("anthropic_blob_root"),
+                    zone_id=zone_id,
+                )
+                return result
+
+            # Federation auto-create: no Python-side backend required.  The
+            # kernel resolves a raft-backed metastore via the federation
+            # provider when ``zone_id`` is set and the coordinator is
+            # initialised — covers ``sys_setattr DT_MOUNT path zone_id=z``
+            # creator semantics and the joiner-side ``source=addr`` form
+            # used by the dynamic-bootstrap mount-with-source path.
+            if backend is None and zone_id:
+                _backend_name = attrs.get("backend_name", "")
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    zone_id=zone_id,
+                    is_external=bool(attrs.get("is_external", False)),
+                    source=attrs.get("source"),
+                )
+                return result
+            if backend is None:
+                raise ValueError(
+                    "sys_setattr(entry_type=DT_MOUNT) requires 'backend' attribute "
+                    "(pre-constructed ObjectStoreABC instance)"
+                )
+            _backend_name = backend.name if isinstance(backend.name, str) else str(backend.name)
+
+            def _remember_mounted_backend() -> None:
+                mounted = getattr(self, "_mounted_backend_instances", None)
+                if isinstance(mounted, dict):
+                    mounted[path] = backend
+
+            # R20.18.6: federation DT_MOUNT auto-resolves its raft backing via
+            # kernel-internal `resolve_federation_mount_backing`; no Python
+            # ZoneHandle crosses the PyO3 boundary here. Non-federation mounts
+            # may still ship a LocalMetastore redb path.
+            _ms_path = getattr(metastore, "_redb_path", None) if metastore is not None else None
+            _ms_path_str = str(_ms_path) if _ms_path else None
+
+            _is_external = bool(attrs.get("is_external", False))
+
+            # ── Rust native backend detection ────────────────────────
+            # For connectors with Rust-native backends, extract typed params
+            # from the Python instance so Rust constructs the backend without
+            # All backends are Rust-native now.
+            _cls_name = type(backend).__name__
+            _rust_typed = self._extract_rust_backend_params(backend, _cls_name)
+            if _rust_typed is not None:
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    zone_id=zone_id,
+                    metastore_path=_ms_path_str,
+                    is_external=_is_external,
+                    **_rust_typed,
+                )
+                _remember_mounted_backend()
+                return result
+
+            # ── Local backend detection — Rust takes ownership natively ──
+            # CASLocalBackend has root_path; PathLocalBackend has root_path;
+            # LocalConnectorBackend has local_path. Rust constructs the matching
+            # backend from local_root param.
+            _root = getattr(backend, "root_path", None)
+            if _root is None:
+                _root = getattr(backend, "local_path", None)
+            if _root is None:
+                # No local root and not matched by _extract_rust_backend_params.
+                # Mount a kernel-only entry (no Rust backend); Python DLC holds
+                # the backend ref for RouteResult.  This path handles test mocks
+                # and any future connectors not yet ported to Rust.
+                logger.debug(
+                    "No Rust-native backend for %s — kernel-only mount",
+                    _cls_name,
+                )
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    zone_id=zone_id,
+                    metastore_path=_ms_path_str,
+                    is_external=_is_external,
+                )
+                _remember_mounted_backend()
+                return result
+            _local_root = str(_root)
+
+            # Determine local backend type for Rust dispatch
+            if "LocalConnector" in _cls_name:
+                _local_type = "local_connector"
+            elif "PathLocal" in _cls_name:
+                _local_type = "path_local"
+            else:
+                _local_type = "cas-local"  # CASLocalBackend (canonical name)
+
+            result = self._kernel.sys_setattr(
+                path,
+                entry_type,
+                _backend_name,
+                local_root=_local_root,
+                backend_type=_local_type,
+                fsync=True,
+                zone_id=zone_id,
+                metastore_path=_ms_path_str,
+                is_external=_is_external,
+            )
+            _remember_mounted_backend()
+            return result
+
+        # ── All other FS types → Rust kernel sys_setattr ─────────────
+        capacity = attrs.get("capacity", 65_536)
+        io_profile = attrs.get("io_profile", "memory")
+        mime_type = attrs.get("mime_type")
+        modified_at_ms = attrs.get("modified_at_ms")
+        zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
+
+        result = self._kernel.sys_setattr(
+            path,
+            entry_type,
+            zone_id=zone_id,
+            io_profile=io_profile,
+            capacity=capacity,
+            mime_type=mime_type,
+            modified_at_ms=modified_at_ms,
+            content_id=attrs.get("content_id"),
+            size=attrs.get("size"),
+            version=attrs.get("version"),
+            created_at_ms=attrs.get("created_at_ms"),
+            read_fd=attrs.get("read_fd"),
+            write_fd=attrs.get("write_fd"),
+        )
+
+        return result
+
+    @rpc_expose(description="Get ETag (content hash) for HTTP caching")
+    def get_content_id(
+        self,
+        path: str,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> str | None:
+        """Get content hash for HTTP If-None-Match checks."""
+        return self._kernel.get_content_id(path, self._zone_id)
+
+    # ── Tier 2 directory ──────────────────────────────────────────────
+
+    def _gate_sys_namespace_mutation(
+        self, paths: tuple[str, ...], context: OperationContext | None
+    ) -> None:
+        """Reject /__sys__/ mutations from non-admin callers.
+
+        Codex Round 10 finding #2: RebacPermissionCheckHook intentionally skips
+        ``/__sys__/`` paths, so mkdir/rename/copy must enforce here.  Any
+        path under /__sys__/ — source or destination — requires admin or
+        is_system; ``context is None`` is no longer treated as privileged.
+        """
+        if not any(p.startswith("/__sys__/") for p in paths):
+            return
+        if context is not None and (
+            getattr(context, "is_admin", False) or getattr(context, "is_system", False)
+        ):
+            return
+        from nexus.contracts.exceptions import PermissionDeniedError as _PDE
+
+        raise _PDE(
+            f"system namespace mutation denied: {paths!r} requires admin",
+            path=paths[0] if paths else "/__sys__/",
+        )
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = True,
+        exist_ok: bool = True,
+        *,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Create a directory (Tier 2 convenience over sys_setattr).
+
+        Defaults: parents=True, exist_ok=True (mkdir -p semantics).
+        DT_DIR metadata creation delegated to Rust kernel sys_setattr.
+        """
+        self._gate_sys_namespace_mutation((path,), context)
+        ctx = self._resolve_cred(context)
+
+        # Rust kernel handles existence check (explicit + implicit directory),
+        # exist_ok/parents semantics, backend.mkdir, ensure_parent_directories,
+        # DT_DIR metadata creation, and dcache update.
+        _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
+        _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
+        if _mkdir_result.post_hook_needed:
+            from nexus.contracts.vfs_hooks import MkdirHookContext
+
+            self._kernel.dispatch_post_hooks(
+                "mkdir",
+                MkdirHookContext(
+                    path=path,
+                    context=ctx,
+                    zone_id=ctx.zone_id,
+                    agent_id=ctx.agent_id,
+                ),
+            )
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def rmdir(
+        self,
+        path: str,
+        recursive: bool = True,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Remove a directory with lenient defaults (Tier 2 convenience).
+
+        Defaults to recursive=True (rm -rf semantics).
+        Delegates directly to sys_unlink.
+        """
+        self.sys_unlink(path, recursive=recursive, context=context)
+
+    # ── Tier 1 delete/rename/copy ─────────────────────────────────────
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def sys_unlink(
+        self,
+        path: str,
+        *,
+        recursive: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Remove a file or directory entry.
+
+        Unified delete syscall — handles both files and directories.
+        For directories, set ``recursive=True`` to delete non-empty dirs.
+
+        Args:
+            path: Virtual path to delete (supports memory, pipe, stream paths).
+            recursive: If True and target is a directory, delete all children
+                first (rm -rf). If False and directory is non-empty, raises
+                OSError(ENOTEMPTY). Ignored for regular files.
+            context: Optional operation context for permission checks.
+
+        Returns:
+            Dict on success.
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist.
+            InvalidPathError: If path is invalid.
+            BackendError: If delete operation fails.
+            OSError(ENOTEMPTY): If directory is non-empty and recursive=False.
+            PermissionError: If path is read-only or user doesn't have write permission.
+        """
+        # ── /__sys__/ kernel management dispatch ──────────────────────
+        # Issue #3786 / Codex Round 8 #1 + Round 9 #4: gate ALL /__sys__/
+        # mutations to admin/system, not just service unregister.  The
+        # RebacPermissionCheckHook explicitly skips system paths, so without
+        # this gate any non-admin caller reaching sys_unlink could
+        # disrupt internal entries (services, hooks, namespaces, locks,
+        # rebac).  Internal kernel callers must pass an explicit system
+        # context — None is no longer treated as privileged.
+        if path.startswith("/__sys__/") and (
+            context is None
+            or not (getattr(context, "is_admin", False) or getattr(context, "is_system", False))
+        ):
+            from nexus.contracts.exceptions import PermissionDeniedError as _PDE
+
+            raise _PDE(
+                f"sys_unlink denied: {path!r} requires admin privileges",
+                path=path,
+            )
+
+        if path.startswith("/__sys__/services/"):
+            name = path.rsplit("/", 1)[-1]
+            # Unregister hooks first
+            from nexus.core.nexus_fs import _unregister_hooks_for_spec
+
+            spec = self._hook_specs.pop(name, None)
+            if spec is not None:
+                _unregister_hooks_for_spec(self, spec)
+            self._kernel.service_unregister(name)
+            return {"path": path, "unregistered": True, "service": name}
+
+        # PRE-DISPATCH: virtual path resolvers (Issue #889)
+        _handled, _result = self.resolve_delete(path, context=context)
+        if _handled:
+            return _result
+
+        # Capture pre-delete metadata so post-delete hooks (snapshot
+        # rollback, audit, etc.) receive the original state as a dict.
+        # Without this, SnapshotWriteHook.on_post_delete returns early
+        # on ctx.metadata=None and never records original_hash for
+        # transactional rollback (Codex review, Issue #4002 round 4).
+        # Let stat errors propagate (Codex review, round 9): if
+        # the probe fails we cannot prove the delete is observable,
+        # so refuse rather than silently lose rollback data.  None is
+        # still legitimate (implicit dirs / external storage entries
+        # carry no metastore row).
+        _pre_delete_meta = self._kernel.sys_stat(path, ROOT_ZONE_ID)
+
+        # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
+        _unlink_start = time.perf_counter()
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
+
+        if _unlink_result.hit:
+            # Rust handled the full operation (§12e: DT_DIR handled via internal sys_rmdir).
+            if _unlink_result.post_hook_needed:
+                et = _unlink_result.entry_type
+                if et == DT_DIR:
+                    from nexus.contracts.vfs_hooks import RmdirHookContext
+
+                    ctx = self._resolve_cred(context)
+                    self._kernel.dispatch_post_hooks(
+                        "rmdir",
+                        RmdirHookContext(
+                            path=path,
+                            context=ctx,
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            recursive=recursive,
+                            metadata=_pre_delete_meta,
+                        ),
+                    )
+                else:
+                    from nexus.contracts.vfs_hooks import DeleteHookContext
+
+                    self._kernel.dispatch_post_hooks(
+                        "delete",
+                        DeleteHookContext(
+                            path=path,
+                            context=context,
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            metadata=_pre_delete_meta,
+                        ),
+                    )
+            if _unlink_result.entry_type == DT_MOUNT:
+                self._forget_mounted_backend_instance(path)
+            emit_op_completed(
+                agent_id=agent_id,
+                op="delete",
+                path=path,
+                bytes_count=0,
+                latency_ms=int((time.perf_counter() - _unlink_start) * 1000),
+            )
+            return {}
+
+        # ── Rust miss: only DT_EXTERNAL_STORAGE (5) or not-found ─────
+        et = _unlink_result.entry_type
+        if et == 0:
+            # Stranded-mount recovery (Codex review, Issue #4002
+            # rounds 5 + 8): if a previous teardown deleted metadata
+            # but failed to remove the kernel mount route, the kernel
+            # now reports not-found while the route is still live.
+            # Probe the caller's zone first, then fall back to root —
+            # mount routes are keyed by the *mounted* zone, which can
+            # differ from the caller's zone.
+            # Fail-closed on probe errors (Codex review, round 10):
+            # in the et=0 retry path, an unverifiable route presence
+            # means we cannot prove the path is clean, so we must
+            # raise rather than treat as 'gone'.
+            stranded_zone: str | None = None
+            for candidate in (zone_id, ROOT_ZONE_ID):
+                if candidate is None:
+                    continue
+                try:
+                    present = self._kernel.has_mount(path, candidate)
+                except Exception as probe_exc:
+                    raise BackendError(
+                        f"sys_unlink: cannot verify mount route in zone "
+                        f"{candidate!r} for {path!r}: {probe_exc}",
+                        path=path,
+                    ) from probe_exc
+                if present:
+                    stranded_zone = candidate
+                    break
+            if stranded_zone is not None:
+                self._driver_coordinator.unmount(path, stranded_zone)
+                try:
+                    still_present = self._kernel.has_mount(path, stranded_zone)
+                except Exception as verify_exc:
+                    raise BackendError(
+                        f"sys_unlink: cannot verify stranded mount route "
+                        f"teardown for {path!r}: {verify_exc}",
+                        path=path,
+                    ) from verify_exc
+                if still_present:
+                    raise BackendError(
+                        f"sys_unlink: stranded mount route remains for {path!r}",
+                        path=path,
+                    )
+                logger.info(
+                    "sys_unlink: cleaned up stranded mount route for %s in zone %s",
+                    path,
+                    stranded_zone,
+                )
+                self._forget_mounted_backend_instance(path)
+                return {}
+            raise NexusFileNotFoundError(path)
+
+        # DT_EXTERNAL_STORAGE (5): Rust kernel now handles metadata delete
+        # (C19). Python only needs connector teardown via DLC + post hooks.
+        if et == 5:
+            ctx = self._resolve_cred(context)
+            from nexus.contracts.vfs_hooks import RmdirHookContext
+
+            # Resolve the mount-route zone from pre-delete metadata
+            # (Codex review, Issue #4002 round 8). Mount routes are
+            # keyed by the *mounted* zone, which can differ from the
+            # caller's zone — e.g. an admin context deleting a tenant
+            # mount.  Fall back to caller zone if metadata is missing
+            # the field (older entries) and finally to ROOT_ZONE_ID.
+            route_zone = (
+                (_pre_delete_meta.get("zone_id") if _pre_delete_meta else None)
+                or zone_id
+                or ROOT_ZONE_ID
+            )
+            self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
+            removed = self._driver_coordinator.unmount(path, route_zone)
+            # Verify the kernel mount route is actually gone so a real
+            # teardown failure surfaces even when unmount() reports
+            # already-cleared (Codex review, Issue #4002 round 4).
+            # Fail-closed on verification errors after metadata is
+            # committed (Codex review, round 9): we can't risk
+            # reporting success while a route may still be live.
+            try:
+                mount_remains = self._kernel.has_mount(path, route_zone)
+            except Exception as verify_exc:
+                raise BackendError(
+                    f"sys_unlink: cannot verify mount route teardown for {path!r}: {verify_exc}",
+                    path=path,
+                ) from verify_exc
+            if mount_remains:
+                raise BackendError(
+                    f"sys_unlink: mount route remains after teardown for {path!r}",
+                    path=path,
+                )
+            self._forget_mounted_backend_instance(path)
+            if not removed:
+                logger.warning(
+                    "sys_unlink: connector teardown returned False for %s "
+                    "(metadata + route already cleared; retry-safe)",
+                    path,
+                )
+            else:
+                logger.info("sys_unlink: unmounted external connector %s", path)
+            return {}
+
+        # Unknown entry type — kernel reported a non-hit with a nonzero
+        # entry_type (e.g. write-lock timeout, internal abort).  Treating
+        # this as success would silently leave files on disk while
+        # callers proceed under a false-clean signal (Codex review,
+        # Issue #4002 round 2).  Surface it so batch APIs can record a
+        # real per-item failure instead of phantom success.
+        raise BackendError(
+            f"sys_unlink: kernel returned non-hit with entry_type={et}",
+            path=path,
+        )
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def sys_rename(
+        self,
+        old_path: str,
+        new_path: str,
+        *,
+        force: bool = False,  # noqa: ARG002 — forwarded to Rust when kernel supports it
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """
+        Rename/move a file by updating its path in metadata.
+
+        This is a metadata-only operation that does NOT copy file content.
+        The file's content remains in the same location in CAS storage,
+        only the virtual path is updated in the metadata database.
+
+        This makes rename/move operations instant, regardless of file size.
+
+        Args:
+            old_path: Current virtual path
+            new_path: New virtual path
+            force: If True, delete the destination before renaming (overwrite).
+            context: Optional operation context for permission checks (uses default if not provided)
+
+        Returns:
+            Empty dict on success.
+
+        Raises:
+            NexusFileNotFoundError: If source file doesn't exist
+            FileExistsError: If destination path already exists (and force=False)
+            InvalidPathError: If either path is invalid
+            PermissionError: If either path is read-only
+            AccessDeniedError: If access is denied (zone isolation)
+
+        Example:
+            >>> nx.sys_rename('/workspace/old.txt', '/workspace/new.txt')
+            >>> nx.sys_rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
+        """
+        self._gate_sys_namespace_mutation((old_path, new_path), context)
+        # Normalize context dict to OperationContext dataclass (CLI passes dicts)
+        context = self._parse_context(context)
+
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+
+        # PRE-INTERCEPT hooks dispatched by Rust kernel
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
+
+        # Rust handles all entry types (files, dirs, mounts, external storage).
+        # Dispatch POST hooks with reconstructed metadata for audit trail.
+        if _rename_result.post_hook_needed:
+            from nexus.contracts.metadata import FileMetadata as _FM
+            from nexus.contracts.vfs_hooks import RenameHookContext
+
+            # Reconstruct old metadata from Rust result fields for the
+            # audit trail (record_store_write_observer uses .content_id + .to_dict()).
+            _old_meta: _FM | None = None
+            if _rename_result.old_content_id is not None or _rename_result.old_size is not None:
+                from datetime import UTC, datetime
+
+                _mod_at = (
+                    datetime.fromtimestamp(_rename_result.old_modified_at_ms / 1000.0, UTC)
+                    if _rename_result.old_modified_at_ms is not None
+                    else None
+                )
+                _old_meta = _FM(
+                    path=old_path,
+                    size=_rename_result.old_size or 0,
+                    content_id=_rename_result.old_content_id,
+                    version=_rename_result.old_version or 1,
+                    modified_at=_mod_at,
+                )
+
+            _rename_ctx = RenameHookContext(
+                old_path=old_path,
+                new_path=new_path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_directory=bool(_rename_result.is_directory),
+                metadata=_old_meta,
+            )
+            self._kernel.dispatch_post_hooks("rename", _rename_ctx)
+
+        return {}
+
+    # ------------------------------------------------------------------
+    # sys_copy — Issue #3329 (Workstream 3: native copy/move)
+    # ------------------------------------------------------------------
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def sys_copy(
+        self, src_path: str, dst_path: str, *, context: OperationContext | None = None
+    ) -> dict[str, Any]:
+        """Copy a file from src_path to dst_path.
+
+        Uses the optimal strategy based on backend capabilities:
+        - **Same backend, path-addressed**: Backend-native server-side copy
+          (S3 CopyObject / GCS rewrite). Zero client bandwidth.
+        - **Same backend, CAS**: Metadata duplication — the content blob
+          is already deduplicated, so no I/O is needed.
+        - **Cross-backend**: Read from source, write to destination.
+          Bounded by ``NEXUS_FS_MAX_INMEMORY_SIZE`` (1 GB).
+
+        Args:
+            src_path: Source virtual path.
+            dst_path: Destination virtual path.
+            context: Operation context for permission checks.
+
+        Returns:
+            Dict with path, size, content_id of the new file.
+
+        Raises:
+            NexusFileNotFoundError: If source file doesn't exist.
+            FileExistsError: If destination path already exists.
+            PermissionError: If source or destination is read-only.
+            ValueError: If cross-backend copy exceeds size limit.
+        """
+        self._gate_sys_namespace_mutation((src_path, dst_path), context)
+        context = self._parse_context(context)
+
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+
+        # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy.
+        # Rust validates source existence + rejects directories internally.
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
+
+        # POST-INTERCEPT hooks (zero consumers use metadata field)
+        if _copy_result.post_hook_needed:
+            from nexus.contracts.vfs_hooks import CopyHookContext
+
+            _copy_ctx = CopyHookContext(
+                src_path=src_path,
+                dst_path=dst_path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                metadata=None,
+            )
+            self._kernel.dispatch_post_hooks("copy", _copy_ctx)
+
+        # §12e: Rust sys_copy now raises KernelError for non-regular files
+        # (DT_DIR, DT_PIPE, DT_STREAM) instead of returning hit=false.
+        # No Python fallback needed.
+        return {
+            "src_path": src_path,
+            "dst_path": dst_path,
+            "size": _copy_result.size,
+            "content_id": _copy_result.content_id,
+            "version": _copy_result.version,
+            "gen": _copy_result.gen,
+        }
+
+    # ── Tier 2 metadata ──────────────────────────────────────────────
+
+    @rpc_expose(description="Get file metadata without reading content")
+    def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
+        """
+        Get file metadata without reading the file content.
+
+        This is useful for getting file size before streaming, or checking
+        file properties without the overhead of reading large files.
+
+        Args:
+            path: Virtual path to stat
+            context: Optional operation context for permission checks
+
+        Returns:
+            Dict with file metadata:
+                - size: File size in bytes
+                - content_id: Content hash
+                - version: Version number
+                - modified_at: Last modification timestamp
+                - is_directory: Whether path is a directory
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            AccessDeniedError: If access is denied
+            PermissionError: If user doesn't have read permission
+
+        Example:
+            >>> info = nx.stat("/workspace/large_file.bin")
+            >>> print(f"File size: {info['size']} bytes")
+        """
+        path = self._validate_path(path)
+
+        # Single Rust round-trip: get stat (handles both explicit entries and implicit directories)
+        _stat = self._kernel.sys_stat(path, self._zone_id)
+        is_implicit_dir = (
+            _stat is not None and _stat.get("is_directory", False) and _stat.get("version", 1) == 0
+        )
+
+        # Issue #1815: permission check via KernelDispatch INTERCEPT hook.
+        ctx = self._resolve_cred(context)
+        if is_implicit_dir:
+            from nexus.contracts.exceptions import PermissionDeniedError
+            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+
+            try:
+                self._kernel.dispatch_pre_hooks(
+                    "stat",
+                    _SHC(
+                        path=path,
+                        context=ctx,
+                        permission="TRAVERSE",
+                        extra={"is_implicit_directory": True},
+                    ),
+                )
+            except PermissionDeniedError:
+                raise PermissionError(
+                    f"Access denied: User '{ctx.user_id}' does not have TRAVERSE "
+                    f"permission for '{path}'"
+                ) from None
+        else:
+            from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
+
+            self._kernel.dispatch_pre_hooks("read", _RHC(path=path, context=context))
+
+        # Return directory info for implicit directories
+        if is_implicit_dir:
+            return {
+                "size": 0,
+                "content_id": None,
+                "version": None,
+                "gen": 0,
+                "modified_at": None,
+                "is_directory": True,
+            }
+
+        # sys_stat already has all metadata — no separate metastore_get needed
+        if _stat is None:
+            raise NexusFileNotFoundError(path)
+
+        return {
+            "size": _stat.get("size", 0),
+            "content_id": _stat.get("content_id"),
+            "version": _stat.get("version"),
+            "gen": _stat.get("gen", 0),
+            "modified_at": _stat.get("modified_at"),
+            "is_directory": _stat.get("is_directory", False),
+        }
+
+    @rpc_expose(description="Get metadata for multiple files in bulk")
+    def stat_bulk(
+        self,
+        paths: list[str],
+        context: OperationContext | None = None,
+        skip_errors: bool = True,
+    ) -> dict[str, dict[str, Any] | None]:
+        """
+        Get metadata for multiple files in a single RPC call.
+
+        This is optimized for bulk operations where many file stats are needed.
+        It batches permission checks and metadata lookups for better performance.
+
+        Args:
+            paths: List of virtual paths to stat
+            context: Optional operation context for permission checks
+            skip_errors: If True, skip files that can't be stat'd and return None.
+                        If False, raise exception on first error.
+
+        Returns:
+            Dict mapping path -> stat dict (or None if skip_errors=True and stat failed)
+            Each stat dict contains: size, content_id, version, modified_at, is_directory
+
+        Performance:
+            - Single RPC call instead of N calls
+            - Batch permission checks (one DB query instead of N)
+            - Batch metadata lookups
+            - Expected speedup: 10-50x for 100+ files
+        """
+
+        bulk_start = time.time()
+        results: dict[str, dict[str, Any] | None] = {}
+
+        # Validate all paths
+        validated_paths = []
+        for path in paths:
+            try:
+                validated_path = self._validate_path(path)
+                validated_paths.append(validated_path)
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_bulk for %s: %s", path, exc)
+                if skip_errors:
+                    results[path] = None
+                    continue
+                raise
+
+        if not validated_paths:
+            return results
+
+        # Batch permission check via shared helper (hook_count fast path).
+        perm_start = time.time()
+        try:
+            allowed_set = self._batch_permission_check(validated_paths, context)
+        except Exception as e:
+            logger.error("[STAT-BULK] Permission check failed: %s", e)
+            if not skip_errors:
+                raise
+            allowed_set = set()
+
+        perm_elapsed = time.time() - perm_start
+        logger.info(
+            f"[STAT-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
+        )
+
+        # Mark denied files
+        for path in validated_paths:
+            if path not in allowed_set:
+                results[path] = None
+
+        # Batch metadata lookup - single SQL query for all paths
+        meta_start = time.time()
+
+        # Batch fetch metadata for all files in single query
+        # Note: We assume paths are files (not implicit directories) since stat_bulk
+        # is typically called on paths returned by list(). If a path isn't found,
+        # we check if it's an implicit directory as a fallback.
+        try:
+            allowed_paths = list(allowed_set)
+            batch_stats = dict(
+                zip(
+                    allowed_paths,
+                    self._kernel.stat_batch(allowed_paths, ROOT_ZONE_ID),
+                    strict=True,
+                )
+            )
+            for path, stat in batch_stats.items():
+                if stat is None:
+                    if skip_errors:
+                        results[path] = None
+                    else:
+                        raise NexusFileNotFoundError(path)
+                else:
+                    results[path] = {
+                        "size": stat.get("size", 0),
+                        "content_id": stat.get("content_id"),
+                        "version": stat.get("version"),
+                        "gen": stat.get("gen", 0),
+                        "modified_at": stat.get("modified_at"),
+                        "is_directory": stat.get("is_directory", False),
+                    }
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            logger.warning("[STAT-BULK] Batch metadata failed: %s: %s", type(e).__name__, e)
+            if not skip_errors:
+                raise
+
+        meta_elapsed = time.time() - meta_start
+        bulk_elapsed = time.time() - bulk_start
+
+        logger.info(
+            f"[STAT-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
+            f"(perm={perm_elapsed * 1000:.0f}ms, meta={meta_elapsed * 1000:.0f}ms)"
+        )
+
+        return results
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def access(self, path: str, *, context: OperationContext | None = None) -> bool:
+        """Tier 2: check if path explicitly exists and is accessible.
+
+        Returns True if path has explicit metadata or is an implicit directory,
+        False otherwise. Delegates to sys_stat which handles dcache → metastore
+        → implicit directory detection + permission hooks in one Rust round-trip.
+        """
+        try:
+            path = self._validate_path(path)
+            stat = self.sys_stat(path, context=context)
+            return stat is not None
+        except (InvalidPathError, NexusFileNotFoundError, BackendError):
+            return False
+
+    @rpc_expose(description="Check existence of multiple paths in single call")
+    def exists_batch(
+        self,
+        paths: list[str],
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, bool]:
+        """Check existence of multiple paths in a single call (Issue #859)."""
+        bools = self._kernel.exists_batch(paths, self._zone_id)
+        return dict(zip(paths, bools, strict=True))
+
+    @rpc_expose(description="Get metadata for multiple paths in single call")
+    def metadata_batch(
+        self, paths: list[str], context: OperationContext | None = None
+    ) -> dict[str, dict[str, Any] | None]:
+        """
+        Get metadata for multiple paths in a single call (Issue #859).
+
+        This reduces network round trips when fetching metadata for many files.
+        Processing 10 paths requires 1 round trip instead of 10.
+
+        Args:
+            paths: List of virtual paths to get metadata for
+            context: Operation context for permission checks (uses default if None)
+
+        Returns:
+            Dictionary mapping each path to its metadata dict or None if not found.
+            Metadata includes: path, size, content_id, mime_type, created_at, modified_at,
+            version, zone_id, is_directory.
+
+        Performance:
+            - Single RPC call instead of N calls
+            - 10x fewer round trips for multi-path operations
+            - Leverages batch metadata fetch from database
+
+        Examples:
+            >>> results = nx.metadata_batch(["/file1.txt", "/missing.txt"])
+            >>> print(results["/file1.txt"]["size"])
+            1024
+            >>> print(results["/missing.txt"])
+            None
+        """
+        results: dict[str, dict[str, Any] | None] = {}
+
+        # Validate paths and collect valid ones
+        valid_paths: list[str] = []
+        for path in paths:
+            try:
+                validated = self._validate_path(path)
+                valid_paths.append(validated)
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_batch for %s: %s", path, exc)
+                results[path] = None
+
+        # Batch fetch metadata from database
+        if valid_paths:
+            batch_stats = dict(
+                zip(
+                    valid_paths,
+                    self._kernel.stat_batch(list(valid_paths), ROOT_ZONE_ID),
+                    strict=True,
+                )
+            )
+        else:
+            batch_stats = {}
+
+        # Process results with permission checks
+        for path in valid_paths:
+            try:
+                stat = batch_stats.get(path)
+
+                if stat is None:
+                    results[path] = None
+                    continue
+
+                # Permission check via KernelDispatch INTERCEPT.
+                from nexus.contracts.exceptions import PermissionDeniedError
+                from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+
+                ctx = self._resolve_cred(context)
+                try:
+                    self._kernel.dispatch_pre_hooks(
+                        "stat", _SHC(path=path, context=ctx, permission="READ")
+                    )
+                except PermissionDeniedError:
+                    results[path] = None
+                    continue
+
+                results[path] = {
+                    "path": stat.get("path", path),
+                    "size": stat.get("size", 0),
+                    "content_id": stat.get("content_id"),
+                    "mime_type": stat.get("mime_type"),
+                    "created_at": stat.get("created_at"),
+                    "modified_at": stat.get("modified_at"),
+                    "version": stat.get("version"),
+                    "gen": stat.get("gen", 0),
+                    "zone_id": stat.get("zone_id"),
+                    "is_directory": stat.get("is_directory", False),
+                }
+            except Exception as exc:
+                logger.debug("Failed to build metadata result for %s: %s", path, exc)
+                results[path] = None
+
+        return results
+
+    @rpc_expose(description="Delete multiple files/directories")
+    def delete_batch(
+        self,
+        paths: list[str],
+        recursive: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, dict]:
+        """
+        Delete multiple files or directories in a single operation.
+
+        Each path is processed independently - failures on one path don't affect others.
+        Directories require recursive=True to delete non-empty directories.
+
+        Args:
+            paths: List of virtual paths to delete
+            recursive: If True, delete non-empty directories (like rm -rf)
+            context: Optional operation context for permission checks
+
+        Returns:
+            Dictionary mapping each path to its result:
+                {"success": True} or {"success": False, "error": "error message"}
+
+        Example:
+            >>> results = nx.delete_batch(['/a.txt', '/b.txt', '/folder'])
+            >>> for path, result in results.items():
+            ...     if result['success']:
+            ...         print(f"Deleted {path}")
+            ...     else:
+            ...         print(f"Failed {path}: {result['error']}")
+        """
+        # Delegate each delete to sys_unlink so the lookup uses the same
+        # source of truth as access()/exists_batch (Rust dcache → metastore →
+        # implicit-dir detection) instead of a raw metastore.get_batch that
+        # can lag behind. Result keys preserve the caller's literal path so
+        # response shape matches write_batch / exists_batch / read_bulk; the
+        # normalized form is only used for the syscall itself.
+        results: dict[str, dict] = {}
+        for path in paths:
+            try:
+                normalized = self._validate_path(path)
+            except Exception as e:
+                results[path] = {"success": False, "error": str(e)}
+                continue
+            try:
+                self.sys_unlink(normalized, recursive=recursive, context=context)
+                results[path] = {"success": True}
+            except NexusFileNotFoundError:
+                # Rust kernel doesn't see implicit directories (paths with
+                # children but no explicit inode). Fall back to the same
+                # is_implicit_directory check stat/list use, so a directory
+                # that exists_batch reports True for is also deletable
+                # (Codex review, Issue #4002 round 2). Wrap the probe +
+                # enumeration in a per-path try so a degraded metastore
+                # doesn't abort the whole batch (round 3 finding).
+                try:
+                    _imp_stat = self._kernel.sys_stat(normalized, ROOT_ZONE_ID)
+                    is_implicit = _imp_stat is not None and _imp_stat.get("is_directory", False)
+                except Exception as e:
+                    results[path] = {"success": False, "error": str(e)}
+                    continue
+                if is_implicit:
+                    if not recursive:
+                        results[path] = {
+                            "success": False,
+                            "error": "Directory not empty",
+                        }
+                        continue
+                    # Slash-bounded prefix prevents sibling-path leakage
+                    # (e.g. /parent must not match /parent2/x). Defensive
+                    # post-filter guards against backends that ignore the
+                    # boundary or return the directory entry itself.
+                    boundary = normalized.rstrip("/") + "/"
+                    try:
+                        # Sort deepest-first so any explicit child
+                        # directory's descendants are gone by the time
+                        # we unlink the directory itself.  Pass
+                        # recursive=True so explicit dirs we couldn't
+                        # pre-drain still tear down, and tolerate
+                        # already-deleted entries (Codex review,
+                        # Issue #4002 round 3).
+                        children = sorted(
+                            (
+                                child
+                                for child in metastore_list_iter(
+                                    self._kernel, prefix=boundary, recursive=True
+                                )
+                                if child.path.startswith(boundary)
+                            ),
+                            key=lambda c: c.path.count("/"),
+                            reverse=True,
+                        )
+                        for child in children:
+                            try:
+                                self.sys_unlink(child.path, recursive=True, context=context)
+                            except NexusFileNotFoundError:
+                                continue
+                        # Strict recheck (Codex review, Issue #4002
+                        # round 6): probe explicit inode AND implicit
+                        # directory directly via metadata. If either
+                        # probe RAISES we cannot prove absence, so we
+                        # must surface failure instead of letting
+                        # access() collapse infrastructure errors into
+                        # a "looks empty" verdict.  Success requires
+                        # both probes to confirm absence.
+                        try:
+                            _after_stat = self._kernel.sys_stat(normalized, ROOT_ZONE_ID)
+                        except Exception as e:
+                            results[path] = {
+                                "success": False,
+                                "error": f"Could not verify recursive delete: {e}",
+                            }
+                            continue
+                        if _after_stat is not None:
+                            results[path] = {
+                                "success": False,
+                                "error": (
+                                    "Path recreated during recursive delete (concurrent write)"
+                                ),
+                            }
+                        else:
+                            results[path] = {"success": True}
+                    except Exception as e:
+                        results[path] = {"success": False, "error": str(e)}
+                else:
+                    results[path] = {"success": False, "error": "File not found"}
+            except Exception as e:
+                results[path] = {"success": False, "error": str(e)}
+        return results
+
+    def _rmdir_internal(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: OperationContext | None = None,
+        is_implicit: bool | None = None,  # noqa: ARG002
+    ) -> None:
+        """Internal rmdir — delegates to sys_unlink which routes through Rust sys_rmdir."""
+        self.sys_unlink(path, recursive=recursive, context=context)
+
+    @rpc_expose(description="Rename/move multiple files")
+    def rename_batch(
+        self,
+        renames: list[tuple[str, str]],
+        context: OperationContext | None = None,
+    ) -> dict[str, dict]:
+        """
+        Rename/move multiple files in a single operation.
+
+        Each rename is processed independently - failures on one don't affect others.
+        This is a metadata-only operation (instant, regardless of file size).
+
+        Args:
+            renames: List of (old_path, new_path) tuples
+            context: Optional operation context for permission checks
+
+        Returns:
+            Dictionary mapping each old_path to its result:
+                {"success": True, "new_path": "..."} or {"success": False, "error": "..."}
+
+        Example:
+            >>> results = nx.rename_batch([
+            ...     ('/old1.txt', '/new1.txt'),
+            ...     ('/old2.txt', '/new2.txt'),
+            ... ])
+            >>> for old_path, result in results.items():
+            ...     if result['success']:
+            ...         print(f"Renamed {old_path} -> {result['new_path']}")
+        """
+        results = {}
+        for old_path, new_path in renames:
+            try:
+                self.sys_rename(old_path, new_path, context=context)
+                results[old_path] = {"success": True, "new_path": new_path}
+            except Exception as e:
+                results[old_path] = {"success": False, "error": str(e)}
+
+        return results
+
+    # ── Search/listing ────────────────────────────────────────────────
+
+    def _matches_patterns(
+        self,
+        file_path: str,
+        include_patterns: builtins.list[str] | None = None,
+        exclude_patterns: builtins.list[str] | None = None,
+    ) -> bool:
+        """Check if file path matches include/exclude patterns."""
+        import fnmatch as _fnmatch
+
+        # Check include patterns
+        if include_patterns and not any(_fnmatch.fnmatch(file_path, p) for p in include_patterns):
+            return False
+
+        # Check exclude patterns
+        return not (
+            exclude_patterns and any(_fnmatch.fnmatch(file_path, p) for p in exclude_patterns)
+        )
+
+    # --- Search (sys_readdir/glob/grep) ---
+
+    @staticmethod
+    def _is_direct_child_path(path: str, prefix: str) -> bool:
+        """Return True when ``path`` is an immediate child of ``prefix``."""
+        rel = path[len(prefix) :].lstrip("/") if path.startswith(prefix) else path
+        return "/" not in rel
+
+    @staticmethod
+    def _paths_with_descendants(entries: builtins.list[FileMetadata]) -> set[str]:
+        """Return listed paths that also have listed descendants."""
+        paths = sorted({entry.path.rstrip("/") for entry in entries if entry.path})
+        return {
+            parent
+            for parent, next_path in zip(paths, paths[1:], strict=False)
+            if next_path.startswith(f"{parent}/")
+        }
+
+    def _entry_to_detail_dict(
+        self,
+        entry: FileMetadata,
+        recursive: bool,
+        *,
+        implicit_dirs: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Convert a FileMetadata entry to a detail dict for sys_readdir.
+
+        Promotes entry_type=0 (DT_REG) to 1 (DT_DIR) for implicit directories
+        in non-recursive listings, matching ls -l semantics.
+        """
+        et = entry.entry_type
+        if not recursive and et == 0:
+            if implicit_dirs is not None:
+                is_implicit_dir = entry.path.rstrip("/") in implicit_dirs
+            else:
+                _s = self._kernel.sys_stat(entry.path, ROOT_ZONE_ID)
+                is_implicit_dir = _s is not None and _s.get("is_directory", False)
+            if is_implicit_dir:
+                et = DT_DIR
+        return {
+            "path": entry.path,
+            "size": entry.size,
+            "content_id": entry.content_id,
+            "entry_type": et,
+            "zone_id": entry.zone_id,
+            "owner_id": entry.owner_id,
+            "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,
+            "version": entry.version,
+            "gen": entry.gen,
+        }
+
+    # Issue #3388: Internal metastore prefixes that must not appear in
+    # user-facing directory listings (search checkpoints, ReBAC namespaces).
+    # These are bare keys (no leading "/") — user paths always start with "/".
+    _INTERNAL_PATH_PREFIXES = ("cfg:", "ns:")
+
+    @staticmethod
+    def _is_internal_path(path: str) -> bool:
+        """Return True for system-internal metastore paths (bare keys)."""
+        return path.startswith(MetadataMixin._INTERNAL_PATH_PREFIXES)
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def sys_readdir(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        show_parsed: bool = True,  # noqa: ARG002
+        *,
+        context: OperationContext | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
+        _list_start = time.perf_counter()
+        _, _list_agent_id, _ = self._get_context_identity(context)
+
+        def _emit_list() -> None:
+            emit_op_completed(
+                agent_id=_list_agent_id,
+                op="list",
+                path=path,
+                bytes_count=0,
+                latency_ms=int((time.perf_counter() - _list_start) * 1000),
+            )
+
+        # PRE-DISPATCH: virtual resolvers (e.g., ``.readme/`` overlay)
+        # contribute synthetic children before the kernel/metastore is
+        # consulted. ``recursive`` is forwarded so resolvers may emit
+        # nested entries when they support it.
+        if hasattr(self, "resolve_list"):
+            _handled, _virt = self.resolve_list(path, context=context, recursive=recursive)
+            if _handled and _virt is not None:
+                _emit_list()
+                # Always return rich dict entries (with size from try_stat)
+                # so virtual files render correctly regardless of the wire
+                # `details` arg. Both `_format_file_entry` shapes (CLI and
+                # API v2) consume dicts; strings would lose size+type info.
+                out: list[dict[str, Any]] = []
+                for p, et in _virt:
+                    size = 0
+                    if et == 0 and hasattr(self, "resolve_stat"):
+                        _ok, _stat = self.resolve_stat(p, context=context)
+                        if _ok and _stat is not None:
+                            size = int(_stat.get("size", 0))
+                    out.append({"path": p, "size": size, "content_id": "", "entry_type": et})
+                return out
+
+        # /__sys__/locks intercept moved to Rust readdir_paged (C3/C7).
+
+        # §12d Phase 2: Rust readdir merges backend list_dir for all
+        # backends (CAS, path-local, external connectors) uniformly.
+        # No Python-side external connector intercept needed.
+
+        # Non-recursive, non-detailed, unbounded listings go through the
+        # Rust kernel so they see per-mount metastore entries (F2 C5).
+        # Python's ``self.metadata.list_iter`` only hits the default global
+        # metastore, which is empty for federation zones.
+        _kernel = getattr(self, "_kernel", None)
+        if (
+            _kernel is not None
+            and not recursive
+            and not details
+            and limit is None
+            and not self._is_internal_path(path)
+        ):
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+            try:
+                _kernel_entries = _kernel.readdir(path, self._zone_id, _is_admin)
+            except (OSError, ValueError) as exc:
+                logger.debug("kernel.readdir failed for %s: %s", path, exc)
+                _kernel_entries = None
+            if _kernel_entries:
+                _children = [
+                    child for child, _etype in _kernel_entries if not self._is_internal_path(child)
+                ]
+                # Issue #3786 / Codex Round 7 finding #1: federation tokens
+                # land here as zone_id="root", so without an explicit zone_perms
+                # filter they would receive every name the kernel returns,
+                # including paths under zones outside their allow-list.
+                _ctx_zp = (
+                    getattr(context, "zone_perms", ())
+                    if context is not None and not isinstance(context, dict)
+                    else (
+                        tuple(tuple(zp) for zp in (context.get("zone_perms") or ()) if len(zp) == 2)
+                        if isinstance(context, dict)
+                        else ()
+                    )
+                )
+                _real_zp = tuple((z, p) for z, p in (_ctx_zp or ()) if z != ROOT_ZONE_ID)
+                if not _is_admin and _real_zp:
+                    _allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
+                    _filtered: builtins.list[str] = []
+                    for _child in _children:
+                        if _child.startswith("/zone/"):
+                            _parts = _child[6:].split("/", 1)
+                            if _parts and _parts[0] in _allowed_zones:
+                                _filtered.append(_child)
+                            # else: drop — outside token's allow-list
+                        else:
+                            # Non-zone paths (root namespace) — keep; they
+                            # are not the federation tenant data.
+                            _filtered.append(_child)
+                    _emit_list()
+                    return _filtered
+                _emit_list()
+                return _children
+
+        prefix = path if path != "/" else ""
+        if prefix and not prefix.endswith("/"):
+            prefix = prefix + "/"
+
+        # Issue #3779 follow-up: filter list results by the caller's zone_id.
+        # The metastore is a single store shared across zones (each row carries
+        # a zone_id column). Without this filter, V2 API callers see every
+        # zone's files. Admins and root-zone callers keep the global view.
+        # Handle OperationContext, dict, and None uniformly — missing zone
+        # falls open to ROOT (admin-equivalent view) by design: a caller
+        # without a zone claim is either the kernel or an unauthenticated
+        # path, neither of which should be zone-restricted here.
+        if isinstance(context, dict):
+            caller_zone = context.get("zone_id") or ROOT_ZONE_ID
+            caller_is_admin = bool(context.get("is_admin", False))
+            _ctx_zp = tuple(tuple(zp) for zp in (context.get("zone_perms") or ()) if len(zp) == 2)
+        elif context is not None:
+            caller_zone = getattr(context, "zone_id", None) or ROOT_ZONE_ID
+            caller_is_admin = bool(getattr(context, "is_admin", False))
+            _ctx_zp = tuple(getattr(context, "zone_perms", ()) or ())
+        else:
+            caller_zone = ROOT_ZONE_ID
+            caller_is_admin = False
+            _ctx_zp = ()
+
+        # Issue #3786 / Codex Round 8 finding #2: federation token allow-list
+        # for the recursive / detail / paginated path.  Multi-zone tokens land
+        # here as caller_zone==root (so the original _zone_allowed shortcut
+        # would let them enumerate every zone).  Build the allow-list once.
+        _real_zp = tuple((z, p) for z, p in _ctx_zp if z != ROOT_ZONE_ID)
+        _fed_allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
+
+        def _zone_allowed(entry: Any) -> bool:
+            if caller_is_admin:
+                return True
+            # Federation token tripwire — restrict /zone/<id>/ entries to
+            # the allow-list even when caller_zone==root.  Root-namespace
+            # entries (no /zone/ prefix) stay visible.
+            if _real_zp:
+                _ep = getattr(entry, "path", "") or ""
+                if _ep.startswith("/zone/"):
+                    _parts = _ep[6:].split("/", 1)
+                    return bool(_parts) and _parts[0] in _fed_allowed_zones
+                return True
+            if caller_zone == ROOT_ZONE_ID:
+                return True
+            entry_zone = getattr(entry, "zone_id", None) or ROOT_ZONE_ID
+            # Root zone is the global namespace, not any user's private zone:
+            # standalone NexusFS tags every file as zone_id=root, and
+            # federation-root-mounted files are visible from every zone by
+            # design. Filtering them out would break sys_readdir in
+            # standalone mode entirely (surface-level cost: the
+            # test_embedded_namespaces_rebac tests that write under
+            # /workspace/acme/ and fail to readdir them). Per-zone isolation
+            # continues to work because non-root entry_zone still has to
+            # match caller_zone below.
+            if entry_zone == ROOT_ZONE_ID:
+                return True
+            return entry_zone == caller_zone
+
+        if limit is not None:
+            from nexus.core.pagination import paginate_iter
+
+            items_iter = (
+                e
+                for e in metastore_list_iter(self._kernel, prefix=prefix, recursive=recursive)
+                if not self._is_internal_path(e.path) and _zone_allowed(e)
+            )
+            result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
+            if details:
+                result.items = [self._entry_to_detail_dict(e, recursive) for e in result.items]
+            else:
+                result.items = [e.path for e in result.items]
+            _emit_list()
+            return result
+
+        # Issue #3706: Use list_iter() instead of list() to avoid creating a
+        # second filtered copy in Python and to bypass RustMetastoreProxy's
+        # _dcache (prevents unbounded cache growth).  Note: the underlying
+        # Rust/Raft engines still materialise the full result set internally;
+        # true streaming requires a Rust-level paginated API (future work).
+        entries_iter = (
+            e
+            for e in metastore_list_iter(self._kernel, prefix=prefix, recursive=recursive)
+            if not self._is_internal_path(e.path) and _zone_allowed(e)
+        )
+        if details:
+            if not recursive:
+                all_entries = [
+                    e
+                    for e in metastore_list_iter(self._kernel, prefix=prefix, recursive=True)
+                    if not self._is_internal_path(e.path) and _zone_allowed(e)
+                ]
+                implicit_dirs = self._paths_with_descendants(all_entries)
+                _result = [
+                    self._entry_to_detail_dict(e, recursive, implicit_dirs=implicit_dirs)
+                    for e in all_entries
+                    if self._is_direct_child_path(e.path, prefix)
+                ]
+            else:
+                _result = [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
+            _emit_list()
+            return _result
+        _result = [e.path for e in entries_iter]
+        _emit_list()
+        return _result
+
+    @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)
+    def backfill_directory_index(
+        self,
+        prefix: str = "/",
+        zone_id: str | None = None,
+        _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
+    ) -> dict[str, Any]:
+        """Backfill sparse directory index from existing files.
+
+        Use this to populate the index for directories that existed before
+        the sparse index feature was added. This improves list() performance
+        from O(n) LIKE queries to O(1) index lookups.
+
+        Args:
+            prefix: Path prefix to backfill (default: "/" for all)
+            zone_id: Zone ID to backfill (None for all zones)
+            _context: Operation context (admin required, enforced by @rpc_expose)
+
+        Returns:
+            Dict with entries_created count
+        """
+        # backfill_directory_index never had a kernel-side equivalent;
+        # the legacy ``RaftMetadataStore`` exposed it as part of the
+        # sparse-index optimisation that is no longer load-bearing
+        # (kernel-internal metastores keep their own DashMap projection
+        # so list lookups don't need a backfill pass). Returning zero
+        # keeps the RPC entry-point a no-op rather than raising.
+        del zone_id
+        return {"entries_created": 0, "prefix": prefix}
+
+    @rpc_expose(description="Flush pending write observer events to DB", admin_only=True)
+    def flush_write_observer(
+        self,
+        _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
+    ) -> dict[str, Any]:
+        """Flush the write observer so pending version/audit records are committed.
+
+        The RecordStoreWriteObserver accumulates events dispatched by the
+        Rust kernel and flushes them to RecordStore in debounced batches.
+        This method forces an immediate flush, guaranteeing that subsequent
+        queries (e.g. list_versions) see the data.
+
+        Returns:
+            Dict with ``flushed`` count.
+        """
+        # Issue #1801: use service registry to find write_observer — no closure needed.
+        _wo = self.service("write_observer")
+        if _wo is None or not hasattr(_wo, "flush"):
+            return {"flushed": 0}
+        from nexus.lib.sync_bridge import run_sync
+
+        flushed: int = run_sync(_wo.flush())
+        return {"flushed": flushed}

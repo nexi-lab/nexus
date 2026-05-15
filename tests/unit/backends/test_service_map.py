@@ -1,7 +1,7 @@
 """Unit tests for service map module."""
 
-from nexus.backends.registry import ConnectorRegistry
-from nexus.backends.service_map import (
+from nexus.backends.base.registry import ConnectorRegistry
+from nexus.backends.misc.service_map import (
     SERVICE_REGISTRY,
     ServiceInfo,
     ServiceMap,
@@ -82,7 +82,7 @@ class TestServiceRegistry:
         """Test Google Calendar service now has a connector (was None before)."""
         info = ServiceMap.get_service_info("google-calendar")
         assert info is not None
-        assert info.connector == "gcalendar_connector"
+        assert info.connector == "calendar_connector"
         assert info.klavis_mcp == "google_calendar"
         assert info.oauth_provider == "google"
 
@@ -119,14 +119,15 @@ class TestAutoDerive:
     def test_connectors_with_service_name_populate_service_map(self) -> None:
         """Test that registered connectors with service_name populate service_map."""
         _sync_from_connector_registry()
-        # All connectors that declare service_name should have their connector
-        # field populated in SERVICE_REGISTRY
+        # All connectors that declare service_name should reverse-map to that
+        # service, even when several connectors share one umbrella service
+        # like gws.
         for info in ConnectorRegistry.list_all():
             if info.service_name and info.service_name in SERVICE_REGISTRY:
-                service = SERVICE_REGISTRY[info.service_name]
-                assert service.connector == info.name, (
-                    f"Service '{info.service_name}' should have connector='{info.name}', "
-                    f"got '{service.connector}'"
+                service_name = ServiceMap.get_service_name(connector=info.name)
+                assert service_name == info.service_name, (
+                    f"Connector '{info.name}' should map to service '{info.service_name}', "
+                    f"got '{service_name}'"
                 )
 
     def test_connector_registry_service_name_round_trip(self) -> None:
@@ -141,9 +142,13 @@ class TestAutoDerive:
                 )
                 # Service name → connector
                 connector = ServiceMap.get_connector(info.service_name)
-                assert connector == info.name, (
-                    f"Service '{info.service_name}' should map to connector '{info.name}', "
-                    f"got '{connector}'"
+                assert connector is not None, (
+                    f"Service '{info.service_name}' should have a canonical connector"
+                )
+                canonical_service = ServiceMap.get_service_name(connector=connector)
+                assert canonical_service == info.service_name, (
+                    f"Canonical connector '{connector}' should map back to "
+                    f"service '{info.service_name}', got '{canonical_service}'"
                 )
 
 
@@ -154,14 +159,14 @@ class TestServiceMapGetServiceName:
         """Test getting service name from connector."""
         assert ServiceMap.get_service_name(connector="gdrive_connector") == "google-drive"
         assert ServiceMap.get_service_name(connector="gmail_connector") == "gmail"
-        assert ServiceMap.get_service_name(connector="gcalendar_connector") == "google-calendar"
+        assert ServiceMap.get_service_name(connector="calendar_connector") == "google-calendar"
 
     def test_get_service_name_by_connector_optional(self) -> None:
         """Test connector lookup for backends with optional deps."""
         # These may not be registered if deps aren't installed
         for connector, expected_service in [
-            ("gcs_connector", "gcs"),
-            ("s3_connector", "s3"),
+            ("path_gcs", "gcs"),
+            ("path_s3", "s3"),
             ("x_connector", "x"),
             ("hn_connector", "hackernews"),
         ]:
@@ -211,7 +216,7 @@ class TestServiceMapGetConnector:
         """Test getting connector for services with connectors."""
         assert ServiceMap.get_connector("google-drive") == "gdrive_connector"
         assert ServiceMap.get_connector("gmail") == "gmail_connector"
-        assert ServiceMap.get_connector("google-calendar") == "gcalendar_connector"
+        assert ServiceMap.get_connector("google-calendar") == "calendar_connector"
 
     def test_get_connector_none(self) -> None:
         """Test getting connector for MCP-only services."""

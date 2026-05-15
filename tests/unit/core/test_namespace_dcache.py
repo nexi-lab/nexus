@@ -14,10 +14,15 @@ import time
 from unittest.mock import patch
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from sqlalchemy import create_engine
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.namespace_manager import NamespaceManager
 from nexus.storage.models import Base
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -41,6 +46,7 @@ def enhanced_rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()
@@ -209,7 +215,7 @@ class TestDCacheNegativeEntries:
         ns = NamespaceManager(
             rebac_manager=enhanced_rebac_manager,
             dcache_positive_ttl=300,
-            dcache_negative_ttl=1,  # 1 second for test speed
+            dcache_negative_ttl=0.05,  # 50ms for test speed
         )
         alice = ("user", "alice")
 
@@ -218,7 +224,7 @@ class TestDCacheNegativeEntries:
         assert ns.metrics["dcache_negative_size"] == 1
 
         # Wait for negative TTL to expire
-        time.sleep(1.1)
+        time.sleep(0.1)
 
         # Negative entry should be expired — TTLCache removes on next access
         ns.is_visible(alice, "/secret/nope.txt", "test_zone")

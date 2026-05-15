@@ -12,6 +12,8 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
+import hashlib
+import json
 import logging
 import os
 import tarfile
@@ -19,7 +21,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.portability.models import (
     BUNDLE_PATHS,
@@ -29,14 +31,76 @@ from nexus.bricks.portability.models import (
     PermissionRecord,
     ZoneExportOptions,
 )
+from nexus.bricks.portability.signer import ArchiveSigner, canonical_json_bytes
+from nexus.bricks.portability.strip import (
+    DEFAULT_REDACT_PATTERNS,
+    RegexStripper,
+    SchemaStripper,
+)
 
 if TYPE_CHECKING:
+    from nexus.bricks.portability.mount_export import _MountListing
     from nexus.contracts.portability_types import PortabilityFSProtocol
 
 logger = logging.getLogger(__name__)
 
 # Progress callback type: (current, total) -> None
 ProgressCallback = Callable[[int, int], None]
+
+
+def _sha256(data: bytes) -> str:
+    """Return hex-encoded SHA-256 digest of `data`."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def _finalize_with_signature(
+    bundle_dir: Path,
+    manifest: ExportManifest,
+    output_path: Path,
+    *,
+    signer: ArchiveSigner | None,
+) -> None:
+    """Write manifest.json (signed if signer is provided), then tar.gz the bundle.
+
+    When `signer` is not None:
+    - Embeds the signer's public key in the manifest dict.
+    - Computes the canonical-JSON bytes of the manifest.
+    - Signs ``manifest_bytes + merkle_root_b64`` with ed25519.
+    - Writes ``signatures.json`` into the bundle directory.
+    - The signature covers the canonical manifest bytes so that verifiers
+      can reconstruct the payload without a separate merkle-root field.
+
+    When `signer` is None the function is byte-identical to the legacy
+    ``_create_bundle`` path — only the manifest is written and no
+    ``signatures.json`` is emitted.
+    """
+    manifest_dict = manifest.to_dict()
+    if signer is not None:
+        manifest_dict["signer_pubkey_b64"] = signer.public_key_b64
+
+    manifest_bytes = canonical_json_bytes(manifest_dict)
+    (bundle_dir / "manifest.json").write_bytes(manifest_bytes)
+
+    if signer is not None:
+        merkle_root_b64 = (manifest_dict.get("checksums") or {}).get("merkle_root") or ""
+        payload = manifest_bytes + merkle_root_b64.encode("utf-8")
+        sig_b64, pub_b64 = signer.sign(payload)
+        sig_doc = {
+            "algorithm": "ed25519",
+            "signer_pubkey_b64": pub_b64,
+            "signature_b64": sig_b64,
+            "manifest_sha256": _sha256(manifest_bytes),
+        }
+        (bundle_dir / "signatures.json").write_text(json.dumps(sig_doc, indent=2))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(output_path, mode="w:gz") as tar:
+        for path in sorted(bundle_dir.rglob("*")):
+            if path.is_file():
+                arcname = str(path.relative_to(bundle_dir))
+                tar.add(path, arcname=arcname)
+
+    logger.info("Created bundle: %s (%d bytes)", output_path, output_path.stat().st_size)
 
 
 class ZoneExportService:
@@ -58,15 +122,28 @@ class ZoneExportService:
     def __init__(
         self,
         nexus_fs: "PortabilityFSProtocol",
+        *,
+        mount_manager: "_MountListing | None" = None,
     ):
         """Initialize the export service.
 
         Args:
             nexus_fs: NexusFS-compatible instance with metadata store and backend access
+            mount_manager: Optional MountManager instance (must expose
+                ``list_mounts(zone_id=...)``).  Required when
+                ``ZoneExportOptions.include_mounts=True``.
         """
         self.nexus_fs = nexus_fs
-        self.metadata_store = nexus_fs.metadata
-        self.backend = nexus_fs.backend
+        # ``nx.metadata`` was removed in W3b — reach the kernel directly so
+        # ``list`` calls land on ``kernel.metastore_list``. The protocol
+        # type doesn't declare ``_kernel`` (it's an implementation
+        # detail of the concrete NexusFS); read it via ``getattr`` to
+        # keep the static contract narrow.
+        self._kernel = getattr(nexus_fs, "_kernel", None)
+        # R20.18.x: `NexusFS.backend` is gone — the kernel owns mount
+        # routing now. Content reads go through `nexus_fs.sys_read`;
+        # see `_export_content_blobs`.
+        self._mount_manager = mount_manager
 
     def export_zone(
         self,
@@ -91,6 +168,12 @@ class ZoneExportService:
         Returns:
             ExportManifest with export statistics and checksums
         """
+        if options.include_mounts and self._mount_manager is None:
+            raise ValueError(
+                "ZoneExportOptions.include_mounts=True requires "
+                "ZoneExportService(mount_manager=...)"
+            )
+
         import nexus
 
         logger.info("Starting export for zone %s to %s", zone_id, options.output_path)
@@ -125,28 +208,85 @@ class ZoneExportService:
                 (temp_path / "embeddings").mkdir(parents=True)
 
             # Export metadata to JSONL
-            content_hashes: set[str] = set()
+            content_ids: set[str] = set()
+            hash_to_path: dict[str, str] = {}
             files_path = temp_path / BUNDLE_PATHS["files"]
 
             file_count, total_size = self._export_metadata_to_jsonl(
                 zone_id=zone_id,
                 output_path=files_path,
                 options=options,
-                content_hashes=content_hashes,
+                content_ids=content_ids,
+                hash_to_path=hash_to_path,
                 progress_callback=progress_callback,
             )
 
             manifest.file_count = file_count
             manifest.total_size_bytes = total_size
 
+            # --- Credential stripping (v2+) ---
+            # When strip_credentials=True, run schema+regex stripping over the
+            # exported file records treated as a "documents" table, then update
+            # files.jsonl in-place and stash any placeholders on the manifest.
+            if options.strip_credentials and files_path.exists():
+                raw_lines = files_path.read_text(encoding="utf-8").splitlines()
+                file_rows = [json.loads(line) for line in raw_lines if line.strip()]
+                stripped_tables, placeholders = _apply_credential_stripping(
+                    {"documents": file_rows},
+                    workspace_root=None,
+                )
+                stripped_rows = stripped_tables.get("documents", file_rows)
+                files_path.write_text(
+                    "\n".join(json.dumps(r) for r in stripped_rows)
+                    + ("\n" if stripped_rows else ""),
+                    encoding="utf-8",
+                )
+                if placeholders:
+                    manifest.placeholders = list(placeholders)
+                    logger.info(
+                        "Credential stripping: %d placeholder(s) captured", len(placeholders)
+                    )
+
+            # --- Mount-config export (v3+, Issue #4083) ---
+            if options.include_mounts:
+                from nexus.bricks.portability.mount_export import (
+                    collect_mounts,
+                    redact_and_write,
+                )
+
+                # Guard at export_zone entry ensures _mount_manager is non-None here.
+                assert self._mount_manager is not None
+                raw_mounts = collect_mounts(self._mount_manager, zone_id=zone_id)
+                if raw_mounts:
+                    mounts_path = temp_path / "mounts.jsonl"
+                    mount_phs = redact_and_write(raw_mounts, out_path=mounts_path)
+                    manifest.placeholders = list(manifest.placeholders) + list(mount_phs)
+                    manifest.mount_count = len(raw_mounts)
+                    mounts_bytes = mounts_path.read_bytes()
+                    checksums.add_file(BUNDLE_PATHS["mounts"], mounts_bytes)
+                    logger.info(
+                        "Mount export: %d mounts, %d placeholders",
+                        len(raw_mounts),
+                        len(mount_phs),
+                    )
+                else:
+                    # Round-5 reviewer finding: writing an empty
+                    # mounts.jsonl with mount_count=0 produced a bundle
+                    # that BundleReader.validate then rejected as
+                    # "unmanifested mounts.jsonl" — exporters must NOT
+                    # emit the file when there's nothing to record.
+                    manifest.mount_count = 0
+                    logger.info("Mount export: zone has no mounts; skipping mounts.jsonl")
+
             # Add checksum for files.jsonl
             if files_path.exists():
                 checksums.add_file(BUNDLE_PATHS["files"], files_path.read_bytes())
 
             # Export content blobs if requested
-            if options.include_content and content_hashes:
+            if options.include_content and content_ids:
                 blob_count = self._export_content_blobs(
-                    content_hashes=content_hashes,
+                    content_ids=content_ids,
+                    hash_to_path=hash_to_path,
                     output_dir=temp_path / "content" / "cas",
                     progress_callback=progress_callback,
                 )
@@ -166,15 +306,20 @@ class ZoneExportService:
             # Finalize manifest
             manifest.checksums = checksums
 
-            # Write manifest
-            manifest_path = temp_path / BUNDLE_PATHS["manifest"]
-            manifest_path.write_text(manifest.to_json())
+            # Instantiate signer if signing is enabled
+            signer: ArchiveSigner | None = None
+            if options.sign:
+                key_path = (
+                    options.signing_key_path or Path.home() / ".nexus" / "archive_signing_key"
+                )
+                signer = ArchiveSigner(key_path)
 
-            # Create tar.gz bundle
-            self._create_bundle(
-                source_dir=temp_path,
+            # Write manifest (signed) and create tar.gz bundle
+            _finalize_with_signature(
+                bundle_dir=temp_path,
+                manifest=manifest,
                 output_path=options.output_path,
-                compression_level=options.compression_level,
+                signer=signer,
             )
 
             logger.info(
@@ -191,7 +336,8 @@ class ZoneExportService:
         zone_id: str,
         output_path: Path,
         options: ZoneExportOptions,
-        content_hashes: set[str],
+        content_ids: set[str],
+        hash_to_path: dict[str, str],
         progress_callback: ProgressCallback | None = None,
     ) -> tuple[int, int]:
         """Export file metadata to JSONL format.
@@ -200,7 +346,7 @@ class ZoneExportService:
             zone_id: Zone to export
             output_path: Path for JSONL output
             options: Export options
-            content_hashes: Set to collect content hashes for blob export
+            content_ids: Set to collect content hashes for blob export
             progress_callback: Optional progress callback
 
         Returns:
@@ -212,7 +358,9 @@ class ZoneExportService:
         # Get all files from metadata store
         # Note: The actual implementation depends on the metadata store API
         prefix = options.path_prefix or ""
-        all_files = list(self.metadata_store.list(prefix))
+        if self._kernel is None:
+            raise RuntimeError("ZoneExportService requires a kernel-backed NexusFS")
+        all_files = self._kernel.metastore_list_paginated(prefix, True, 100000, None)["items"]
 
         # Apply zone filter if metadata store doesn't do it
         # (In a real implementation, this would be done at the database level)
@@ -237,15 +385,21 @@ class ZoneExportService:
                     continue
 
                 # Build FileRecord
+                # ``backend_id`` and ``physical_path`` were removed from
+                # FileMetadata — the kernel now resolves the physical
+                # location at read time via the mount/route layer, so
+                # bundles only need to carry the virtual path. We keep
+                # the FileRecord fields (the .nexus 1.0 schema requires
+                # them) but emit empty strings.
                 record = FileRecord(
                     path_id=getattr(file_meta, "path_id", str(idx)),
                     zone_id=zone_id,
                     virtual_path=file_meta.path,
-                    backend_id=file_meta.backend_name,
-                    physical_path=file_meta.physical_path,
+                    backend_id="",
+                    physical_path="",
                     file_type=file_meta.mime_type,
                     size_bytes=file_meta.size,
-                    content_hash=file_meta.etag,
+                    content_id=file_meta.content_id,
                     created_at=file_meta.created_at,
                     updated_at=file_meta.modified_at,
                     current_version=getattr(file_meta, "version", 1),
@@ -255,9 +409,14 @@ class ZoneExportService:
                 # Write JSONL line
                 f.write(record.to_jsonl() + "\n")
 
-                # Collect content hash for blob export
-                if file_meta.etag:
-                    content_hashes.add(file_meta.etag)
+                # Collect content hash for blob export (CAS dedup): first
+                # path wins. Later iterations that see the same hash
+                # (identical content at a different path) are no-ops —
+                # `_export_content_blobs` reads via sys_read(path) once
+                # per unique hash.
+                if file_meta.content_id and file_meta.content_id not in content_ids:
+                    content_ids.add(file_meta.content_id)
+                    hash_to_path[file_meta.content_id] = file_meta.path
 
                 file_count += 1
                 total_size += file_meta.size
@@ -274,38 +433,44 @@ class ZoneExportService:
 
     def _export_content_blobs(
         self,
-        content_hashes: set[str],
+        content_ids: set[str],
+        hash_to_path: dict[str, str],
         output_dir: Path,
         progress_callback: ProgressCallback | None = None,
     ) -> int:
         """Export content blobs to CAS directory structure.
 
-        Args:
-            content_hashes: Set of content hashes to export
-            output_dir: Output directory for CAS structure
-            progress_callback: Optional progress callback
-
-        Returns:
-            Number of blobs exported
+        Reads each blob by path via `nexus_fs.sys_read` — the kernel
+        resolves the correct mount + backend internally. The legacy
+        `nexus_fs.backend.read_content(hash)` path was removed with
+        `NexusFS.backend` in R20.18; post-migration the only way to
+        reach a CAS blob is via a VFS path, so we carry one path per
+        unique hash (first-seen wins — CAS dedup makes the choice
+        arbitrary).
         """
         blob_count = 0
-        total_hashes = len(content_hashes)
+        total_hashes = len(content_ids)
 
-        for idx, content_hash in enumerate(content_hashes):
+        for idx, content_id in enumerate(content_ids):
+            path = hash_to_path.get(content_id)
+            if not path:
+                logger.warning("No source path recorded for hash %s; skipping", content_id[:12])
+                continue
             try:
-                # Read content from backend
-                response = self.backend.read_content(content_hash)
-                if not response.success or response.data is None:
-                    logger.warning("Failed to read content %s: %s", content_hash, response.error)
+                data = self.nexus_fs.sys_read(path)
+                if data is None:
+                    logger.warning(
+                        "sys_read returned no data for %s (hash %s)", path, content_id[:12]
+                    )
                     continue
 
                 # Write to CAS structure (2-char prefix directories)
-                if len(content_hash) >= 2:
-                    prefix = content_hash[:2]
+                if len(content_id) >= 2:
+                    prefix = content_id[:2]
                     blob_dir = output_dir / prefix
                     blob_dir.mkdir(parents=True, exist_ok=True)
-                    blob_path = blob_dir / content_hash
-                    blob_path.write_bytes(response.data)
+                    blob_path = blob_dir / content_id
+                    blob_path.write_bytes(data if isinstance(data, bytes) else bytes(data))
                     blob_count += 1
 
                 # Progress callback
@@ -313,7 +478,7 @@ class ZoneExportService:
                     progress_callback(idx + 1, total_hashes)
 
             except Exception as e:
-                logger.warning("Error exporting blob %s: %s", content_hash, e)
+                logger.warning("Error exporting blob %s: %s", content_id, e)
 
         # Final progress update
         if progress_callback:
@@ -384,9 +549,11 @@ class ZoneExportService:
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Ensure .nexus extension
-        if not str(output_path).endswith(".nexus"):
-            output_path = output_path.with_suffix(".nexus")
+        # Honor the caller's chosen suffix. Bundle format is tar.gz
+        # regardless of filename; `.nexus` is just the conventional
+        # extension but not enforced. Previous version force-rewrote
+        # the path to `.nexus`, which silently broke callers that
+        # passed a different suffix (e.g., E2E tests using `.tar`).
 
         # Create tar.gz bundle
         # Note: tarfile "w:gz" uses default gzip compression level
@@ -398,6 +565,55 @@ class ZoneExportService:
                     tar.add(item, arcname=str(arcname))
 
         logger.info("Created bundle: %s (%d bytes)", output_path, output_path.stat().st_size)
+
+
+def _apply_credential_stripping(
+    rows_by_table: dict[str, list[dict[str, Any]]],
+    *,
+    workspace_root: str | None,
+    extra_patterns: list[dict[str, str]] | None = None,
+) -> tuple[dict[str, list[dict[str, Any]]], list]:
+    """Run schema + regex strip across every row group.
+
+    Layer 1 (SchemaStripper): nulls known sensitive columns by table + field
+    name and replaces them with ``${PLACEHOLDER_NAME}`` strings.
+
+    Layer 2 (RegexStripper): scans every string value for known credential
+    patterns (API keys, PATs, etc.) as a backstop.
+
+    Args:
+        rows_by_table: Mapping of table name to list of row dicts.
+        workspace_root: Workspace root path for path-normalisation rules in
+            SchemaStripper (pass ``None`` to skip).
+        extra_patterns: Additional regex patterns to append to
+            ``DEFAULT_REDACT_PATTERNS`` (each dict has ``name`` + ``pattern``).
+
+    Returns:
+        A tuple of ``(stripped_rows_by_table, placeholders_list)`` where
+        *placeholders_list* is a flat list of :class:`PlaceholderRef` objects
+        collected across all tables.
+    """
+    schema = SchemaStripper(workspace_root=workspace_root)
+    patterns = list(DEFAULT_REDACT_PATTERNS) + list(extra_patterns or [])
+    regex = RegexStripper(patterns)
+
+    out: dict[str, list[dict[str, Any]]] = {}
+    placeholders: list = []
+
+    for table, rows in rows_by_table.items():
+        schema_result = schema.strip_table(table, rows)
+        cleaned: list[dict[str, Any]] = []
+        for i, row in enumerate(schema_result.rows):
+            new_row = dict(row)
+            for k, v in row.items():
+                if isinstance(v, str):
+                    scan = regex.scan(v, location=f"{table}:row={i}:field={k}")
+                    new_row[k] = scan.text
+            cleaned.append(new_row)
+        out[table] = cleaned
+        placeholders.extend(schema_result.placeholders)
+
+    return out, placeholders
 
 
 # Convenience function for CLI usage

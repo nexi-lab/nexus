@@ -20,7 +20,6 @@ from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.server.batch_executor import BatchExecutor, BatchRequest, BatchResponse
 
@@ -31,6 +30,7 @@ def create_batch_router(
     nexus_fs: Any | None = None,
     get_fs: Any | None = None,
     get_context_override: Callable[..., Any] | None = None,
+    get_zone_registry: Callable[[], Any | None] | None = None,
 ) -> APIRouter:
     """Create a batch operations router.
 
@@ -43,6 +43,7 @@ def create_batch_router(
         get_fs: Callable returning NexusFS (lazy mode).
         get_context_override: Optional context provider for testing.
             When None, imports auth from fastapi_server.
+        get_zone_registry: Callable returning ZoneRegistry (lazy mode).
 
     Returns:
         FastAPI router with the ``POST /batch`` endpoint.
@@ -62,6 +63,9 @@ def create_batch_router(
             detail="NexusFS not initialized. Server may still be starting up.",
         )
 
+    def _get_zone_registry() -> Any | None:
+        return get_zone_registry() if get_zone_registry is not None else None
+
     # Build context dependency: use override if provided, else import from server.
     if get_context_override is not None:
         _context_dep = get_context_override
@@ -79,9 +83,7 @@ def create_batch_router(
         ) -> OperationContext:
             """Get operation context from auth result."""
             if auth_result is None or not auth_result.get("authenticated"):
-                from nexus.contracts.types import OperationContext as OC
-
-                return OC(user_id="anonymous", groups=[], zone_id=ROOT_ZONE_ID)
+                raise HTTPException(status_code=401, detail="Authentication required")
             return cast("OperationContext", _real_get_operation_context(auth_result))
 
     @router.post("/batch", response_model=BatchResponse)
@@ -107,7 +109,7 @@ def create_batch_router(
         - 30-second timeout per operation
         """
         fs = await _get_fs()
-        executor = BatchExecutor(fs=fs)
+        executor = BatchExecutor(fs=fs, zone_registry=_get_zone_registry())
 
         logger.info(
             "Batch request: %d operations, stop_on_error=%s",

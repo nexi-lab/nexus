@@ -178,7 +178,7 @@ def setup_prometheus() -> None:
 
     # Re-register metrics (they may have been unregistered during shutdown)
     for collector in (REQUEST_DURATION, REQUEST_COUNT, REQUESTS_IN_PROGRESS, NEXUS_INFO):
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(ValueError):  # Already registered
             REGISTRY.register(collector)
 
     version = get_nexus_version()
@@ -197,6 +197,6 @@ def shutdown_prometheus() -> None:
     from prometheus_client import REGISTRY
 
     for collector in (REQUEST_DURATION, REQUEST_COUNT, REQUESTS_IN_PROGRESS, NEXUS_INFO):
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(ValueError):  # Not registered
             REGISTRY.unregister(collector)
     logger.info("Prometheus metrics shut down")

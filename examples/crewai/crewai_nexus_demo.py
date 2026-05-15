@@ -49,7 +49,7 @@ from crewai.tools import tool
 # we'll create custom tools that call the MCP server via subprocess
 
 
-def call_nexus_mcp(tool_name: str, **kwargs) -> str:
+async def call_nexus_mcp(tool_name: str, **kwargs) -> str:
     """Call a Nexus MCP tool via stdio transport."""
     import json
 
@@ -420,7 +420,7 @@ def demo_3_multi_agent_collaboration():
 # =========================================================================
 
 
-def check_environment():
+async def check_environment():
     """Check that required environment variables are set."""
 
     print("Checking environment...")
@@ -467,7 +467,7 @@ def check_environment():
     print("\n✓ Environment check passed!\n")
 
 
-def setup_test_data():
+async def setup_test_data():
     """Setup test data for demos."""
 
     print("Setting up test data...")
@@ -480,7 +480,7 @@ def setup_test_data():
         # Create directories
         for dir_path in ["/workspace", "/reports"]:
             with contextlib.suppress(Exception):
-                nx.sys_mkdir(dir_path)  # Directory may already exist
+                nx.mkdir(dir_path)  # Directory may already exist
 
         # Create sample Python files with async patterns
         sample_files = {
@@ -519,7 +519,7 @@ async def query_users(min_age: int) -> list:
     # TODO: Consider making this async for large datasets
     return {k: v.upper() if isinstance(v, str) else v for k, v in data.items()}
 
-def validate_input(data: dict) -> bool:
+async def validate_input(data: dict) -> bool:
     '''Validate input data.'''
     required_fields = ['id', 'name', 'email']
     return all(field in data for field in required_fields)

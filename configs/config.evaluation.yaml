@@ -1,8 +1,8 @@
 # Nexus Evaluation Configuration
 # Configuration for MCP evaluation testing with semantic search enabled
 
-# Deployment mode (standalone = single-node redb, no Raft)
-mode: standalone
+# Deployment profile
+profile: full
 
 # Database path (for TokenManager and other components that need DB access)
 db_path: postgresql://postgres:nexus@postgres:5432/nexus

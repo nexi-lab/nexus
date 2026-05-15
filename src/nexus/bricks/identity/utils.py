@@ -2,7 +2,7 @@
 
 Centralizes JSON metadata serialization/deserialization with consistent error handling
 and immutable return types. Used by identity models and services, and available for
-backfill into existing code (agent_registry.py, workspace_registry.py) in future PRs.
+backfill into existing code (workspace_registry.py) in future PRs.
 """
 
 import json

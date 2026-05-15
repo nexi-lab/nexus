@@ -14,58 +14,232 @@ Deployment-profile invariant: any distro ≥ kernel.
 
 Issue #1171: Service-layer RPC proxy for REMOTE profile.
 Issue #844:  Part of NexusFS(profile=REMOTE) convergence.
+Issue #1708: Uses coordinator.enlist() — same entry point as all profiles.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
+    from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
 
-# All fields accepted by NexusFS._bind_wired_services() (dict path).
-# Derived from nexus_fs.py:290-326.
-_WIRED_FIELDS: list[str] = [
-    # Services
-    "rebac_service",
-    "mount_service",
-    "gateway",
-    "mount_core_service",
-    "sync_service",
-    "sync_job_service",
-    "mount_persist_service",
-    "mcp_service",
-    "llm_service",
-    "llm_subsystem",
-    "oauth_service",
-    "skill_service",
-    "skill_package_service",
-    "search_service",
-    "share_link_service",
-    "events_service",
-    "task_queue_service",
-    "workspace_rpc_service",
-    "agent_rpc_service",
-    "user_provisioning_service",
-    "sandbox_rpc_service",
-    "metadata_export_service",
-    "ace_rpc_service",
-    "descendant_checker",
-    "memory_provider",
-]
+
+def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport") -> None:
+    """Route kernel ops that require server-side hooks through direct RPC.
+
+    The Rust kernel's internal Redb metastore is empty in the REMOTE profile
+    (no local data_dir), so kernel.sys_read / kernel.sys_write return hit=False
+    for all paths. Override these to call the authoritative server RPCs directly.
+
+    sys_rename is also overridden because the client-side kernel emulates it
+    as metadata put/delete, bypassing server-side post-rename hooks.
+    """
+    import types
+
+    def _coerce_bytes(result: Any) -> bytes:
+        if isinstance(result, bytes):
+            return result
+        if isinstance(result, bytearray):
+            return bytes(result)
+        if isinstance(result, memoryview):
+            return result.tobytes()
+        if isinstance(result, str):
+            return result.encode("utf-8")
+        return bytes(result)
+
+    def _write_params(
+        path: str,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        if isinstance(buf, str):
+            buf = buf.encode("utf-8")
+        if count is not None:
+            buf = buf[:count]
+        params: dict[str, Any] = {"path": path, "buf": buf}
+        if offset:
+            params["offset"] = offset
+        return params
+
+    def _ensure_capability(_self: Any, path: str, capability: str) -> None:
+        from nexus.contracts.exceptions import RemoteCapabilityUnsupportedError
+        from nexus.grpc.capability_discovery import capability_for_path
+
+        capabilities = getattr(_self, "capabilities", None)
+        allowed = capability_for_path(capabilities, path, capability)
+        if allowed is False:
+            raise RemoteCapabilityUnsupportedError(capability, path=path)
+
+    def _remote_sys_read(
+        _self: Any,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: Any = None,  # noqa: ARG001
+    ) -> bytes:
+        # NexusFS methods are sync (Phase 7). transport calls are blocking gRPC.
+        # Use generic Call for both full and range reads so the server applies
+        # the same auth, zone scoping, and permission hooks as HTTP RPC.
+        params: dict[str, Any] = {"path": path}
+        if count is not None:
+            params["count"] = count
+        if offset:
+            params["offset"] = offset
+        result = transport.call_rpc("sys_read", params)
+        return _coerce_bytes(result)
+
+    def _remote_sys_write(
+        _self: Any,
+        path: str,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: Any = None,  # noqa: ARG001
+    ) -> dict[str, Any]:
+        _ensure_capability(_self, path, "write")
+        return cast(
+            dict[str, Any],
+            transport.call_rpc("sys_write", _write_params(path, buf, count=count, offset=offset)),
+        )
+
+    def _remote_sys_stat(
+        _self: Any,
+        path: str,
+        *,
+        context: Any = None,  # noqa: ARG001
+        **_: Any,
+    ) -> dict[str, Any] | None:
+        return cast(dict[str, Any] | None, transport.call_rpc("sys_stat", {"path": path}))
+
+    def _remote_write(
+        _self: Any,
+        path: str,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: Any = None,  # noqa: ARG001
+        ttl: float | None = None,  # noqa: ARG001
+    ) -> dict[str, Any]:
+        _ensure_capability(_self, path, "write")
+        return cast(
+            dict[str, Any],
+            transport.call_rpc("write", _write_params(path, buf, count=count, offset=offset)),
+        )
+
+    def _remote_sys_rename(
+        _self: Any,
+        old_path: str,
+        new_path: str,
+        *,
+        force: bool = False,
+        **_: Any,
+    ) -> dict[str, Any]:
+        _ensure_capability(_self, old_path, "rename")
+        _ensure_capability(_self, new_path, "rename")
+        transport.call_rpc(
+            "sys_rename", {"old_path": old_path, "new_path": new_path, "force": force}
+        )
+        return {}
+
+    def _remote_sys_unlink(
+        _self: Any,
+        path: str,
+        *,
+        recursive: bool = False,
+        context: Any = None,  # noqa: ARG001
+    ) -> dict[str, Any]:
+        _ensure_capability(_self, path, "unlink")
+        return cast(
+            dict[str, Any],
+            transport.call_rpc("sys_unlink", {"path": path, "recursive": recursive}),
+        )
+
+    def _remote_mkdir(
+        _self: Any,
+        path: str,
+        parents: bool = True,
+        exist_ok: bool = True,
+        *,
+        context: Any = None,  # noqa: ARG001
+    ) -> None:
+        _ensure_capability(_self, path, "mkdir")
+        transport.call_rpc("mkdir", {"path": path, "parents": parents, "exist_ok": exist_ok})
+
+    def _remote_rmdir(
+        _self: Any,
+        path: str,
+        recursive: bool = True,
+        context: Any = None,  # noqa: ARG001
+    ) -> None:
+        _ensure_capability(_self, path, "rmdir")
+        transport.call_rpc("rmdir", {"path": path, "recursive": recursive})
+
+    def _remote_sys_readdir(
+        _self: Any,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        *,
+        context: Any = None,  # noqa: ARG001
+        limit: int | None = None,
+        cursor: str | None = None,
+        **_: Any,
+    ) -> Any:
+        # The in-memory Redb metastore is empty in REMOTE profile, so
+        # sys_readdir returns [] for all paths. Forward to server via RPC.
+        params: dict[str, Any] = {"path": path, "recursive": recursive, "details": details}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        result: Any = transport.call_rpc("sys_readdir", params)
+        if isinstance(result, dict):
+            if limit is not None:
+                # Paginated call: convert RPC envelope to PaginatedResult so
+                # callers get the same contract as the local kernel.
+                from nexus.core.pagination import PaginatedResult
+
+                return PaginatedResult(
+                    items=result.get("files", []),
+                    next_cursor=result.get("next_cursor"),
+                    has_more=result.get("has_more", False),
+                    total_count=result.get("total_count"),
+                )
+            return result.get("files", [])
+        return result if isinstance(result, list) else []
+
+    cast(Any, nfs).sys_read = types.MethodType(_remote_sys_read, nfs)
+    cast(Any, nfs).sys_write = types.MethodType(_remote_sys_write, nfs)
+    cast(Any, nfs).sys_stat = types.MethodType(_remote_sys_stat, nfs)
+    cast(Any, nfs).write = types.MethodType(_remote_write, nfs)
+    cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)
+    cast(Any, nfs).sys_unlink = types.MethodType(_remote_sys_unlink, nfs)
+    cast(Any, nfs).mkdir = types.MethodType(_remote_mkdir, nfs)
+    cast(Any, nfs).rmdir = types.MethodType(_remote_rmdir, nfs)
+    cast(Any, nfs).sys_readdir = types.MethodType(_remote_sys_readdir, nfs)
 
 
 def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
-    """Wire RemoteServiceProxy instances as all service attributes.
+    """Wire RemoteServiceProxy instances via coordinator.enlist().
 
     Like ``mount -t nfs``: fills VFS service slots with RPC forwarders
     instead of local service implementations.
 
-    Called by ``connect(mode="remote")`` after NexusFS construction.
+    Called by ``connect(profile="remote")`` after NexusFS construction.
+
+    Issue #1708: Coordinator is always created (BLM=None for REMOTE).
+    Single entry point — no fallback to register_wired_services().
 
     Args:
         nfs: The NexusFS instance to wire services onto.
@@ -75,14 +249,19 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
 
     proxy = RemoteServiceProxy(call_rpc, service_name="universal")
 
-    # Fill all wired service slots via _bind_wired_services (dict path)
-    wired_dict: dict[str, Any] = dict.fromkeys(_WIRED_FIELDS, proxy)
-    nfs._bind_wired_services(wired_dict)
+    # Issue #1708: ServiceRegistry now has integrated lifecycle.
+    # REMOTE profile: no BLM needed.
 
-    # BrickServices field not covered by WiredServices
-    nfs.version_service = proxy
+    # Enlist all canonical services via kernel (Issue #1708)
+    from nexus.factory.service_routing import _CANONICAL_NAMES, enlist_wired_services
+
+    wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
+    enlist_wired_services(nfs, wired_dict)
+
+    # version_service — enlist into ServiceRegistry
+    nfs.sys_setattr("/__sys__/services/version_service", service=proxy)
 
     logger.info(
         "REMOTE profile: wired %d service slots with RPC forwarders (kernel runs naturally)",
-        len(_WIRED_FIELDS) + 1,
+        len(_CANONICAL_NAMES) + 1,
     )

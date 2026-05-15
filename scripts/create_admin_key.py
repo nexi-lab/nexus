@@ -14,8 +14,6 @@ Output:
     Prints "API Key: <key>" on success
 """
 
-import hashlib
-import hmac
 import os
 import sys
 from datetime import UTC, datetime, timedelta
@@ -31,7 +29,8 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
 from nexus.bricks.rebac.entity_registry import EntityRegistry  # noqa: E402
-from nexus.storage.models import APIKeyModel  # noqa: E402
+from nexus.storage.models import APIKeyModel, APIKeyZoneModel  # noqa: E402
+from nexus.storage.zone_bootstrap import ensure_root_zone  # noqa: E402
 
 
 def create_admin_key(
@@ -39,7 +38,7 @@ def create_admin_key(
     admin_user: str,
     custom_key: str | None = None,
     skip_permissions: bool = False,
-    zone_id: str = "default",
+    zone_id: str = "root",
 ) -> tuple[str, bool]:
     """
     Create or register admin API key.
@@ -49,7 +48,7 @@ def create_admin_key(
         admin_user: Admin user ID
         custom_key: Optional custom API key to register (if None, generates new one)
         skip_permissions: If True, skip entity registry registration
-        zone_id: Zone ID (default: "default")
+        zone_id: Zone ID (default: "root")
 
     Returns:
         Tuple of (api_key, success)
@@ -57,6 +56,7 @@ def create_admin_key(
     try:
         engine = create_engine(database_url)
         SessionFactory = sessionmaker(bind=engine)
+        ensure_root_zone(SessionFactory)
 
         # Register user in entity registry (for agent permission inheritance)
         # Skip if NEXUS_SKIP_PERMISSIONS is set to true
@@ -80,18 +80,26 @@ def create_admin_key(
 
             if custom_key:
                 # Use custom API key from environment
-                # Hash the key for storage (same as DatabaseAPIKeyAuth does)
-                # Uses HMAC-SHA256 with salt (same as nexus.server.auth.database_key)
-                HMAC_SALT = "nexus-api-key-v1"
-                key_hash = hmac.new(
-                    HMAC_SALT.encode("utf-8"), custom_key.encode("utf-8"), hashlib.sha256
-                ).hexdigest()
+                key_hash = DatabaseAPIKeyAuth._hash_key(custom_key)
 
                 # Check if this specific key already exists (by hash)
                 existing = session.execute(
                     select(APIKeyModel).where(APIKeyModel.key_hash == key_hash)
                 ).scalar_one_or_none()
                 if existing:
+                    if existing.zone_id is not None:
+                        existing.zone_id = None
+                    if zone_id:
+                        zone_row = session.get(APIKeyZoneModel, (existing.key_id, zone_id))
+                        if zone_row is None:
+                            session.add(
+                                APIKeyZoneModel(
+                                    key_id=existing.key_id,
+                                    zone_id=zone_id,
+                                    permissions="rw",
+                                )
+                            )
+                    session.commit()
                     print(f"API Key: {custom_key}", file=sys.stdout)
                     print(
                         f"Custom API key already registered for user: {admin_user}",
@@ -104,7 +112,7 @@ def create_admin_key(
                         user_id=admin_user,
                         key_hash=key_hash,
                         name="Admin key (from environment)",
-                        zone_id=zone_id,
+                        zone_id=None,
                         is_admin=1,  # PostgreSQL expects integer, not boolean
                         subject_type="user",
                         subject_id=admin_user,
@@ -114,6 +122,15 @@ def create_admin_key(
                         expires_at=expires_at,
                     )
                     session.add(api_key)
+                    session.flush()
+                    if zone_id:
+                        session.add(
+                            APIKeyZoneModel(
+                                key_id=api_key.key_id,
+                                zone_id=zone_id,
+                                permissions="rw",
+                            )
+                        )
                     session.commit()
 
                     print(f"API Key: {custom_key}", file=sys.stdout)

@@ -17,8 +17,8 @@ import pytest
 from sqlalchemy import create_engine, text
 
 import nexus.bricks.rebac.rebac_tracing as _rebac_tracing_mod
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.manager import (
-    ConsistencyLevel,
     EnhancedReBACManager,
 )
 from nexus.bricks.rebac.rebac_tracing import (
@@ -37,6 +37,7 @@ from nexus.bricks.rebac.rebac_tracing import (
     reset_tracer,
 )
 from nexus.storage.models import Base
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Helpers — in-memory span exporter compatible with all OTel SDK versions
@@ -112,6 +113,7 @@ def manager(engine):
         enable_graph_limits=True,
         enable_leopard=True,
         enable_tiger_cache=False,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield mgr
     mgr.close()
@@ -194,7 +196,7 @@ class TestRealPermissionCheckSpans:
         assert attrs[ATTR_OBJECT_TYPE] == "file"
         assert attrs[ATTR_OBJECT_ID] == "/doc.txt"
         assert attrs[ATTR_ZONE_ID] == "test_zone"
-        assert attrs[ATTR_CONSISTENCY] == "eventual"
+        assert attrs[ATTR_CONSISTENCY] == "cached"
         assert attrs[ATTR_DECISION] == "ALLOW"
         assert ATTR_DECISION_TIME_MS in attrs
 
@@ -215,6 +217,7 @@ class TestRealPermissionCheckSpans:
             enable_graph_limits=True,
             enable_leopard=True,
             enable_tiger_cache=False,
+            namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
         )
         try:
             # Check permission on non-existent relation (cache miss → graph traversal)
@@ -223,7 +226,6 @@ class TestRealPermissionCheckSpans:
                 permission="read",
                 object=("file", "/missing.txt"),
                 zone_id="test_zone",
-                consistency=ConsistencyLevel.STRONG,  # Force fresh compute
             )
             assert result is False
 

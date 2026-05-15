@@ -263,7 +263,9 @@ class ZoneAwareTraversal:
                         "queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries
                     )
 
-                related_objects = self.find_related_objects(obj, tupleset_relation, zone_id)
+                related_objects = self.find_related_objects(
+                    obj, tupleset_relation, zone_id, context
+                )
                 logger.debug(
                     f"{indent}│ ├─[TTU-PARENT] Found {len(related_objects)} objects via '{tupleset_relation}': {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
                 )
@@ -299,7 +301,7 @@ class ZoneAwareTraversal:
                         "queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries
                     )
 
-                related_subjects = self.find_subjects(obj, tupleset_relation, zone_id)
+                related_subjects = self.find_subjects(obj, tupleset_relation, zone_id, context)
                 logger.debug(
                     f"{indent}[depth={depth}]   Pattern 2 (group): Found {len(related_subjects)} subjects with '{tupleset_relation}' on obj: {[f'{s.entity_type}:{s.entity_id}' for s in related_subjects]}"
                 )
@@ -400,31 +402,12 @@ class ZoneAwareTraversal:
             row = conn.execute(stmt).first()
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("[DIRECT-CHECK] Query result row: %s", row)
-            if row:
-                # Tuple exists - check conditions if context provided
-                conditions_json = row.conditions
-
-                if conditions_json:
-                    try:
-                        conditions = (
-                            json.loads(conditions_json)
-                            if isinstance(conditions_json, str)
-                            else conditions_json
-                        )
-                        # Evaluate ABAC conditions
-                        if not self._evaluate_conditions(conditions, context):
-                            pass  # Continue to check userset-as-subject
-                        else:
-                            return True  # Conditions satisfied
-                    except (json.JSONDecodeError, TypeError):
-                        # On parse error, treat as no conditions (allow)
-                        return True
-                else:
-                    return True  # No conditions, allow
+            if row and self._conditions_allow(row.conditions, context):
+                return True
 
             # Cross-zone check for shared-* relations (PR #647, #648)
             if self._zone_manager.is_cross_zone_readable(relation):
-                cross_zone_stmt = select(RT.tuple_id).where(
+                cross_zone_stmt = select(RT.tuple_id, RT.conditions).where(
                     RT.subject_type == subject.entity_type,
                     RT.subject_id == subject.entity_id,
                     RT.relation == relation,
@@ -433,7 +416,12 @@ class ZoneAwareTraversal:
                     RT.subject_relation.is_(None),
                     expires_filter,
                 )
-                if conn.execute(cross_zone_stmt).first():
+                cross_zone_allowed = False
+                for cross_zone_row in conn.execute(cross_zone_stmt):
+                    if self._conditions_allow(cross_zone_row.conditions, context):
+                        cross_zone_allowed = True
+                        break
+                if cross_zone_allowed:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(
                             "Cross-zone share found: %s -> %s -> %s",
@@ -445,20 +433,21 @@ class ZoneAwareTraversal:
 
             # Check for wildcard/public access (*:*) - Issue #1064
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
-                wildcard_stmt = (
-                    select(RT.tuple_id)
-                    .where(
-                        RT.subject_type == WILDCARD_SUBJECT[0],
-                        RT.subject_id == WILDCARD_SUBJECT[1],
-                        RT.relation == relation,
-                        RT.object_type == obj.entity_type,
-                        RT.object_id == obj.entity_id,
-                        RT.subject_relation.is_(None),
-                        expires_filter,
-                    )
-                    .limit(1)
+                wildcard_stmt = select(RT.tuple_id, RT.conditions).where(
+                    RT.subject_type == WILDCARD_SUBJECT[0],
+                    RT.subject_id == WILDCARD_SUBJECT[1],
+                    RT.relation == relation,
+                    RT.object_type == obj.entity_type,
+                    RT.object_id == obj.entity_id,
+                    RT.subject_relation.is_(None),
+                    expires_filter,
                 )
-                if conn.execute(wildcard_stmt).first():
+                wildcard_allowed = False
+                for wildcard_row in conn.execute(wildcard_stmt):
+                    if self._conditions_allow(wildcard_row.conditions, context):
+                        wildcard_allowed = True
+                        break
+                if wildcard_allowed:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(
                             "[DIRECT-CHECK] Wildcard access found: *:* -> %s -> %s",
@@ -468,7 +457,12 @@ class ZoneAwareTraversal:
                     return True
 
             # Check for userset-as-subject tuple (e.g., group#member)
-            userset_stmt = select(RT.subject_type, RT.subject_id, RT.subject_relation).where(
+            userset_stmt = select(
+                RT.subject_type,
+                RT.subject_id,
+                RT.subject_relation,
+                RT.conditions,
+            ).where(
                 RT.relation == relation,
                 RT.object_type == obj.entity_type,
                 RT.object_id == obj.entity_id,
@@ -479,6 +473,9 @@ class ZoneAwareTraversal:
 
             # BUGFIX (Issue #1): Use recursive ReBAC evaluation instead of direct SQL
             for userset_row in conn.execute(userset_stmt):
+                if not self._conditions_allow(userset_row.conditions, context):
+                    continue
+
                 userset_type = userset_row.subject_type
                 userset_id = userset_row.subject_id
                 userset_relation = userset_row.subject_relation
@@ -507,11 +504,31 @@ class ZoneAwareTraversal:
 
             return False
 
+    def _conditions_allow(self, conditions_json: Any, context: dict[str, Any] | None) -> bool:
+        """Return True when tuple conditions are empty or satisfied."""
+        if not conditions_json:
+            return True
+
+        try:
+            conditions = (
+                json.loads(conditions_json) if isinstance(conditions_json, str) else conditions_json
+            )
+        except (json.JSONDecodeError, TypeError):
+            return True
+
+        return self._evaluate_conditions(conditions, context)
+
     # ------------------------------------------------------------------
     # Zone-scoped tuple queries
     # ------------------------------------------------------------------
 
-    def find_related_objects(self, obj: Entity, relation: str, zone_id: str) -> list[Entity]:
+    def find_related_objects(
+        self,
+        obj: Entity,
+        relation: str,
+        zone_id: str,
+        context: dict[str, Any] | None = None,
+    ) -> list[Entity]:
         """Find all objects related to obj via relation (zone-scoped).
 
         For parent inheritance: (child, relation, parent) - returns parents.
@@ -537,7 +554,7 @@ class ZoneAwareTraversal:
             return []
 
         now = datetime.now(UTC)
-        stmt = select(RT.object_type, RT.object_id).where(
+        stmt = select(RT.object_type, RT.object_id, RT.conditions).where(
             RT.subject_type == obj.entity_type,
             RT.subject_id == obj.entity_id,
             RT.relation == relation,
@@ -546,14 +563,24 @@ class ZoneAwareTraversal:
         )
 
         with self._engine.connect() as conn:
-            results = [Entity(row.object_type, row.object_id) for row in conn.execute(stmt)]
+            results = [
+                Entity(row.object_type, row.object_id)
+                for row in conn.execute(stmt)
+                if self._conditions_allow(row.conditions, context)
+            ]
 
             logger.debug(
                 f"find_related_objects: Found {len(results)} objects for {obj} via '{relation}': {[str(r) for r in results]}"
             )
             return results
 
-    def find_subjects(self, obj: Entity, relation: str, zone_id: str) -> list[Entity]:
+    def find_subjects(
+        self,
+        obj: Entity,
+        relation: str,
+        zone_id: str,
+        context: dict[str, Any] | None = None,
+    ) -> list[Entity]:
         """Find all subjects that have a relation to obj (zone-scoped).
 
         For group-style tupleToUserset: (subject, relation, obj) - returns subjects.
@@ -569,7 +596,7 @@ class ZoneAwareTraversal:
         logger.debug(f"find_subjects: Looking for (?, '{relation}', {obj})")
 
         now = datetime.now(UTC)
-        stmt = select(RT.subject_type, RT.subject_id).where(
+        stmt = select(RT.subject_type, RT.subject_id, RT.conditions).where(
             RT.object_type == obj.entity_type,
             RT.object_id == obj.entity_id,
             RT.relation == relation,
@@ -578,7 +605,11 @@ class ZoneAwareTraversal:
         )
 
         with self._engine.connect() as conn:
-            results = [Entity(row.subject_type, row.subject_id) for row in conn.execute(stmt)]
+            results = [
+                Entity(row.subject_type, row.subject_id)
+                for row in conn.execute(stmt)
+                if self._conditions_allow(row.conditions, context)
+            ]
 
             logger.debug(
                 f"find_subjects: Found {len(results)} subjects for (?, '{relation}', {obj}): {[str(r) for r in results]}"

@@ -12,45 +12,44 @@ Pattern follows grep_fast.py.
 
 import logging
 import os
-from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
+# RUST_FALLBACK: trigram_fast — all optional Rust symbols come through
+# nexus._rust_compat so absent/stale binaries disable this accelerator
+# without breaking module imports.
+from nexus._rust_compat import (
+    build_trigram_index as _build_trigram_index,
+)
+from nexus._rust_compat import (
+    build_trigram_index_from_entries as _build_trigram_index_from_entries,
+)
+from nexus._rust_compat import (
+    invalidate_trigram_cache as _invalidate_trigram_cache,
+)
+from nexus._rust_compat import (
+    trigram_grep as _trigram_grep,
+)
+from nexus._rust_compat import (
+    trigram_index_stats as _trigram_index_stats,
+)
+from nexus._rust_compat import (
+    trigram_search_candidates as _trigram_search_candidates,
+)
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
-# Try to import Rust extension
-TRIGRAM_AVAILABLE = False
-_build_trigram_index: Callable[..., None] | None = None
-_build_trigram_index_from_entries: Callable[..., None] | None = None
-_trigram_grep: Callable[..., list[dict[str, Any]]] | None = None
-_trigram_search_candidates: Callable[..., list[str]] | None = None
-_trigram_index_stats: Callable[..., dict[str, Any]] | None = None
-_invalidate_trigram_cache: Callable[..., None] | None = None
-
-try:
-    from nexus_fast import (  # type: ignore[no-redef]
-        build_trigram_index as _build_trigram_index,
+TRIGRAM_AVAILABLE = all(
+    symbol is not None
+    for symbol in (
+        _build_trigram_index,
+        _build_trigram_index_from_entries,
+        _invalidate_trigram_cache,
+        _trigram_grep,
+        _trigram_index_stats,
+        _trigram_search_candidates,
     )
-    from nexus_fast import (  # type: ignore[no-redef]
-        build_trigram_index_from_entries as _build_trigram_index_from_entries,
-    )
-    from nexus_fast import (  # type: ignore[no-redef]
-        invalidate_trigram_cache as _invalidate_trigram_cache,
-    )
-    from nexus_fast import (  # type: ignore[no-redef]
-        trigram_grep as _trigram_grep,
-    )
-    from nexus_fast import (  # type: ignore[no-redef]
-        trigram_index_stats as _trigram_index_stats,
-    )
-    from nexus_fast import (  # type: ignore[no-redef]
-        trigram_search_candidates as _trigram_search_candidates,
-    )
-
-    TRIGRAM_AVAILABLE = True
-except ImportError:
-    pass
+)
 
 
 def is_available() -> bool:
@@ -205,7 +204,7 @@ def search_candidates(
         return None
 
     try:
-        return _trigram_search_candidates(index_path, pattern, ignore_case)
+        return cast(list[str], _trigram_search_candidates(index_path, pattern, ignore_case))
     except (OSError, ValueError, RuntimeError):
         logger.warning(
             "Trigram candidate search failed for pattern %r on %s",

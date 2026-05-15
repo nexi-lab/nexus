@@ -37,6 +37,7 @@ class NexusAppState:
     auth_provider: Any = None
     data_dir: str | None = None
     brick_container: Any = None
+    zone_registry: Any = None
 
     # === Deployment config ===
     deployment_profile: str = "full"
@@ -46,8 +47,6 @@ class NexusAppState:
     features_info: Any = None
 
     # === Flattened from NexusFS (replaces private attr access) ===
-    system_services: Any = None
-    brick_services: Any = None
     rebac_manager: Any = None
     entity_registry: Any = None
     namespace_manager: Any = None
@@ -56,10 +55,8 @@ class NexusAppState:
     permission_enforcer: Any = None
     record_store: Any = None
 
-    # === Flattened from SystemServices ===
+    # === From ServiceRegistry ===
     observability_subsystem: Any = None
-    brick_lifecycle_manager: Any = None
-    brick_reconciler: Any = None
     eviction_manager: Any = None
 
     # === Database sessions ===
@@ -72,21 +69,20 @@ class NexusAppState:
     observability_registry: Any = None
 
     # === Services (initialized to None, set during lifespan) ===
-    agent_registry: Any = None
     agent_warmup_service: Any = None
-    async_agent_registry: Any = None
     async_rebac_manager: Any = None
     key_service: Any = None
     credential_service: Any = None
     scheduler_service: Any = None
     task_runner: Any = None
+    task_manager_service: Any = None
+    task_write_hook: Any = None
+    task_dispatch_consumer: Any = None
     workflow_engine: Any = None
     workflow_dispatch: Any = None
-    rlm_service: Any = None
     sandbox_auth_service: Any = None
     agent_event_log: Any = None
     transactional_snapshot_service: Any = None
-    memory_service: Any = None
 
     # === Realtime ===
     subscription_manager: Any = None
@@ -96,13 +92,10 @@ class NexusAppState:
     cache_brick: Any = None
     websocket_manager: Any = None
     reactive_subscription_manager: Any = None
-    write_back_service: Any = None
-    event_log: Any = None
     exporter_registry: Any = None
 
     # === Permissions ===
     rebac_circuit_breaker: Any = None
-    manifest_resolver: Any = None
 
     # === Governance (Issue #2129) ===
     governance_anomaly_service: Any = None
@@ -111,20 +104,25 @@ class NexusAppState:
     governance_response_service: Any = None
 
     # === Services (brick-sourced) ===
-    reputation_service: Any = None
     delegation_service: Any = None
     chunked_upload_service: Any = None
 
     # === IPC ===
-    ipc_storage_driver: Any = None
+    ipc_nexus_fs: Any = None
     ipc_provisioner: Any = None
     ipc_sweeper: Any = None
 
-    # === A2A ===
-    a2a_task_manager: Any = None
-
     # === gRPC server (#1249) ===
     grpc_server: Any = None
+
+    # === Approvals brick (Issue #3790) ===
+    # ApprovalsStack instance from nexus.bricks.approvals.bootstrap.
+    # When NEXUS_APPROVALS_ENABLED is unset (default), .service and .gate are None.
+    approvals_stack: Any = None
+    # PolicyGate instance OR None when approvals are disabled. The MCP egress
+    # hook (Task 18) and hub zone-access hook (Task 19) read this and treat
+    # `None` as "approvals disabled" by contract.
+    policy_gate: Any = None
 
     # === Exposed methods ===
     exposed_methods: dict[str, Any] = field(default_factory=dict)
@@ -180,18 +178,22 @@ def init_app_state(app: "FastAPI", nexus_fs: Any = None, **overrides: Any) -> No
 
 
 def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
-    """Flatten NexusFS private attrs onto app.state for typed access."""
-    # Direct NexusFS attrs
-    app.state.system_services = getattr(nexus_fs, "_system_services", None)
-    app.state.brick_services = getattr(nexus_fs, "_brick_services", None)
-    app.state.event_bus = getattr(nexus_fs, "_event_bus", None)
-    app.state.write_observer = getattr(nexus_fs, "_write_observer", None)
-    app.state.permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
+    """Flatten NexusFS internals onto app.state for typed access.
 
-    # Flatten from SystemServices
-    _sys = app.state.system_services
-    if _sys is not None:
-        app.state.observability_subsystem = getattr(_sys, "observability_subsystem", None)
-        app.state.brick_lifecycle_manager = getattr(_sys, "brick_lifecycle_manager", None)
-        app.state.brick_reconciler = getattr(_sys, "brick_reconciler", None)
-        app.state.eviction_manager = getattr(_sys, "eviction_manager", None)
+    All services accessed via ServiceRegistry.
+    """
+    # Direct NexusFS attrs
+    app.state.permission_enforcer = (
+        nexus_fs.service("permission_enforcer") if hasattr(nexus_fs, "service") else None
+    )
+
+    # Helper: safe service() call (handles mocks without service())
+    def _svc(name: str) -> Any:
+        svc_fn = getattr(nexus_fs, "service", None)
+        return svc_fn(name) if svc_fn is not None else None
+
+    # All from ServiceRegistry
+    app.state.event_bus = _svc("event_bus")
+    app.state.write_observer = _svc("write_observer")
+    app.state.observability_subsystem = _svc("observability_subsystem")
+    app.state.eviction_manager = _svc("eviction_manager")

@@ -1,14 +1,16 @@
 """
-Nexus: AI-Native Distributed Filesystem Architecture
+Nexus — filesystem/context plane (Rust kernel).
 
-Nexus is a complete AI agent infrastructure platform that combines distributed
-unified filesystem, self-evolving agent memory, intelligent document processing,
-and seamless deployment across three modes.
+Nexus combines a VFS-style filesystem interface with deployment-aware context,
+storage, and service composition for agent systems.
 
-Three Deployment Modes, One Codebase:
-- Standalone: Single-node redb, no Raft (like SQLite) — default mode
-- Remote: NexusFS with RemoteBackend + RemoteServiceProxy (thin HTTP client)
-- Federation: ZoneManager + Raft consensus for multi-node clusters
+Deployment profiles control which bricks are enabled:
+- slim: Bare VFS, kernel only
+- embedded: Eventlog only
+- lite: Core services
+- full: All bricks (default)
+- cloud: All bricks + federation
+- remote: Thin gRPC client (RemoteBackend + RemoteServiceProxy)
 
 SDK vs CLI:
 -----------
@@ -16,7 +18,7 @@ For programmatic access (building tools, libraries, integrations), use the SDK:
 
     from nexus.sdk import connect
 
-    nx = connect()
+    nx = connect(config={"profile": "embedded", "data_dir": "./nexus-data"})
     nx.sys_write("/workspace/data.txt", b"Hello World")
     content = nx.sys_read("/workspace/data.txt")
 
@@ -37,15 +39,16 @@ New projects should use nexus.sdk for a cleaner API.
 PERFORMANCE NOTE:
 -----------------
 This module uses lazy imports to minimize startup time. Heavy modules like
-nexus.bricks.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
+nexus.core.nexus_fs and nexus.remote are only loaded when
 first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
 
 import logging
 import os as _os
+import threading as _threading
 from typing import TYPE_CHECKING, Any, cast
 
-__version__ = "0.7.2.dev0"  # bump to trigger CI quality checks
+__version__ = "0.10.0"  # release version
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 
@@ -53,25 +56,16 @@ __license__ = "Apache-2.0"
 # LAZY IMPORTS for performance optimization
 # =============================================================================
 # These modules are imported lazily via __getattr__ to avoid loading heavy
-# dependencies (skills, nexus_fs, remote) on module import.
+# dependencies (nexus_fs, remote) on module import.
 # This significantly speeds up CLI startup and FUSE mount initialization.
 
 if TYPE_CHECKING:
     # Type hints for IDE support - these don't trigger actual imports
     from pathlib import Path
 
-    from nexus.backends.backend import Backend
-    from nexus.backends.gcs import GCSBackend
-    from nexus.backends.local import LocalBackend
-    from nexus.bricks.skills.exporter import SkillExporter, SkillExportError
-    from nexus.bricks.skills.manager import SkillManager, SkillManagerError
-    from nexus.bricks.skills.models import Skill, SkillMetadata
-    from nexus.bricks.skills.parser import SkillParseError, SkillParser
-    from nexus.bricks.skills.registry import (
-        SkillDependencyError,
-        SkillNotFoundError,
-        SkillRegistry,
-    )
+    from nexus.backends.base.backend import Backend
+    from nexus.backends.storage.cas_gcs import CASGCSBackend as GCSBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.config import NexusConfig, load_config
     from nexus.contracts.exceptions import (
         BackendError,
@@ -81,8 +75,6 @@ if TYPE_CHECKING:
         NexusFileNotFoundError,
         NexusPermissionError,
     )
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as NexusFilesystem
-    from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
 
 # =============================================================================
@@ -97,8 +89,28 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
 )
 
+# Codex review R5 (high): module-level lock that serializes
+# ``connect()``'s env-mutation + factory-boot region. ``connect()``
+# briefly writes ``NEXUS_PROFILE`` + ``NEXUS_ENABLE_VECTOR_SEARCH``
+# into ``os.environ`` so ``_wired.py`` can read them, then restores
+# them in ``finally``. Without this lock, two threads can race: thread
+# B observes thread A's synthetic env as "operator-set" and skips its
+# own propagation, or thread A's restore kicks in while thread B is
+# still booting against the wrong values. ``RLock`` so test harnesses
+# that recursively call connect() (rare but possible) don't deadlock.
+_CONNECT_ENV_LOCK = _threading.RLock()
+
+
 # All mutable state (data, metastore, record store, etc.) lives under this directory.
-NEXUS_STATE_DIR = _os.path.expanduser("~/.nexus")
+# Resolved lazily so HOME changes after import (e.g., per-agent isolation) take effect.
+# Override via NEXUS_STATE_DIR env var. Access via ``nexus.NEXUS_STATE_DIR`` (routed
+# through ``__getattr__``) or call ``_resolve_state_dir()`` directly inside this module.
+def _resolve_state_dir() -> str:
+    override = _os.environ.get("NEXUS_STATE_DIR")
+    if override:
+        return override
+    return _os.path.expanduser("~/.nexus")
+
 
 logger = logging.getLogger(__name__)
 
@@ -108,27 +120,17 @@ _lazy_imports_cache: dict[str, Any] = {}
 # Mapping of attribute names to their import paths
 _LAZY_IMPORTS = {
     # Backends
-    "Backend": ("nexus.backends.backend", "Backend"),
-    "LocalBackend": ("nexus.backends.local", "LocalBackend"),
-    "GCSBackend": ("nexus.backends.gcs", "GCSBackend"),
+    "Backend": ("nexus.backends.base.backend", "Backend"),
+    "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
+    "GCSBackend": ("nexus.backends.storage.cas_gcs", "CASGCSBackend"),
     # Config
     "NexusConfig": ("nexus.config", "NexusConfig"),
     "load_config": ("nexus.config", "load_config"),
     # Core - heavy
-    "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
-    # Skills - very heavy
-    "Skill": ("nexus.bricks.skills.models", "Skill"),
-    "SkillDependencyError": ("nexus.bricks.skills.registry", "SkillDependencyError"),
-    "SkillExporter": ("nexus.bricks.skills.exporter", "SkillExporter"),
-    "SkillExportError": ("nexus.bricks.skills.exporter", "SkillExportError"),
-    "SkillManager": ("nexus.bricks.skills.manager", "SkillManager"),
-    "SkillManagerError": ("nexus.bricks.skills.manager", "SkillManagerError"),
-    "SkillMetadata": ("nexus.bricks.skills.models", "SkillMetadata"),
-    "SkillNotFoundError": ("nexus.bricks.skills.registry", "SkillNotFoundError"),
-    "SkillParseError": ("nexus.bricks.skills.parser", "SkillParseError"),
-    "SkillParser": ("nexus.bricks.skills.parser", "SkillParser"),
-    "SkillRegistry": ("nexus.bricks.skills.registry", "SkillRegistry"),
+    # Slim package top-level API (nexus.mount / nexus.mount_sync)
+    "mount": ("nexus.fs", "mount"),
+    "mount_sync": ("nexus.fs", "mount_sync"),
 }
 
 
@@ -157,21 +159,117 @@ def __getattr__(name: str) -> Any:
     if name == "connect":
         return connect
 
+    # Dynamic state dir — resolved on every access so HOME / NEXUS_STATE_DIR
+    # changes after import are honored (per-agent HOME isolation, Koi hosts).
+    if name == "NEXUS_STATE_DIR":
+        return _resolve_state_dir()
+
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
+
+
+def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
+    """Return a ``PyKernel`` with the redb metastore opened (or in-memory).
+
+    Replaces the historical ``_open_local_metastore`` factory which used
+    to wrap the kernel in a ``RustMetastoreProxy``. After the W3 SSOT
+    cleanup the kernel handle is the SSOT — every caller used to
+    immediately reach ``proxy._rust_kernel`` anyway, so we hand back the
+    kernel directly.
+
+    Args:
+        metadata_path: Filesystem path for the redb store. ``":memory:"``
+            is the SQLite-style sentinel for "no on-disk file"; the
+            kernel keeps its boot-time tempdir-backed ``LocalMetaStore``
+            so the in-memory mode still has a working metastore for the
+            session.
+        kernel: Optional pre-constructed ``PyKernel``. When ``None``, a
+            fresh kernel is built and federation/transport wiring is
+            installed.
+
+    Returns:
+        A ``PyKernel`` instance ready for ``kernel.metastore_*``
+        operations.
+    """
+    from pathlib import Path
+
+    # ``":memory:"`` is the SQLite-style sentinel for "no on-disk file —
+    # in-memory only".  Skip ``Path`` construction in that case: on
+    # Windows the colon is parsed as a drive separator, so
+    # ``Path(":memory:").with_suffix(".redb")`` yields the syntactically
+    # invalid ``:memory:.redb`` and any later ``str(_redb_path)`` raises
+    # ``IOError`` from redb.  ``Kernel::new()`` wires a tempdir-backed
+    # LocalMetaStore as the boot-time default, so an in-memory mode
+    # works without any path at all.
+    _redb_path = None if metadata_path == ":memory:" else Path(metadata_path).with_suffix(".redb")
+
+    if kernel is None:
+        from nexus_runtime import PyKernel as _Kernel
+
+        kernel = _Kernel()
+        # Start write-buffer background flusher (production only).
+        kernel.start_write_buffer_flusher(250)
+        # Phase 4 (full): drain the federation init's blob-fetcher slot
+        # + install the real `PeerBlobClient` (replaces the kernel's
+        # boot-time Noop default).  Idempotent — no-op if the slot
+        # was never stashed (federation disabled).
+        # Skip during pytest — xdist workers compete for the same gRPC
+        # port causing hangs and preventing clean process exit.
+        import os as _os_wiring
+
+        if "pytest" not in __import__("sys").modules:
+            try:
+                import nexus_runtime as _nk
+
+                # Federation wiring runs FIRST so init_from_env can stash the
+                # raft-side `BlobFetcherSlot` into the kernel; the transport
+                # install hook below drains that slot and installs the real
+                # fetcher.  Reverse order would leave the slot empty when
+                # transport drains, falling back to "blob fetcher not installed".
+                _nk.install_federation_wiring(kernel)
+                _nk.install_transport_wiring(kernel)
+            except Exception as _wiring_exc:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "install_transport_wiring/install_federation_wiring failed "
+                    "(federation peer-blob fetch will fall back to Noop): %s",
+                    _wiring_exc,
+                )
+
+    if _redb_path is None:
+        return kernel
+    try:
+        if _redb_path.exists() or _redb_path.parent.exists():
+            kernel.set_metastore_path(str(_redb_path))
+        return kernel
+    except Exception as e:
+        # An existing on-disk store that we can't open is a hard error:
+        # silently falling back would hide previously written data.
+        if _redb_path.exists():
+            raise RuntimeError(
+                f"set_metastore_path failed for existing {_redb_path}: {e}. "
+                "Refusing to fall back to a different metadata format. "
+                "Rebuild: cd rust/kernel && maturin develop --release"
+            ) from e
+        raise
+
+
+# Backwards-compatible alias — pre-W3b callers imported the old name.
+_open_local_metastore = _open_local_kernel
 
 
 def connect(
     config: "str | Path | dict | NexusConfig | None" = None,
-) -> "NexusFilesystem":
+) -> "NexusFS":
     """
     Connect to Nexus filesystem.
 
     This is the main entry point for using Nexus. It dispatches based on the
-    deployment mode in configuration:
+    deployment profile in configuration:
 
-    - **standalone** (default): Single-node redb, no Raft. Like SQLite.
-    - **remote**: NexusFS with RemoteBackend + RemoteServiceProxy (thin HTTP client).
-    - **federation**: ZoneManager + Raft consensus for multi-node clusters.
+    - **profile="remote"**: Thin gRPC client (RemoteBackend + RemoteServiceProxy).
+    - **All other profiles**: Local NexusFS. Federation (Raft + ZoneManager) is
+      auto-detected based on whether the Rust extensions are importable.
 
     Args:
         config: Configuration source:
@@ -181,127 +279,246 @@ def connect(
             - NexusConfig: Already loaded config
 
     Returns:
-        NexusFilesystem instance (mode-dependent):
-            - remote: Returns NexusFS with RemoteBackend + RemoteServiceProxy
-            - standalone/federation: Returns NexusFS with local backend
-
-        All modes implement the NexusFilesystem interface, ensuring consistent
-        API across deployment modes.
+        NexusFS instance. All profiles implement the NexusFS
+        interface, ensuring consistent API.
 
     Raises:
-        ValueError: If configuration is invalid or mode is unknown
+        ValueError: If configuration is invalid
 
     Examples:
-        Remote mode (production client):
+        Remote profile (production client):
             >>> nx = nexus.connect(config={
-            ...     "mode": "remote",
+            ...     "profile": "remote",
             ...     "url": "http://localhost:2026",
             ...     "api_key": "your-api-key"
             ... })
 
-        Standalone mode (development/testing):
+        Default (development/testing):
             >>> nx = nexus.connect()
             >>> nx.sys_write("/workspace/file.txt", b"Hello World")
 
-        Federation mode (multi-node cluster):
-            >>> # Requires NEXUS_NODE_ID, NEXUS_BIND_ADDR env vars
-            >>> nx = nexus.connect(config={"mode": "federation"})
+        Federation (auto-detected when Rust extensions available):
+            >>> # Requires NEXUS_PEERS, NEXUS_BIND_ADDR env vars
+            >>> nx = nexus.connect(config={"profile": "cloud"})
     """
     import os
     from pathlib import Path
 
-    # Lazy load dependencies
-    from nexus.backends.backend import Backend
-    from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
-    from nexus.core.nexus_fs import NexusFS
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     # Load configuration
     cfg = load_config(config)
 
-    # ── Mode: remote ─────────────────────────────────────────────────
-    if cfg.mode == "remote":
+    # ── Profile: remote ──────────────────────────────────────────────
+    if cfg.profile == "remote":
         from urllib.parse import urlparse
 
         server_url = cfg.url or os.getenv("NEXUS_URL")
         if not server_url:
             raise ValueError(
-                "mode='remote' requires a server URL. "
+                "profile='remote' requires a server URL. "
                 "Set 'url' in config or NEXUS_URL environment variable."
             )
         api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
 
-        # Build gRPC address from NEXUS_URL hostname + NEXUS_GRPC_PORT.
-        grpc_port = int(os.getenv("NEXUS_GRPC_PORT", "2028"))
+        # Build gRPC address from NEXUS_URL hostname + gRPC port.
+        # Port precedence: NEXUS_GRPC_PORT env > nexus.yaml ports.grpc > default 2028
+        _grpc_port_str = os.getenv("NEXUS_GRPC_PORT")
+        if not _grpc_port_str:
+            try:
+                import yaml as _yaml
+
+                _pf = Path("nexus.yaml")
+                if _pf.exists():
+                    with open(_pf) as _f:
+                        _pc = _yaml.safe_load(_f) or {}
+                    _grpc_port_str = str(_pc.get("ports", {}).get("grpc", ""))
+            except Exception:
+                pass
+        grpc_port = int(_grpc_port_str) if _grpc_port_str else 2028
         parsed = urlparse(server_url)
         grpc_address = f"{parsed.hostname}:{grpc_port}"
 
         # Single shared RPCTransport (gRPC channel) for all remote proxies.
         from nexus.remote.rpc_transport import RPCTransport
 
+        # TLS: NEXUS_GRPC_TLS env var overrides all other TLS signals.
+        #   true  → force TLS
+        #   false → force insecure
+        #   unset → fall back to nexus.yaml tls / NEXUS_DATA_DIR auto-detect
+        _tls_config = None
+        _grpc_tls_env = os.getenv("NEXUS_GRPC_TLS", "").lower()
+        _tls_enabled = _grpc_tls_env in ("true", "1", "yes")
+        _tls_disabled = _grpc_tls_env in ("false", "0", "no")
+        _tls_from_config = False  # set when nexus.yaml explicitly enables TLS
+        _data_dir = os.getenv("NEXUS_DATA_DIR")
+        if _data_dir and not _tls_disabled:
+            _tls_enabled = True  # Auto-detect from NEXUS_DATA_DIR (backward compat)
+        if not _data_dir:
+            _project_yaml = Path("nexus.yaml")
+            if _project_yaml.exists():
+                try:
+                    import yaml as _yaml
+
+                    with open(_project_yaml) as _f:
+                        _project_cfg = _yaml.safe_load(_f) or {}
+                    _data_dir = _project_cfg.get("data_dir")
+                    # nexus.yaml tls: only used when env var is unset
+                    if not _grpc_tls_env:
+                        _tls_from_config = bool(_project_cfg.get("tls"))
+                        _tls_enabled = _tls_from_config
+                except Exception:
+                    pass
+        if not _data_dir:
+            _data_dir = getattr(cfg, "data_dir", None)
+
+        if _data_dir and _tls_enabled:
+            from nexus.security.tls.config import ZoneTlsConfig
+
+            # TLS explicitly requested (env var or config) → check both layouts
+            # NEXUS_DATA_DIR auto-detect only → Raft-only (backward compat)
+            _tls_intentional = _grpc_tls_env in ("true", "1", "yes") or _tls_from_config
+            _tls_config = (
+                ZoneTlsConfig.from_data_dir_any(_data_dir)
+                if _tls_intentional
+                else ZoneTlsConfig.from_data_dir(_data_dir)
+            )
+
+        # Fail closed: NEXUS_GRPC_TLS=true but no certs resolved.
+        # As a last resort, check NEXUS_TLS_* env vars — but only when
+        # TLS was explicitly requested, to avoid stale env vars from a
+        # previous session flipping a plaintext stack onto mTLS.
+        _tls_explicit = _grpc_tls_env in ("true", "1", "yes")
+        if _tls_explicit and _tls_config is None and os.getenv("NEXUS_TLS_CERT"):
+            import contextlib
+
+            from nexus.security.tls.config import ZoneTlsConfig
+
+            with contextlib.suppress(Exception):
+                _tls_config = ZoneTlsConfig.from_env()
+        if _tls_explicit and _tls_config is None:
+            raise RuntimeError(
+                "NEXUS_GRPC_TLS=true but no TLS certificates found. "
+                "Provide certs via NEXUS_TLS_CERT/KEY/CA, "
+                "in {data_dir}/tls/, or set data_dir in nexus.yaml."
+            )
+
         transport = RPCTransport(
             server_address=grpc_address,
             auth_token=api_key,
             timeout=float(timeout),
             connect_timeout=float(connect_timeout),
+            tls_config=_tls_config,
         )
+        try:
+            initialize_payload = transport.initialize(
+                client_name="nexus-python",
+                client_version=__version__,
+            )
+        except Exception:
+            try:
+                transport.close()
+            except Exception as close_error:
+                logger.debug(
+                    "Failed to close remote transport after initialize failure: %s",
+                    close_error,
+                )
+            raise
 
-        # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
-        from nexus.backends.remote import RemoteBackend
-        from nexus.factory import create_nexus_fs as _create_remote_nfs
-        from nexus.storage.remote_metastore import RemoteMetastore
-
-        remote_backend = RemoteBackend(transport)
-        remote_metastore = RemoteMetastore(transport)
-
-        # In REMOTE mode, server enforces permissions — disable client-side.
+        # Rust-native remote wiring (Issue #1134 Phase 4, a803a9d63):
+        # the root mount carries backend_type="remote" + connection params,
+        # and PyKernel::sys_setattr constructs both the Rust RemoteBackend
+        # and the Rust RemoteMetastore from those params — no Python shim.
+        # The metastore handle is a bare ``PyKernel``: the kernel routes
+        # per-mount reads/writes to the remote backend it built.
+        from nexus.contracts.metadata import DT_MOUNT
+        from nexus.contracts.types import OperationContext as _RemoteOC
         from nexus.core.config import PermissionConfig as _PermissionConfig
+        from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
 
-        nfs = _create_remote_nfs(
-            backend=remote_backend,
-            metadata_store=remote_metastore,
-            record_store=None,
+        remote_kernel = _open_local_kernel(":memory:")
+        nfs = _RemoteNexusFS(
+            metadata_store=remote_kernel,
             permissions=_PermissionConfig(enforce=False),
+            init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
-        nfs.router.add_mount("/", remote_backend)
+
+        nfs.sys_setattr(
+            "/",
+            entry_type=DT_MOUNT,
+            backend_type="remote",
+            backend_name="remote",
+            server_address=grpc_address,
+            remote_auth_token=api_key,
+            remote_ca_pem=(_tls_config.ca_pem.decode() if _tls_config else None),
+            remote_cert_pem=(_tls_config.node_cert_pem.decode() if _tls_config else None),
+            remote_key_pem=(_tls_config.node_key_pem.decode() if _tls_config else None),
+            remote_timeout=float(timeout),
+        )
+
+        # Issue #4055: expose HTTP URL + API key so NexusFUSEOperations(use_rust=True)
+        # can spawn the Rust nexus-fuse daemon (it talks to /api/nfs/* HTTP
+        # endpoints, not gRPC).
+        #
+        # The original cross-tenant cache-sharing concern that motivated an
+        # opt-in env gate was addressed in cache.rs by namespacing the foyer
+        # directory with `principal_hash(server_url, api_key)` — different
+        # API keys never share a cache directory, so exposing the credentials
+        # here is safe for unscoped remote mounts. Scoped/agent mounts are
+        # blocked from constructing the Rust daemon entirely in
+        # NexusFUSEOperations (see operations.py: `context is not None`).
+        nfs._base_url = server_url  # noqa: SLF001
+        nfs._api_key = api_key  # noqa: SLF001
+        nfs.capabilities = (
+            initialize_payload.get("capabilities") if initialize_payload is not None else None
+        )
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards
         # method calls to the server via gRPC.
-        from nexus.factory._remote import _boot_remote_services
+        from nexus.factory._remote import (
+            _boot_remote_services,
+            install_remote_kernel_rpc_overrides,
+        )
 
         _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+        install_remote_kernel_rpc_overrides(nfs, transport)
+        cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
+        nfs._register_runtime_closeable(transport)
+        nfs._remote_base_url = server_url
+        nfs._remote_api_key = api_key or ""
 
         return nfs
 
-    # ── Modes: standalone / federation ───────────────────────────────
-    if cfg.mode not in ("standalone", "federation"):
-        raise ValueError(
-            f"Unknown mode: '{cfg.mode}'. Must be one of: standalone, remote, federation"
-        )
+    # ── Local node (single-node or federated, auto-detected) ────────
+    # Heavy imports for local profiles
+    from nexus.backends.base.backend import Backend
+    from nexus.backends.storage.cas_local import CASLocalBackend
+    from nexus.core.nexus_fs import NexusFS
 
     # Create backend based on configuration
     backend: Backend
     if cfg.backend == "gcs":
-        from nexus.backends.gcs import GCSBackend
+        from nexus.backends.storage.cas_gcs import CASGCSBackend
 
         if not cfg.gcs_bucket_name:
             raise ValueError(
                 "gcs_bucket_name is required when backend='gcs'. "
                 "Set gcs_bucket_name in your config or NEXUS_GCS_BUCKET_NAME environment variable."
             )
-        backend = GCSBackend(
+        backend = CASGCSBackend(
             bucket_name=cfg.gcs_bucket_name,
             project_id=cfg.gcs_project_id,
             credentials_path=cfg.gcs_credentials_path,
         )
-        nexus_root = NEXUS_STATE_DIR
+        nexus_root = _resolve_state_dir()
         data_dir = str(Path(nexus_root) / "data")
     else:
-        data_dir = cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
+        data_dir = (
+            cfg.data_dir if cfg.data_dir is not None else str(Path(_resolve_state_dir()) / "data")
+        )
         # nexus_root hosts sibling state directories (metastore, record_store).
         # When data_dir is explicitly provided (e.g. --data-dir /some/path), USE
         # data_dir itself as nexus_root so metastore goes inside it — this avoids
@@ -310,121 +527,49 @@ def connect(
         # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
         # for backward compatibility.
         nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
-        backend = LocalBackend(root_path=Path(data_dir).resolve())
+        if cfg.backend == "path_local":
+            from nexus.backends.storage.path_local import PathLocalBackend
 
-    # Resolve paths — new fields take precedence, db_path is legacy fallback
-    metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
+            backend = PathLocalBackend(root_path=Path(data_dir).resolve())
+        else:
+            # Parse tiering config from YAML if present (Issue #3406)
+            tiering_cfg = None
+            if cfg.tiering and cfg.tiering.get("enabled"):
+                from nexus.core.config import TieringConfig
+
+                t = cfg.tiering
+                tiering_cfg = TieringConfig(
+                    enabled=True,
+                    quiet_period_seconds=float(t.get("quiet_period", 3600)),
+                    min_volume_size_bytes=int(t.get("min_volume_size", 100 * 1024 * 1024)),
+                    cloud_backend=str(t.get("cloud_backend", "gcs")),
+                    cloud_bucket=str(t.get("cloud_bucket", "")),
+                    upload_rate_limit_bytes=int(t.get("upload_rate_limit", 25 * 1024 * 1024)),
+                    sweep_interval_seconds=float(t.get("sweep_interval", 60)),
+                    local_cache_size_bytes=int(t.get("local_cache_size", 10 * 1024 * 1024 * 1024)),
+                    burst_read_threshold=int(t.get("burst_read_threshold", 5)),
+                    burst_read_window_seconds=float(t.get("burst_read_window", 60)),
+                )
+            backend = CASLocalBackend(
+                root_path=Path(data_dir).resolve(),
+                tiering_config=tiering_cfg,
+            )
+
+    # Resolve paths — new fields take precedence, db_path is a legacy fallback
+    # only when it is a filesystem path. Docker/demo configs use db_path for a
+    # PostgreSQL URL; treating that URL as a redb path makes the kernel fall
+    # back to a temp metastore, losing metadata on process restart.
+    legacy_metadata_path = cfg.db_path if cfg.db_path and "://" not in str(cfg.db_path) else None
+    metadata_path = (
+        cfg.metastore_path or legacy_metadata_path or str(Path(nexus_root) / "metastore")
+    )
     record_store_path = cfg.record_store_path or None
 
-    # Create metadata store based on mode
-    metadata_store: MetastoreABC
-    if cfg.mode == "federation":
-        try:
-            from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
-            from nexus.raft import FederatedMetadataProxy
-            from nexus.raft.zone_manager import ZoneManager
-        except ImportError as err:
-            raise ImportError(
-                "mode='federation' requires the Rust Raft extension built with --features full. "
-                "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
-            ) from err
-
-        node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
-        bind_addr = os.environ.get("NEXUS_BIND_ADDR", DEFAULT_GRPC_BIND_ADDR)
-        zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
-        zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
-
-        # Parse peer addresses for multi-node Raft groups
-        peers_str = os.environ.get("NEXUS_PEERS", "")
-        peers = [p.strip() for p in peers_str.split(",") if p.strip()] if peers_str else []
-
-        # Bootstrap root zone (with peers for multi-node, without for single-node)
-        zone_mgr.bootstrap(peers=peers if peers else None)
-
-        # Static Day-1 topology from env vars (idempotent)
-        zones_str = os.environ.get("NEXUS_FEDERATION_ZONES", "")
-        mounts_str = os.environ.get("NEXUS_FEDERATION_MOUNTS", "")
-        if zones_str:
-            zones = [z.strip() for z in zones_str.split(",") if z.strip()]
-            mounts: dict[str, str] = {}
-            if mounts_str:
-                for pair in mounts_str.split(","):
-                    path, zone_id = pair.strip().split("=", 1)
-                    mounts[path.strip()] = zone_id.strip()
-            zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
-
-        metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
-    else:
-        # standalone: single-node embedded Raft (no peers)
-        metadata_store = RaftMetadataStore.embedded(metadata_path)
-
-    # Permission defaults: standalone without explicit config → permissive
-    enforce_permissions = cfg.enforce_permissions
-    if config is None or isinstance(config, dict) and "enforce_permissions" not in config:
-        enforce_permissions = False
-
-    # Zone isolation: default enabled for security
-    enforce_zone_isolation = cfg.enforce_zone_isolation
-    if config is None or isinstance(config, dict) and "enforce_zone_isolation" not in config:
-        enforce_zone_isolation = True
-
-    # Tiger Cache
-    enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
-    enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
-
-    # RecordStore (Four Pillars) — created from NEXUS_RECORD_STORE_PATH or
-    # NEXUS_DATABASE_URL.  Passing None gives a bare kernel (storage-only)
-    # where all service-layer features (audit log, versioning, ReBAC, Memory
-    # API, etc.) are skipped.  The factory handles record_store=None gracefully.
-    _database_url = os.environ.get("NEXUS_DATABASE_URL")
-    if record_store_path:
-        from nexus.storage.record_store import SQLAlchemyRecordStore
-
-        record_store = SQLAlchemyRecordStore(db_path=record_store_path)
-    elif _database_url:
-        from nexus.storage.record_store import SQLAlchemyRecordStore
-
-        record_store = SQLAlchemyRecordStore(db_url=_database_url)
-    else:
-        record_store = None
-
-    # Build config objects from NexusConfig fields (Issue #1391)
-    from nexus.core.config import (
-        CacheConfig,
-        DistributedConfig,
-        ParseConfig,
-        PermissionConfig,
-    )
-
-    cache_cfg = CacheConfig(
-        path_size=cfg.cache_path_size,
-        list_size=cfg.cache_list_size,
-        kv_size=cfg.cache_kv_size,
-        exists_size=cfg.cache_exists_size,
-        ttl_seconds=cfg.cache_ttl_seconds,
-    )
-
-    perm_cfg = PermissionConfig(
-        enforce=enforce_permissions,
-        allow_admin_bypass=cfg.allow_admin_bypass,
-        enforce_zone_isolation=enforce_zone_isolation,
-        enable_tiger_cache=enable_tiger_cache,
-    )
-
-    dist_cfg = DistributedConfig(
-        enable_workflows=cfg.enable_workflows,
-    )
-
-    parse_cfg = ParseConfig(
-        auto_parse=cfg.auto_parse,
-        providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
-    )
-
-    # --- Profile resolution (Issue #1708) ---
+    # --- Profile resolution (Issue #1708, moved before metadata store for federation gating) ---
     from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
     if cfg.profile == "auto":
-        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
+        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
 
         caps = detect_capabilities()
         resolved_profile = suggest_profile(caps)
@@ -438,7 +583,7 @@ def connect(
     else:
         resolved_profile = DeploymentProfile(cfg.profile)
         # Warn if explicit profile may exceed device capabilities
-        from nexus.core.device_capabilities import (
+        from nexus.lib.device_capabilities import (
             detect_capabilities,
             warn_if_profile_exceeds_device,
         )
@@ -446,44 +591,308 @@ def connect(
         caps = detect_capabilities()
         warn_if_profile_exceeds_device(resolved_profile, caps)
 
-    # Apply FeaturesConfig overrides (Issue #1389 — was unused in connect())
-    overrides = cfg.features.to_overrides() if cfg.features else {}
-    enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
+    # Codex review R3+R4 (high): propagate cfg.profile + cfg.enable_
+    # vector_search into env vars so the factory wiring layer
+    # (``_wired.py`` reads env, not cfg) sees the same values the
+    # caller specified. Three constraints, all surfaced by review:
+    #
+    #  1. Detection must be source-agnostic. Use ``cfg.model_fields_set``
+    #     so config files (str/Path), NexusConfig objects, and dicts all
+    #     get the same treatment — not just the dict path (Codex R4 #1).
+    #  2. Env precedence: a pre-existing operator-set env var must win.
+    #  3. Restore in finally so two sequential ``connect()`` calls (or
+    #     subprocesses spawned after connect) do NOT inherit synthetic
+    #     env from a prior boot (Codex R4 #2).
+    # Codex review R5 (high): the env mutation + factory boot must run
+    # under a process-wide lock so two concurrent ``connect()`` calls
+    # cannot see each other's synthetic env as "operator-set". The
+    # lock spans BOTH the propagation block AND the boot it backs;
+    # taking + releasing only around the env writes would still leave
+    # call B reading thread-A's transiently-set env during its own
+    # propagation check.
+    _CONNECT_ENV_LOCK.acquire()
+    _env_to_propagate: dict[str, str] = {}
+    if "NEXUS_PROFILE" not in os.environ:
+        _env_to_propagate["NEXUS_PROFILE"] = str(resolved_profile.value)
+    if (
+        "enable_vector_search" in cfg.model_fields_set
+        and "NEXUS_ENABLE_VECTOR_SEARCH" not in os.environ
+    ):
+        _env_to_propagate["NEXUS_ENABLE_VECTOR_SEARCH"] = (
+            "true" if cfg.enable_vector_search else "false"
+        )
+    _env_saved = {k: os.environ.get(k) for k in _env_to_propagate}
+    for _k, _v in _env_to_propagate.items():
+        os.environ[_k] = _v
 
-    # Create NexusFS via factory
-    from nexus.factory import create_nexus_fs
+    try:
+        # Apply FeaturesConfig overrides (Issue #1389)
+        overrides = cfg.features.to_overrides() if cfg.features else {}
+        enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
 
-    nx_fs = create_nexus_fs(
-        backend=backend,
-        metadata_store=metadata_store,
-        record_store=record_store,
-        is_admin=cfg.is_admin,
-        cache=cache_cfg,
-        permissions=perm_cfg,
-        distributed=dist_cfg,
-        parsing=parse_cfg,
-        enabled_bricks=enabled_bricks,
-    )
+        # Create Rust kernel early so RustMetastoreProxy can use it.
+        # Route through _rust_compat so stale binaries (missing Kernel methods)
+        # are caught here and never passed to RustMetastoreProxy (Issue #3712).
+        _early_kernel = None
+        try:
+            from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
+            from nexus._rust_compat import PyKernel as _Kernel
 
-    # Set memory config for Memory API
-    if cfg.zone_id or cfg.user_id or cfg.agent_id:
-        nx_fs._memory_config = {
-            "zone_id": cfg.zone_id,
-            "user_id": cfg.user_id,
-            "agent_id": cfg.agent_id,
-        }
+            if _RUST_AVAILABLE and _Kernel is not None:
+                _early_kernel = _Kernel()
+                # Start write-buffer background flusher (production only).
+                _early_kernel.start_write_buffer_flusher(250)
+                # Skip federation wiring during pytest — xdist workers
+                # compete for the same gRPC port causing hangs and
+                # preventing clean process exit.
+                import os as _os_connect
 
-    # Store config for OAuth factory and other components that need it
-    nx_fs._config = cfg
+                if "pytest" not in __import__("sys").modules:
+                    try:
+                        import nexus_runtime as _nk
 
-    # Store zone manager for federation topology initialization (health check)
-    if cfg.mode == "federation":
-        nx_fs._zone_mgr = zone_mgr
+                        # Federation wiring first so init_from_env stashes the
+                        # blob-fetcher slot before transport drains it.
+                        _nk.install_federation_wiring(_early_kernel)
+                        _nk.install_transport_wiring(_early_kernel)
+                    except Exception as _wiring_exc:
+                        import logging as _logging
 
-    # Restore saved mounts (application-layer startup I/O)
-    _restore_mounts(nx_fs)
+                        _logging.getLogger(__name__).warning(
+                            "install_transport_wiring/install_federation_wiring "
+                            "failed (federation peer-blob fetch will fall back to "
+                            "Noop): %s",
+                            _wiring_exc,
+                        )
+        except Exception as _early_kernel_exc:
+            import logging as _logging
 
-    return nx_fs
+            _logging.getLogger(__name__).debug(
+                "early kernel construction failed: %s", _early_kernel_exc
+            )
+
+        # Create metadata store — kernel owns federation bootstrap since
+        # R20.18.5. When federation env vars are set (NEXUS_HOSTNAME /
+        # NEXUS_PEERS / NEXUS_FEDERATION_ZONES), Kernel::new reads them
+        # in Rust and stands up the raft::ZoneManager internally; the
+        # metadata store wrapper below uses the same kernel so writes
+        # route through MountTable to the per-zone ZoneMetastore. When
+        # those env vars are unset, Kernel::new is a no-op and the
+        # store is backed by LocalMetastore/MemoryMetastore as before.
+        # Develop renamed _open_local_metastore → _open_local_kernel and
+        # deleted MetastoreABC; the alias still works but the typed
+        # annotation is now ``Any`` (kernel-shape) per the W3 SSOT
+        # cleanup.
+        metadata_store: Any = _open_local_kernel(metadata_path, kernel=_early_kernel)
+        # Python no longer owns a FederationService object. `federation=None`
+        # below just drops a dead kwarg into the orchestrator; _lifecycle.py
+        # handles the None path. ``metadata_store`` here is a ``PyKernel`` —
+        # the orchestrator passes it straight through to NexusFS.__init__,
+        # which detects the kernel-shape and stashes it as ``self._kernel``.
+        federation = None
+
+        # Permission defaults: standalone without explicit config → permissive
+        enforce_permissions = cfg.enforce_permissions
+        if config is None or isinstance(config, dict) and "enforce_permissions" not in config:
+            enforce_permissions = False
+
+        # Zone isolation: default enabled for security
+        enforce_zone_isolation = cfg.enforce_zone_isolation
+        if config is None or isinstance(config, dict) and "enforce_zone_isolation" not in config:
+            enforce_zone_isolation = True
+
+        # Tiger Cache
+        enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
+        enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
+
+        # RecordStore (Four Pillars) — created from NEXUS_RECORD_STORE_PATH or
+        # NEXUS_DATABASE_URL (both flow into ``cfg`` via env overrides, or via
+        # explicit config keys from callers like nexusd --database-url).
+        # Passing None gives a bare kernel (storage-only) where all service-layer
+        # features (audit log, versioning, ReBAC, Memory API, etc.) are skipped.
+        # The factory handles record_store=None gracefully.
+        _database_url = cfg.database_url
+        if record_store_path:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            record_store = SQLAlchemyRecordStore(db_path=record_store_path)
+        elif _database_url:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            record_store = SQLAlchemyRecordStore(db_url=_database_url)
+        else:
+            record_store = None
+
+        # Build config objects from NexusConfig fields (Issue #1391)
+        from nexus.core.config import (
+            CacheConfig,
+            DistributedConfig,
+            ParseConfig,
+            PermissionConfig,
+        )
+
+        cache_cfg = CacheConfig(
+            path_size=cfg.cache_path_size,
+            list_size=cfg.cache_list_size,
+            kv_size=cfg.cache_kv_size,
+            exists_size=cfg.cache_exists_size,
+            ttl_seconds=cfg.cache_ttl_seconds,
+        )
+
+        perm_cfg = PermissionConfig(
+            enforce=enforce_permissions,
+            allow_admin_bypass=cfg.allow_admin_bypass,
+            enforce_zone_isolation=enforce_zone_isolation,
+            enable_tiger_cache=enable_tiger_cache,
+        )
+
+        dist_cfg = DistributedConfig(
+            enable_workflows=cfg.enable_workflows,
+        )
+
+        parse_cfg = ParseConfig(
+            auto_parse=cfg.auto_parse,
+            providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
+        )
+
+        # Audit strict mode: env var override (default True for compliance)
+        from nexus.contracts.types import AuditConfig
+
+        _audit_strict = os.environ.get("NEXUS_AUDIT_STRICT_MODE", "true").lower() not in (
+            "false",
+            "0",
+            "no",
+        )
+        audit_cfg = AuditConfig(strict_mode=_audit_strict)
+
+        # Create NexusFS via factory
+        from nexus.factory import create_nexus_fs
+
+        nx_fs = create_nexus_fs(
+            backend=backend,
+            metadata_store=metadata_store,
+            record_store=record_store,
+            is_admin=cfg.is_admin,
+            cache=cache_cfg,
+            permissions=perm_cfg,
+            distributed=dist_cfg,
+            parsing=parse_cfg,
+            enabled_bricks=enabled_bricks,
+            audit=audit_cfg,
+            federation=federation,
+            security=getattr(cfg, "security", None),
+        )
+
+        # Set memory config for Memory API
+        if cfg.zone_id or cfg.user_id or cfg.agent_id:
+            nx_fs._memory_config = {
+                "zone_id": cfg.zone_id,
+                "user_id": cfg.user_id,
+                "agent_id": cfg.agent_id,
+            }
+
+        # Store config for OAuth factory and other components that need it
+        nx_fs._config = cfg
+
+        # Register federation content resolver (PRE-DISPATCH, Issue #163)
+        # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
+        # Federation is already enlisted in ServiceRegistry by _wire_services().
+        if federation is not None:
+            _register_federation_resolver(nx_fs, federation, backend)
+
+        # Restore saved mounts (application-layer startup I/O)
+        _restore_mounts(nx_fs)
+
+        # Start audit hook if federation is active (requires a loaded Raft zone).
+        _init_audit_hook(nx_fs)
+
+        return nx_fs
+    finally:
+        # Codex review R4 (high): restore env so successive
+        # ``connect()`` calls (and any subprocess spawned later) do
+        # NOT inherit the synthetic NEXUS_PROFILE /
+        # NEXUS_ENABLE_VECTOR_SEARCH this call wrote. Without this,
+        # call N+1 sees call N's value as "operator env" and refuses
+        # to overwrite, leaking sandbox/false through into a later
+        # full/true boot. Always restore in finally so a raised
+        # exception during boot doesn't leave sticky env either.
+        for _k, _prev in _env_saved.items():
+            if _prev is None:
+                os.environ.pop(_k, None)
+            else:
+                os.environ[_k] = _prev
+        _CONNECT_ENV_LOCK.release()
+
+
+def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: Any) -> None:
+    """Wire federation transport — set TLS config on RPCTransportPool.
+
+    Content locality (remote reads) and IPC (remote pipe/stream) are now
+    handled transparently by the Rust kernel routing and RPCTransportPool.
+    No PRE-DISPATCH resolvers needed.
+
+    The old FederationContentResolver, FederationIPCResolver, and
+    FederatedMetadataProxy have been deleted — their functionality is
+    subsumed by PathRouter per-mount metastore (#3580) and backend_key()
+    write enrichment.
+    """
+    _ = backend  # unused after resolver deletion
+    _zone_mgr = federation.zone_manager
+
+    # Set TLS config on transport pool now that federation is initialized
+    if (
+        hasattr(nx_fs, "_transport_pool")
+        and nx_fs._transport_pool is not None
+        and _zone_mgr.tls_config
+    ):
+        nx_fs._transport_pool.set_tls_config(_zone_mgr.tls_config)
+
+    logger.info("Federation transport configured (TLS=%s)", _zone_mgr.tls_config is not None)
+
+
+def _init_audit_hook(nx_fs: "NexusFS") -> None:
+    """Wire the root zone's AuditHook at boot.
+
+    Writes a Rust AuditHook into the WAL-replicated DT_STREAM at
+    ``/__sys__/audit/traces/`` so every VFS mutation in the root zone
+    is durably recorded. Only meaningful in federation mode — the call
+    requires a loaded Raft zone and silently skips otherwise.
+
+    The audit stream lives under ``SYSTEM_PATH_PREFIX`` because
+    AuditHook is an "unnamed" native dispatch hook (LSM-style global,
+    observes every path). The kernel-internal contract is that all
+    such hooks self-exclude ``/__sys__/`` at the top of ``on_post`` to
+    break self-write recursion (see PR #3890 CI hang root cause). By
+    siting the audit stream itself under ``/__sys__/``, the
+    ``is_system_path`` short-circuit in AuditHook covers the
+    recursion case uniformly with the rest of the kernel-internal
+    namespace — no path-literal exclusion needed on top.
+
+    Phase 3 (refactor/rust-workspace-parallel-layers): the audit hook
+    moved out of the kernel crate into ``services::audit`` per the
+    parallel-layers split. The Python entry point is now a free function
+    on the ``nexus_runtime`` module — ``install_audit_hook(kernel, zone,
+    stream)`` — instead of a method on the Kernel pyclass. Service-tier
+    owns hook lifecycle; kernel composes the stream itself via the
+    syscall surface (``sys_setattr DT_STREAM ... io_profile=wal``).
+    """
+    kernel = getattr(nx_fs, "_kernel", None)
+    if kernel is None:
+        return
+
+    audit_zone = "root"
+    audit_stream_path = "/__sys__/audit/traces/"
+
+    try:
+        import nexus_runtime
+
+        nexus_runtime.install_audit_hook(kernel, audit_zone, audit_stream_path)
+        logger.info("Audit hook started: zone=%s stream=%s", audit_zone, audit_stream_path)
+    except RuntimeError as e:
+        # Federation not active or zone not loaded — expected in standalone mode.
+        logger.debug("Audit hook not started (federation inactive): %s", e)
+    except Exception as e:
+        logger.warning("Failed to start audit hook: %s", e)
 
 
 def _restore_mounts(nx_fs: "NexusFS") -> None:
@@ -493,28 +902,14 @@ def _restore_mounts(nx_fs: "NexusFS") -> None:
     The factory itself never performs I/O — callers decide when to
     restore mounts.
     """
-    import os
-
     try:
-        auto_sync = os.getenv("NEXUS_AUTO_SYNC_MOUNTS", "false").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-        mount_result = nx_fs.load_all_saved_mounts(auto_sync=auto_sync)
+        mount_result = nx_fs.service("mount_persist").load_all_mounts()
         if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
-            sync_msg = f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
             logger.info(
-                "Mount restoration: %d loaded%s, %d failed",
+                "Mount restoration: %d loaded, %d failed",
                 mount_result["loaded"],
-                sync_msg,
                 mount_result["failed"],
             )
-            if not auto_sync and mount_result["loaded"] > 0:
-                logger.info(
-                    "Auto-sync disabled for fast startup. "
-                    "Use sync_mount() or set NEXUS_AUTO_SYNC_MOUNTS=true"
-                )
             for error in mount_result.get("errors", []):
                 logger.error("  Mount error: %s", error)
     except Exception as e:
@@ -524,17 +919,17 @@ def _restore_mounts(nx_fs: "NexusFS") -> None:
 __all__ = [
     # Version
     "__version__",
-    # Main entry point
+    # Main entry points
     "connect",
+    "mount",
+    "mount_sync",
     # Configuration
     "NexusConfig",
     "load_config",
-    # Core interfaces
-    "NexusFilesystem",  # Abstract base class for all filesystem modes
     # Filesystem implementation
     "NexusFS",
     # Backends
-    "LocalBackend",
+    "CASLocalBackend",
     "GCSBackend",
     # Exceptions (always loaded - lightweight)
     "NexusError",
@@ -543,16 +938,4 @@ __all__ = [
     "BackendError",
     "InvalidPathError",
     "MetadataError",
-    # Skills System
-    "SkillRegistry",
-    "SkillExporter",
-    "SkillManager",
-    "SkillParser",
-    "Skill",
-    "SkillMetadata",
-    "SkillNotFoundError",
-    "SkillDependencyError",
-    "SkillManagerError",
-    "SkillParseError",
-    "SkillExportError",
 ]

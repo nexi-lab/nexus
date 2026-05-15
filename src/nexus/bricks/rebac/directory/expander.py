@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError
 
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.consistency.revision import get_zone_revision_for_grant
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -119,14 +120,20 @@ class DirectoryExpander:
         metadata_store: Any | None = None,
         *,
         is_postgresql: bool = False,  # noqa: ARG002
+        version_store: MetastoreVersionStore | None = None,
     ) -> None:
         self._engine = engine
         self._tiger_cache = tiger_cache
         self._metadata_store = metadata_store
+        # Pull the kernel out of the proxy so calls go to ``kernel.metastore_*``
+        # directly (and survive W3).
+        self._kernel: Any = metadata_store
+        self._version_store = version_store
 
     def set_metadata_store(self, metadata_store: Any) -> None:
         """Set the metadata store reference for directory queries."""
         self._metadata_store = metadata_store
+        self._kernel = metadata_store
 
     # -- Path detection ----------------------------------------------------
 
@@ -153,10 +160,11 @@ class DirectoryExpander:
             if extension in _FILE_EXTENSIONS:
                 return False
 
-        # If we have a metadata store reference, check for children
-        if self._metadata_store:
+        # If we have a kernel reference, check for children
+        if self._kernel is not None:
             try:
-                return bool(self._metadata_store.is_implicit_directory(path))
+                _stat = self._kernel.sys_stat(path, ROOT_ZONE_ID)
+                return _stat is not None and _stat.get("is_directory", False)
             except (RuntimeError, OperationalError) as e:
                 logger.debug("[LEOPARD] Failed to check directory via metadata: %s", e)
 
@@ -187,7 +195,11 @@ class DirectoryExpander:
             directory_path = directory_path + "/"
 
         # Get current revision for consistency (prevents "new enemy" problem)
-        grant_revision = get_zone_revision_for_grant(self._engine, zone_id)
+        grant_revision = (
+            get_zone_revision_for_grant(self._version_store, zone_id)
+            if self._version_store is not None
+            else 0
+        )
 
         # Get all descendants of the directory
         descendants = self.get_directory_descendants(directory_path, zone_id)
@@ -295,14 +307,13 @@ class DirectoryExpander:
         Returns:
             List of descendant file paths.
         """
-        # Try using metadata store if available
-        if self._metadata_store:
+        # Try using the kernel metastore if available. ``kernel.metastore_list``
+        # is single-zone (the proxy ignored ``zone_id`` too); the SQL fallback
+        # below honours the parameter for federated installs.
+        if self._kernel is not None:
             try:
-                files = self._metadata_store.list(
-                    prefix=directory_path,
-                    recursive=True,
-                    zone_id=zone_id,
-                )
+                _page = self._kernel.metastore_list_paginated(directory_path, True, 100000, None)
+                files = _page["items"]
                 return [f.path for f in files]
             except (RuntimeError, OperationalError) as e:
                 logger.warning("[LEOPARD] Metadata store query failed: %s", e)

@@ -116,12 +116,13 @@ class FakeReBACManager:
 
 def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
     """Create a minimal SearchService with a fake metadata store and ReBAC manager."""
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        metadata_store = RaftMetadataStore.embedded(str(Path(tmpdir) / "meta"), zone_id="root")
+        # Post-W3: ``metadata_store`` is just a path string; the
+        # SearchService opens its own kernel-backed redb internally.
+        metadata_store = str(Path(tmpdir) / "meta")
 
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         svc = SearchService(
             metadata_store=metadata_store,
@@ -129,7 +130,6 @@ def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
             enforce_permissions=False,
         )
         yield svc
-        metadata_store.close()
 
 
 @pytest.fixture

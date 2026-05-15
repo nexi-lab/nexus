@@ -16,67 +16,15 @@ Run: pytest tests/e2e/server/test_credentials_e2e.py -v
 import shutil
 import tempfile
 import uuid
-from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
-from nexus.contracts.metadata import FileMetadata, PaginatedResult
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
-
-# ---------------------------------------------------------------------------
-# In-memory metadata store (same pattern as test_identity_e2e.py)
-# ---------------------------------------------------------------------------
-
-
-class InMemoryMetadataStore(MetastoreABC):
-    def __init__(self) -> None:
-        self._store: dict[str, FileMetadata] = {}
-
-    def get(self, path: str) -> FileMetadata | None:
-        return self._store.get(path)
-
-    def put(self, metadata: FileMetadata) -> None:
-        self._store[metadata.path] = metadata
-
-    def delete(self, path: str) -> dict[str, Any] | None:
-        removed = self._store.pop(path, None)
-        return {"path": path} if removed else None
-
-    def exists(self, path: str) -> bool:
-        return path in self._store
-
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
-        return [m for p, m in self._store.items() if p.startswith(prefix)]
-
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        zone_id: str | None = None,
-    ) -> PaginatedResult:
-        items = self.list(prefix, recursive)
-        return PaginatedResult(
-            items=items[:limit],
-            next_cursor=None,
-            has_more=len(items) > limit,
-            total_count=len(items),
-        )
-
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        return {p: self._store.get(p) for p in paths}
-
-    def is_implicit_directory(self, path: str) -> bool:
-        prefix = path.rstrip("/") + "/"
-        return any(p.startswith(prefix) for p in self._store)
-
-    def close(self) -> None:
-        self._store.clear()
-
+from tests.testkit.auth import TEST_CONTEXT
+from tests.testkit.metadata import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -119,14 +67,14 @@ def api_keys(session_factory: Any) -> dict[str, Any]:
             session,
             user_id="e2e-admin",
             name="E2E Admin Key",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
         normal_key_id, normal_raw = DatabaseAPIKeyAuth.create_key(
             session,
             user_id="e2e-user",
             name="E2E User Key",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=False,
         )
         session.commit()
@@ -140,28 +88,29 @@ def api_keys(session_factory: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
-def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any:
+async def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any:
     """FastAPI app with permissions enabled, database auth, identity + credentials."""
     from types import SimpleNamespace
 
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     tmpdir = tempfile.mkdtemp(prefix="nexus-cred-e2e-")
-    backend = LocalBackend(root_path=tmpdir)
-    metadata_store = InMemoryMetadataStore()
+    backend = CASLocalBackend(root_path=tmpdir)
+    metadata_store = DictMetastore()
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}")
 
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
+        init_cred=TEST_CONTEXT,
     )
 
     db_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))

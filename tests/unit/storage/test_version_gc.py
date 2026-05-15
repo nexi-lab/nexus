@@ -8,10 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.version_gc import GCStats, VersionGCSettings, VersionHistoryGC
 
@@ -117,6 +116,11 @@ class TestVersionGCSettings:
         assert "max_versions=50" in repr_str
 
 
+async def _flush(nx) -> None:
+    """Flush async write observer so version_history is up to date."""
+    nx.flush_write_observer()
+
+
 class TestVersionHistoryGC:
     """Test VersionHistoryGC garbage collector."""
 
@@ -139,13 +143,13 @@ class TestVersionHistoryGC:
     def nx(self, temp_dir, record_store):
         """Create NexusFS instance for testing.
 
-        Uses RaftMetadataStore. TODO: Version history depends on FilePathModel
-        populated by SQLAlchemy, may need adjustment.
+        Version history depends on ``FilePathModel`` populated by
+        SQLAlchemy — see TODO comments in the assertions below.
         """
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
-        backend = LocalBackend(root_path=data_dir)
-        metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
+        backend = CASLocalBackend(root_path=data_dir)
+        metadata_store = str(data_dir / "raft-metadata")
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
@@ -155,13 +159,15 @@ class TestVersionHistoryGC:
         yield nx
         nx.close()
 
-    def test_gc_preserves_latest_version(self, nx, record_store):
+    @pytest.mark.asyncio
+    async def test_gc_preserves_latest_version(self, nx, record_store):
         """Test that GC always preserves the latest version."""
         path = "/workspace/test.txt"
 
         # Create multiple versions
         for i in range(5):
-            nx.sys_write(path, f"Version {i + 1}".encode())
+            nx.write(path, f"Version {i + 1}".encode())
+        await _flush(nx)
 
         # Run GC with very aggressive settings (0 retention, 1 max version)
         gc = VersionHistoryGC(record_store)
@@ -179,13 +185,15 @@ class TestVersionHistoryGC:
         content = nx.sys_read(path)
         assert content == b"Version 5"
 
-    def test_gc_dry_run_no_changes(self, nx, record_store):
+    @pytest.mark.asyncio
+    async def test_gc_dry_run_no_changes(self, nx, record_store):
         """Test that dry run doesn't delete anything."""
         path = "/workspace/test.txt"
 
         # Create multiple versions
         for i in range(3):
-            nx.sys_write(path, f"Version {i + 1}".encode())
+            nx.write(path, f"Version {i + 1}".encode())
+        await _flush(nx)
 
         # Get initial version count
         with record_store.session_factory() as session:
@@ -207,13 +215,15 @@ class TestVersionHistoryGC:
             final_count = session.scalar(select(func.count()).select_from(VersionHistoryModel))
             assert final_count == initial_count
 
-    def test_gc_respects_max_versions(self, nx, record_store):
+    @pytest.mark.asyncio
+    async def test_gc_respects_max_versions(self, nx, record_store):
         """Test GC enforces max versions per resource."""
         path = "/workspace/many_versions.txt"
 
         # Create 10 versions
         for i in range(10):
-            nx.sys_write(path, f"Version {i + 1}".encode())
+            nx.write(path, f"Version {i + 1}".encode())
+        await _flush(nx)
 
         # Get the resource_id (path_id) for this file
         with record_store.session_factory() as session:
@@ -252,11 +262,13 @@ class TestVersionHistoryGC:
             )
             assert count == 3
 
-    def test_gc_stats_reporting(self, nx, record_store):
+    @pytest.mark.asyncio
+    async def test_gc_stats_reporting(self, nx, record_store):
         """Test that GC reports accurate statistics."""
         # Create a file
         path = "/workspace/stats_test.txt"
-        nx.sys_write(path, b"Content")
+        nx.write(path, b"Content")
+        await _flush(nx)
 
         gc = VersionHistoryGC(record_store)
         table_stats = gc.get_stats()
@@ -270,13 +282,15 @@ class TestVersionHistoryGC:
         assert table_stats["total_versions"] >= 1
         assert table_stats["unique_resources"] >= 1
 
-    def test_gc_multiple_resources(self, nx, record_store):
+    @pytest.mark.asyncio
+    async def test_gc_multiple_resources(self, nx, record_store):
         """Test GC handles multiple resources correctly."""
         # Create versions for multiple files
         for file_num in range(3):
             path = f"/workspace/file{file_num}.txt"
             for version in range(5):
-                nx.sys_write(path, f"File {file_num} Version {version}".encode())
+                nx.write(path, f"File {file_num} Version {version}".encode())
+        await _flush(nx)
 
         # Run GC with max 2 versions
         gc = VersionHistoryGC(record_store)
@@ -296,11 +310,13 @@ class TestVersionHistoryGC:
             content = nx.sys_read(path)
             assert b"Version 4" in content  # Latest version
 
-    def test_gc_override_params(self, nx, record_store):
+    @pytest.mark.asyncio
+    async def test_gc_override_params(self, nx, record_store):
         """Test parameter override functionality."""
         path = "/workspace/override_test.txt"
         for i in range(5):
-            nx.sys_write(path, f"V{i}".encode())
+            nx.write(path, f"V{i}".encode())
+        await _flush(nx)
 
         gc = VersionHistoryGC(record_store)
         default_config = VersionGCSettings(
@@ -318,6 +334,7 @@ class TestVersionHistoryGC:
         # Should respect override
         assert stats.deleted_by_count == 3  # 5 - 2 = 3
 
+    @pytest.mark.asyncio
     def test_gc_empty_table(self, temp_dir):
         """Test GC handles empty version_history table."""
         data_dir = Path(temp_dir) / "nexus-data-empty"
@@ -325,8 +342,8 @@ class TestVersionHistoryGC:
 
         # Create fresh record store and NexusFS without any files
         rs_empty = SQLAlchemyRecordStore(db_path=str(data_dir / "nexus.db"))
-        backend = LocalBackend(root_path=data_dir)
-        metadata_store = RaftMetadataStore.embedded(str(data_dir / "metadata"))
+        backend = CASLocalBackend(root_path=data_dir)
+        metadata_store = str(data_dir / "metadata")
         nx_empty = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
@@ -362,7 +379,7 @@ class TestVersionGCTask:
         task = asyncio.create_task(version_gc_task(mock_session_factory, mock_config))
 
         # Let it start
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         # Cancel and verify it was created successfully
         task.cancel()

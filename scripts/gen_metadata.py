@@ -5,8 +5,8 @@ SSOT: proto/nexus/core/metadata.proto is the single source of truth
 for FileMetadata fields. This script generates:
 
   - src/nexus/core/metadata_pb2.py         (protobuf stubs via grpc_tools.protoc)
-  - src/nexus/core/metadata.py             (FileMetadata + PaginatedResult data classes)
-  - src/nexus/core/metastore.py            (MetastoreABC + AsyncMetastoreWrapper)
+  - src/nexus/core/metadata.py             (FileMetadata data class)
+  - src/nexus/core/metastore.py            (MetastoreABC — hand-maintained, not generated)
   - src/nexus/core/_compact_generated.py   (CompactFileMetadata + interning)
 
 Usage:
@@ -33,15 +33,16 @@ MAPPER_OUT = REPO_ROOT / "src" / "nexus" / "storage" / "_metadata_mapper_generat
 GENERATED_NAMES: dict[str, set[str]] = {
     "metadata": {
         "FileMetadata",
-        "PaginatedResult",
         "DT_REG",
         "DT_DIR",
         "DT_MOUNT",
         "DT_PIPE",
+        "DT_STREAM",
+        "DT_EXTERNAL_STORAGE",
+        "DT_LINK",
     },
     "metastore": {
         "MetastoreABC",
-        "AsyncMetastoreWrapper",
     },
     "_compact_generated": {"CompactFileMetadata", "get_intern_pool_stats", "clear_intern_pool"},
     "_metadata_mapper_generated": {"MetadataMapper"},
@@ -60,7 +61,9 @@ RENAMES: dict[str, str] = {}
 PROTO_TYPE_MAP: dict[str, str] = {
     "string": "str",
     "int64": "int",
+    "uint64": "int",
     "int32": "int",
+    "double": "float",
     "bool": "bool",
     "DirEntryType": "int",  # Enum stored as int in Python
 }
@@ -70,58 +73,59 @@ DATETIME_FIELDS: set[str] = {"created_at", "modified_at"}
 
 # String fields that are nullable (str | None, default None)
 NULLABLE_STRING_FIELDS: set[str] = {
-    "etag",
+    "content_id",
     "mime_type",
     "zone_id",
     "created_by",
     "owner_id",
     "target_zone_id",
+    "last_writer_address",
+    "link_target",
 }
 
 # Non-default defaults
 FIELD_DEFAULTS: dict[str, str] = {
     "version": "1",
     "entry_type": "0",
-    "i_links_count": "0",
+    "ttl_seconds": "0.0",
+    "gen": "0",
 }
 
 # String fields that get interned in CompactFileMetadata
 INTERNED_FIELDS: list[str] = [
     "path",
-    "backend_name",
-    "physical_path",
-    "etag",
+    "content_id",
     "mime_type",
     "zone_id",
     "created_by",
     "owner_id",
     "target_zone_id",
+    "last_writer_address",
+    "link_target",
 ]
 
 # Compact field name mapping
 COMPACT_FIELD_NAMES: dict[str, str] = {
     "path": "path_id",
-    "backend_name": "backend_name_id",
-    "physical_path": "physical_path_id",
-    "etag": "etag_id",
+    "content_id": "content_id_intern",
     "mime_type": "mime_type_id",
     "zone_id": "zone_id_intern",
     "created_by": "created_by_id",
     "owner_id": "owner_id_intern",
     "target_zone_id": "target_zone_id_intern",
+    "last_writer_address": "last_writer_address_id",
+    "link_target": "link_target_id",
 }
 
 # from_proto fallback: when a proto field is empty, use another field's value
-FROM_PROTO_FALLBACKS: dict[str, str] = {
-    "physical_path": "proto.path",
-}
+FROM_PROTO_FALLBACKS: dict[str, str] = {}
 
 # Fields stored directly (not interned) in CompactFileMetadata
 DIRECT_COMPACT_FIELDS: dict[str, str] = {
     "size": "int",
     "version": "int",
     "entry_type": "int",
-    "i_links_count": "int",
+    "gen": "int",
 }
 
 
@@ -326,6 +330,20 @@ def generate_metadata_py(
     enum_properties = _generate_enum_properties(fields, enums)
     enum_properties_block = f"\n{enum_properties}" if enum_properties else ""
     to_dict_block = _generate_to_dict(fields)
+    uint64_validation_lines = []
+    for f in fields:
+        if f["type"] == "uint64":
+            name = f["name"]
+            uint64_validation_lines.extend(
+                [
+                    f"        if self.{name} < 0:",
+                    f'            raise ValidationError(f"{name} cannot be negative, got {{self.{name}}}", path=self.path)',
+                    "",
+                ]
+            )
+    uint64_validation_block = "\n".join(uint64_validation_lines).rstrip()
+    if uint64_validation_block:
+        uint64_validation_block = f"\n{uint64_validation_block}"
 
     return f'''\
 """Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT.
@@ -340,8 +358,7 @@ To modify FileMetadata:
 
 Contains:
   - FileMetadata: Core file metadata dataclass
-  - PaginatedResult: Cursor-based pagination container
-  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE: Directory entry type constants
+  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM, DT_EXTERNAL_STORAGE: Directory entry type constants
 """
 
 from __future__ import annotations
@@ -353,37 +370,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nexus.core._compact_generated import CompactFileMetadata
 {enum_constants_block}
-
-@dataclass
-class PaginatedResult:
-    """Result container for paginated list operations.
-
-    Generated from: proto/nexus/core/metadata.proto
-
-    Supports cursor-based pagination for efficient traversal of large datasets
-    at 1M+ file scale without OOM or timeouts.
-
-    Attributes:
-        items: List of FileMetadata or dict items for current page
-        next_cursor: Opaque token for fetching next page (None if last page)
-        has_more: Whether more results exist beyond this page
-        total_count: Optional total count (expensive at scale, often None)
-    """
-
-    items: list[Any]
-    next_cursor: str | None
-    has_more: bool
-    total_count: int | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict for API response."""
-        return {{
-            "items": self.items,
-            "next_cursor": self.next_cursor,
-            "has_more": self.has_more,
-            "total_count": self.total_count,
-        }}
-
 
 @dataclass(slots=True)
 class FileMetadata:
@@ -420,16 +406,11 @@ class FileMetadata:
 
         if "\\x00" in self.path:
             raise ValidationError("path contains null bytes", path=self.path)
+{uint64_validation_block}
 
-        # DT_PIPE inodes: in-memory ring buffer, no backend storage required
-        if self.entry_type == 3:  # DT_PIPE
+        # DT_PIPE/DT_STREAM inodes: in-memory buffers, no backend storage required
+        if self.entry_type in (3, 4):  # DT_PIPE, DT_STREAM
             return
-
-        if not self.backend_name:
-            raise ValidationError("backend_name is required", path=self.path)
-
-        if not self.physical_path:
-            raise ValidationError("physical_path is required", path=self.path)
 
         if self.size < 0:
             raise ValidationError(f"size cannot be negative, got {{self.size}}", path=self.path)
@@ -463,117 +444,6 @@ class FileMetadata:
             Full FileMetadata object
         """
         return compact.to_file_metadata()
-'''
-
-
-def _extract_protocol_methods(source: str) -> list[tuple[str, str, str]]:
-    """Extract method signatures from the generated MetastoreABC text.
-
-    Returns list of (method_name, params_after_self, return_type).
-    This derives async wrapper signatures from the protocol — true SSOT.
-    """
-    # Isolate the MetastoreABC class body
-    proto_match = re.search(r"class MetastoreABC.*?(?=\nclass |\Z)", source, re.DOTALL)
-    if not proto_match:
-        return []
-
-    proto_text = proto_match.group()
-    methods: list[tuple[str, str, str]] = []
-
-    # Match method defs (handles multi-line signatures via DOTALL)
-    for m in re.finditer(
-        r"def\s+(\w+)\s*\((.*?)\)\s*->\s*([\w\[\], |\"]+)\s*:",
-        proto_text,
-        re.DOTALL,
-    ):
-        name = m.group(1)
-        full_params = m.group(2)
-        return_type = m.group(3).strip()
-
-        # Normalize whitespace and strip 'self'
-        params = re.sub(r"\s+", " ", full_params).strip()
-        params = re.sub(r"^self\s*,?\s*", "", params).strip()
-        # Remove inline noqa comments (match only the code, not trailing params)
-        params = re.sub(r"\s*#\s*noqa:\s*[\w,]+", "", params).strip()
-        # Clean trailing comma
-        params = params.rstrip(", ")
-
-        methods.append((name, params, return_type))
-
-    return methods
-
-
-def _params_to_call_args(params: str) -> str:
-    """Extract argument names from a parameter string for a function call.
-
-    Example: ``"prefix: str = '', recursive: bool = True, **kwargs: Any"``
-    → ``"prefix, recursive, **kwargs"``
-
-    Handles keyword-only marker ``*``: params after bare ``*`` are emitted
-    as ``name=name`` (keyword arguments in the call expression).
-    """
-    if not params:
-        return ""
-    args: list[str] = []
-    keyword_only = False
-    for param in params.split(","):
-        param = param.strip()
-        if not param:
-            continue
-        # Bare * is the keyword-only separator — skip it, mark subsequent args
-        if param == "*":
-            keyword_only = True
-            continue
-        # Name is everything before ':' or '='
-        name = param.split(":")[0].split("=")[0].strip()
-        if keyword_only and not name.startswith("**"):
-            args.append(f"{name}={name}")
-        else:
-            args.append(name)
-    return ", ".join(args)
-
-
-def generate_async_wrapper(metadata_source: str) -> str:
-    """Generate AsyncMetastoreWrapper by parsing MetastoreABC.
-
-    Derives method signatures from the protocol text so that adding
-    a method to the protocol automatically produces its async counterpart.
-    """
-    methods = _extract_protocol_methods(metadata_source)
-    if not methods:
-        return ""
-
-    lines: list[str] = []
-    for name, params, return_type in methods:
-        async_name = f"a{name}"
-        call_args = _params_to_call_args(params)
-
-        sig_params = f", {params}" if params else ""
-        call_str = f", {call_args}" if call_args else ""
-
-        lines.append(
-            f"    async def {async_name}(self{sig_params}) -> {return_type}:\n"
-            f"        return await asyncio.to_thread(self._store.{name}{call_str})"
-        )
-
-    methods_block = "\n\n".join(lines)
-
-    return f'''
-
-class AsyncMetastoreWrapper:
-    """Async wrapper around any MetastoreABC implementation.
-
-    Generated from: scripts/gen_metadata.py
-    Derived from: MetastoreABC method signatures (SSOT).
-
-    Each ``aXXX(...)`` method delegates to ``asyncio.to_thread(store.XXX, ...)``.
-    Performance: sled ~5 us + to_thread ~50 us = 55 us per call.
-    """
-
-    def __init__(self, store: MetastoreABC) -> None:
-        self._store = store
-
-{methods_block}
 '''
 
 
@@ -734,7 +604,7 @@ def clear_intern_pool() -> None:
 def _field_category(field: dict[str, str]) -> str:
     """Classify a proto field for mapper code generation.
 
-    Returns one of: 'datetime', 'nullable_string', 'int', 'required_string'.
+    Returns one of: 'datetime', 'nullable_string', 'int', 'enum', 'required_string'.
     """
     name = field["name"]
     if name in DATETIME_FIELDS:
@@ -742,9 +612,9 @@ def _field_category(field: dict[str, str]) -> str:
     if name in NULLABLE_STRING_FIELDS:
         return "nullable_string"
     proto_type = field["type"]
-    if proto_type in ("int64", "int32"):
+    if proto_type in ("int64", "uint64", "int32"):
         return "int"
-    if proto_type in PROTO_TYPE_MAP and PROTO_TYPE_MAP[proto_type] == "int":
+    if proto_type == "DirEntryType":
         return "enum"
     return "required_string"
 
@@ -825,6 +695,12 @@ def generate_mapper_py(fields: list[dict[str, str]]) -> str:
             to_json_lines.append(f'            "{name}": metadata.{name},')
     to_json_block = "\n".join(to_json_lines)
 
+    # --- Build known field names set ---
+    # Multi-line layout matches ruff format output so the generated
+    # file passes `ruff format --check` without a post-codegen pass.
+    known_fields = "\n".join(f'        "{f["name"]}",' for f in fields)
+    known_fields = "\n" + known_fields + "\n    "
+
     return f'''\
 """Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT.
 
@@ -841,6 +717,14 @@ import logging
 from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+from nexus.contracts.constants import ROOT_ZONE_ID
+
+# Known FileMetadata field names (generated from proto).
+# Used by from_json() to strip unknown keys from external dicts.
+_KNOWN_FIELDS: frozenset[str] = frozenset(
+    {{{known_fields}}}
+)
 
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
@@ -868,20 +752,19 @@ def _utcnow_naive() -> datetime:
 
 PROTO_TO_SQL: dict[str, str | None] = {{
     "path": "virtual_path",
-    "backend_name": "backend_id",
-    "physical_path": "physical_path",
     "size": "size_bytes",
-    "etag": "content_hash",
+    "content_id": "content_id",
     "mime_type": "file_type",
     "created_at": "created_at",
     "modified_at": "updated_at",
     "version": "current_version",
+    "gen": None,  # Rust/metastore generation, not persisted in FilePathModel
     "zone_id": "zone_id",
     "created_by": None,  # TODO(#1246): Add to FilePathModel
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
     "owner_id": "posix_uid",
-    "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
+    "last_writer_address": None,  # SQL backend (FilePathModel) doesn't currently persist last writer; add a column when needed.
 }}
 
 
@@ -934,6 +817,9 @@ class MetadataMapper:
             if "entry_type" not in obj:
                 obj["entry_type"] = 1 if is_dir else 0
 
+        # Strip unknown keys (forward compatibility with older/newer proto versions)
+        obj = {{k: v for k, v in obj.items() if k in _KNOWN_FIELDS}}
+
         if obj.get("created_at"):
             obj["created_at"] = datetime.fromisoformat(obj["created_at"])
         if obj.get("modified_at"):
@@ -954,14 +840,12 @@ class MetadataMapper:
         """
         values: dict[str, Any] = {{
             "virtual_path": metadata.path,
-            "backend_id": metadata.backend_name or "local",
-            "physical_path": metadata.physical_path or metadata.path,
             "size_bytes": metadata.size or 0,
-            "content_hash": metadata.etag,
+            "content_id": metadata.content_id,
             "file_type": metadata.mime_type,
             "created_at": _to_naive(metadata.created_at) or _utcnow_naive(),
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
-            "zone_id": metadata.zone_id or "default",
+            "zone_id": metadata.zone_id or ROOT_ZONE_ID,
             "posix_uid": metadata.owner_id,
         }}
         if include_version:
@@ -972,10 +856,8 @@ class MetadataMapper:
     def to_file_path_update_values(metadata: FileMetadata) -> dict[str, Any]:
         """Convert FileMetadata to dict for UPDATE operations."""
         return {{
-            "backend_id": metadata.backend_name,
-            "physical_path": metadata.physical_path,
             "size_bytes": metadata.size or 0,
-            "content_hash": metadata.etag,
+            "content_id": metadata.content_id,
             "file_type": metadata.mime_type,
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
         }}
@@ -1078,7 +960,7 @@ def audit_ssot_coverage() -> list[str]:
     tests_dir = REPO_ROOT / "tests"
 
     # Match single-line and multi-line imports from generated/managed modules
-    # e.g. from nexus.contracts.metadata import FileMetadata, PaginatedResult
+    # e.g. from nexus.contracts.metadata import FileMetadata
     # e.g. from nexus.core.metastore import MetastoreABC
     # e.g. from nexus.core._compact_generated import CompactFileMetadata
     import_re = re.compile(
@@ -1147,12 +1029,12 @@ def main() -> None:
     # 1. Generate protobuf stubs (metadata_pb2.py)
     generate_protobuf_stubs()
 
-    # 2. Generate Python dataclass (FileMetadata + PaginatedResult)
+    # 2. Generate Python dataclass (FileMetadata)
     metadata_content = generate_metadata_py(fields, enums)
     METADATA_OUT.write_text(metadata_content, encoding="utf-8")
     print(f"Generated: {METADATA_OUT}")
 
-    # 2b. MetastoreABC + AsyncMetastoreWrapper are hand-maintained in metastore.py
+    # 2b. MetastoreABC is hand-maintained in metastore.py
     # (not generated — the ABC methods are designed by hand, not derived from proto)
     print(f"Skipped:   {METASTORE_OUT} (hand-maintained)")
 

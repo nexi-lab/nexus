@@ -7,7 +7,6 @@ Hierarchy:
     ├── InvalidDelegationModeError - Unknown mode value
     ├── DelegationNotFoundError   - Delegation ID not found
     ├── DelegationChainError      - Delegated agent tries to delegate
-    └── InsufficientTrustError    - Agent trust score below threshold (#1619)
 """
 
 
@@ -48,22 +47,3 @@ class DepthExceededError(DelegationError):
 
 class InvalidPrefixError(DelegationError):
     """Raised when scope_prefix fails validation (empty, relative, malformed)."""
-
-
-class InsufficientTrustError(DelegationError):
-    """Raised when agent trust score is below the required threshold (#1619).
-
-    Attributes:
-        agent_id: The agent whose trust score was checked.
-        score: The agent's current trust score (None if no score exists).
-        threshold: The minimum required trust score.
-    """
-
-    def __init__(self, agent_id: str, score: float | None, threshold: float) -> None:
-        self.agent_id = agent_id
-        self.score = score
-        self.threshold = threshold
-        score_str = f"{score:.3f}" if score is not None else "None"
-        super().__init__(
-            f"Agent {agent_id} trust score {score_str} is below threshold {threshold:.3f}"
-        )

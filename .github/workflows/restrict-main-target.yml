@@ -1,0 +1,29 @@
+name: Restrict Main Branch
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Enforce develop → main only
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check source branch
+        run: |
+          SOURCE="${{ github.head_ref }}"
+          echo "PR source branch: $SOURCE"
+          echo "PR target branch: main"
+
+          if [ "$SOURCE" != "develop" ]; then
+            echo ""
+            echo "❌ ERROR: PRs to main must come from develop, not '$SOURCE'"
+            echo ""
+            echo "The main branch only accepts merges from develop."
+            echo "Please target develop instead:"
+            echo "  gh pr edit --base develop"
+            echo ""
+            exit 1
+          fi
+
+          echo "✅ Source branch is develop — allowed"

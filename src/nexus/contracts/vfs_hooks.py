@@ -9,12 +9,14 @@ Two-phase dispatch model (Issue #900):
     INTERCEPT — synchronous, ordered.  Can abort (raise) or modify context.
     OBSERVE   — fire-and-forget (``FileEvent``).  Cannot abort.
 
-All six operations are covered:
-    read / write / delete / rename / mkdir / rmdir
+All eight operations are covered:
+    read / write / delete / rename / mkdir / rmdir / stat / access
 
 Issue #625: Extracted from ``core/vfs_hooks.py``.
 Issue #900: Added MkdirHookContext, RmdirHookContext, VFSMkdirHook,
             VFSRmdirHook.  Unified under KernelDispatch.
+Issue #1815: Added StatHookContext, AccessHookContext, VFSStatHook,
+             VFSAccessHook for permission enforcement migration.
 """
 
 from dataclasses import dataclass, field
@@ -39,7 +41,7 @@ class ReadHookContext:
     agent_id: str | None = None
     metadata: FileMetadata | None = None
     content: bytes | None = None
-    content_hash: str | None = None
+    content_id: str | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -54,9 +56,9 @@ class WriteHookContext:
     zone_id: str | None = None
     agent_id: str | None = None
     is_new_file: bool = False
-    content_hash: str | None = None
+    content_id: str | None = None
     metadata: FileMetadata | None = None
-    old_metadata: FileMetadata | None = None
+    old_metadata: dict[str, Any] | None = None
     new_version: int = 1
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -70,7 +72,7 @@ class DeleteHookContext:
     context: OperationContext | None
     zone_id: str | None = None
     agent_id: str | None = None
-    metadata: FileMetadata | None = None
+    metadata: dict[str, Any] | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -85,6 +87,20 @@ class RenameHookContext:
     zone_id: str | None = None
     agent_id: str | None = None
     is_directory: bool = False
+    metadata: FileMetadata | None = None
+    warnings: list[OperationWarning] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CopyHookContext:
+    """Context passed through copy hooks (Issue #3329)."""
+
+    src_path: str
+    dst_path: str
+    context: OperationContext | None
+    zone_id: str | None = None
+    agent_id: str | None = None
     metadata: FileMetadata | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -112,8 +128,34 @@ class RmdirHookContext:
     zone_id: str | None = None
     agent_id: str | None = None
     recursive: bool = False
-    metadata: FileMetadata | None = None
+    metadata: dict[str, Any] | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class StatHookContext:
+    """Context for stat/is_directory permission check (Issue #1815).
+
+    Hooks raise ``PermissionDeniedError`` to deny access.
+    """
+
+    path: str
+    context: OperationContext | None
+    permission: str = "TRAVERSE"  # TRAVERSE or READ
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AccessHookContext:
+    """Context for access permission check (Issue #1815).
+
+    Hooks raise ``PermissionDeniedError`` to deny access.
+    """
+
+    path: str
+    context: OperationContext | None
+    permission: str = "TRAVERSE"  # TRAVERSE or READ
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -183,6 +225,16 @@ class VFSRenameHook(Protocol):
 
 
 @runtime_checkable
+class VFSCopyHook(Protocol):
+    """Hook that runs after a copy operation (Issue #3329)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def on_post_copy(self, ctx: CopyHookContext) -> None: ...
+
+
+@runtime_checkable
 class VFSMkdirHook(Protocol):
     """Hook that runs after a mkdir operation (Issue #900)."""
 
@@ -202,11 +254,34 @@ class VFSRmdirHook(Protocol):
     def on_post_rmdir(self, ctx: RmdirHookContext) -> None: ...
 
 
+@runtime_checkable
+class VFSStatHook(Protocol):
+    """INTERCEPT hook for stat/is_directory permission check (Issue #1815).
+
+    ``on_pre_stat`` is called before stat operations.  Raise
+    ``PermissionDeniedError`` to deny access.
+    """
+
+    def on_pre_stat(self, ctx: StatHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSAccessHook(Protocol):
+    """INTERCEPT hook for access permission check (Issue #1815).
+
+    ``on_pre_access`` is called before access checks.  Raise
+    ``PermissionDeniedError`` to deny access.
+    """
+
+    def on_pre_access(self, ctx: AccessHookContext) -> None: ...
+
+
 @dataclass
 class WriteBatchHookContext:
     """Context passed through write-batch hooks (Issue #900)."""
 
     items: list[tuple[Any, bool]]
+    context: OperationContext | None = None
     zone_id: str | None = None
     agent_id: str | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
@@ -222,6 +297,27 @@ class VFSWriteBatchHook(Protocol):
     def on_post_write_batch(self, ctx: WriteBatchHookContext) -> None: ...
 
 
+@dataclass
+class ReadBatchHookContext:
+    """Context passed through read-batch hooks (Issue #3700)."""
+
+    items: list[tuple[Any, dict[str, Any] | None]]  # (path, metadata_dict_or_None)
+    context: OperationContext | None = None
+    zone_id: str | None = None
+    agent_id: str | None = None
+    warnings: list[OperationWarning] = field(default_factory=list)
+
+
+@runtime_checkable
+class VFSReadBatchHook(Protocol):
+    """Hook that runs after a batch read operation (Issue #3700)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def on_post_read_batch(self, ctx: ReadBatchHookContext) -> None: ...
+
+
 # ---------------------------------------------------------------------------
 # OBSERVE phase — observer protocol (Issue #900)
 # ---------------------------------------------------------------------------
@@ -233,9 +329,27 @@ class VFSObserver(Protocol):
 
     Receives a frozen ``FileEvent`` after every successful mutation.
     Must not raise — exceptions are caught and logged by KernelDispatch.
+
+    OBSERVE is fire-and-forget by definition. All observers run on the
+    kernel's background ThreadPool (§11 Phase 3), off the syscall hot
+    path. There is no other mode — ``OBSERVE_INLINE`` was deleted in
+    §11 Phase 2 because inline observers were functionally identical to
+    INTERCEPT POST hooks and violated dispatch-contract orthogonality.
+    Observers needing sync blocking on the syscall return path belong in
+    INTERCEPT POST, not OBSERVE.
+
+    Note: ``on_mutation`` was removed — all observer dispatch is now
+    handled by the Rust kernel's MutationObserver trait.  Python
+    observers that need to receive events use explicit publish()
+    calls wired at factory time, not Protocol dispatch.
+
+    Optional class attributes:
+
+    ``event_mask`` (default: ``ALL_FILE_EVENTS``)
+        Rust-side event-type bitmask filtering to skip irrelevant observers.
     """
 
-    def on_mutation(self, event: Any) -> None: ...
+    ...
 
 
 # ---------------------------------------------------------------------------
@@ -245,20 +359,69 @@ class VFSObserver(Protocol):
 
 @runtime_checkable
 class VFSPathResolver(Protocol):
-    """PRE-DISPATCH resolver for virtual paths (Issue #889).
+    """PRE-DISPATCH resolver for virtual paths (Issue #889, #1665).
 
     Linux analogue: virtual filesystem dispatch (procfs, sysfs, devtmpfs).
-    When read()/write()/delete() is called on a path claimed by a resolver,
-    the resolver handles the entire operation — the normal VFS pipeline is
-    skipped.  Each resolver owns its own permission semantics.
+    When a path is claimed by a resolver, the resolver handles the entire
+    operation — the normal VFS pipeline is skipped.  Each resolver owns
+    its own permission semantics.
+
+    Single-call ``try_*`` pattern: each method returns ``None`` when the
+    resolver does not claim the path ("not my path"), or the operation
+    result when it does.  This eliminates the old two-phase
+    ``matches()`` + ``read/write/delete()`` dispatch.
 
     Registered at boot via factory into KernelDispatch.  Empty resolver
     chain = no-op = zero overhead when no resolvers registered.
     """
 
-    def matches(self, path: str) -> bool: ...
-    def read(
-        self, path: str, *, return_metadata: bool = False, context: Any = None
-    ) -> bytes | dict: ...
-    def write(self, path: str, content: bytes) -> dict[str, Any]: ...
-    def delete(self, path: str, *, context: Any = None) -> None: ...
+    # Content I/O routing
+    def try_read(self, path: str, *, context: Any = None) -> bytes | None: ...
+    def try_write(
+        self, path: str, content: bytes, *, context: Any = None
+    ) -> dict[str, Any] | None: ...
+    def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None: ...
+
+
+# ---------------------------------------------------------------------------
+# MOUNT/UNMOUNT hooks — driver lifecycle notifications (Issue #1811)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MountHookContext:
+    """Context passed to mount hooks when a backend is mounted."""
+
+    mount_point: str
+    backend: Any  # ObjectStoreABC
+
+
+@dataclass
+class UnmountHookContext:
+    """Context passed to unmount hooks when a backend is unmounted."""
+
+    mount_point: str
+    backend: Any  # ObjectStoreABC
+
+
+@runtime_checkable
+class VFSMountHook(Protocol):
+    """Hook that runs when a backend is mounted (Issue #1811).
+
+    Linux analogue: ``file_system_type.mount()``.
+    Fire-and-forget — failures are caught and logged by KernelDispatch.
+    Dispatched by DriverLifecycleCoordinator via KernelDispatch.
+    """
+
+    def on_mount(self, ctx: MountHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSUnmountHook(Protocol):
+    """Hook that runs when a backend is unmounted (Issue #1811).
+
+    Linux analogue: ``kill_sb()``.
+    Fire-and-forget — failures are caught and logged by KernelDispatch.
+    """
+
+    def on_unmount(self, ctx: UnmountHookContext) -> None: ...

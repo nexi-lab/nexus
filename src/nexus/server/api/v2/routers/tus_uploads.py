@@ -12,14 +12,17 @@ Every endpoint (except OPTIONS) validates the Tus-Resumable header.
 
 import base64
 import logging
-from typing import TYPE_CHECKING
+import os
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import require_auth
+from nexus.server.zone_execution import run_zone_scoped
 
 if TYPE_CHECKING:
-    from nexus.services.upload.chunked_upload_service import ChunkedUploadService
+    from nexus.bricks.upload.chunked_upload_service import ChunkedUploadService
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +73,25 @@ def _parse_upload_metadata(raw: str | None) -> dict[str, str]:
     return result
 
 
+def _authorize_upload_access(session: Any, auth_result: dict[str, Any]) -> Any:
+    """Return request context if caller owns the upload session or is admin."""
+    from nexus.server.dependencies import get_operation_context
+
+    ctx = get_operation_context(auth_result)
+    if getattr(ctx, "is_admin", False):
+        return ctx
+
+    request_zone = ctx.zone_id or ROOT_ZONE_ID
+    request_user = ctx.user_id or "anonymous"
+    if session.zone_id != request_zone or session.user_id != request_user:
+        raise HTTPException(status_code=403, detail="Upload session is not owned by caller")
+    return ctx
+
+
+def _get_zone_registry(request: Request) -> Any | None:
+    return getattr(request.app.state, "zone_registry", None)
+
+
 def create_tus_uploads_router(
     get_upload_service: object,
 ) -> tuple[APIRouter, APIRouter]:
@@ -104,7 +126,7 @@ def create_tus_uploads_router(
             status_code=204,
             headers={
                 **caps,
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": os.environ.get("NEXUS_CORS_ORIGIN", ""),
                 "Access-Control-Allow-Methods": "OPTIONS, POST, PATCH, HEAD, DELETE",
                 "Access-Control-Allow-Headers": (
                     "Tus-Resumable, Upload-Length, Upload-Offset, "
@@ -124,9 +146,11 @@ def create_tus_uploads_router(
     async def tus_create(
         request: Request,
         _tus_resumable: str = Depends(_validate_tus_resumable),
+        auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Create a new upload session (tus creation extension)."""
-        from nexus.contracts.exceptions import ValidationError
+        from nexus.contracts.exceptions import NexusPermissionError, ValidationError
+        from nexus.server.dependencies import get_operation_context
 
         service = _get_service()
 
@@ -145,24 +169,31 @@ def create_tus_uploads_router(
         metadata_raw = request.headers.get("Upload-Metadata")
         metadata = _parse_upload_metadata(metadata_raw)
 
-        # Extract identity from request context if available
-        zone_id = request.headers.get("X-Zone-Id", "root")
-        user_id = request.headers.get("X-User-Id", "anonymous")
+        # Use authenticated principal instead of trusting request headers
+        ctx = get_operation_context(auth_result)
+        zone_id = ctx.zone_id or ROOT_ZONE_ID
+        user_id = ctx.user_id or "anonymous"
 
-        try:
-            session = await service.create_upload(
-                target_path=metadata.get("filename", metadata.get("path", "/uploads/unknown")),
-                upload_length=upload_length,
-                metadata=metadata,
-                zone_id=zone_id,
-                user_id=user_id,
-            )
-        except RuntimeError as e:
-            if "Too many concurrent" in str(e):
-                raise HTTPException(status_code=429, detail=str(e)) from e
-            raise
-        except ValidationError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+        async def _create() -> Any:
+            try:
+                return await service.create_upload(
+                    target_path=metadata.get("filename", metadata.get("path", "/uploads/unknown")),
+                    upload_length=upload_length,
+                    metadata=metadata,
+                    zone_id=zone_id,
+                    user_id=user_id,
+                    context=ctx,
+                )
+            except RuntimeError as e:
+                if "Too many concurrent" in str(e):
+                    raise HTTPException(status_code=429, detail=str(e)) from e
+                raise
+            except ValidationError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            except NexusPermissionError as e:
+                raise HTTPException(status_code=403, detail=str(e)) from e
+
+        session = await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _create)
 
         # Build Location URL
         location = str(request.url).rstrip("/") + f"/{session.upload_id}"
@@ -183,9 +214,11 @@ def create_tus_uploads_router(
         upload_id: str,
         request: Request,
         _tus_resumable: str = Depends(_validate_tus_resumable),
+        auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Upload a chunk of data (tus core protocol)."""
         from nexus.contracts.exceptions import (
+            NexusPermissionError,
             UploadChecksumMismatchError,
             UploadExpiredError,
             UploadNotFoundError,
@@ -194,6 +227,21 @@ def create_tus_uploads_router(
         )
 
         service = _get_service()
+
+        from nexus.server.dependencies import get_operation_context
+
+        ctx = get_operation_context(auth_result)
+
+        async def _status_for_chunk() -> Any:
+            try:
+                current = await service.get_upload_status(upload_id)
+                return _authorize_upload_access(current, auth_result)
+            except UploadNotFoundError as e:
+                raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
+            except UploadExpiredError as e:
+                raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
+
+        ctx = await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _status_for_chunk)
 
         # Validate Content-Type
         content_type = request.headers.get("Content-Type", "")
@@ -221,29 +269,35 @@ def create_tus_uploads_router(
         # Optional checksum
         checksum_header = request.headers.get("Upload-Checksum")
 
-        try:
-            session = await service.receive_chunk(
-                upload_id=upload_id,
-                offset=offset,
-                chunk_data=chunk_data,
-                checksum_header=checksum_header,
-            )
-        except UploadNotFoundError as e:
-            raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
-        except UploadExpiredError as e:
-            raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
-        except UploadOffsetMismatchError as e:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Offset mismatch: expected {e.expected_offset}, got {e.received_offset}",
-            ) from e
-        except UploadChecksumMismatchError as e:
-            raise HTTPException(
-                status_code=460,
-                detail=f"Checksum mismatch ({e.algorithm})",
-            ) from e
-        except ValidationError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+        async def _receive() -> Any:
+            try:
+                return await service.receive_chunk(
+                    upload_id=upload_id,
+                    offset=offset,
+                    chunk_data=chunk_data,
+                    checksum_header=checksum_header,
+                    context=ctx,
+                )
+            except UploadNotFoundError as e:
+                raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
+            except UploadExpiredError as e:
+                raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
+            except UploadOffsetMismatchError as e:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Offset mismatch: expected {e.expected_offset}, got {e.received_offset}",
+                ) from e
+            except UploadChecksumMismatchError as e:
+                raise HTTPException(
+                    status_code=460,
+                    detail=f"Checksum mismatch ({e.algorithm})",
+                ) from e
+            except ValidationError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            except NexusPermissionError as e:
+                raise HTTPException(status_code=403, detail=str(e)) from e
+
+        session = await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _receive)
 
         headers = {
             "Tus-Resumable": TUS_RESUMABLE,
@@ -259,19 +313,30 @@ def create_tus_uploads_router(
     @router.head("/{upload_id}")
     async def tus_get_offset(
         upload_id: str,
+        request: Request,
         _tus_resumable: str = Depends(_validate_tus_resumable),
+        auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Get the current offset of an upload (for resumption)."""
         from nexus.contracts.exceptions import UploadExpiredError, UploadNotFoundError
 
         service = _get_service()
 
-        try:
-            session = await service.get_upload_status(upload_id)
-        except UploadNotFoundError as e:
-            raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
-        except UploadExpiredError as e:
-            raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
+        from nexus.server.dependencies import get_operation_context
+
+        ctx = get_operation_context(auth_result)
+
+        async def _status() -> Any:
+            try:
+                session = await service.get_upload_status(upload_id)
+                _authorize_upload_access(session, auth_result)
+                return session
+            except UploadNotFoundError as e:
+                raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
+            except UploadExpiredError as e:
+                raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
+
+        session = await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _status)
 
         headers = {
             "Tus-Resumable": TUS_RESUMABLE,
@@ -289,17 +354,30 @@ def create_tus_uploads_router(
     @router.delete("/{upload_id}")
     async def tus_terminate(
         upload_id: str,
+        request: Request,
         _tus_resumable: str = Depends(_validate_tus_resumable),
+        auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Terminate an upload and release resources (tus termination extension)."""
-        from nexus.contracts.exceptions import UploadNotFoundError
+        from nexus.contracts.exceptions import UploadExpiredError, UploadNotFoundError
 
         service = _get_service()
 
-        try:
-            await service.terminate_upload(upload_id)
-        except UploadNotFoundError as e:
-            raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
+        from nexus.server.dependencies import get_operation_context
+
+        ctx = get_operation_context(auth_result)
+
+        async def _terminate() -> None:
+            try:
+                session = await service.get_upload_status(upload_id)
+                _authorize_upload_access(session, auth_result)
+                await service.terminate_upload(upload_id)
+            except UploadNotFoundError as e:
+                raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
+            except UploadExpiredError as e:
+                raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
+
+        await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _terminate)
 
         return Response(
             status_code=204,

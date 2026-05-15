@@ -5,6 +5,9 @@ These tests verify async permission enforcement functionality.
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.async_permissions import AsyncPermissionEnforcer
 from nexus.contracts.types import OperationContext, Permission
 

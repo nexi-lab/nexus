@@ -16,7 +16,7 @@ Design reference:
 import threading
 from unittest.mock import MagicMock, patch
 
-from nexus.backends.wrapper_metrics import WrapperMetrics
+from nexus.backends.wrappers.metrics import WrapperMetrics
 
 # ---------------------------------------------------------------------------
 # In-Memory Counter Tests

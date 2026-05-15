@@ -60,7 +60,6 @@ EXCLUDED_METHODS: set[str] = {
     "stream",
     "stream_range",
     "write_stream",
-    "shutdown_parser_threads",
     "export_metadata",
     "import_metadata",
     "batch_get_content_ids",
@@ -77,51 +76,56 @@ EXCLUDED_METHODS: set[str] = {
     "get_dynamic_viewer_config",
     "read_with_dynamic_viewer",
     "apply_dynamic_viewer_filter",
-    "semantic_search",
+    # Codex review of #3701 (finding #3): semantic_search REMAINS exposed
+    # via SearchService and is called positionally by RemoteServiceProxy
+    # (e.g. ``proxy.semantic_search("needle", path="/docs", limit=5)``).
+    # Excluding it from METHOD_PARAMS broke that positional binding —
+    # restored so RPCProxyBase._get_param_names() can resolve "query".
     "semantic_search_stats",
     "initialize_semantic_search",
     "wait_for_changes",
     "lock",
     "extend_lock",
     "unlock",
-    "llm_read",
-    "llm_read_detailed",
-    "llm_read_stream",
-    "create_llm_reader",
-    "ace_retrieve_trajectory",
-    "ace_get_trajectory_stats",
-    "ace_export_trajectories",
-    "export",  # skill_service.export — not in METHOD_PARAMS
-    "import_skill",  # skill_service.import_skill — not in METHOD_PARAMS
-    "validate_zip",  # skill_service.validate_zip — not in METHOD_PARAMS
 }
 
 # Modules to scan for @rpc_expose methods.  We inspect each class in each
 # module and collect all methods that have ``_rpc_exposed = True``.
+#
+# Codex review of #3701 (finding #3): the previous list referenced stale
+# ``nexus.system_services.*`` module paths that were moved during the
+# kernel/services refactor. Those modules silently ImportError'd, the
+# codegen logged a warning, and the resulting METHOD_PARAMS was missing
+# entries for ``register_workspace``, ``register_agent``, and several
+# other still-exposed RPCs. RemoteServiceProxy / RPCProxyBase rely on
+# METHOD_PARAMS to map positional arguments to keyword names, so any
+# missing entry silently misserializes positional remote calls. Fix by
+# pointing at the canonical post-refactor locations.
 MODULES_TO_SCAN: list[str] = [
     "nexus.core.nexus_fs",
-    # Search (reorganized from flat nexus.services.search_*)
-    "nexus.services.search.search_service",
-    "nexus.services.search.search_semantic",
+    # Search (moved to bricks tier, Issue #1287)
+    "nexus.bricks.search.search_service",
     # Services (reorganized into sub-packages)
-    "nexus.services.share_link.share_link_service",
-    "nexus.services.versioning.version_service",
-    "nexus.services.mount.mount_service",
-    "nexus.services.oauth.oauth_service",
-    "nexus.services.memory_service",
-    "nexus.services.ace_rpc_service",
-    "nexus.services.workspace_rpc_service",
-    "nexus.services.user_provisioning",
-    "nexus.services.agents.agent_service",
-    # System services
-    "nexus.system_services.lifecycle.events_service",
-    "nexus.system_services.lifecycle.task_queue_service",
+    "nexus.bricks.share_link.share_link_service",
+    "nexus.bricks.versioning.version_service",
+    "nexus.bricks.mount.mount_service",
+    # OAuth credential service (moved into bricks/auth/oauth/)
+    "nexus.bricks.auth.oauth.credential_service",
+    # post-refactor canonical locations (was nexus.system_services.*)
+    "nexus.services.workspace.workspace_rpc_service",
+    "nexus.services.agents.agent_rpc_service",
+    "nexus.services.lifecycle.user_provisioning",
+    "nexus.services.metadata_export",
     # Brick services with @rpc_expose
-    "nexus.bricks.llm.llm_service",
     "nexus.bricks.mcp.mcp_service",
     "nexus.bricks.rebac.rebac_service",
-    "nexus.bricks.skills.service",
-    "nexus.bricks.skills.package_service",
+    # Server-side RPC services (Issue #2986: post-refactor split)
+    "nexus.server.rpc.services.snapshots_rpc",
+    "nexus.server.rpc.services.pay_rpc",
+    "nexus.server.rpc.services.governance_rpc",
+    "nexus.server.rpc.services.federation_rpc",
+    "nexus.server.rpc.services.events_rpc",
+    "nexus.server.rpc.services.audit_rpc",
 ]
 
 # Types that signal "operation context" — parameters with these types are
@@ -241,16 +245,31 @@ def _default_repr(default: Any) -> str:
         return f'"{default}"'
     if isinstance(default, bool):
         return repr(default)
-    if isinstance(default, (int, float)):
+    if isinstance(default, int | float):
         return repr(default)
-    if isinstance(default, (list, tuple, dict)):
+    if isinstance(default, list | tuple | dict):
         return repr(default)
     return repr(default)
 
 
 def _is_context_param(name: str, annotation_str: str) -> bool:
-    """Return True if this parameter represents an OperationContext."""
-    if annotation_str in CONTEXT_TYPES:
+    """Return True if this parameter represents an OperationContext.
+
+    Handles bare forms (``OperationContext``, ``OperationContext | None``)
+    AND single-quoted double-forward-reference forms
+    (``'OperationContext | None'``) that leak through when the source
+    has ``context: "OperationContext | None"`` with `from __future__
+    import annotations` — inspect.signature returns the annotation as
+    a string that still contains the literal inner quotes.
+    """
+    # Strip any outer single/double quote pair before comparing — this
+    # catches the double-forward-reference case.
+    stripped = annotation_str.strip()
+    if (stripped.startswith("'") and stripped.endswith("'")) or (
+        stripped.startswith('"') and stripped.endswith('"')
+    ):
+        stripped = stripped[1:-1]
+    if stripped in CONTEXT_TYPES or annotation_str in CONTEXT_TYPES:
         return True
     # Also exclude _context params (internal convention)
     return name.startswith("_") and "context" in name.lower()

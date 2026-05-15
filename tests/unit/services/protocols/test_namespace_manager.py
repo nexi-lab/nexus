@@ -4,8 +4,11 @@ import dataclasses
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.namespace_manager import NamespaceMount
-from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # NamespaceMount frozen dataclass tests

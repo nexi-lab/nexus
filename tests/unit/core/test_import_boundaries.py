@@ -12,12 +12,14 @@ Tier hierarchy (Liedtke minimality):
 """
 
 import ast
+import tomllib
 from pathlib import Path
 
 import pytest
 
 # Project root for src/nexus/
 NEXUS_ROOT = Path(__file__).resolve().parents[3] / "src" / "nexus"
+PROJECT_ROOT = NEXUS_ROOT.parents[1]
 
 
 def _collect_imports(module_path: Path) -> list[tuple[str, int, str]]:
@@ -151,6 +153,43 @@ class TestServicesDoNotImportServer:
         )
 
 
+class TestImportLinterPackageCoverage:
+    """Verify import-linter models top-level package boundaries, not just tier names."""
+
+    def test_top_level_server_forbidden_contract_covers_non_server_packages(self):
+        pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        contracts = pyproject["tool"]["importlinter"]["contracts"]
+        contract = next(
+            (c for c in contracts if c.get("id") == "top-level-packages-must-not-import-server"),
+            None,
+        )
+        assert contract is not None
+        assert contract["type"] == "forbidden"
+        assert "nexus.server" in contract["forbidden_modules"]
+
+        covered = set(contract["source_modules"])
+        expected = {
+            "nexus.backends",
+            "nexus.contracts",
+            "nexus.core",
+            "nexus.factory",
+            "nexus.fs",
+            "nexus.lib",
+            "nexus.remote",
+            "nexus.security",
+            "nexus.services",
+            "nexus.storage",
+        }
+        assert expected <= covered
+
+
+class TestTypingPackageMarker:
+    """Packaging metadata must match PEP 561 typed-package marker requirements."""
+
+    def test_nexus_namespace_has_py_typed_marker(self):
+        assert (NEXUS_ROOT / "py.typed").is_file()
+
+
 class TestRPCTypesInCore:
     """Verify RPC types are importable from core (Issue #1519, 1A)."""
 
@@ -172,15 +211,18 @@ class TestFourStoragePillars:
     """Verify all Four Storage Pillars are importable ABCs (Issue #1525).
 
     The NEXUS-LEGO-ARCHITECTURE defines exactly four storage pillars:
-    1. MetastoreABC   — inode/path metadata (Raft, redb)
-    2. Backend         — object/blob storage (ObjectStoreABC: Local, GCS, S3)
-    3. RecordStoreABC — relational data (PostgreSQL, SQLite)
-    4. CacheStoreABC  — ephemeral KV + PubSub (Dragonfly, in-memory)
+    1. MetaStore (Rust) — inode/path metadata, kernel-internal
+    2. Backend           — object/blob storage (ObjectStoreABC: Local, GCS, S3)
+    3. RecordStoreABC    — relational data (PostgreSQL, SQLite)
+    4. CacheStoreABC     — ephemeral KV + PubSub (Dragonfly, in-memory)
     """
 
+    # Python-side Pillar abstract bases. The MetaStore SSOT is in the
+    # Rust kernel — there is no Python ABC for it after W3 deleted
+    # ``MetastoreABC`` and the ``RustMetastoreProxy`` shim. Callers
+    # reach the metastore through ``kernel.metastore_*``.
     PILLARS = [
-        ("nexus.core.metastore", "MetastoreABC"),
-        ("nexus.backends.backend", "Backend"),
+        ("nexus.backends.base.backend", "Backend"),
         ("nexus.storage.record_store", "RecordStoreABC"),
         ("nexus.contracts.cache_store", "CacheStoreABC"),
     ]
@@ -188,10 +230,10 @@ class TestFourStoragePillars:
     @pytest.mark.parametrize(
         ("module_path", "class_name"),
         PILLARS,
-        ids=["MetastoreABC", "Backend", "RecordStoreABC", "CacheStoreABC"],
+        ids=["Backend", "RecordStoreABC", "CacheStoreABC"],
     )
     def test_pillar_is_importable_abc(self, module_path: str, class_name: str):
-        """Each storage pillar must be importable and be an ABC."""
+        """Each Python storage pillar must be importable and be an ABC."""
         import importlib
         from abc import ABC
 
@@ -200,23 +242,19 @@ class TestFourStoragePillars:
         assert isinstance(cls, type), f"{class_name} is not a class"
         assert issubclass(cls, ABC), f"{class_name} is not an ABC"
 
-    def test_metastore_has_required_abstract_methods(self):
-        """MetastoreABC must declare the 6 required abstract methods."""
-        from nexus.core.metastore import MetastoreABC
+    def test_metastore_pillar_is_kernel_only(self):
+        """The MetaStore pillar has no Python ABC — its trait lives in
+        ``rust/kernel/src/abc/meta_store.rs`` and the concrete impl is
+        ``LocalMetaStore`` (also Rust). Python reaches the metastore
+        through ``sys_stat`` / ``sys_setattr`` / ``metastore_list_paginated``
+        PyO3 bindings.
+        """
+        from nexus_runtime import PyKernel
 
-        required = {"get", "put", "delete", "exists", "list", "close"}
-        abstract = getattr(MetastoreABC, "__abstractmethods__", frozenset())
-        missing = required - abstract
-        assert not missing, f"MetastoreABC missing abstract methods: {missing}"
-
-    def test_metastore_implementations_exist(self):
-        """At least RaftMetadataStore and FederatedMetadataProxy implement MetastoreABC."""
-        from nexus.core.metastore import MetastoreABC
-        from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
-        from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-        assert issubclass(RaftMetadataStore, MetastoreABC)
-        assert issubclass(FederatedMetadataProxy, MetastoreABC)
+        kernel = PyKernel()
+        assert hasattr(kernel, "sys_stat")
+        assert hasattr(kernel, "sys_setattr")
+        assert hasattr(kernel, "metastore_list_paginated")
 
     def test_no_old_name_in_codebase(self):
         """FileMetadataProtocol should not appear in src/ (clean rename)."""
@@ -256,11 +294,56 @@ class TestConfigDoesNotImportServer:
         )
 
     def test_auth_config_canonical_import(self):
-        """OAuthConfig canonical path is nexus.bricks.auth.oauth.config (#2281)."""
-        from nexus.bricks.auth.oauth.config import OAuthConfig, OAuthProviderConfig
+        """OAuthConfig canonical path is nexus.contracts.oauth_types (#3230)."""
+        from nexus.contracts.oauth_types import OAuthConfig, OAuthProviderConfig
 
         assert OAuthConfig is not None
         assert OAuthProviderConfig is not None
+
+    def test_auth_config_backward_compat_import(self):
+        """OAuthConfig backward-compat shim from bricks.auth.oauth.config (#3230)."""
+        from nexus.bricks.auth.oauth.config import OAuthConfig as ShimOAuth
+        from nexus.bricks.auth.oauth.config import OAuthProviderConfig as ShimProvider
+        from nexus.contracts.oauth_types import OAuthConfig, OAuthProviderConfig
+
+        assert ShimOAuth is OAuthConfig
+        assert ShimProvider is OAuthProviderConfig
+
+    def test_config_no_bricks_auth_imports(self):
+        """nexus/config.py must not import from nexus.bricks.auth at top level (#3230).
+
+        This prevents config from pulling in the auth brick, which may
+        not be installed in the slim nexus-fs package.
+        """
+        config_path = NEXUS_ROOT / "config.py"
+        violations: list[str] = []
+
+        for module, lineno, _kind in _collect_top_level_imports(config_path):
+            if module.startswith("nexus.bricks.auth"):
+                violations.append(f"config.py:{lineno} imports {module}")
+
+        assert violations == [], (
+            "config.py→bricks.auth import violations found (#3230):\n"
+            + "\n".join(f"  - {v}" for v in violations)
+        )
+
+    def test_sdk_no_bricks_rebac_top_level_imports(self):
+        """nexus/sdk/__init__.py must not top-level import from nexus.bricks.rebac (#3230).
+
+        ReBAC implementation types should be lazy-loaded via __getattr__ so
+        that `import nexus.sdk` works without bricks.rebac installed.
+        """
+        sdk_init = NEXUS_ROOT / "sdk" / "__init__.py"
+        violations: list[str] = []
+
+        for module, lineno, _kind in _collect_top_level_imports(sdk_init):
+            if module.startswith("nexus.bricks.rebac"):
+                violations.append(f"sdk/__init__.py:{lineno} imports {module}")
+
+        assert violations == [], (
+            "sdk/__init__.py→bricks.rebac top-level import violations found (#3230):\n"
+            + "\n".join(f"  - {v}" for v in violations)
+        )
 
 
 class TestZoneHelpersInLib:

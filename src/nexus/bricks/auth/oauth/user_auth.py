@@ -8,7 +8,7 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -63,14 +63,31 @@ class OAuthUserAuth:
                 list(providers.keys()),
             )
 
-    def get_auth_url(self, provider_name: str, redirect_uri: str | None = None) -> tuple[str, str]:
+    def get_auth_url(
+        self,
+        provider_name: str,
+        redirect_uri: str | None = None,
+        state: str | None = None,
+    ) -> tuple[str, str]:
         """Get OAuth authorization URL for any registered provider.
 
+        Args:
+            provider_name: Registered provider key (e.g. ``"google"``).
+            redirect_uri: Optional redirect URI override.
+            state: Optional caller-supplied state value. When provided, it
+                is forwarded verbatim to the OAuth provider as the
+                ``state`` query parameter and returned to the caller. This
+                lets the server layer issue signed / binding-aware state
+                (see ``OAuthStateService``) without duplicating generation
+                logic here. When ``None``, a fresh 32-byte random token is
+                generated — preserves backward compatibility.
+
         Returns:
-            Tuple of (authorization_url, state)
+            Tuple of (authorization_url, state).
         """
         provider = self._get_provider(provider_name)
-        state = secrets.token_urlsafe(32)
+        if state is None:
+            state = secrets.token_urlsafe(32)
         kwargs: dict[str, Any] = {"state": state}
         if redirect_uri is not None:
             kwargs["redirect_uri"] = redirect_uri
@@ -78,17 +95,38 @@ class OAuthUserAuth:
         return auth_url, state
 
     # Keep backward-compat convenience method
-    def get_google_auth_url(self, redirect_uri: str | None = None) -> tuple[str, str]:
-        return self.get_auth_url("google", redirect_uri=redirect_uri)
+    def get_google_auth_url(
+        self, redirect_uri: str | None = None, state: str | None = None
+    ) -> tuple[str, str]:
+        return self.get_auth_url("google", redirect_uri=redirect_uri, state=state)
 
     async def handle_callback(
         self,
         provider_name: str,
         code: str,
-        _state: str | None = None,
+        state: str | None = None,
         redirect_uri: str | None = None,
+        expected_state: str | None = None,
     ) -> tuple[UserModel, str]:
-        """Handle OAuth callback for any provider."""
+        """Handle OAuth callback for any provider.
+
+        Args:
+            provider_name: OAuth provider name.
+            code: Authorization code from provider.
+            state: State parameter returned in the callback.
+            redirect_uri: Redirect URI used in the original request.
+            expected_state: The state value originally sent in the auth URL.
+                Must match ``state`` when provided (CSRF protection).
+
+        Raises:
+            ValueError: If state validation fails.
+        """
+        # Validate OAuth state for CSRF protection
+        if expected_state is not None and (
+            state is None or not secrets.compare_digest(state, expected_state)
+        ):
+            raise ValueError("OAuth state mismatch — possible CSRF attack")
+
         provider = self._get_provider(provider_name)
 
         try:
@@ -159,9 +197,19 @@ class OAuthUserAuth:
 
     # Keep backward-compat convenience method
     async def handle_google_callback(
-        self, code: str, _state: str | None = None, redirect_uri: str | None = None
+        self,
+        code: str,
+        state: str | None = None,
+        redirect_uri: str | None = None,
+        expected_state: str | None = None,
     ) -> tuple[UserModel, str]:
-        return await self.handle_callback("google", code, _state=_state, redirect_uri=redirect_uri)
+        return await self.handle_callback(
+            "google",
+            code,
+            state=state,
+            redirect_uri=redirect_uri,
+            expected_state=expected_state,
+        )
 
     async def _extract_user_info(self, provider_name: str, access_token: str) -> dict[str, Any]:
         """Fetch user info from provider's userinfo endpoint."""
@@ -196,8 +244,17 @@ class OAuthUserAuth:
         picture: str | None,
         oauth_credential: Any,
     ) -> tuple[UserModel, bool]:
-        """Get existing user or create from OAuth (with race condition protection)."""
+        """Get existing user or create from OAuth (with race condition protection).
+
+        The new-user path defers ``_provision_oauth_user`` until after the outer
+        transaction commits. ``UserProvisionerProtocol`` opens a second Session
+        on the same engine and writes to ``users`` / ``zones``; invoking it
+        inside the outer ``session.begin()`` block makes the inner INSERT wait
+        on the still-pending users row lock, which deadlocks the request.
+        """
         from nexus.bricks.auth.user_queries import get_user_by_email
+
+        new_user_to_provision: UserModel | None = None
 
         with session.begin():
             stmt = select(UserOAuthAccountModel).where(
@@ -212,7 +269,7 @@ class OAuthUserAuth:
                 if not user or user.is_active == 0:
                     raise ValueError("User account is inactive")
 
-                existing_oauth.last_used_at = datetime.utcnow()
+                existing_oauth.last_used_at = datetime.now(UTC).replace(tzinfo=None)
                 session.add(existing_oauth)
                 session.flush()
                 session.expunge(user)
@@ -238,20 +295,16 @@ class OAuthUserAuth:
                     logger.info("Linked OAuth account to existing user: %s", provider_email)
                     return existing_user, False
                 except IntegrityError:
-                    session.rollback()
-                    existing_oauth = session.scalar(stmt)
-                    if existing_oauth:
-                        user = session.get(UserModel, existing_oauth.user_id)
-                        if not user:
-                            raise ValueError("User not found for OAuth account") from None
-                        session.expunge(user)
-                        return user, False
-                    raise
+                    return self._retry_oauth_race(session, stmt)
 
             elif existing_user and existing_user.email_verified == 0:
-                logger.warning(
-                    "OAuth email matches existing user but email not verified: %s",
-                    provider_email,
+                # Issue #3062: Block OAuth signup when an unverified local
+                # account exists with the same email.  This prevents
+                # duplicate-account confusion and pre-account-takeover
+                # attacks (see CVE-2024-38351).
+                raise ValueError(
+                    "An account with this email already exists but is not verified. "
+                    "Please verify your existing account first."
                 )
 
             user_id = str(uuid.uuid4())
@@ -268,8 +321,8 @@ class OAuthUserAuth:
                 is_active=1,
                 email_verified=1 if email_verified else 0,
                 user_metadata=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                updated_at=datetime.now(UTC).replace(tzinfo=None),
             )
 
             session.add(user)
@@ -287,26 +340,42 @@ class OAuthUserAuth:
                 )
                 session.flush()
                 session.expunge(user)
-
-                if provider_email:
-                    await self._provision_oauth_user(
-                        user_id=user_id,
-                        email=provider_email,
-                        display_name=user.display_name,
-                    )
-
-                return user, True
-
+                new_user_to_provision = user
             except IntegrityError:
-                session.rollback()
-                existing_oauth = session.scalar(stmt)
-                if existing_oauth:
-                    user = session.get(UserModel, existing_oauth.user_id)
-                    if not user:
-                        raise ValueError("User not found for OAuth account") from None
-                    session.expunge(user)
-                    return user, False
-                raise
+                return self._retry_oauth_race(session, stmt)
+
+        # Transaction has committed. Safe to invoke the user provisioner — it
+        # opens its own Session and will not deadlock on our released locks.
+        if new_user_to_provision is not None and new_user_to_provision.email:
+            await self._provision_oauth_user(
+                user_id=new_user_to_provision.user_id,
+                email=new_user_to_provision.email,
+                display_name=new_user_to_provision.display_name,
+            )
+
+        assert new_user_to_provision is not None
+        return new_user_to_provision, True
+
+    @staticmethod
+    def _retry_oauth_race(
+        session: Session,
+        stmt: Any,
+    ) -> tuple[UserModel, bool]:
+        """Handle IntegrityError from a concurrent OAuth account creation race.
+
+        Rolls back, re-queries for the winning OAuth account, and returns
+        the associated user.  Extracted to avoid duplicating this pattern
+        in the link-existing-user and create-new-user code paths.
+        """
+        session.rollback()
+        existing_oauth = session.scalar(stmt)
+        if existing_oauth:
+            user = session.get(UserModel, existing_oauth.user_id)
+            if not user:
+                raise ValueError("User not found for OAuth account")
+            session.expunge(user)
+            return user, False
+        raise  # re-raise original IntegrityError if no OAuth row found
 
     async def _create_oauth_account(
         self,
@@ -344,8 +413,8 @@ class OAuthUserAuth:
                 else None
             ),
             provider_profile=provider_profile,
-            created_at=datetime.utcnow(),
-            last_used_at=datetime.utcnow(),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            last_used_at=datetime.now(UTC).replace(tzinfo=None),
         )
 
         session.add(oauth_account)
@@ -367,14 +436,14 @@ class OAuthUserAuth:
         zone_id = email.split("@")[0] if email else user_id
 
         try:
-            result = self._user_provisioner.provision_user(
+            result = await self._user_provisioner.provision_user(
                 user_id=user_id,
                 email=email,
                 display_name=display_name,
                 zone_id=zone_id,
                 create_api_key=True,
                 create_agents=True,
-                import_skills=True,
+                import_skills=False,
             )
 
             if logger.isEnabledFor(logging.INFO):

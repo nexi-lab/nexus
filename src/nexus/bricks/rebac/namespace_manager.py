@@ -40,6 +40,7 @@ References:
     - Linux VFS dcache: https://docs.kernel.org/filesystems/path-lookup.html
 """
 
+import asyncio
 import bisect
 import hashlib
 import logging
@@ -54,7 +55,7 @@ from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.manager import ReBACManager
-    from nexus.services.protocols.persistent_view import PersistentViewStore
+    from nexus.contracts.protocols.persistent_view import PersistentViewStore
 
 logger = logging.getLogger(__name__)
 
@@ -414,6 +415,55 @@ class NamespaceManager:
                 ]
                 for k in keys_to_remove:
                     self._dcache_negative.pop(k, None)
+
+    def update_mount_table(
+        self,
+        subject: tuple[str, str],
+        mount_entries: list[MountEntry],
+        zone_id: str | None = None,
+    ) -> None:
+        """Replace a subject's cached mount table with the given entries.
+
+        Used by ``AgentNamespaceForkService.merge()`` to apply the merged
+        mount table back to the live namespace without a full ReBAC rebuild.
+
+        Invalidates dcache for the subject to ensure subsequent visibility
+        checks use the updated mount table.
+
+        Args:
+            subject: (subject_type, subject_id) tuple.
+            mount_entries: Sorted list of MountEntry to install.
+            zone_id: Zone ID for multi-zone isolation.
+        """
+        mount_paths = [m.virtual_path for m in mount_entries]
+
+        # Compute grants_hash from mount_paths (deterministic)
+        sorted_paths = sorted(f"file:{p}" for p in mount_paths)
+        grants_hash = hashlib.sha256("|".join(sorted_paths).encode()).hexdigest()[:16]
+
+        try:
+            current_revision = self._rebac_manager.get_zone_revision(zone_id)
+        except Exception:
+            current_revision = 0
+
+        with self._lock:
+            self._cache[subject] = (
+                mount_entries,
+                mount_paths,
+                current_revision,
+                zone_id,
+                grants_hash,
+            )
+
+        # Invalidate dcache so visibility checks pick up the new mount table
+        self.invalidate_dcache(subject)
+
+        logger.debug(
+            "[NAMESPACE] Updated mount table for %s:%s: %d mounts",
+            subject[0],
+            subject[1],
+            len(mount_entries),
+        )
 
     def invalidate(self, subject: tuple[str, str]) -> None:
         """Explicitly invalidate a subject's cached mount table, dcache, and L3 entries.
@@ -794,3 +844,62 @@ class NamespaceManager:
         cached_bucket = cached_revision // self._revision_window
         current_bucket = current_revision // self._revision_window
         return cached_bucket == current_bucket
+
+
+# ── Async wrapper (merged from async_namespace_manager.py, Issue #1440) ──
+
+
+def _to_namespace_mount(
+    entry: "MountEntry",
+    subject: tuple[str, str],
+    zone_id: str | None,
+) -> NamespaceMount:
+    """Convert a ``MountEntry`` to the protocol-level ``NamespaceMount``."""
+    return NamespaceMount(
+        virtual_path=entry.virtual_path,
+        subject_type=subject[0],
+        subject_id=subject[1],
+        zone_id=zone_id,
+    )
+
+
+class AsyncNamespaceManager:
+    """Async adapter for ``NamespaceManager`` conforming to ``NamespaceManagerProtocol``.
+
+    ``is_visible`` and ``get_mount_table`` may trigger ReBAC rebuilds (I/O),
+    so they delegate via ``asyncio.to_thread``.  ``invalidate`` also uses
+    ``to_thread`` for consistency (cache operations under lock).
+    """
+
+    def __init__(self, inner: "NamespaceManager") -> None:
+        self._inner = inner
+
+    async def is_visible(
+        self,
+        subject: tuple[str, str],
+        path: str,
+        *,
+        zone_id: str | None = None,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._inner.is_visible,
+            subject,
+            path,
+            zone_id=zone_id,
+        )
+
+    async def get_mount_table(
+        self,
+        subject: tuple[str, str],
+        *,
+        zone_id: str | None = None,
+    ) -> list[NamespaceMount]:
+        entries = await asyncio.to_thread(
+            self._inner.get_mount_table,
+            subject,
+            zone_id=zone_id,
+        )
+        return [_to_namespace_mount(e, subject, zone_id) for e in entries]
+
+    async def invalidate(self, subject: tuple[str, str]) -> None:
+        await asyncio.to_thread(self._inner.invalidate, subject)

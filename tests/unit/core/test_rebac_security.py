@@ -16,17 +16,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.manager import (
     CheckResult,
-    ConsistencyLevel,
-    ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,
     WriteResult,
 )
-from nexus.contracts.rebac_types import ConsistencyMode
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import (
     OperationContext,
     Permission,
@@ -48,7 +48,7 @@ def _make_mock_rebac(allowed_map: dict[tuple, bool] | None = None):
     rebac = MagicMock()
 
     def _check(subject, permission, object, zone_id=None):
-        key = (subject, permission, object, zone_id or "root")
+        key = (subject, permission, object, zone_id or ROOT_ZONE_ID)
         return allowed_map.get(key, False)
 
     rebac.rebac_check.side_effect = _check
@@ -527,52 +527,6 @@ class TestGraphLimitProtection:
 
 
 # ---------------------------------------------------------------------------
-# Consistency levels and requirements
-# ---------------------------------------------------------------------------
-
-
-class TestConsistencyValidation:
-    """Verify consistency requirement validation."""
-
-    def test_at_least_as_fresh_requires_min_revision(self):
-        """AT_LEAST_AS_FRESH mode requires min_revision."""
-        with pytest.raises(ValueError, match="min_revision is required"):
-            ConsistencyRequirement(mode=ConsistencyMode.AT_LEAST_AS_FRESH)
-
-    def test_at_least_as_fresh_with_revision_ok(self):
-        """AT_LEAST_AS_FRESH with min_revision succeeds."""
-        req = ConsistencyRequirement(mode=ConsistencyMode.AT_LEAST_AS_FRESH, min_revision=42)
-        assert req.min_revision == 42
-
-    def test_minimize_latency_does_not_require_revision(self):
-        """MINIMIZE_LATENCY mode does not need min_revision."""
-        req = ConsistencyRequirement(mode=ConsistencyMode.MINIMIZE_LATENCY)
-        assert req.min_revision is None
-
-    def test_fully_consistent_does_not_require_revision(self):
-        """FULLY_CONSISTENT mode does not need min_revision."""
-        req = ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
-        assert req.min_revision is None
-
-    def test_to_legacy_level_mapping(self):
-        """ConsistencyRequirement maps to correct legacy ConsistencyLevel."""
-        assert (
-            ConsistencyRequirement(mode=ConsistencyMode.MINIMIZE_LATENCY).to_legacy_level()
-            == ConsistencyLevel.EVENTUAL
-        )
-        assert (
-            ConsistencyRequirement(
-                mode=ConsistencyMode.AT_LEAST_AS_FRESH, min_revision=1
-            ).to_legacy_level()
-            == ConsistencyLevel.BOUNDED
-        )
-        assert (
-            ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT).to_legacy_level()
-            == ConsistencyLevel.STRONG
-        )
-
-
-# ---------------------------------------------------------------------------
 # CheckResult and WriteResult data classes
 # ---------------------------------------------------------------------------
 
@@ -714,7 +668,7 @@ class TestBypassAuditLogging:
         enforcer = PermissionEnforcer(audit_store=audit_store)
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
-        enforcer.check("/system/config.json", Permission.READ, ctx)
+        enforcer.check("/__sys__/config.json", Permission.READ, ctx)
 
         audit_store.log_bypass.assert_called_once()
         entry = audit_store.log_bypass.call_args[0][0]

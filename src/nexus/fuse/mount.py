@@ -11,14 +11,19 @@ import logging
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fuse import FUSE
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+    from nexus.core.nexus_fs import NexusFS
 
 from nexus.fuse.operations import NexusFUSEOperations
+from nexus.fuse.passthrough import (
+    PassthroughOptions,
+    RustPassthroughMount,
+    mount_is_passthrough_safe,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +60,7 @@ class NexusFUSE:
 
     def __init__(
         self,
-        nexus_fs: "NexusFilesystemABC",
+        nexus_fs: "NexusFS",
         mount_point: str,
         mode: MountMode = MountMode.SMART,
         cache_config: dict[str, int | bool] | None = None,
@@ -66,6 +71,14 @@ class NexusFUSE:
         owner_id: str | None = None,
         zone_id: str | None = None,
         use_rust: bool = False,
+        passthrough_enabled: bool | None = None,
+        passthrough_patterns: list[str] | None = None,
+        passthrough_deny_patterns: list[str] | None = None,
+        passthrough_threshold_bytes: int | None = None,
+        passthrough_require: bool = False,
+        passthrough_backing_dir: str | Path | None = None,
+        lease_manager: Any | None = None,
+        file_cache: Any | None = None,
     ) -> None:
         """Initialize FUSE mount manager.
 
@@ -74,10 +87,12 @@ class NexusFUSE:
             mount_point: Local path to mount the filesystem
             mode: Mount mode (binary, text, or smart)
             cache_config: Optional cache configuration dict with keys:
-                         - attr_cache_size: int (default: 1024)
+                         - content_cache_bytes: int (default: 512*1024*1024)
+                         - parsed_cache_bytes: int (default: 64*1024*1024)
+                         - max_drain_bytes: int (default: 16*1024*1024)
                          - attr_cache_ttl: int (default: 60)
-                         - content_cache_size: int (default: 10000)
-                         - parsed_cache_size: int (default: 50)
+                         - dir_cache_ttl: int (default: 5)
+                         - index_ttl_overrides: dict[str, int] (default: {})
                          - enable_metrics: bool (default: False)
             warmup_depth: Directory depth for automatic warmup (default: 2)
             warmup_max_files: Maximum files to warm (default: 1000)
@@ -90,6 +105,12 @@ class NexusFUSE:
             owner_id: Human owner ID for the agent (defaults to agent_id).
             zone_id: Zone ID for multi-zone isolation.
             use_rust: Use high-performance Rust FUSE daemon (Issue #1569).
+            passthrough_enabled: Route safe mounts to Rust-owned passthrough.
+            passthrough_patterns: Include patterns for Rust passthrough.
+            passthrough_deny_patterns: Exclude patterns for Rust passthrough.
+            passthrough_threshold_bytes: Minimum passthrough size. Defaults to env.
+            passthrough_require: Raise instead of falling back when unsafe.
+            passthrough_backing_dir: Optional local backing directory.
 
         Note:
             Issue #1076: Cache warmup runs automatically after mount in background.
@@ -106,6 +127,36 @@ class NexusFUSE:
         self._owner_id = owner_id
         self._zone_id = zone_id
         self._use_rust = use_rust
+        env_options = PassthroughOptions.from_env()
+        self._passthrough_options = PassthroughOptions(
+            enabled=env_options.enabled if passthrough_enabled is None else passthrough_enabled,
+            patterns=(
+                passthrough_patterns if passthrough_patterns is not None else env_options.patterns
+            ),
+            deny_patterns=(
+                passthrough_deny_patterns
+                if passthrough_deny_patterns is not None
+                else env_options.deny_patterns
+            ),
+            threshold_bytes=(
+                passthrough_threshold_bytes
+                if passthrough_threshold_bytes is not None
+                else env_options.threshold_bytes
+            ),
+            require=passthrough_require or env_options.require,
+            backing_dir=(
+                Path(passthrough_backing_dir)
+                if passthrough_backing_dir
+                else env_options.backing_dir
+            ),
+        )
+        self._rust_passthrough_mount: RustPassthroughMount | None = None
+        self._lease_manager = lease_manager
+        self._file_cache = file_cache
+        # Generate unique mount ID for lease holder identity (Decision 2A)
+        import uuid
+
+        self._mount_id = f"mount-{uuid.uuid4().hex[:12]}"
         self.fuse: FUSE | None = None
         self._mount_thread: threading.Thread | None = None
         self._mounted = False
@@ -172,8 +223,13 @@ class NexusFUSE:
             # A2-B: Try to obtain NamespaceManager for direct visibility checks
             namespace_manager = getattr(self.nexus_fs, "namespace_manager", None)
 
+        if self._should_use_rust_passthrough(context):
+            self._start_rust_passthrough_mount()
+            return
+
         # Create FUSE operations
-        event_bus = getattr(self.nexus_fs, "_event_bus", None)
+        # Issue #1771: event_bus via kernel-level _event_bus
+        event_bus = getattr(self.nexus_fs, "_event_bus", None) if self.nexus_fs else None
         subscription_manager = getattr(self.nexus_fs, "subscription_manager", None)
         operations = NexusFUSEOperations(
             self.nexus_fs,
@@ -184,6 +240,9 @@ class NexusFUSE:
             use_rust=self._use_rust,
             event_bus=event_bus,
             subscription_manager=subscription_manager,
+            lease_manager=self._lease_manager,
+            mount_id=self._mount_id,
+            file_cache=self._file_cache,
         )
 
         # Issue #1115: Set up event loop for async event dispatch
@@ -288,6 +347,61 @@ class NexusFUSE:
             # Always enabled - non-blocking, lightweight, reduces first-access latency
             self._start_warmup()
 
+    def _should_use_rust_passthrough(self, context: Any | None) -> bool:
+        if not (self._use_rust and self._passthrough_options.enabled):
+            return False
+        if self._rust_passthrough_credentials() is None:
+            if self._passthrough_options.require:
+                raise RuntimeError(
+                    "FUSE passthrough requires a remote NexusFS with passthrough credentials"
+                )
+            return False
+        if not mount_is_passthrough_safe(
+            self.nexus_fs,
+            mode_value=self.mode.value,
+            context=context,
+        ):
+            if self._passthrough_options.require:
+                raise RuntimeError("FUSE passthrough is not safe for this mount configuration")
+            return False
+        return True
+
+    def _rust_passthrough_credentials(self) -> tuple[str, str] | None:
+        missing = object()
+        remote_fs = cast(Any, self.nexus_fs)
+
+        nexus_url = getattr(remote_fs, "_base_url", missing)
+        if nexus_url is missing:
+            nexus_url = getattr(remote_fs, "_remote_base_url", missing)
+        if nexus_url is missing:
+            return None
+
+        api_key = getattr(remote_fs, "_api_key", missing)
+        if api_key is missing:
+            api_key = getattr(remote_fs, "_remote_api_key", "")
+        if api_key is None:
+            api_key = ""
+
+        return str(nexus_url), str(api_key)
+
+    def _start_rust_passthrough_mount(self) -> None:
+        credentials = self._rust_passthrough_credentials()
+        if credentials is None:
+            raise RuntimeError(
+                "FUSE passthrough requires a remote NexusFS with passthrough credentials"
+            )
+        nexus_url, api_key = credentials
+        self._rust_passthrough_mount = RustPassthroughMount.create(
+            nexus_url=nexus_url,
+            api_key=api_key,
+            mount_point=self.mount_point,
+            options=self._passthrough_options,
+            agent_id=getattr(self.nexus_fs, "_agent_id", self._agent_id),
+        )
+        self._rust_passthrough_mount.start()
+        self._mounted = True
+        self._start_warmup()
+
     def _start_warmup(self) -> None:
         """Start background cache warmup (Issue #1076).
 
@@ -339,6 +453,13 @@ class NexusFUSE:
         self._warmup_thread = threading.Thread(target=warmup_thread, daemon=True)
         self._warmup_thread.start()
 
+    def _stop_rust_passthrough_mount(self) -> None:
+        rust_mount = self._rust_passthrough_mount
+        if rust_mount is None:
+            return
+        rust_mount.stop()
+        self._rust_passthrough_mount = None
+
     def unmount(self) -> None:
         """Unmount the filesystem.
 
@@ -346,6 +467,9 @@ class NexusFUSE:
             RuntimeError: If not mounted
         """
         if not self._mounted:
+            if self._rust_passthrough_mount is not None:
+                self._stop_rust_passthrough_mount()
+                return
             raise RuntimeError("Filesystem is not mounted")
 
         logger.info(f"Unmounting {self.mount_point}")
@@ -381,9 +505,22 @@ class NexusFUSE:
                 self._event_loop = None
                 logger.info("[FUSE] Event loop stopped")
 
+            # Issue #3397: Close lease coordinator
+            if hasattr(self, "_operations") and hasattr(self._operations, "_ctx"):
+                coordinator = self._operations._ctx.cache
+                if hasattr(coordinator, "close"):
+                    coordinator.close()
+
+            self._stop_rust_passthrough_mount()
+
         except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to unmount: {e.stderr.decode()}")
-            raise RuntimeError(f"Failed to unmount: {e.stderr.decode()}") from e
+            stderr = e.stderr.decode()
+            logger.error(f"Failed to unmount: {stderr}")
+            try:
+                self._stop_rust_passthrough_mount()
+            except Exception as stop_error:
+                logger.error(f"Failed to stop Rust passthrough mount: {stop_error}")
+            raise RuntimeError(f"Failed to unmount: {stderr}") from e
 
     def is_mounted(self) -> bool:
         """Check if filesystem is currently mounted.
@@ -416,7 +553,7 @@ class NexusFUSE:
 
 
 def mount_nexus(
-    nexus_fs: "NexusFilesystemABC",
+    nexus_fs: "NexusFS",
     mount_point: str,
     mode: str = "smart",
     foreground: bool = True,
@@ -430,6 +567,14 @@ def mount_nexus(
     owner_id: str | None = None,
     zone_id: str | None = None,
     use_rust: bool = False,
+    passthrough_enabled: bool | None = None,
+    passthrough_patterns: list[str] | None = None,
+    passthrough_deny_patterns: list[str] | None = None,
+    passthrough_threshold_bytes: int | None = None,
+    passthrough_require: bool = False,
+    passthrough_backing_dir: str | Path | None = None,
+    lease_manager: Any | None = None,
+    file_cache: Any | None = None,
 ) -> "NexusFUSE":
     """Convenience function to mount Nexus filesystem.
 
@@ -441,10 +586,12 @@ def mount_nexus(
         allow_other: Allow other users to access the mount
         debug: Enable FUSE debug output
         cache_config: Optional cache configuration dict with keys:
-                     - attr_cache_size: int (default: 1024)
+                     - content_cache_bytes: int (default: 512*1024*1024)
+                     - parsed_cache_bytes: int (default: 64*1024*1024)
+                     - max_drain_bytes: int (default: 16*1024*1024)
                      - attr_cache_ttl: int (default: 60)
-                     - content_cache_size: int (default: 10000)
-                     - parsed_cache_size: int (default: 50)
+                     - dir_cache_ttl: int (default: 5)
+                     - index_ttl_overrides: dict[str, int] (default: {})
                      - enable_metrics: bool (default: False)
         warmup_depth: Directory depth for automatic warmup (default: 2)
         warmup_max_files: Maximum files to warm (default: 1000)
@@ -453,6 +600,12 @@ def mount_nexus(
         owner_id: Human owner ID for the agent
         zone_id: Zone ID for multi-zone isolation
         use_rust: Use high-performance Rust FUSE daemon (Issue #1569)
+        passthrough_enabled: Route safe mounts to Rust-owned passthrough.
+        passthrough_patterns: Include patterns for Rust passthrough.
+        passthrough_deny_patterns: Exclude patterns for Rust passthrough.
+        passthrough_threshold_bytes: Minimum passthrough size. Defaults to env.
+        passthrough_require: Raise instead of falling back when unsafe.
+        passthrough_backing_dir: Optional local backing directory.
 
     Returns:
         NexusFUSE instance
@@ -492,6 +645,14 @@ def mount_nexus(
         owner_id=owner_id,
         zone_id=zone_id,
         use_rust=use_rust,
+        passthrough_enabled=passthrough_enabled,
+        passthrough_patterns=passthrough_patterns,
+        passthrough_deny_patterns=passthrough_deny_patterns,
+        passthrough_threshold_bytes=passthrough_threshold_bytes,
+        passthrough_require=passthrough_require,
+        passthrough_backing_dir=passthrough_backing_dir,
+        lease_manager=lease_manager,
+        file_cache=file_cache,
     )
     fuse.mount(foreground=foreground, allow_other=allow_other, debug=debug)
 

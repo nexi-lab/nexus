@@ -34,7 +34,7 @@ def setup_uvloop() -> bool:
         asyncio.run(my_async_function())  # Now uses uvloop
 
         # To disable uvloop:
-        # NEXUS_USE_UVLOOP=false nexus serve
+        # NEXUS_USE_UVLOOP=false nexusd
     """
     # Check environment variable to allow disabling uvloop
     use_uvloop = os.environ.get("NEXUS_USE_UVLOOP", "true").lower()
@@ -59,7 +59,6 @@ def setup_uvloop() -> bool:
 # LAZY IMPORTS for performance optimization
 # =============================================================================
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.lib.registry import BaseRegistry, BrickInfo, BrickRegistry
 
@@ -71,7 +70,6 @@ _LAZY_IMPORTS = {
     "BaseRegistry": ("nexus.lib.registry", "BaseRegistry"),
     "BrickInfo": ("nexus.lib.registry", "BrickInfo"),
     "BrickRegistry": ("nexus.lib.registry", "BrickRegistry"),
-    "NexusFilesystemABC": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
 }
 
@@ -103,6 +101,5 @@ __all__ = [
     "BrickInfo",
     "BrickRegistry",
     # Filesystem classes (lazy)
-    "NexusFilesystemABC",
     "NexusFS",
 ]

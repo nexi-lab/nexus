@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 permissions:
   contents: read
   pages: write
@@ -26,7 +29,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -35,11 +38,12 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Install dependencies
         run: |
           uv pip install -e ".[dev]"
+          uv pip install -r packages/nexus-fs/requirements-docs.txt
 
       - name: Setup Pages
         id: pages
@@ -47,7 +51,7 @@ jobs:
 
       - name: Build documentation
         run: |
-          uv run mkdocs build
+          uv run python scripts/build_docs_site.py
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -56,7 +60,7 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/develop'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

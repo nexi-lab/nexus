@@ -1,0 +1,171 @@
+{{- if and .Values.nexus.persistence.enabled (gt (int .Values.nexus.replicaCount) 1) }}
+{{- fail "nexus.replicaCount must be 1 when nexus.persistence.enabled=true because Nexus pods would share one writable data PVC; disable nexus.persistence.enabled to use multiple Nexus replicas." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus-hub.nexusName" . }}
+  labels:
+    {{- include "nexus-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus
+spec:
+  replicas: {{ .Values.nexus.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "nexus-hub.selectorLabels" (dict "root" . "component" "nexus") | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.nexus.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "nexus-hub.selectorLabels" (dict "root" . "component" "nexus") | nindent 8 }}
+        {{- with .Values.nexus.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      initContainers:
+        - name: wait-for-postgres
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -ec
+          args:
+            - |
+              until nc -z "$POSTGRES_HOST" "$POSTGRES_PORT"; do
+                echo "waiting for postgres at ${POSTGRES_HOST}:${POSTGRES_PORT}"
+                sleep 2
+              done
+          env:
+            - name: POSTGRES_HOST
+              value: {{ include "nexus-hub.postgresHost" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ include "nexus-hub.postgresPort" . | quote }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+      containers:
+        - name: nexus
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["nexusd"]
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - {{ .Values.service.nexusHttpPort | quote }}
+            - "--profile"
+            - {{ .Values.nexus.profile | quote }}
+            - "--auth-type"
+            - "database"
+            - "--database-url"
+            - "$(NEXUS_DATABASE_URL)"
+          env:
+            - name: NEXUS_PROFILE
+              value: {{ .Values.nexus.profile | quote }}
+            - name: NEXUS_DATA_DIR
+              value: /data
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nexus-hub.postgresSecretName" . }}
+                  key: {{ include "nexus-hub.postgresPasswordKey" . }}
+            - name: NEXUS_DATABASE_URL
+              value: "postgresql://{{ include "nexus-hub.postgresUsername" . }}:$(POSTGRES_PASSWORD)@{{ include "nexus-hub.postgresHost" . }}:{{ include "nexus-hub.postgresPort" . }}/{{ include "nexus-hub.postgresDatabase" . }}"
+            - name: NEXUS_REDIS_URL
+{{ if and (not .Values.redis.internal.enabled) .Values.redis.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.external.existingSecret }}
+                  key: {{ .Values.redis.external.existingSecretUrlKey }}
+{{ else }}
+              value: {{ include "nexus-hub.redisUrl" . | quote }}
+{{ end }}
+            - name: NEXUS_GRPC_BIND_ALL
+              value: "true"
+            - name: NEXUS_GRPC_PORT
+              value: {{ .Values.service.nexusGrpcPort | quote }}
+            - name: NEXUS_ADVERTISE_ADDR
+              value: "{{ include "nexus-hub.nexusName" . }}:{{ .Values.service.nexusGrpcPort }}"
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.nexusHttpPort }}
+            - name: grpc
+              containerPort: {{ .Values.service.nexusGrpcPort }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.nexus.probes.startup.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.nexus.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nexus.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.nexus.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.nexus.probes.startup.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.nexus.probes.readiness.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.nexus.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nexus.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.nexus.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.nexus.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.nexus.probes.liveness.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.nexus.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nexus.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.nexus.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.nexus.probes.liveness.failureThreshold }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.nexus.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- with .Values.nexus.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nexus.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nexus.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.nexus.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "nexus-hub.nexusName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.nexus.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "nexus-hub.nexusName" . }}
+  labels:
+    {{- include "nexus-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nexus
+spec:
+  accessModes:
+    {{- toYaml .Values.nexus.persistence.accessModes | nindent 4 }}
+  {{- if .Values.nexus.persistence.storageClass }}
+  storageClassName: {{ .Values.nexus.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.nexus.persistence.size | quote }}
+{{- end }}

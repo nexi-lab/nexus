@@ -118,9 +118,11 @@ class PipelineIndexer:
                 try:
                     raw = self._file_reader(fp)
                     if isinstance(raw, bytes):
-                        text_map[fp] = raw.decode("utf-8", errors="ignore")
+                        decoded = raw.decode("utf-8", errors="ignore")
                     else:
-                        text_map[fp] = str(raw)
+                        decoded = str(raw)
+                    # Strip NUL bytes — Postgres TEXT rejects them (Issue #3989).
+                    text_map[fp] = decoded.replace("\x00", "") if "\x00" in decoded else decoded
                 except Exception as exc:
                     logger.warning("Failed to read %s for indexing: %s", fp, exc)
 

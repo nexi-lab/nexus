@@ -22,15 +22,14 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from nexus import LocalBackend
+from nexus import CASLocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
-def main() -> None:
+async def main() -> None:
     """Test deprovision_user with configurable database backend."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Test deprovision_user functionality")
@@ -72,8 +71,8 @@ def main() -> None:
     # db_path accepts both PostgreSQL URLs and SQLite file paths
     record_store = SQLAlchemyRecordStore(db_path=db_path)
     nx = create_nexus_fs(
-        backend=LocalBackend(args.backend_path),
-        metadata_store=RaftMetadataStore.embedded(str(Path(args.backend_path) / "raft-metadata")),
+        backend=CASLocalBackend(args.backend_path),
+        metadata_store=str(Path(args.backend_path) / "raft-metadata"),
         record_store=record_store,
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=True, allow_admin_bypass=True),
@@ -145,7 +144,7 @@ def main() -> None:
         existing_resources = []
         for resource_type in resource_types:
             resource_path = f"{user_base}/{resource_type}"
-            if nx.sys_access(resource_path, context=admin_context):
+            if nx.access(resource_path, context=admin_context):
                 existing_resources.append(resource_type)
                 print(f"  ✓ {resource_type}: exists")
 
@@ -289,8 +288,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import asyncio
+
     try:
-        main()
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("\n\n✗ Test interrupted")
         sys.exit(1)

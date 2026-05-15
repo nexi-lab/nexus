@@ -1,0 +1,142 @@
+[package]
+name = "raft"
+version = "0.1.0"
+edition = "2021"
+description = "Raft consensus and embedded storage for Nexus"
+authors = ["Nexus Team"]
+
+# Allow build.rs to set has_protos cfg (set when proto files exist for gRPC codegen)
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(has_protos)"] }
+
+[lib]
+# Raft is an rlib consumed by the ``nexus_runtime`` cdylib so both Kernel
+# and ZoneManager live in a single .so file. Python imports
+# ``ZoneManager`` / ``ZoneHandle`` from ``nexus_runtime``. Lib name is a
+# regular Rust identifier so kernel can ``use nexus_raft::...``.
+name = "nexus_raft"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "nexus-witness"
+path = "src/bin/witness.rs"
+required-features = ["grpc"]
+
+[[bin]]
+name = "nexus-federation-server"
+path = "src/bin/federation_server.rs"
+required-features = ["grpc"]
+
+[dependencies]
+# Cross-tier constants (ROOT_ZONE_ID, …) — mirror of
+# ``nexus.contracts.constants``. Pulled in so raft shares one source
+# of truth with the kernel crate instead of hardcoding ``"root"``.
+contracts = { workspace = true }
+# raft → kernel direction. Lets raft state-machine impls
+# (zone_meta_store, wal_stream_backend) and the
+# `RaftDistributedCoordinator` trait impl depend on kernel-defined
+# traits (`kernel::abc::MetaStore`,
+# `kernel::hal::distributed_coordinator::DistributedCoordinator`,
+# etc.) without closing a Cargo cycle.
+kernel = { workspace = true }
+# Embedded KV storage — redb (stable since 1.0, June 2023).
+# Issue #1330: Replaced sled 0.34 with redb for reliability + maintenance.
+redb = "4"
+tempfile = "3"
+
+# Raft consensus (tikv/raft-rs)
+raft = { version = "0.7", default-features = false, features = ["protobuf-codec"], optional = true }
+protobuf = { version = "2.28", optional = true }  # Required by raft-rs
+slog = { version = "2.8", optional = true }  # Required by raft-rs for logging
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"  # Fast binary serialization for Raft log entries
+
+# Shared in-memory mutex for the advisory-lock SSOT that the kernel
+# and raft state machine both hold via Arc<Mutex<LockState>>.
+parking_lot = "0.12"
+
+# Error handling
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros", "signal"], optional = true }
+
+# gRPC (general-purpose, reusable for Raft and webhooks).
+# tls feature enables rustls for mTLS (mutual TLS) transport encryption.
+# `lib::transport_primitives` (gated by lib's `transport` feature)
+# provides shared TLS / pool / addressing / TOFU / PeerBlobClient.
+lib = { workspace = true, optional = true }
+tonic = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+tonic-prost = { workspace = true, optional = true }
+
+# Utilities
+bytes = { version = "1", optional = true }
+dashmap = { version = "6", optional = true }
+time = { version = "0.3", features = ["parsing"], optional = true }
+sha2 = { version = "0.11", optional = true }  # SHA-256 for JoinCluster token verification
+rcgen = { version = "0.14", features = ["pem", "x509-parser"], optional = true }  # Server-side node cert generation for JoinCluster
+pem = { version = "3", optional = true }  # PEM parsing for CA fingerprint verification
+base64 = { version = "0.22", optional = true }  # Base64 encoding for CA fingerprint
+rand = { version = "0.10", optional = true }  # Random join-token password generation
+gethostname = { version = "1.1", optional = true }  # Hostname-based node ID derivation
+
+# Python bindings (PyO3 FFI). The final cdylib (nexus_runtime) owns
+# libpython linkage; raft only needs PyO3's macros / trait impls, so
+# ``extension-module`` is not enabled here.
+pyo3 = { version = "0.28.3", optional = true }
+mimalloc = { workspace = true, optional = true }
+
+[build-dependencies]
+tonic-prost-build = { version = "0.14", optional = true }
+# Vendored protoc binary so raft build works on any host without a
+# system-wide protobuf-compiler install. Only used when grpc feature
+# triggers proto codegen (see build.rs).
+protoc-bin-vendored = "3"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = ["full"]
+mimalloc = ["dep:mimalloc"]
+
+# Enable async support (Tokio runtime)
+async = ["tokio"]
+
+# Enable Python bindings (PyO3 FFI) — production path. Raft is an rlib;
+# mimalloc lives in the final cdylib (nexus_runtime).
+# `lib/python` brings PyTofuTrustStore + PyTrustedZone pyclasses
+# alongside the algorithm pyclasses.
+# `kernel/python` is required because `raft::pyo3_bindings` references
+# `kernel::generated_kernel_abi_pyo3::PyKernel` — that module is gated
+# behind kernel's own `python` feature.  raft.python is only enabled
+# by `nexus-cdylib`, so this transitive dep does NOT pull Python into
+# `nexus-cluster` (which builds without raft.python).  Keeping the
+# transitive dep explicit avoids a broken `--all-features` build.
+python = ["pyo3", "lib/python", "lib/transport", "kernel/python"]
+
+# Enable Raft consensus (tikv/raft-rs) — EXPERIMENTAL, default OFF.
+# Not used in production. Preserved for future multi-node support.
+# See: docs/rfcs/adr-raft-sled-strategy.md (Decision 2)
+consensus = ["raft", "protobuf", "slog", "async"]
+
+# Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
+# Requires `consensus` feature. Not used in production.
+# See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
+grpc = ["tonic", "prost", "tonic-prost", "lib/transport", "lib", "bytes", "dep:tonic-prost-build", "async", "tracing-subscriber", "consensus", "dashmap", "time", "sha2", "rcgen", "pem", "base64", "gethostname", "rand"]
+
+# Enable everything that builds standalone (without external Python).
+# `python` is intentionally NOT in `full` — it requires the kernel
+# crate's `python` feature to be enabled (for `PyKernel`), which is
+# done only by `nexus-cdylib`.  Workspace-level `python` was removed
+# from raft's default features in PR #3995 to keep `nexus-cluster`
+# Python-free; `full` matches that decision.
+full = ["grpc", "consensus"]

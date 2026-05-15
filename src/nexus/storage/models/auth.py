@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -76,6 +76,18 @@ class UserModel(Base):
         Index("idx_users_active", "is_active"),
         Index("idx_users_deleted", "deleted_at"),
         Index("idx_users_email_active_deleted", "email", "is_active", "deleted_at"),
+        # Issue #3062: Prevent duplicate verified emails for active users.
+        # Partial unique index — only enforced for active, verified, non-deleted users.
+        # Both postgresql_where and sqlite_where are needed so the index is
+        # created correctly regardless of whether Alembic or
+        # Base.metadata.create_all() builds the schema.
+        Index(
+            "uq_users_email_verified_active",
+            "email",
+            unique=True,
+            postgresql_where=text("is_active = 1 AND email_verified = 1 AND deleted_at IS NULL"),
+            sqlite_where=text("is_active = 1 AND email_verified = 1 AND deleted_at IS NULL"),
+        ),
     )
 
     def __repr__(self) -> str:
@@ -140,9 +152,12 @@ class APIKeyModel(Base):
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True, default="user")
     subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(
-        String(255), nullable=False, default=ROOT_ZONE_ID, index=True
-    )
+    zone_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    """DEPRECATED — column scheduled for removal in Phase 3 of #3871.
+    Always NULL on keys minted on or after Phase 2 (#3871). Source of
+    truth is `api_key_zones`. Use `get_primary_zone(key_id)` for
+    "primary zone" semantics or `get_zones_for_key(key_id)` for the
+    full set."""
     is_admin: Mapped[int] = mapped_column(Integer, default=0)
 
     inherit_permissions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -151,9 +166,35 @@ class APIKeyModel(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    grant_tuple_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     revoked: Mapped[int] = mapped_column(Integer, default=0, index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class APIKeyZoneModel(Base):
+    """Junction: token → zone allow-list (#3785). Composite PK (key_id, zone_id)."""
+
+    __tablename__ = "api_key_zones"
+
+    key_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("api_keys.key_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    zone_id: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("zones.zone_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    granted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    permissions: Mapped[str] = mapped_column(String(8), nullable=False, default="rw")
+
+    __table_args__ = (
+        Index("idx_api_key_zones_key", "key_id"),
+        Index("idx_api_key_zones_zone", "zone_id"),
+    )
 
 
 class OAuthAPIKeyModel(Base):
@@ -297,6 +338,17 @@ class ZoneModel(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     settings: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Per-directory semantic index scoping (Issue #3698).
+    # 'all'    — embed every file under the zone (legacy, default)
+    # 'scoped' — only embed files under directories registered in
+    #            indexed_directories for this zone
+    indexing_mode: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'all'"),
+        default="all",
+    )
 
     phase: Mapped[str] = mapped_column(String(12), default="Active", nullable=False)
     finalizers: Mapped[str] = mapped_column(Text, default="[]", nullable=False)

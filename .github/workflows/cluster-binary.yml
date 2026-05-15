@@ -1,0 +1,34 @@
+name: Cluster Binary
+
+# Per-PR + develop-push gate for nexusd-cluster. Builds across all three
+# platforms and enforces the per-platform size budgets defined in the
+# reusable workflow. Tagged releases use the same reusable workflow via
+# release.yml so size budgets stay aligned across triggers.
+#
+# paths-filtered: only fires for changes that can actually move the
+# binary or its build inputs.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "proto/**"
+      - ".github/workflows/cluster-binary.yml"
+      - ".github/workflows/cluster-binary-build.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "proto/**"
+      - ".github/workflows/cluster-binary.yml"
+      - ".github/workflows/cluster-binary-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/cluster-binary-build.yml
+    with:
+      upload_retention_days: 14

@@ -6,32 +6,35 @@ tus uploads router with a real service and in-memory SQLite backend.
 
 import base64
 import hashlib
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
-from nexus.backends.local import LocalBackend
-from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
-from nexus.server.dependencies import require_auth
-from nexus.services.upload.chunked_upload_service import (
+from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.bricks.upload.chunked_upload_service import (
     ChunkedUploadConfig,
     ChunkedUploadService,
 )
+from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
+from nexus.server.dependencies import require_auth
+from nexus.storage.models.upload_session import UploadSessionModel
 
 # --- Test fixtures ---
 
 
 @pytest.fixture
-def tmp_backend(tmp_path: Path) -> LocalBackend:
-    return LocalBackend(root_path=tmp_path)
+def tmp_backend(tmp_path: Path) -> CASLocalBackend:
+    return CASLocalBackend(root_path=tmp_path)
 
 
 @pytest.fixture
-def upload_service(tmp_backend: LocalBackend) -> ChunkedUploadService:
+def upload_service(tmp_backend: CASLocalBackend) -> ChunkedUploadService:
     """Create a service with an in-memory SQLite session store."""
-    from tests.helpers.in_memory_record_store import InMemoryRecordStore
+    from tests.testkit.records import InMemoryRecordStore
 
     record_store = InMemoryRecordStore()
 
@@ -50,7 +53,12 @@ def upload_service(tmp_backend: LocalBackend) -> ChunkedUploadService:
 
 
 @pytest.fixture
-def app(upload_service: ChunkedUploadService) -> FastAPI:
+def auth_state() -> dict[str, object]:
+    return {"authenticated": True, "is_admin": False, "subject_id": "test-user"}
+
+
+@pytest.fixture
+def app(upload_service: ChunkedUploadService, auth_state: dict[str, object]) -> FastAPI:
     """Create a FastAPI app with the tus router."""
     _app = FastAPI()
     public_router, auth_router = create_tus_uploads_router(
@@ -59,8 +67,7 @@ def app(upload_service: ChunkedUploadService) -> FastAPI:
     _app.include_router(public_router, prefix="/api/v2/uploads")
     _app.include_router(auth_router, prefix="/api/v2/uploads")
     # Override require_auth for functional tests
-    _auth_result = {"authenticated": True, "is_admin": False, "subject_id": "test-user"}
-    _app.dependency_overrides[require_auth] = lambda: _auth_result
+    _app.dependency_overrides[require_auth] = lambda: auth_state
     return _app
 
 
@@ -266,6 +273,31 @@ class TestResumeAfterDisconnect:
         assert patch2.status_code == 204
         assert patch2.headers["Upload-Offset"] == str(len(full_content))
 
+    @pytest.mark.asyncio
+    async def test_different_user_cannot_resume_upload(
+        self,
+        client: AsyncClient,
+        auth_state: dict[str, object],
+    ) -> None:
+        create_resp = await client.post(
+            "/api/v2/uploads",
+            headers={**TUS_HEADERS, "Upload-Length": "4"},
+        )
+        upload_path = create_resp.headers["Location"].replace("http://test", "")
+
+        auth_state["subject_id"] = "other-user"
+        patch_resp = await client.patch(
+            upload_path,
+            headers={
+                **TUS_HEADERS,
+                "Upload-Offset": "0",
+                "Content-Type": "application/offset+octet-stream",
+            },
+            content=b"data",
+        )
+
+        assert patch_resp.status_code == 403
+
 
 class TestChecksumEndpoints:
     @pytest.mark.asyncio
@@ -376,6 +408,32 @@ class TestTerminateEndpoint:
             headers=TUS_HEADERS,
         )
         assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_terminate_expired_upload_returns_410(
+        self,
+        client: AsyncClient,
+        upload_service: ChunkedUploadService,
+    ) -> None:
+        create_resp = await client.post(
+            "/api/v2/uploads",
+            headers={**TUS_HEADERS, "Upload-Length": "100"},
+        )
+        upload_path = create_resp.headers["Location"].replace("http://test", "")
+        upload_id = upload_path.rsplit("/", 1)[-1]
+
+        db = upload_service._session_factory()
+        try:
+            model = db.execute(
+                select(UploadSessionModel).filter_by(upload_id=upload_id)
+            ).scalar_one()
+            model.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            db.commit()
+        finally:
+            db.close()
+
+        resp = await client.delete(upload_path, headers=TUS_HEADERS)
+        assert resp.status_code == 410
 
 
 class TestZeroByteUpload:

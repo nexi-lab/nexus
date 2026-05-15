@@ -3,7 +3,7 @@
 Merges the former ReBACManager + ReBACManager into a single class.
 
 Features:
-- P0-1: Consistency levels and version tokens
+- P0-1: Version tokens (consistency always cached)
 - P0-2: Zone scoping
 - P0-5: Graph limits and DoS protection
 - Leopard: Pre-computed transitive group closure for O(1) group lookups
@@ -15,6 +15,7 @@ Usage:
     manager = ReBACManager(engine)
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -23,7 +24,7 @@ import time
 import traceback
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import bindparam, text
@@ -33,6 +34,7 @@ from nexus.bricks.rebac.batch.bulk_checker import BulkPermissionChecker
 from nexus.bricks.rebac.cache.leopard_facade import LeopardFacade
 from nexus.bricks.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.bricks.rebac.cache.tiger.facade import TigerFacade
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
@@ -72,15 +74,12 @@ from nexus.bricks.rebac.tuples.repository import TupleRepository
 from nexus.bricks.rebac.tuples.writer import TupleWriter
 from nexus.bricks.rebac.utils.fast import (
     check_permissions_bulk_with_fallback,
-    is_rust_available,
 )
 from nexus.bricks.rebac.zone_graph_loader import ZoneGraphLoader
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rebac_types import (
     CROSS_ZONE_ALLOWED_RELATIONS,
     CheckResult,
-    ConsistencyLevel,
-    ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,
@@ -93,6 +92,7 @@ if TYPE_CHECKING:
 
     from nexus.bricks.rebac.cache.leopard import LeopardIndex
     from nexus.bricks.rebac.cache.tiger import TigerCache, TigerCacheUpdater
+    from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +132,9 @@ class ReBACManager:
         enable_tiger_cache: bool = True,
         read_engine: "Engine | None" = None,
         is_postgresql: bool = False,
+        version_store: MetastoreVersionStore | None = None,
+        namespace_store: "MetastoreNamespaceStore | None" = None,
+        enable_inheritance: bool = True,
     ):
         """Initialize ReBAC manager.
 
@@ -146,10 +149,15 @@ class ReBACManager:
             read_engine: Optional separate engine for read-only operations (Issue #725).
                         Defaults to ``engine`` when not provided.
             is_postgresql: Whether the database is PostgreSQL (config-time flag).
+            version_store: MetastoreVersionStore for zone revision tracking (Issue #191).
+            namespace_store: MetastoreNamespaceStore for namespace config (Issue #183).
+            enable_inheritance: Enable automatic parent tuple creation in HierarchyManager.
         """
         # ── Base initialization (formerly in ReBACManager.__init__) ──
         self.engine = engine
         self._is_postgresql = is_postgresql
+        self._version_store = version_store
+        self._namespace_store = namespace_store
         self.cache_ttl_seconds = cache_ttl_seconds
         self.max_depth = max_depth
         self._last_cleanup_time: datetime | None = None
@@ -157,7 +165,12 @@ class ReBACManager:
         self._tuple_version: int = 0
 
         # Compose TupleRepository for data access delegation (Issue #725: read/write split)
-        self._repo = TupleRepository(engine, read_engine=read_engine, is_postgresql=is_postgresql)
+        self._repo = TupleRepository(
+            engine,
+            read_engine=read_engine,
+            is_postgresql=is_postgresql,
+            version_store=version_store,
+        )
 
         # Compose graph traversal and expand engines
         self._computer = PermissionComputer(self._repo, self.get_namespace, max_depth)
@@ -166,7 +179,7 @@ class ReBACManager:
         # Initialize L1 in-memory cache
         self._l1_cache: ReBACPermissionCache | None = None
         self._l1_cache = ReBACPermissionCache(
-            max_size=50000,
+            max_size=max(2, int(os.environ.get("NEXUS_CACHE_L1_SIZE", "5000"))),
             ttl_seconds=cache_ttl_seconds,
             enable_metrics=True,
             enable_adaptive_ttl=False,
@@ -352,11 +365,143 @@ class ReBACManager:
             get_namespace_cb=self.get_namespace,
             compute_permission_cb=self._compute_permission,
             cache_check_result_cb=self._cache_check_result,
+            # Async eager recompute only safe with real connection pools (PostgreSQL).
+            # SQLite + StaticPool shares a single DBAPI connection across threads,
+            # causing segfaults when the background thread closes it mid-query.
+            enable_async_recompute=is_postgresql,
             # Stats / cleanup
             cache_ttl_seconds=self.cache_ttl_seconds,
             get_tuple_version=lambda: self._tuple_version,
             set_tuple_version=lambda v: setattr(self, "_tuple_version", v),
+            # Issue #3192: DT_STREAM + Pub/Sub
+            invalidation_stream=self._create_invalidation_stream(),
+            pubsub=self._create_pubsub(),
         )
+
+        # Issue #3395: Wire Tiger L2 (Dragonfly) invalidation into coordinator.
+        # The coordinator expands relation → permissions internally, so the
+        # callback receives individual permissions matching Tiger cache keys.
+        if self._tiger_cache is not None:
+            tc = self._tiger_cache
+
+            def _tiger_l2_cb(st: str, si: str, perm: str, rt: str, zid: str) -> None:
+                tc.evict_cached(st, si, perm, rt, zid)
+
+            self._cache_coordinator.register_tiger_l2_invalidator("tiger_bitmap", _tiger_l2_cb)
+
+        # Issue #3192: Wire SharedRingBuffer for cross-process revision broadcasting
+        self._wire_shared_ring_buffer()
+
+        # ── Internalized sub-components (formerly factory-constructed) ────
+        # These are rebac-internal concerns — factory shouldn't construct them.
+
+        # HierarchyManager: automatic parent tuple creation on permission writes
+        from nexus.bricks.rebac.hierarchy_manager import HierarchyManager
+
+        self._hierarchy_manager: HierarchyManager = HierarchyManager(
+            rebac_manager=self,
+            enable_inheritance=enable_inheritance,
+        )
+
+        # DirectoryVisibilityCache: O(1) directory permission lookups via Tiger bitmaps
+        from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+        self._dir_visibility_cache: DirectoryVisibilityCache = DirectoryVisibilityCache(
+            tiger_cache=self._tiger_cache,
+            ttl=cache_ttl_seconds,
+            max_entries=10000,
+        )
+        # Wire invalidation: permission changes → dir visibility cache
+        self.register_dir_visibility_invalidator(
+            "nexusfs",
+            lambda zone_id, path: self._dir_visibility_cache.invalidate_for_resource(path, zone_id),
+        )
+
+        # NamespaceManager: optional (profile-gated), created on demand via
+        # create_namespace_manager() when namespace brick is enabled.
+        self._namespace_manager: "Any | None" = None
+
+    # ── Public property accessors for internalized sub-components ────
+
+    @property
+    def hierarchy_manager(self) -> Any:
+        """HierarchyManager — automatic parent tuple creation on permission writes."""
+        return self._hierarchy_manager
+
+    @property
+    def dir_visibility_cache(self) -> Any:
+        """DirectoryVisibilityCache — O(1) directory permission lookups."""
+        return self._dir_visibility_cache
+
+    @property
+    def namespace_manager(self) -> Any:
+        """NamespaceManager — per-subject namespace visibility (may be None if not created)."""
+        return self._namespace_manager
+
+    def create_namespace_manager(self, record_store: Any = None) -> Any:
+        """Create and attach the NamespaceManager (profile-gated, call when namespace brick is enabled).
+
+        Args:
+            record_store: RecordStoreABC for L3 persistent view store. If None, L3 is disabled.
+
+        Returns:
+            The newly created NamespaceManager instance.
+        """
+        from nexus.bricks.rebac.namespace_factory import (
+            create_namespace_manager as _create_ns_manager,
+        )
+
+        self._namespace_manager = _create_ns_manager(self, record_store)
+        return self._namespace_manager
+
+    def _create_invalidation_stream(self) -> Any:
+        """Create the DT_STREAM for ordered intra-zone invalidation."""
+        from nexus.bricks.rebac.cache.invalidation_stream import InvalidationStream
+
+        return InvalidationStream()
+
+    def _create_pubsub(self) -> Any:
+        """Create the Pub/Sub for cross-zone invalidation hints."""
+        from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
+
+        return PubSubInvalidation()
+
+    def _wire_shared_ring_buffer(self) -> None:
+        """Create and inject SharedRingBuffers for cross-process IPC (Issue #3192).
+
+        Uses separate buffers for each message type to avoid multiplexing
+        incompatible schemas. Each buffer is SPSC: one producer per process,
+        one consumer per process. Multi-process safety is achieved by using
+        unique buffer names per process (PID suffix).
+        """
+        try:
+            import os
+
+            from nexus.bricks.rebac.cache.shared_ring_buffer import SharedRingBuffer
+
+            pid = os.getpid()
+
+            # Separate buffer for zone graph tuple notifications
+            if self._zone_loader is not None:
+                zone_ring = SharedRingBuffer(
+                    name=f"rebac-zone-tuples-{pid}",
+                    entry_size=256,
+                    capacity=1024,
+                ).open_producer()
+                self._zone_loader.set_ring_buffer(zone_ring)
+
+            # Separate buffer for revision sequence broadcasting
+            if self._l1_cache is not None:
+                rev_ring = SharedRingBuffer(
+                    name=f"rebac-revisions-{pid}",
+                    entry_size=128,
+                    capacity=1024,
+                ).open_producer()
+                self._l1_cache.set_revision_ring_buffer(rev_ring)
+
+            logger.info("[RING-BUFFER] SharedRingBuffers wired (pid=%d)", pid)
+        except Exception as e:
+            logger.debug("[RING-BUFFER] SharedRingBuffer not available: %s", e)
 
     def rebac_check(
         self,
@@ -365,13 +510,8 @@ class ReBACManager:
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
         zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
-        consistency: ConsistencyLevel | ConsistencyRequirement | None = None,
     ) -> bool:
-        """Check permission with explicit consistency control (P0-1, Issue #1081).
-
-        Supports both legacy ConsistencyLevel and new ConsistencyRequirement.
-        The new ConsistencyRequirement enables SpiceDB/Zanzibar-style per-request
-        consistency modes including AT_LEAST_AS_FRESH for read-your-writes.
+        """Check permission (always uses cached/eventual consistency).
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -379,15 +519,6 @@ class ReBACManager:
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
             zone_id: Zone ID to scope check
-            consistency: Consistency control, one of:
-                - None: Uses EVENTUAL/MINIMIZE_LATENCY (default, fastest)
-                - ConsistencyLevel.EVENTUAL: Use cache (up to 5min staleness)
-                - ConsistencyLevel.BOUNDED: Max 1s staleness
-                - ConsistencyLevel.STRONG: Bypass cache entirely
-                - ConsistencyRequirement(mode=MINIMIZE_LATENCY): Same as EVENTUAL
-                - ConsistencyRequirement(mode=AT_LEAST_AS_FRESH, min_revision=N):
-                    Use cache only if revision >= N (for read-your-writes)
-                - ConsistencyRequirement(mode=FULLY_CONSISTENT): Same as STRONG
 
         Returns:
             True if permission is granted, False otherwise
@@ -396,38 +527,8 @@ class ReBACManager:
             GraphLimitExceeded: If graph traversal exceeds limits (P0-5)
 
         Example:
-            # Default: maximize cache usage
             result = manager.rebac_check(subject, permission, object)
-
-            # After a write, ensure we see the new permission
-            write_result = manager.rebac_write(subject, relation, object, ...)
-            result = manager.rebac_check(
-                subject, permission, object,
-                consistency=ConsistencyRequirement(
-                    mode=ConsistencyMode.AT_LEAST_AS_FRESH,
-                    min_revision=write_result.revision
-                )
-            )
-
-            # Security audit: bypass all caches
-            result = manager.rebac_check(
-                subject, permission, object,
-                consistency=ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
-            )
         """
-        # Issue #1081: Normalize consistency parameter
-        consistency_level: ConsistencyLevel
-        min_revision: int | None = None
-
-        if consistency is None:
-            consistency_level = ConsistencyLevel.EVENTUAL
-        elif isinstance(consistency, ConsistencyRequirement):
-            # New-style ConsistencyRequirement
-            consistency_level = consistency.to_legacy_level()
-            min_revision = consistency.min_revision
-        else:
-            # Legacy ConsistencyLevel
-            consistency_level = consistency
         logger.debug(
             f"ReBACManager.rebac_check called: enforce_zone_isolation={self.enforce_zone_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
         )
@@ -439,7 +540,7 @@ class ReBACManager:
             permission=permission,
             obj=object,
             zone_id=zone_id,
-            consistency=consistency_level.value,
+            consistency="cached",
         ) as _check_span:
             result = self._rebac_check_inner(
                 subject,
@@ -447,8 +548,6 @@ class ReBACManager:
                 object,
                 context,
                 zone_id,
-                consistency_level,
-                min_revision,
             )
             decision_ms = (time.perf_counter() - check_start) * 1000
             record_check_result(_check_span, allowed=result, decision_time_ms=decision_ms)
@@ -461,8 +560,6 @@ class ReBACManager:
         object: tuple[str, str],
         context: dict[str, Any] | None,
         zone_id: str | None,
-        consistency_level: ConsistencyLevel,
-        min_revision: int | None,
     ) -> bool:
         """Inner body of rebac_check, extracted for clean span wrapping (Issue #702)."""
         object_type, object_id = object
@@ -471,12 +568,11 @@ class ReBACManager:
 
         # OPTIMIZATION 1: Boundary Cache (Issue #922) - O(1) inheritance shortcut
         # For file permissions, check if we have a cached boundary (nearest ancestor with grant)
-        # Skip when consistency_level is STRONG — caches must be bypassed for strong reads
         if (
             object_type == "file"
             and permission in ("read", "write", "execute")
             and self._boundary_cache
-            and consistency_level != ConsistencyLevel.STRONG
+            and context is None
         ):
             boundary = self._boundary_cache.get_boundary(
                 effective_zone, subject_type, subject_id, permission, object_id
@@ -501,8 +597,7 @@ class ReBACManager:
 
         # OPTIMIZATION 2: Try Tiger Cache (O(1) bitmap lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
-        # Skip when consistency_level is STRONG — caches must be bypassed for strong reads
-        if self._tiger_cache and zone_id and consistency_level != ConsistencyLevel.STRONG:
+        if self._tiger_cache and zone_id and context is None:
             tiger_result = self.tiger_check_access(
                 subject=subject,
                 permission=permission,
@@ -524,29 +619,32 @@ class ReBACManager:
             result = self._rebac_check_base(subject, permission, object, context, zone_id)
 
             # Write-through to Tiger Cache (Issue #935)
-            if result and self._tiger_cache and zone_id:
+            if result and self._tiger_cache and zone_id and context is None:
                 self._tiger_write_through_single(subject, permission, object, zone_id, logger)
 
             # Issue #922: Cache boundary if permission was granted via parent
-            if result and object_type == "file" and self._boundary_cache:
+            if result and object_type == "file" and self._boundary_cache and context is None:
                 self._cache_boundary_if_inherited(subject, permission, object, zone_id, logger)
 
             return result
 
         logger.debug("  -> Using rebac_check_detailed")
-        detailed_result = self.rebac_check_detailed(
-            subject, permission, object, context, zone_id, consistency_level, min_revision
-        )
+        detailed_result = self.rebac_check_detailed(subject, permission, object, context, zone_id)
         logger.debug(
             f"  -> rebac_check_detailed result: allowed={detailed_result.allowed}, indeterminate={detailed_result.indeterminate}"
         )
 
         # Write-through to Tiger Cache (Issue #935)
-        if detailed_result.allowed and self._tiger_cache and zone_id:
+        if detailed_result.allowed and self._tiger_cache and zone_id and context is None:
             self._tiger_write_through_single(subject, permission, object, zone_id, logger)
 
         # Issue #922: Cache boundary if permission was granted via parent
-        if detailed_result.allowed and object_type == "file" and self._boundary_cache:
+        if (
+            detailed_result.allowed
+            and object_type == "file"
+            and self._boundary_cache
+            and context is None
+        ):
             self._cache_boundary_if_inherited(subject, permission, object, zone_id, logger)
 
         return detailed_result.allowed
@@ -731,10 +829,10 @@ class ReBACManager:
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
         zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
-        consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
-        min_revision: int | None = None,  # Issue #1081: For AT_LEAST_AS_FRESH mode
     ) -> CheckResult:
-        """Check permission with detailed result metadata (P0-1, Issue #1081).
+        """Check permission with detailed result metadata.
+
+        Always uses cached (eventual) consistency.
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -742,10 +840,6 @@ class ReBACManager:
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
             zone_id: Zone ID to scope check
-            consistency: Consistency level (EVENTUAL, BOUNDED, STRONG)
-            min_revision: Minimum acceptable revision for AT_LEAST_AS_FRESH mode.
-                When provided with BOUNDED consistency, cache will only be used
-                if the cached entry was created at revision >= min_revision.
 
         Returns:
             CheckResult with consistency metadata and traversal stats
@@ -788,57 +882,9 @@ class ReBACManager:
         # Clean up expired tuples
         self._cleanup_expired_tuples_if_needed()
 
-        # P0-1: Handle consistency levels
-        if consistency == ConsistencyLevel.STRONG:
-            # Strong consistency: Bypass cache, fresh read
-            return self._fresh_compute(
-                subject_entity, permission, object_entity, zone_id, start_time, context
-            )
-
-        elif consistency == ConsistencyLevel.BOUNDED:
-            # Bounded consistency: Max 1s staleness OR revision-based (Issue #1081)
-            cached = None
-            cached_revision = 0
-
-            if min_revision is not None and self._l1_cache:
-                # Issue #1081: AT_LEAST_AS_FRESH mode - check cache with revision constraint
-                cached, cached_revision = self._l1_cache.get_with_revision_check(
-                    subject_entity.entity_type,
-                    subject_entity.entity_id,
-                    permission,
-                    object_entity.entity_type,
-                    object_entity.entity_id,
-                    zone_id,
-                    min_revision,
-                )
-            else:
-                # Legacy time-based bounded check
-                cached = self._get_cached_check_zone_aware_bounded(
-                    subject_entity, permission, object_entity, zone_id, max_age_seconds=1
-                )
-
-            if cached is not None:
-                decision_time_ms = (time.perf_counter() - start_time) * 1000
-                return CheckResult(
-                    allowed=cached,
-                    consistency_token=self._get_version_token(zone_id),
-                    decision_time_ms=decision_time_ms,
-                    cached=True,
-                    cache_age_ms=None,  # Within staleness bound
-                    traversal_stats=None,
-                )
-
-            # Cache miss or too old/stale - compute fresh and cache
-            result = self._fresh_compute(
-                subject_entity, permission, object_entity, zone_id, start_time, context
-            )
-            self._cache_check_result_zone_aware(
-                subject_entity, permission, object_entity, zone_id, result.allowed
-            )
-            return result
-
-        else:  # ConsistencyLevel.EVENTUAL (default)
-            # Eventual consistency: Use cache (up to cache_ttl_seconds staleness)
+        # Context-sensitive ABAC checks cannot use the context-free cache key.
+        if context is None:
+            # Always use cached (eventual) consistency: Use cache (up to cache_ttl_seconds staleness)
             cached = self._get_cached_check_zone_aware(
                 subject_entity, permission, object_entity, zone_id
             )
@@ -854,16 +900,17 @@ class ReBACManager:
                     cache_age_ms=None,  # Could be up to cache_ttl_seconds old
                     traversal_stats=None,
                 )
-            logger.debug("  -> CACHE MISS: computing fresh result")
+        logger.debug("  -> CACHE MISS: computing fresh result")
 
-            # Cache miss - compute fresh and cache
-            result = self._fresh_compute(
-                subject_entity, permission, object_entity, zone_id, start_time, context
-            )
+        # Cache miss - compute fresh and cache
+        result = self._fresh_compute(
+            subject_entity, permission, object_entity, zone_id, start_time, context
+        )
+        if context is None:
             self._cache_check_result_zone_aware(
                 subject_entity, permission, object_entity, zone_id, result.allowed
             )
-            return result
+        return result
 
     def _fresh_compute(
         self,
@@ -956,30 +1003,32 @@ class ReBACManager:
                 check_permission_single_rust,
             )
 
-            if is_rust_available():
-                # Fetch tuples and namespace configs for Rust
-                # CROSS-ZONE FIX: Pass subject to include cross-zone shares
+            if context is None:
+                # Fetch tuples and namespace configs for Rust.
+                # CROSS-ZONE FIX: Pass subject to include cross-zone shares.
                 tuples = self._fetch_tuples_for_rust(zone_id, subject=subject)
-                namespace_configs = self._get_namespace_configs_for_rust()
+                if not any(tuple_data.get("conditions") for tuple_data in tuples):
+                    namespace_configs = self._get_namespace_configs_for_rust()
 
-                result = check_permission_single_rust(
-                    subject_type=subject.entity_type,
-                    subject_id=subject.entity_id,
-                    permission=permission,
-                    object_type=obj.entity_type,
-                    object_id=obj.entity_id,
-                    tuples=tuples,
-                    namespace_configs=namespace_configs,
-                )
+                    result = check_permission_single_rust(
+                        subject_type=subject.entity_type,
+                        subject_id=subject.entity_id,
+                        permission=permission,
+                        object_type=obj.entity_type,
+                        object_id=obj.entity_id,
+                        tuples=tuples,
+                        namespace_configs=namespace_configs,
+                    )
 
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                stats.duration_ms = elapsed_ms
-                logger.debug(
-                    f"[RUST-SINGLE] Permission check completed in {elapsed_ms:.2f}ms: "
-                    f"{subject.entity_type}:{subject.entity_id} {permission} "
-                    f"{obj.entity_type}:{obj.entity_id} = {result}"
-                )
-                return result
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    stats.duration_ms = elapsed_ms
+                    logger.debug(
+                        f"[RUST-SINGLE] Permission check completed in {elapsed_ms:.2f}ms: "
+                        f"{subject.entity_type}:{subject.entity_id} {permission} "
+                        f"{obj.entity_type}:{obj.entity_id} = {result}"
+                    )
+                    return result
+                logger.debug("Skipping Rust permission check for conditional ReBAC tuples")
 
         except (RuntimeError, ValueError) as e:
             logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
@@ -1238,19 +1287,10 @@ class ReBACManager:
 
         Returns:
             WriteResult with tuple_id, revision, and consistency_token.
-            Use the revision with ConsistencyRequirement(mode=AT_LEAST_AS_FRESH, min_revision=...)
-            for read-your-writes consistency.
 
         Example:
-            # Write and immediately check with read-your-writes guarantee
             result = manager.rebac_write(subject, relation, object, zone_id=zone)
-            allowed = manager.rebac_check(
-                subject, permission, object,
-                consistency=ConsistencyRequirement(
-                    mode=ConsistencyMode.AT_LEAST_AS_FRESH,
-                    min_revision=result.revision
-                )
-            )
+            allowed = manager.rebac_check(subject, permission, object)
         """
         write_start = time.perf_counter()
         # Issue #773: Default subject_zone_id and object_zone_id to zone_id
@@ -1291,7 +1331,7 @@ class ReBACManager:
 
         # Tiger Cache: Write-through - persist grant immediately
         # This is the fast path (~1-5ms) vs queue processing (~20-40s)
-        if self._tiger_cache:
+        if self._tiger_cache and not conditions:
             subject_tuple = (subject[0], subject[1])
             object_type = object[0]
             object_id = object[1]
@@ -1400,6 +1440,9 @@ class ReBACManager:
             # Tiger Cache: Write-through for bulk operations
             if self._tiger_cache:
                 for t in tuples:
+                    if t.get("conditions"):
+                        continue
+
                     subject = t["subject"]
                     obj = t["object"]
                     relation = t.get("relation", "")
@@ -1615,97 +1658,21 @@ class ReBACManager:
     def _get_cached_check_zone_aware(
         self, subject: Entity, permission: str, obj: Entity, zone_id: str
     ) -> bool | None:
-        """Get cached permission check result (zone-aware cache key)."""
-        with self._connection(readonly=True) as conn:
-            cursor = self._create_cursor(conn)
+        """Get cached permission check result (zone-aware cache key).
 
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT result, expires_at
-                    FROM rebac_check_cache
-                    WHERE zone_id = ?
-                      AND subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                      AND expires_at > ?
-                    """
-                ),
-                (
-                    zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            row = cursor.fetchone()
-            if row:
-                result = row["result"]
-                return bool(result)
-            return None
+        Note: L2 SQL cache (rebac_check_cache) removed — always returns None (cache miss).
+        L1 in-memory cache is checked by callers before this method.
+        """
+        return None
 
     def _cache_check_result_zone_aware(
         self, subject: Entity, permission: str, obj: Entity, zone_id: str, result: bool
     ) -> None:
-        """Cache permission check result (zone-aware cache key)."""
-        cache_id = str(uuid.uuid4())
-        computed_at = datetime.now(UTC)
-        expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
+        """Cache permission check result (zone-aware cache key).
 
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # Delete existing cache entry if present
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_check_cache
-                    WHERE zone_id = ?
-                      AND subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                    """
-                ),
-                (
-                    zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                ),
-            )
-
-            # Insert new cache entry
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_check_cache (
-                        cache_id, zone_id, subject_type, subject_id, permission,
-                        object_type, object_id, result, computed_at, expires_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    cache_id,
-                    zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    int(result),
-                    computed_at.isoformat(),
-                    expires_at.isoformat(),
-                ),
-            )
-
-            conn.commit()
+        Note: L2 SQL cache (rebac_check_cache) removed — no-op.
+        L1 in-memory caching is handled by callers.
+        """
 
     # ============================================================================
     # End Zone-Aware Methods
@@ -2046,7 +2013,9 @@ class ReBACManager:
 
     def _get_zone_revision_for_grant(self, zone_id: str) -> int:
         """Get current zone revision for consistency during expansion."""
-        return get_zone_revision_for_grant(self.engine, zone_id)
+        if self._version_store is not None:
+            return get_zone_revision_for_grant(self._version_store, zone_id)
+        return 0
 
     def _get_directory_descendants(self, directory_path: str, zone_id: str) -> list[str]:
         """Get all file paths under a directory."""
@@ -2063,14 +2032,19 @@ class ReBACManager:
             Dict mapping object_type -> namespace config
         """
         # Get the standard object types that we need namespace configs for
-        # These are the common object types used in permission checks
-        object_types = ["file", "zone", "user", "group", "agent", "memory"]
+        # These are the common object types used in permission checks.
+        # ``approvals`` is included so ReBACCapabilityAuth (Issue #3790) can
+        # expand viewer/editor/owner relations to read/write/create
+        # permissions on per-zone objects ``("approvals", <zone_id>)`` from
+        # the Rust path (zone scoping enforced at the F1 layer).
+        object_types = ["file", "zone", "user", "group", "agent", "memory", "approvals"]
 
         configs = {}
         for obj_type in object_types:
             namespace = self.get_namespace(obj_type)
             if namespace:
                 configs[obj_type] = namespace.config
+
         return configs
 
     def _compute_permission_zone_aware_with_limits(
@@ -2137,7 +2111,9 @@ class ReBACManager:
 
         Delegates to consistency.revision module (Issue #1459).
         """
-        return increment_version_token(self.engine, zone_id, is_postgresql=self._is_postgresql)
+        if self._version_store is not None:
+            return increment_version_token(self._version_store, zone_id)
+        return "v0"
 
     def _get_cached_check_zone_aware_bounded(
         self,
@@ -2149,49 +2125,14 @@ class ReBACManager:
     ) -> bool | None:
         """Get cached result with bounded staleness (P0-1).
 
-        Returns None if cache entry is older than max_age_seconds.
+        Note: L2 SQL cache (rebac_check_cache) removed — always returns None (cache miss).
         """
-        with self._connection(readonly=True) as conn:
-            cursor = self._create_cursor(conn)
-
-            min_computed_at = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT result, computed_at, expires_at
-                    FROM rebac_check_cache
-                    WHERE zone_id = ?
-                      AND subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                      AND computed_at >= ?
-                      AND expires_at > ?
-                    """
-                ),
-                (
-                    zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    min_computed_at.isoformat(),
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            row = cursor.fetchone()
-            if row:
-                result = row["result"]
-                return bool(result)
-            return None
+        return None
 
     def rebac_check_bulk(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
-        consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Check permissions for multiple (subject, permission, object) tuples in batch.
 
@@ -2207,7 +2148,7 @@ class ReBACManager:
             tiger_cache=self._tiger_cache,
             tuple_version=getattr(self, "_tuple_version", 0),
         )
-        return self._bulk_checker.check_bulk(checks, zone_id, consistency)
+        return self._bulk_checker.check_bulk(checks, zone_id)
 
     def rebac_list_objects(
         self,
@@ -2274,7 +2215,6 @@ class ReBACManager:
             ... )
         """
         from nexus.bricks.rebac.utils.fast import (
-            RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )
 
@@ -2304,27 +2244,24 @@ class ReBACManager:
         )
 
         # Try Rust implementation first (much faster)
-        if RUST_AVAILABLE:
-            try:
-                result = list_objects_for_subject_rust(
-                    subject_type=subject_type,
-                    subject_id=subject_id,
-                    permission=permission,
-                    object_type=object_type,
-                    tuples=tuples,
-                    namespace_configs=namespace_configs,
-                    path_prefix=path_prefix,
-                    limit=limit,
-                    offset=offset,
-                )
-                elapsed = (time.perf_counter() - start_time) * 1000
-                logger.debug(
-                    f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
-                )
-                return result
-            except (RuntimeError, ValueError) as e:
-                logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
-                # Fall through to Python implementation
+        try:
+            result = list_objects_for_subject_rust(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                permission=permission,
+                object_type=object_type,
+                tuples=tuples,
+                namespace_configs=namespace_configs,
+                path_prefix=path_prefix,
+                limit=limit,
+                offset=offset,
+            )
+            elapsed = (time.perf_counter() - start_time) * 1000
+            logger.debug(f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms")
+            return result
+        except (RuntimeError, ValueError) as e:
+            logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
+            # Fall through to Python implementation
 
         # Python fallback implementation
         return self._rebac_list_objects_python(
@@ -2404,6 +2341,47 @@ class ReBACManager:
                 }
                 for row in cursor.fetchall()
             ]
+
+    def get_cross_zone_shared_paths(
+        self,
+        subject_type: str,
+        subject_id: str,
+        zone_id: str,
+        object_type: str = "file",
+        prefix: str = "",
+    ) -> list[str]:
+        """Return distinct object paths shared with a subject from other zones."""
+        cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
+        placeholders = ", ".join("?" for _ in cross_zone_relations)
+        query = f"""
+            SELECT DISTINCT object_id
+            FROM rebac_tuples
+            WHERE relation IN ({placeholders})
+              AND subject_type = ? AND subject_id = ?
+              AND object_type = ?
+              AND zone_id != ?
+              AND (expires_at IS NULL OR expires_at > ?)
+        """
+        params: tuple[Any, ...] = (
+            *cross_zone_relations,
+            subject_type,
+            subject_id,
+            object_type,
+            zone_id,
+            datetime.now(UTC).isoformat(),
+        )
+        if prefix:
+            query += " AND object_id LIKE ?"
+            params = (*params, f"{prefix}%")
+
+        with self._connection(readonly=True) as conn:
+            cursor = self._create_cursor(conn)
+            cursor.execute(self._fix_sql_placeholders(query), params)
+            paths: list[str] = []
+            for row in cursor.fetchall():
+                path = row["object_id"] if hasattr(row, "keys") else row[0]
+                paths.append(path)
+            return paths
 
     def _rebac_list_objects_python(
         self,
@@ -2620,7 +2598,7 @@ class ReBACManager:
     def _get_namespace_configs_dict(self) -> dict[str, Any]:
         """Get namespace configs as a dict for Rust interop."""
         configs: dict[str, Any] = {}
-        for obj_type in ["file", "group", "zone", "memory"]:
+        for obj_type in ["file", "group", "zone", "memory", "approvals"]:
             namespace = self.get_namespace(obj_type)
             if namespace and namespace.config:
                 configs[obj_type] = {
@@ -2760,23 +2738,30 @@ class ReBACManager:
             cursor = self._create_cursor(conn)
             cursor.execute(query, params)
 
+            def _safe_get(row: Any, key: str) -> Any:
+                """Read a nullable column from any row type (dict, sqlite3.Row, etc.)."""
+                try:
+                    return row[key]
+                except (KeyError, IndexError):
+                    return None
+
             results = []
             for row in cursor.fetchall():
-                try:
-                    zone_id_val = row["zone_id"]
-                except (KeyError, IndexError):
-                    zone_id_val = None
                 results.append(
                     {
                         "tuple_id": row["tuple_id"],
                         "subject_type": row["subject_type"],
                         "subject_id": row["subject_id"],
+                        "subject_relation": _safe_get(row, "subject_relation"),
                         "relation": row["relation"],
                         "object_type": row["object_type"],
                         "object_id": row["object_id"],
                         "created_at": row["created_at"],
-                        "expires_at": row["expires_at"],
-                        "zone_id": zone_id_val,
+                        "expires_at": _safe_get(row, "expires_at"),
+                        "conditions": _safe_get(row, "conditions"),
+                        "zone_id": _safe_get(row, "zone_id"),
+                        "subject_zone_id": _safe_get(row, "subject_zone_id"),
+                        "object_zone_id": _safe_get(row, "object_zone_id"),
                     }
                 )
 
@@ -2786,7 +2771,24 @@ class ReBACManager:
 
     def _increment_zone_revision(self, zone_id: str | None, conn: Any) -> int:
         """Increment and return the new revision. Delegates to TupleRepository (Issue #1459)."""
-        return self._repo.increment_zone_revision(zone_id, conn)
+        new_rev = self._repo.increment_zone_revision(zone_id, conn)
+
+        # Issue #3192: Broadcast revision via SharedRingBuffer
+        if self._l1_cache is not None:
+            ring = getattr(self._l1_cache, "_revision_ring_buffer", None)
+            if ring is not None:
+                try:
+                    import json
+
+                    ring.write(
+                        json.dumps(
+                            {"zone_id": zone_id or ROOT_ZONE_ID, "revision": new_rev}
+                        ).encode()
+                    )
+                except Exception:
+                    pass  # best-effort broadcast
+
+        return new_rev
 
     @contextmanager
     def _connection(self, *, readonly: bool = False) -> Any:
@@ -2841,6 +2843,7 @@ class ReBACManager:
     def _initialize_default_namespaces_with_conn(self, conn: Any) -> None:
         """Initialize default namespace configurations with given connection."""
         from nexus.bricks.rebac.default_namespaces import (
+            DEFAULT_APPROVALS_NAMESPACE,
             DEFAULT_FILE_NAMESPACE,
             DEFAULT_GROUP_NAMESPACE,
             DEFAULT_MEMORY_NAMESPACE,
@@ -2848,6 +2851,29 @@ class ReBACManager:
             DEFAULT_SKILL_NAMESPACE,
             DEFAULT_TRAJECTORY_NAMESPACE,
         )
+
+        all_defaults = [
+            DEFAULT_FILE_NAMESPACE,
+            DEFAULT_GROUP_NAMESPACE,
+            DEFAULT_MEMORY_NAMESPACE,
+            DEFAULT_PLAYBOOK_NAMESPACE,
+            DEFAULT_TRAJECTORY_NAMESPACE,
+            DEFAULT_SKILL_NAMESPACE,
+            DEFAULT_APPROVALS_NAMESPACE,
+        ]
+
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            try:
+                for ns_config in all_defaults:
+                    self._namespace_store.create_or_update_default(ns_config)
+                return
+            except Exception as e:
+                logger.warning(
+                    f"Failed to register default namespaces via metastore: {type(e).__name__}: {e}"
+                )
+                logger.debug(traceback.format_exc())
+                return
 
         try:
             cursor = self._create_cursor(conn)
@@ -2864,14 +2890,7 @@ class ReBACManager:
                 return  # Table doesn't exist yet
 
             # Check and create/update namespaces
-            for ns_config in [
-                DEFAULT_FILE_NAMESPACE,
-                DEFAULT_GROUP_NAMESPACE,
-                DEFAULT_MEMORY_NAMESPACE,
-                DEFAULT_PLAYBOOK_NAMESPACE,
-                DEFAULT_TRAJECTORY_NAMESPACE,
-                DEFAULT_SKILL_NAMESPACE,
-            ]:
+            for ns_config in all_defaults:
                 cursor.execute(
                     self._fix_sql_placeholders(
                         "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
@@ -2911,7 +2930,6 @@ class ReBACManager:
                         )
             conn.commit()
         except Exception as e:  # fail-safe: tables may not exist yet at startup
-            logger = logging.getLogger(__name__)
             logger.warning(f"Failed to register default namespaces: {type(e).__name__}: {e}")
             logger.debug(traceback.format_exc())
 
@@ -2926,6 +2944,12 @@ class ReBACManager:
         Args:
             namespace: Namespace configuration to create
         """
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            self._namespace_store.create_or_update(namespace)
+            self._invalidate_cache_for_namespace(namespace.object_type)
+            return
+
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
@@ -2987,6 +3011,25 @@ class ReBACManager:
         Returns:
             NamespaceConfig or None if not found
         """
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            data = self._namespace_store.get(object_type)
+            if data is None:
+                return None
+            created_at = data.get("created_at", "")
+            updated_at = data.get("updated_at", "")
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at) if created_at else datetime.now(UTC)
+            if isinstance(updated_at, str):
+                updated_at = datetime.fromisoformat(updated_at) if updated_at else datetime.now(UTC)
+            return NamespaceConfig(
+                namespace_id=data["namespace_id"],
+                object_type=data["object_type"],
+                config=data["config"],
+                created_at=created_at,
+                updated_at=updated_at,
+            )
+
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
@@ -3031,6 +3074,9 @@ class ReBACManager:
             List of namespace dicts with keys: namespace_id, object_type,
             config (parsed JSON), created_at, updated_at.
         """
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            return self._namespace_store.list_all()
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -3062,6 +3108,15 @@ class ReBACManager:
         Returns:
             True if namespace was deleted, False if not found.
         """
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            deleted = self._namespace_store.delete(object_type)
+            if deleted:
+                cache = getattr(self, "_cache", None)
+                if cache is not None:
+                    cache.clear()
+            return deleted
+
         conn = self._get_connection()
         try:
             cursor = self._create_cursor(conn)
@@ -3494,74 +3549,37 @@ class ReBACManager:
                 uncached_checks.append((i, (subject, permission, obj)))
 
         logger.debug(
-            f"🚀 Batch check: {len(checks)} total, {len(results)} cached, "
-            f"{len(uncached_checks)} to compute (Rust={'enabled' if use_rust and is_rust_available() else 'disabled'})"
+            f"Batch check: {len(checks)} total, {len(results)} cached, "
+            f"{len(uncached_checks)} to compute (Rust=enabled)"
         )
 
-        # Phase 2: Compute uncached checks
+        # Phase 2: Compute uncached checks using Rust
         if uncached_checks:
-            if use_rust and is_rust_available() and len(uncached_checks) >= 10:
-                # Use Rust for bulk computation (efficient for 10+ checks)
-                logger.debug(
-                    f"⚡ Using Rust acceleration for {len(uncached_checks)} uncached checks"
-                )
-                try:
-                    start_time = time.perf_counter()
-                    rust_results = self._compute_batch_rust([check for _, check in uncached_checks])
-                    total_delta = time.perf_counter() - start_time
-                    # Approximate per-check delta (Rust computes in bulk)
-                    avg_delta = total_delta / len(uncached_checks) if uncached_checks else 0.0
+            logger.debug(f"Using Rust acceleration for {len(uncached_checks)} uncached checks")
+            start_time = time.perf_counter()
+            rust_results = self._compute_batch_rust([check for _, check in uncached_checks])
+            total_delta = time.perf_counter() - start_time
+            # Approximate per-check delta (Rust computes in bulk)
+            avg_delta = total_delta / len(uncached_checks) if uncached_checks else 0.0
 
-                    for idx, (i, _) in enumerate(uncached_checks):
-                        result = rust_results[idx]
-                        results[i] = result
-                        # Cache the result with XFetch delta (Issue #718)
-                        subject, permission, obj = uncached_checks[idx][1]
-                        subject_entity = Entity(subject[0], subject[1])
-                        object_entity = Entity(obj[0], obj[1])
-                        self._cache_check_result(
-                            subject_entity,
-                            permission,
-                            object_entity,
-                            result,
-                            zone_id=None,
-                            delta=avg_delta,
-                        )
-                except Exception as e:  # fail-safe: Rust fallback to Python computation
-                    logger.warning(f"Rust batch computation failed, falling back to Python: {e}")
-                    # Fall back to Python computation
-                    self._compute_batch_python(uncached_checks, results)
-            else:
-                # Use Python for small batches or when Rust is unavailable
-                reason = (
-                    "batch too small (<10)" if len(uncached_checks) < 10 else "Rust not available"
+            for idx, (i, _) in enumerate(uncached_checks):
+                result = rust_results[idx]
+                results[i] = result
+                # Cache the result with XFetch delta (Issue #718)
+                subject, permission, obj = uncached_checks[idx][1]
+                subject_entity = Entity(subject[0], subject[1])
+                object_entity = Entity(obj[0], obj[1])
+                self._cache_check_result(
+                    subject_entity,
+                    permission,
+                    object_entity,
+                    result,
+                    zone_id=None,
+                    delta=avg_delta,
                 )
-                logger.debug(
-                    f"🐍 Using Python computation for {len(uncached_checks)} checks ({reason})"
-                )
-                self._compute_batch_python(uncached_checks, results)
 
         # Return results in original order
         return [results[i] for i in range(len(checks))]
-
-    def _compute_batch_python(
-        self,
-        uncached_checks: list[tuple[int, tuple[tuple[str, str], str, tuple[str, str]]]],
-        results: dict[int, bool],
-    ) -> None:
-        """Compute uncached checks using Python (original implementation)."""
-        for i, (subject, permission, obj) in uncached_checks:
-            subject_entity = Entity(subject[0], subject[1])
-            object_entity = Entity(obj[0], obj[1])
-            start_time = time.perf_counter()
-            result = self._compute_permission(
-                subject_entity, permission, object_entity, visited=set(), depth=0
-            )
-            delta = time.perf_counter() - start_time
-            self._cache_check_result(
-                subject_entity, permission, object_entity, result, zone_id=None, delta=delta
-            )
-            results[i] = result
 
     def _compute_batch_rust(
         self,
@@ -3623,10 +3641,8 @@ class ReBACManager:
                     SELECT subject_type, subject_id, subject_relation,
                            relation, object_type, object_id
                     FROM rebac_tuples
-                    WHERE (expiration_time IS NULL OR expiration_time > ?)
                     """
                 ),
-                (datetime.now(UTC),),
             )
 
             tuples = []
@@ -3872,7 +3888,7 @@ class ReBACManager:
     ) -> bool | None:
         """Get cached permission check result.
 
-        Checks L1 (in-memory) cache first, then L2 (database) cache.
+        Checks L1 (in-memory) cache only. L2 SQL cache (rebac_check_cache) removed.
 
         Args:
             subject: Subject entity
@@ -3883,7 +3899,7 @@ class ReBACManager:
         Returns:
             Cached result or None if not cached or expired
         """
-        # Check L1 cache first (if enabled)
+        # Check L1 cache (if enabled)
         if self._l1_cache:
             l1_result = self._l1_cache.get(
                 subject.entity_type,
@@ -3894,53 +3910,11 @@ class ReBACManager:
                 zone_id,
             )
             if l1_result is not None:
-                logger.debug("✅ L1 CACHE HIT")
+                logger.debug("L1 CACHE HIT")
                 return l1_result
 
-        # L1 miss - check L2 (database) cache
-        with self._connection(readonly=True) as conn:
-            cursor = self._create_cursor(conn)
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT result, expires_at
-                    FROM rebac_check_cache
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                      AND expires_at > ?
-                    """
-                ),
-                (
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            row = cursor.fetchone()
-            if row:
-                result = bool(row["result"])
-                logger.debug("✅ L2 CACHE HIT (populating L1)")
-
-                # Populate L1 cache from L2
-                if self._l1_cache:
-                    self._l1_cache.set(
-                        subject.entity_type,
-                        subject.entity_id,
-                        permission,
-                        obj.entity_type,
-                        obj.entity_id,
-                        result,
-                        zone_id,
-                    )
-
-                return result
-            return None
+        # L2 SQL cache removed — return None (cache miss)
+        return None
 
     # ============================================================
     # Background Refresh (Issue #932)
@@ -4053,7 +4027,9 @@ class ReBACManager:
         conn: Any | None = None,
         delta: float = 0.0,
     ) -> None:
-        """Cache permission check result in both L1 and L2 caches.
+        """Cache permission check result in L1 cache.
+
+        L2 SQL cache (rebac_check_cache) has been removed.
 
         Args:
             subject: Subject entity
@@ -4061,10 +4037,10 @@ class ReBACManager:
             obj: Object entity
             result: Check result
             zone_id: Optional zone ID for multi-zone isolation
-            conn: Optional database connection
+            conn: Optional database connection (unused, kept for API compatibility)
             delta: Recomputation time in seconds for XFetch (Issue #718)
         """
-        # Cache in L1 first (faster)
+        # Cache in L1 (in-memory)
         if self._l1_cache:
             self._l1_cache.set(
                 subject.entity_type,
@@ -4077,71 +4053,7 @@ class ReBACManager:
                 delta=delta,
             )
 
-        # Then cache in L2 (database)
-        cache_id = str(uuid.uuid4())
-        computed_at = datetime.now(UTC)
-        expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
-
-        # Use "root" zone if not specified
-        effective_zone_id = zone_id if zone_id is not None else ROOT_ZONE_ID
-
-        # Use provided connection or create new one (avoids SQLite lock contention)
-        should_close = conn is None
-        if conn is None:
-            conn = self._get_connection()
-        try:
-            cursor = self._create_cursor(conn)
-
-            # Delete existing cache entry if present
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_check_cache
-                    WHERE zone_id = ?
-                      AND subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                    """
-                ),
-                (
-                    effective_zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                ),
-            )
-
-            # Insert new cache entry
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_check_cache (
-                        cache_id, zone_id, subject_type, subject_id, permission,
-                        object_type, object_id, result, computed_at, expires_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    cache_id,
-                    effective_zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    int(result),  # Convert boolean to int for PostgreSQL compatibility
-                    computed_at.isoformat(),
-                    expires_at.isoformat(),
-                ),
-            )
-
-            conn.commit()
-        finally:
-            if should_close:
-                self._close_connection(conn)
+        # L2 SQL cache (rebac_check_cache) removed — no-op.
 
     def _invalidate_cache_for_tuple(
         self,
@@ -4207,13 +4119,209 @@ class ReBACManager:
         self._cache_coordinator.reset_cache_stats()
 
     def close(self) -> None:
-        """Close database connection.
+        """Close the manager: shut down cache coordinator and release DB resources.
 
-        Note: With fresh connections, there's nothing to close here.
-        Connections are closed immediately after each operation.
+        Must be called before the underlying database engine is disposed.
+        Stops background recompute threads, clears all caches, and releases
+        database connection callbacks to prevent use-after-close errors.
         """
-        pass
+        if hasattr(self, "_cache_coordinator") and self._cache_coordinator is not None:
+            self._cache_coordinator.close()
 
 
 # Backward-compat alias — many tests and call-sites still reference the old name.
 EnhancedReBACManager = ReBACManager
+
+
+# ── Async wrapper (merged from async_manager.py, Issue #1385) ────────
+
+
+class AsyncReBACManager:
+    """Async facade over the synchronous ReBACManager.
+
+    Wraps all public methods with ``asyncio.to_thread()`` for non-blocking
+    execution in async contexts (FastAPI, etc.).
+    """
+
+    def __init__(self, sync_manager: Any) -> None:
+        self._sync = sync_manager
+
+    # ── Core Zanzibar APIs ──────────────────────────────────────────
+
+    async def rebac_check(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        context: dict[str, Any] | None = None,
+        zone_id: str | None = None,
+        consistency: Any | None = None,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._sync.rebac_check,
+            subject,
+            permission,
+            object,
+            context,
+            zone_id,
+            consistency,
+        )
+
+    async def rebac_write(
+        self,
+        subject: tuple[str, str] | tuple[str, str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: Any | None = None,
+        conditions: dict[str, Any] | None = None,
+        zone_id: str | None = None,
+    ) -> WriteResult:
+        return await asyncio.to_thread(
+            self._sync.rebac_write,
+            subject,
+            relation,
+            object,
+            expires_at,
+            conditions,
+            zone_id,
+        )
+
+    async def rebac_delete(self, tuple_id: str) -> bool:
+        return await asyncio.to_thread(self._sync.rebac_delete, tuple_id)
+
+    async def rebac_expand(
+        self,
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> list[tuple[str, str]]:
+        return await asyncio.to_thread(self._sync.rebac_expand, permission, object, zone_id)
+
+    # ── Bulk APIs ───────────────────────────────────────────────────
+
+    async def rebac_check_bulk(
+        self,
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
+        return await asyncio.to_thread(self._sync.rebac_check_bulk, checks, zone_id)
+
+    async def rebac_list_objects(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object_type: str = "file",
+        zone_id: str | None = None,
+        path_prefix: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[tuple[str, str]]:
+        return await asyncio.to_thread(
+            self._sync.rebac_list_objects,
+            subject,
+            permission,
+            object_type,
+            zone_id,
+            path_prefix,
+            limit,
+            offset,
+        )
+
+    async def rebac_write_batch(self, tuples: list[dict[str, Any]]) -> int:
+        return await asyncio.to_thread(self._sync.rebac_write_batch, tuples)
+
+    async def rebac_explain(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._sync.rebac_explain, subject, permission, object, zone_id
+        )
+
+    # ── Namespace APIs ──────────────────────────────────────────────
+
+    async def get_namespace(self, object_type: str) -> Any:
+        return await asyncio.to_thread(self._sync.get_namespace, object_type)
+
+    async def create_namespace(self, namespace: Any) -> None:
+        return await asyncio.to_thread(self._sync.create_namespace, namespace)
+
+    # ── Cache / Leopard / Tiger APIs ────────────────────────────────
+
+    async def get_transitive_groups(
+        self,
+        subject: tuple[str, str],
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> set[tuple[str, str]]:
+        return await asyncio.to_thread(self._sync.get_transitive_groups, subject, zone_id)
+
+    async def invalidate_zone_graph_cache(self, zone_id: str | None = None) -> None:
+        return await asyncio.to_thread(self._sync.invalidate_zone_graph_cache, zone_id)
+
+    async def get_cache_stats(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self._sync.get_cache_stats)
+
+    def get_l1_cache_stats(self) -> dict[str, Any]:
+        return self._sync.get_cache_stats()
+
+    # ── Bridge convenience methods ─────────────────────────────────
+
+    async def write_tuple(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+        subject_relation: str | None = None,  # noqa: ARG002
+    ) -> str:
+        result = await self.rebac_write(
+            subject=subject, relation=relation, object=object, zone_id=zone_id
+        )
+        return result.tuple_id
+
+    async def delete_tuple(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> bool:
+        def _delete_by_components() -> bool:
+            from nexus.lib.zone import normalize_zone_id
+
+            nz = normalize_zone_id(zone_id)
+            with self._sync._connection() as conn:
+                cursor = self._sync._create_cursor(conn)
+                cursor.execute(
+                    self._sync._fix_sql_placeholders(
+                        "SELECT tuple_id FROM rebac_tuples "
+                        "WHERE subject_type = ? AND subject_id = ? "
+                        "AND relation = ? AND object_type = ? AND object_id = ? "
+                        "AND zone_id = ?"
+                    ),
+                    (subject[0], subject[1], relation, object[0], object[1], nz),
+                )
+                row = cursor.fetchone()
+            if not row:
+                return False
+            return self._sync.rebac_delete(row[0])
+
+        return await asyncio.to_thread(_delete_by_components)
+
+    # ── Lifecycle ───────────────────────────────────────────────────
+
+    async def close(self) -> None:
+        return await asyncio.to_thread(self._sync.close)
+
+    # ── Passthrough properties ──────────────────────────────────────
+
+    @property
+    def engine(self) -> Any:
+        return self._sync.engine
+
+    @property
+    def enforce_zone_isolation(self) -> bool:
+        return self._sync.enforce_zone_isolation

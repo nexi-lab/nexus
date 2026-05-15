@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus.bricks.pay.x402 import X402Client, X402PaymentVerification
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.routers.x402 import router as x402_router
 from nexus.server.api.v2.routers.x402 import webhook_router as x402_webhook_router
 from nexus.server.dependencies import require_auth
@@ -259,7 +260,7 @@ class TestWebhookIntegration:
         # Verify CreditsService was called correctly
         mock_credits_service.provision_wallet.assert_called_once_with(
             agent_id="agent-test-123",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         mock_credits_service.topup.assert_called_once()
         call_kwargs = mock_credits_service.topup.call_args.kwargs

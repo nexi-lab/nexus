@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -62,6 +63,15 @@ class SpendingPolicyModel(Base):
 
     __table_args__ = (
         UniqueConstraint("agent_id", "zone_id", name="uq_spending_policy_agent_zone"),
+        # PostgreSQL treats NULLs as distinct in unique constraints, so the
+        # above does not prevent multiple zone-default rows (agent_id IS NULL).
+        # This partial unique index enforces at most one default per zone.
+        Index(
+            "uq_spending_policy_zone_default",
+            "zone_id",
+            unique=True,
+            postgresql_where=text("agent_id IS NULL"),
+        ),
         Index("ix_spending_policies_zone_priority", "zone_id", "priority"),
     )
 

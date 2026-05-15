@@ -8,7 +8,7 @@ interface changes only need updating in one place.
 import hashlib
 from unittest.mock import MagicMock, PropertyMock
 
-from nexus.backends.backend import Backend
+from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -26,14 +26,11 @@ def make_leaf(name: str = "local") -> MagicMock:
     mock = MagicMock(spec=Backend)
     mock.name = name
     mock.describe.return_value = name
-    type(mock).user_scoped = PropertyMock(return_value=False)
     type(mock).is_connected = PropertyMock(return_value=True)
     type(mock).thread_safe = PropertyMock(return_value=True)
     type(mock).supports_rename = PropertyMock(return_value=False)
     type(mock).has_root_path = PropertyMock(return_value=True)
-    type(mock).has_token_manager = PropertyMock(return_value=False)
     type(mock).has_data_dir = PropertyMock(return_value=False)
-    type(mock).is_passthrough = PropertyMock(return_value=False)
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=False)
     return mock
 
@@ -48,23 +45,25 @@ def make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     storage: dict[str, bytes] = {}
     mock = make_leaf("storage-mock")
 
-    def write_content(content: bytes, context: object = None) -> WriteResult:
+    def write_content(
+        content: bytes, content_id: str = "", *, offset: int = 0, context: object = None
+    ) -> WriteResult:
         h = hashlib.sha256(content).hexdigest()
         storage[h] = content
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, version=h, size=len(content))
 
-    def read_content(content_hash: str, context: object = None) -> bytes:
-        if content_hash in storage:
-            return storage[content_hash]
-        raise NexusFileNotFoundError(content_hash)
+    def read_content(content_id: str, context: object = None) -> bytes:
+        if content_id in storage:
+            return storage[content_id]
+        raise NexusFileNotFoundError(content_id)
 
     def batch_read_content(
-        content_hashes: list[str],
+        content_ids: list[str],
         context: object = None,
         *,
         contexts: dict | None = None,
     ) -> dict[str, bytes | None]:
-        return {h: storage.get(h) for h in content_hashes}
+        return {h: storage.get(h) for h in content_ids}
 
     mock.write_content = MagicMock(side_effect=write_content)
     mock.read_content = MagicMock(side_effect=read_content)

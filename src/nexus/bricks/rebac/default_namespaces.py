@@ -6,17 +6,28 @@ definition lives in the rebac brick since it owns namespace semantics.
 
 Canonical import:
     from nexus.bricks.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
+
+IMPORTANT: namespace_id MUST be deterministic (uuid5, not uuid4).
+uuid4() generates a new ID on every import, which breaks the update
+guard in _initialize_default_namespaces_with_conn() — after a server
+restart the new UUID doesn't match the stored one, so the namespace
+config is never updated.  uuid5(NEXUS_NS, object_type) is stable
+across restarts while remaining unique per object type.
 """
 
 import uuid
 
 from nexus.bricks.rebac.domain import NamespaceConfig
 
+# Fixed namespace for deterministic UUID generation.
+# uuid5(NEXUS_NS, "file") always produces the same ID.
+_NEXUS_NS = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
 # ---------------------------------------------------------------------------
 # File namespace (complex: parent inheritance + group + cross-zone sharing)
 # ---------------------------------------------------------------------------
 DEFAULT_FILE_NAMESPACE = NamespaceConfig(
-    namespace_id=str(uuid.uuid4()),
+    namespace_id=str(uuid.uuid5(_NEXUS_NS, "file")),
     object_type="file",
     config={
         "relations": {
@@ -106,7 +117,7 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
 # Group namespace
 # ---------------------------------------------------------------------------
 DEFAULT_GROUP_NAMESPACE = NamespaceConfig(
-    namespace_id=str(uuid.uuid4()),
+    namespace_id=str(uuid.uuid5(_NEXUS_NS, "group")),
     object_type="group",
     config={
         "relations": {
@@ -130,7 +141,7 @@ DEFAULT_GROUP_NAMESPACE = NamespaceConfig(
 # Memory namespace
 # ---------------------------------------------------------------------------
 DEFAULT_MEMORY_NAMESPACE = NamespaceConfig(
-    namespace_id=str(uuid.uuid4()),
+    namespace_id=str(uuid.uuid5(_NEXUS_NS, "memory")),
     object_type="memory",
     config={
         "relations": {
@@ -152,7 +163,7 @@ DEFAULT_MEMORY_NAMESPACE = NamespaceConfig(
 # v0.5.0 ACE: Playbook namespace
 # ---------------------------------------------------------------------------
 DEFAULT_PLAYBOOK_NAMESPACE = NamespaceConfig(
-    namespace_id=str(uuid.uuid4()),
+    namespace_id=str(uuid.uuid5(_NEXUS_NS, "playbook")),
     object_type="playbook",
     config={
         "relations": {
@@ -174,7 +185,7 @@ DEFAULT_PLAYBOOK_NAMESPACE = NamespaceConfig(
 # v0.5.0 ACE: Trajectory namespace
 # ---------------------------------------------------------------------------
 DEFAULT_TRAJECTORY_NAMESPACE = NamespaceConfig(
-    namespace_id=str(uuid.uuid4()),
+    namespace_id=str(uuid.uuid5(_NEXUS_NS, "trajectory")),
     object_type="trajectory",
     config={
         "relations": {
@@ -192,10 +203,57 @@ DEFAULT_TRAJECTORY_NAMESPACE = NamespaceConfig(
 )
 
 # ---------------------------------------------------------------------------
+# Approvals namespace (Issue #3790)
+#
+# Drives ReBACCapabilityAuth on the ApprovalsV1 gRPC servicer. The brick
+# uses per-zone ReBAC objects ``("approvals", <zone_id>)`` so capability
+# grants are strictly scoped to a single zone (Issue #3790, F1) — a
+# subject granted ``viewer`` on ``("approvals", "z1")`` can read
+# approvals in zone ``z1`` but NOT zone ``z2``, even with the same
+# token. Operators (or auth_keys.py grants) write any of the standard
+# ``viewer``/``editor``/``owner`` direct relations against
+# ``("approvals", <zone_id>)``; the relation→permission expansion below
+# matches the three capability strings ``ApprovalsServicer`` checks today:
+#
+#   approvals:read    -> ReBAC ``read``   (viewer | editor | owner)
+#   approvals:decide  -> ReBAC ``write``  (editor | owner)
+#   approvals:request -> ReBAC ``create`` (editor | owner)
+#
+# Without this namespace registered the manager has no way to expand
+# ``viewer -> read``: ``rebac_check`` falls back to looking for a literal
+# ``read`` direct tuple, which never exists, and every non-admin call hits
+# PERMISSION_DENIED even with a valid grant.
+# ---------------------------------------------------------------------------
+DEFAULT_APPROVALS_NAMESPACE = NamespaceConfig(
+    namespace_id=str(uuid.uuid5(_NEXUS_NS, "approvals")),
+    object_type="approvals",
+    config={
+        "relations": {
+            # Direct relations granted explicitly via
+            # POST /api/v2/rebac/tuples (or auth_keys.py grants).
+            "viewer": {},
+            "editor": {},
+            "owner": {},
+        },
+        # Capability-string mapping consumed by
+        # nexus.bricks.approvals.grpc_auth._CAPABILITY_TO_PERMISSION:
+        #   approvals:read    -> "read"
+        #   approvals:decide  -> "write"
+        #   approvals:request -> "create"
+        "permissions": {
+            "read": ["viewer", "editor", "owner"],
+            "write": ["editor", "owner"],
+            "create": ["editor", "owner"],
+        },
+    },
+)
+
+
+# ---------------------------------------------------------------------------
 # v0.5.0 Skills System: Skill namespace
 # ---------------------------------------------------------------------------
 DEFAULT_SKILL_NAMESPACE = NamespaceConfig(
-    namespace_id=str(uuid.uuid4()),
+    namespace_id=str(uuid.uuid5(_NEXUS_NS, "skill")),
     object_type="skill",
     config={
         "relations": {

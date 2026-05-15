@@ -1,0 +1,338 @@
+//! Remote MetaStore — `MetaStore` trait impl via tonic gRPC.
+//!
+//! Replaces Python `storage/remote_metastore.py`. Each method dispatches
+//! a Call RPC to the remote server's VFS layer (sys_stat, sys_readdir,
+//! sys_setattr, sys_unlink, access).
+//!
+//! Issue #1134: Rust-first connector routing + REMOTE profile.
+
+use std::sync::Arc;
+
+use dashmap::DashMap;
+
+use crate::meta_store::{FileMetadata, MetaStore, MetaStoreError, PaginatedList};
+use crate::rpc_transport::RpcTransport;
+
+/// MetaStore backed by a remote Nexus server via gRPC Call RPC.
+///
+/// All metadata ops serialize to JSON, dispatch via `Call(method, payload)`,
+/// and deserialize the response. Server-side NexusFS is the SSOT.
+///
+/// Internal cache (DashMap projection) accelerates repeated reads of
+/// the same path — same shape as `LocalMetaStore` / `ZoneMetaStore`.
+/// `get` consults the cache first; `put` is write-through; `delete`
+/// invalidates pre-store-call.
+pub struct RemoteMetaStore {
+    transport: Arc<RpcTransport>,
+    cache: DashMap<String, FileMetadata>,
+}
+
+impl RemoteMetaStore {
+    pub fn new(transport: Arc<RpcTransport>) -> Self {
+        Self {
+            transport,
+            cache: DashMap::new(),
+        }
+    }
+}
+
+impl MetaStore for RemoteMetaStore {
+    fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetaStoreError> {
+        if let Some(cached) = self.cache.get(path) {
+            return Ok(Some(cached.clone()));
+        }
+        let payload = serde_json::json!({ "path": path });
+        let bytes =
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
+
+        let (resp_bytes, is_error) = self
+            .transport
+            .call("sys_stat", &bytes)
+            .map_err(MetaStoreError::IOError)?;
+
+        if is_error {
+            // Server reported error (path not found, etc.)
+            return Ok(None);
+        }
+
+        let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
+            .map_err(|e| MetaStoreError::IOError(format!("decode sys_stat response: {e}")))?;
+
+        // Server returns None/null for missing paths
+        if value.is_null() {
+            return Ok(None);
+        }
+
+        let meta = parse_metadata_from_json(&value)?;
+        self.cache.insert(path.to_string(), meta.clone());
+        Ok(Some(meta))
+    }
+
+    fn put(&self, path: &str, metadata: FileMetadata) -> Result<(), MetaStoreError> {
+        // Wire format expected by the hub's `handle_set_metadata` (#3786):
+        //     {"path": ..., "metadata": { ...flat fields... }}
+        // The handler reads `params.path` + `params.metadata` (a dict) and
+        // reconstructs the FileMetadata via MetadataMapper.from_json.  Sending
+        // flat fields at the top level fails parse_method_params(SetMetadataParams)
+        // and the SimpleNamespace fallback has no `metadata` attribute.
+        let payload = serde_json::json!({
+            "path": path,
+            "metadata": {
+                "entry_type": metadata.entry_type,
+                "size": metadata.size,
+                "content_id": metadata.content_id,
+                "gen": metadata.gen,
+                "version": metadata.version,
+                "zone_id": metadata.zone_id,
+                "mime_type": metadata.mime_type,
+                "last_writer_address": metadata.last_writer_address,
+                "created_at_ms": metadata.created_at_ms,
+                "modified_at_ms": metadata.modified_at_ms,
+                "target_zone_id": metadata.target_zone_id,
+                "link_target": metadata.link_target,
+                "owner_id": metadata.owner_id,
+            },
+        });
+        let bytes =
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
+
+        let (_resp, is_error) = self
+            .transport
+            .call("sys_setattr", &bytes)
+            .map_err(MetaStoreError::IOError)?;
+
+        if is_error {
+            return Err(MetaStoreError::IOError(format!(
+                "sys_setattr failed for {path}"
+            )));
+        }
+        // Write-through: cache update after the remote ack so future
+        // reads on this transport short-circuit the round trip.
+        self.cache.insert(path.to_string(), metadata);
+        Ok(())
+    }
+
+    fn delete(&self, path: &str) -> Result<bool, MetaStoreError> {
+        // Invalidate cache before the remote call (race-safe per the
+        // LocalMetaStore reasoning).
+        self.cache.remove(path);
+        let payload = serde_json::json!({ "path": path });
+        let bytes =
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
+
+        let (_resp, is_error) = self
+            .transport
+            .call("sys_unlink", &bytes)
+            .map_err(MetaStoreError::IOError)?;
+
+        Ok(!is_error)
+    }
+
+    fn list(&self, prefix: &str) -> Result<Vec<FileMetadata>, MetaStoreError> {
+        let payload = serde_json::json!({
+            "path": prefix,
+            "recursive": true,
+        });
+        let bytes =
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
+
+        let (resp_bytes, is_error) = self
+            .transport
+            .call("sys_readdir", &bytes)
+            .map_err(MetaStoreError::IOError)?;
+
+        if is_error {
+            return Ok(Vec::new());
+        }
+
+        let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
+            .map_err(|e| MetaStoreError::IOError(format!("decode sys_readdir: {e}")))?;
+
+        // Server returns an array of entries (path, entry_type pairs or full metadata)
+        let entries = match value.as_array() {
+            Some(arr) => arr
+                .iter()
+                .filter_map(|v| parse_metadata_from_json(v).ok())
+                .collect(),
+            None => Vec::new(),
+        };
+
+        Ok(entries)
+    }
+
+    fn exists(&self, path: &str) -> Result<bool, MetaStoreError> {
+        let payload = serde_json::json!({ "path": path });
+        let bytes =
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
+
+        let (resp_bytes, is_error) = self
+            .transport
+            .call("access", &bytes)
+            .map_err(MetaStoreError::IOError)?;
+
+        if is_error {
+            return Ok(false);
+        }
+
+        // Server returns a bool or a JSON object with an "exists" field
+        let value: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap_or_default();
+        Ok(value.as_bool().unwrap_or_else(|| {
+            value
+                .get("exists")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        }))
+    }
+
+    fn is_implicit_directory(&self, path: &str) -> Result<bool, MetaStoreError> {
+        let payload = serde_json::json!({ "path": path });
+        let bytes =
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
+
+        let (resp_bytes, is_error) = self
+            .transport
+            .call("is_directory", &bytes)
+            .map_err(MetaStoreError::IOError)?;
+
+        if is_error {
+            return Ok(false);
+        }
+
+        let value: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap_or_default();
+        Ok(value.as_bool().unwrap_or(false))
+    }
+
+    fn list_paginated(
+        &self,
+        prefix: &str,
+        recursive: bool,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<PaginatedList, MetaStoreError> {
+        let mut payload = serde_json::json!({
+            "path": prefix,
+            "recursive": recursive,
+            "limit": limit,
+        });
+        if let Some(c) = cursor {
+            payload["cursor"] = serde_json::Value::String(c.to_string());
+        }
+        let bytes =
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
+
+        let (resp_bytes, is_error) = self
+            .transport
+            .call("sys_readdir", &bytes)
+            .map_err(MetaStoreError::IOError)?;
+
+        if is_error {
+            return Ok(PaginatedList::default());
+        }
+
+        let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
+            .map_err(|e| MetaStoreError::IOError(format!("decode paginated readdir: {e}")))?;
+
+        let items: Vec<FileMetadata> = value
+            .get("items")
+            .or(Some(&value))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| parse_metadata_from_json(v).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let next_cursor = value
+            .get("next_cursor")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let has_more = value
+            .get("has_more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let total_count = value
+            .get("total_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(items.len() as u64) as usize;
+
+        Ok(PaginatedList {
+            items,
+            next_cursor,
+            has_more,
+            total_count,
+        })
+    }
+}
+
+/// Parse FileMetadata from a JSON value (server sys_stat response).
+fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, MetaStoreError> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| MetaStoreError::IOError("expected JSON object".into()))?;
+
+    Ok(FileMetadata {
+        path: obj
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        size: obj.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+        content_id: obj
+            .get("content_id")
+            .or_else(|| obj.get("content_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        gen: obj.get("gen").and_then(|v| v.as_u64()).unwrap_or(0),
+        version: obj.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        entry_type: obj.get("entry_type").and_then(|v| v.as_u64()).unwrap_or(0) as u8,
+        zone_id: obj
+            .get("zone_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        mime_type: obj
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        created_at_ms: obj.get("created_at_ms").and_then(|v| v.as_i64()),
+        modified_at_ms: obj.get("modified_at_ms").and_then(|v| v.as_i64()),
+        last_writer_address: obj
+            .get("last_writer_address")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        target_zone_id: obj
+            .get("target_zone_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        link_target: obj
+            .get("link_target")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        owner_id: obj
+            .get("owner_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_metadata_from_json_preserves_gen() {
+        let meta = parse_metadata_from_json(&serde_json::json!({
+            "path": "/remote.txt",
+            "size": 5,
+            "content_id": "hash",
+            "gen": 23,
+            "version": 2,
+            "entry_type": 0,
+        }))
+        .unwrap();
+
+        assert_eq!(meta.gen, 23);
+        assert_eq!(meta.path, "/remote.txt");
+        assert_eq!(meta.content_id.as_deref(), Some("hash"));
+    }
+}

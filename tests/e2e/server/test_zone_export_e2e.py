@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.portability import (
     BundleReader,
     ZoneExportOptions,
@@ -22,9 +22,9 @@ from nexus.bricks.portability import (
     inspect_bundle,
     validate_bundle,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
@@ -36,24 +36,24 @@ def temp_dir():
 
 
 @pytest.fixture
-def nexus_fs(temp_dir):
+async def nexus_fs(temp_dir):
     """Create NexusFS instance with test data."""
     data_dir = temp_dir / "data"
     data_dir.mkdir()
 
     fs = create_nexus_fs(
-        backend=LocalBackend(data_dir),
-        metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
+        backend=CASLocalBackend(data_dir),
+        metadata_store=str(data_dir / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=False),
     )
 
     # Create test files
-    fs.sys_write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
-    fs.sys_write("/workspace/src/main.py", b'print("Hello, World!")')
-    fs.sys_write("/workspace/src/utils.py", b"def helper(): pass")
-    fs.sys_write("/docs/guide.txt", b"User guide content here.")
+    fs.write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
+    fs.write("/workspace/src/main.py", b'print("Hello, World!")')
+    fs.write("/workspace/src/utils.py", b"def helper(): pass")
+    fs.write("/docs/guide.txt", b"User guide content here.")
 
     yield fs
     fs.close()
@@ -134,7 +134,7 @@ class TestBundleReader:
         # Create bundle
         manifest = export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -152,7 +152,7 @@ class TestBundleReader:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -172,7 +172,7 @@ class TestBundleReader:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -181,8 +181,8 @@ class TestBundleReader:
             records = list(reader.iter_file_records())
             readme_record = next(r for r in records if "readme" in r.virtual_path)
 
-            if readme_record.content_hash:
-                content = reader.read_content_blob(readme_record.content_hash)
+            if readme_record.content_id:
+                content = reader.read_content_blob(readme_record.content_id)
                 assert content is not None
                 assert b"Test Project" in content
 
@@ -192,7 +192,7 @@ class TestBundleReader:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -212,7 +212,7 @@ class TestValidateBundle:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -253,7 +253,7 @@ class TestInspectBundle:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -275,7 +275,7 @@ class TestExportConvenienceFunction:
 
         manifest = export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
             include_content=True,
             include_permissions=True,
@@ -296,7 +296,7 @@ class TestExportConvenienceFunction:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
             progress_callback=on_progress,
         )

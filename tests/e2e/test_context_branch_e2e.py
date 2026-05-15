@@ -25,10 +25,9 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
 )
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.lib.response import HandlerResponse
+from nexus.services.workspace.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
-from nexus.system_services.workspace.context_branch import ContextBranchService
 
 # ---------------------------------------------------------------------------
 # Fixtures — real DB + CAS
@@ -41,16 +40,18 @@ class InMemoryCAS:
     def __init__(self):
         self.blobs: dict[str, bytes] = {}
 
-    def read_content(self, content_hash, context=None):
-        data = self.blobs.get(content_hash)
+    def read_content(self, content_id, context=None):
+        data = self.blobs.get(content_id)
         if data is None:
-            raise FileNotFoundError(f"CAS blob {content_hash} not found")
-        return HandlerResponse.ok(data)
+            raise FileNotFoundError(f"CAS blob {content_id} not found")
+        return data
 
-    def write_content(self, data, context=None):
+    def write_content(self, data, content_id: str = "", *, offset: int = 0, context=None):
+        from nexus.core.object_store import WriteResult
+
         h = hashlib.sha256(data).hexdigest()
         self.blobs[h] = data
-        return HandlerResponse.ok(h)
+        return WriteResult(content_id=h, size=len(data))
 
 
 class InMemoryMetadata:
@@ -78,7 +79,7 @@ class FakeWorkspaceManagerE2E:
         manifest = WorkspaceManifest(
             entries={
                 f"file-{self._snap_counter}.txt": ManifestEntry(
-                    content_hash=f"hash-{self._snap_counter}",
+                    content_id=f"hash-{self._snap_counter}",
                     size=100 * self._snap_counter,
                     mime_type="text/plain",
                 )
@@ -108,7 +109,6 @@ class FakeWorkspaceManagerE2E:
                 file_count=manifest.file_count,
                 total_size_bytes=manifest.total_size,
                 description=description,
-                created_by=kwargs.get("created_by"),
             )
             session.add(snap)
             session.flush()
@@ -450,10 +450,10 @@ class TestE2EThreeWayMerge:
         initial_manifest = WorkspaceManifest(
             entries={
                 "shared.txt": ManifestEntry(
-                    content_hash="hash-shared", size=100, mime_type="text/plain"
+                    content_id="hash-shared", size=100, mime_type="text/plain"
                 ),
                 "common.txt": ManifestEntry(
-                    content_hash="hash-common", size=50, mime_type="text/plain"
+                    content_id="hash-common", size=50, mime_type="text/plain"
                 ),
             }
         )
@@ -485,20 +485,20 @@ class TestE2EThreeWayMerge:
         source_manifest = WorkspaceManifest(
             entries={
                 "shared.txt": ManifestEntry(
-                    content_hash="hash-source-edit", size=200, mime_type="text/plain"
+                    content_id="hash-source-edit", size=200, mime_type="text/plain"
                 ),
                 "common.txt": ManifestEntry(
-                    content_hash="hash-common", size=50, mime_type="text/plain"
+                    content_id="hash-common", size=50, mime_type="text/plain"
                 ),
             }
         )
         target_manifest = WorkspaceManifest(
             entries={
                 "shared.txt": ManifestEntry(
-                    content_hash="hash-target-edit", size=300, mime_type="text/plain"
+                    content_id="hash-target-edit", size=300, mime_type="text/plain"
                 ),
                 "common.txt": ManifestEntry(
-                    content_hash="hash-common", size=50, mime_type="text/plain"
+                    content_id="hash-common", size=50, mime_type="text/plain"
                 ),
             }
         )
@@ -640,7 +640,7 @@ class TestE2ENamespaceForkIntegration:
 
     @pytest.fixture
     def fork_service(self, mock_namespace_manager):
-        from nexus.system_services.namespace.namespace_fork_service import (
+        from nexus.services.namespace.namespace_fork_service import (
             AgentNamespaceForkService,
         )
 
@@ -690,7 +690,7 @@ class TestE2ENamespaceForkIntegration:
         broken_mgr = MagicMock()
         broken_mgr.get_mount_table.side_effect = RuntimeError("DB down")
 
-        from nexus.system_services.namespace.namespace_fork_service import (
+        from nexus.services.namespace.namespace_fork_service import (
             AgentNamespaceForkService,
         )
 

@@ -8,13 +8,10 @@ because only FUSE handlers use it.
 import fnmatch
 from typing import Any
 
-# Try to import Rust acceleration
-try:
-    import nexus_fast
+# RUST_FALLBACK: filter_paths
+import nexus_runtime
 
-    RUST_AVAILABLE = True
-except ImportError:
-    RUST_AVAILABLE = False
+RUST_AVAILABLE = True
 
 # OS-generated metadata file patterns
 # These files are automatically created by operating systems and should be
@@ -75,9 +72,9 @@ def filter_os_metadata(files: list[str]) -> list[str]:
         ['file.txt']
     """
     # Use Rust for bulk filtering if available (5-10x faster)
-    if RUST_AVAILABLE and len(files) >= 10:
+    if len(files) >= 10:
         try:
-            result: list[str] = nexus_fast.filter_paths(files, OS_METADATA_PATTERNS)
+            result: list[str] = nexus_runtime.filter_paths(files, OS_METADATA_PATTERNS)
             return result
         except (OSError, ValueError, RuntimeError):
             # Fall back to Python on error

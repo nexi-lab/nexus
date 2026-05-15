@@ -42,19 +42,41 @@ class Recipient(BaseModel):
 
 
 class Attachment(BaseModel):
-    """Email attachment reference.
+    """Email attachment — inline base64 data or filesystem path reference.
 
-    For sending, attachments can reference files from the mounted filesystem.
+    Inline mode (preferred):
+        data: base64-encoded file content
+        filename: required when using data
+
+    Path mode (requires kernel VFS access — not yet supported):
+        path: VFS path to attachment file
     """
 
-    path: Annotated[str, Field(description="Path to attachment file in mounted filesystem")]
+    path: Annotated[
+        str | None,
+        Field(default=None, description="Path to attachment file in mounted filesystem (future)"),
+    ]
+    data: Annotated[
+        str | None,
+        Field(default=None, description="Base64-encoded file content (inline attachment)"),
+    ]
     filename: Annotated[
-        str | None, Field(default=None, description="Override filename (uses basename if not set)")
+        str | None,
+        Field(default=None, description="Filename (required for inline, optional for path)"),
     ]
     content_type: Annotated[
         str | None,
-        Field(default=None, description="MIME type (auto-detected if not set)"),
+        Field(default=None, description="MIME type (auto-detected from filename if not set)"),
     ]
+
+    @model_validator(mode="after")
+    def validate_attachment_source(self) -> "Attachment":
+        """Ensure either data or path is provided, and filename is set for inline."""
+        if not self.data and not self.path:
+            raise ValueError("Attachment requires either 'data' (base64) or 'path'")
+        if self.data and not self.filename:
+            raise ValueError("Attachment with inline 'data' requires 'filename'")
+        return self
 
 
 class SendEmailSchema(BaseModel):

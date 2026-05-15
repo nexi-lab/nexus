@@ -9,6 +9,7 @@ import {
   ReservationError,
   WalletNotFoundError,
 } from "../src/errors.js";
+import { NexusApiError } from "@nexus-ai-fs/api-client";
 
 function jsonResponse(body: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
@@ -61,6 +62,27 @@ describe("FetchClient", () => {
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
       const headers = new Headers(init.headers);
       expect(headers.get("Content-Type")).toBe("application/json");
+    });
+
+    it("forwards configured identity headers to the shared API client", async () => {
+      const identityClient = new FetchClient({
+        apiKey: "nx_test_agent1",
+        baseUrl: "https://api.example.com",
+        maxRetries: 0,
+        agentId: "agent-1",
+        subject: "user:alice",
+        zoneId: "zone-a",
+        fetch: mockFetch,
+      });
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      await identityClient.get("/test");
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      const headers = new Headers(init.headers);
+      expect(headers.get("X-Agent-ID")).toBe("agent-1");
+      expect(headers.get("X-Nexus-Subject")).toBe("user:alice");
+      expect(headers.get("X-Nexus-Zone-ID")).toBe("zone-a");
     });
   });
 
@@ -140,6 +162,19 @@ describe("FetchClient", () => {
       await expect(client.get("/test")).rejects.toThrow(AuthenticationError);
     });
 
+    it("401 preserves detail message from JSON response", async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({ detail: "Token expired for this session" }, 401),
+      );
+      try {
+        await client.get("/test");
+        expect.fail("should have thrown");
+      } catch (e) {
+        expect(e).toBeInstanceOf(AuthenticationError);
+        expect((e as AuthenticationError).message).toBe("Token expired for this session");
+      }
+    });
+
     it("402 → InsufficientCreditsError", async () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({ detail: "Not enough", error_code: "insufficient_credits" }, 402),
@@ -192,7 +227,7 @@ describe("FetchClient", () => {
       }
     });
 
-    it("other 4xx → NexusPayError", async () => {
+    it("other 4xx → NexusApiError (from shared base client)", async () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({ detail: "Bad request" }, 400),
       );
@@ -200,16 +235,16 @@ describe("FetchClient", () => {
         await client.get("/test");
         expect.fail("should have thrown");
       } catch (e) {
-        expect(e).toBeInstanceOf(NexusPayError);
-        expect((e as NexusPayError).status).toBe(400);
+        expect(e).toBeInstanceOf(NexusApiError);
+        expect((e as NexusApiError).status).toBe(400);
       }
     });
 
-    it("5xx → NexusPayError", async () => {
+    it("5xx → NexusApiError (ServerError from shared base client)", async () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({ detail: "Server error" }, 500),
       );
-      await expect(client.get("/test")).rejects.toThrow(NexusPayError);
+      await expect(client.get("/test")).rejects.toThrow(NexusApiError);
     });
 
     it("non-JSON error response uses status text", async () => {
@@ -218,8 +253,8 @@ describe("FetchClient", () => {
         await client.get("/test");
         expect.fail("should have thrown");
       } catch (e) {
-        expect(e).toBeInstanceOf(NexusPayError);
-        expect((e as NexusPayError).message).toContain("500");
+        expect(e).toBeInstanceOf(NexusApiError);
+        expect((e as NexusApiError).message).toContain("500");
       }
     });
 
@@ -281,14 +316,14 @@ describe("FetchClient", () => {
       mockFetch
         .mockResolvedValue(jsonResponse({ detail: "server down" }, 500));
 
-      await expect(retryClient.get("/test")).rejects.toThrow(NexusPayError);
+      await expect(retryClient.get("/test")).rejects.toThrow(NexusApiError);
       // 1 initial + 2 retries = 3 calls
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
     it("does NOT retry on 400", async () => {
       mockFetch.mockResolvedValueOnce(jsonResponse({ detail: "bad" }, 400));
-      await expect(retryClient.get("/test")).rejects.toThrow(NexusPayError);
+      await expect(retryClient.get("/test")).rejects.toThrow(NexusApiError);
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -338,10 +373,10 @@ describe("FetchClient", () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
-    it("throws NexusPayError after network error retries exhausted", async () => {
+    it("throws NexusApiError after network error retries exhausted", async () => {
       mockFetch.mockRejectedValue(new TypeError("fetch failed"));
 
-      await expect(retryClient.get("/test")).rejects.toThrow(NexusPayError);
+      await expect(retryClient.get("/test")).rejects.toThrow(NexusApiError);
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
   });
@@ -370,7 +405,7 @@ describe("FetchClient", () => {
           }),
       );
 
-      await expect(slowClient.get("/slow")).rejects.toThrow(NexusPayError);
+      await expect(slowClient.get("/slow")).rejects.toThrow(NexusApiError);
     });
 
     it("per-request timeout overrides global", async () => {
@@ -384,7 +419,7 @@ describe("FetchClient", () => {
           }),
       );
 
-      await expect(client.get("/slow", { timeout: 50 })).rejects.toThrow(NexusPayError);
+      await expect(client.get("/slow", { timeout: 50 })).rejects.toThrow(NexusApiError);
     });
 
     it("user-provided AbortSignal is respected", async () => {
@@ -403,7 +438,7 @@ describe("FetchClient", () => {
       controller.abort();
 
       await expect(client.get("/test", { signal: controller.signal })).rejects.toThrow(
-        NexusPayError,
+        NexusApiError,
       );
     });
   });

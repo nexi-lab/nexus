@@ -8,6 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.contracts.types import OperationContext
 
 
@@ -28,13 +31,10 @@ def mock_cas():
 
 
 @pytest.fixture
-def mock_router():
-    """Mock router."""
+def mock_dlc():
+    """Mock DriverLifecycleCoordinator."""
     mock = MagicMock()
-    backend = MagicMock()
-    backend.read_content.return_value = b"test content"
-    route = MagicMock(backend=backend, readonly=False)
-    mock.route.return_value = route
+    mock.list_mounts.return_value = []
     return mock
 
 
@@ -58,30 +58,30 @@ def operation_context():
 class TestVersionServiceSmoke:
     """Smoke tests for VersionService."""
 
-    def test_version_service_init(self, mock_metadata, mock_cas, mock_router):
+    def test_version_service_init(self, mock_metadata, mock_cas, mock_dlc):
         """Test VersionService can be instantiated."""
-        from nexus.services.versioning.version_service import VersionService
+        from nexus.bricks.versioning.version_service import VersionService
 
         service = VersionService(
             metadata_store=mock_metadata,
             cas_store=mock_cas,
-            router=mock_router,
+            dlc=mock_dlc,
         )
 
         assert service.metadata == mock_metadata
         # CAS store is stored as self.cas
         assert service.cas == mock_cas
-        assert service.router == mock_router
+        assert service._dlc == mock_dlc
 
     @pytest.mark.asyncio
-    async def test_list_versions_basic(self, mock_metadata, mock_cas, mock_router):
+    async def test_list_versions_basic(self, mock_metadata, mock_cas, mock_dlc):
         """Test list_versions can be called."""
-        from nexus.services.versioning.version_service import VersionService
+        from nexus.bricks.versioning.version_service import VersionService
 
         service = VersionService(
             metadata_store=mock_metadata,
             cas_store=mock_cas,
-            router=mock_router,
+            dlc=mock_dlc,
             enforce_permissions=False,
         )
 
@@ -121,56 +121,31 @@ class TestMCPServiceSmoke:
 
 
 # =============================================================================
-# LLMService Smoke Tests
-# =============================================================================
-
-
-class TestLLMServiceSmoke:
-    """Smoke tests for LLMService."""
-
-    def test_llm_service_init(self):
-        """Test LLMService can be instantiated."""
-        from nexus.bricks.llm.llm_service import LLMService
-
-        service = LLMService(nexus_fs=None)
-        assert service.nexus_fs is None
-
-    def test_create_llm_reader_raises_without_nexus_fs(self):
-        """Test create_llm_reader raises if nexus_fs not set."""
-        from nexus.bricks.llm.llm_service import LLMService
-
-        service = LLMService(nexus_fs=None)
-
-        with pytest.raises(RuntimeError, match="NexusFS not configured"):
-            service.create_llm_reader()
-
-
-# =============================================================================
-# OAuthService Smoke Tests
+# OAuthCredentialService Smoke Tests
 # =============================================================================
 
 
 class TestOAuthServiceSmoke:
-    """Smoke tests for OAuthService."""
+    """Smoke tests for OAuthCredentialService."""
 
     def test_oauth_service_init(self):
-        """Test OAuthService can be instantiated."""
-        from nexus.services.oauth.oauth_service import OAuthService
+        """Test OAuthCredentialService can be instantiated."""
+        from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
 
-        service = OAuthService(oauth_factory=None, token_manager=None)
+        service = OAuthCredentialService(oauth_factory=None, token_manager=None)
         # Service can be created without factory/token_manager (lazy initialization)
         assert service is not None
 
     @pytest.mark.asyncio
     async def test_oauth_list_providers_basic(self):
-        """Test oauth_list_providers can be called."""
-        from nexus.services.oauth.oauth_service import OAuthService
+        """Test list_providers can be called."""
+        from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
 
-        service = OAuthService(oauth_factory=None, token_manager=None)
+        service = OAuthCredentialService(oauth_factory=None, token_manager=None)
 
         # Should work even without config (returns empty list)
         try:
-            result = await service.oauth_list_providers()
+            result = await service.list_providers()
             assert isinstance(result, list)
         except Exception:
             # May raise if config not found, that's ok for smoke test
@@ -187,7 +162,7 @@ class TestSearchServiceSmoke:
 
     def test_search_service_init(self, mock_metadata):
         """Test SearchService can be instantiated."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         service = SearchService(
             metadata_store=mock_metadata,
@@ -201,20 +176,20 @@ class TestSearchServiceSmoke:
     @pytest.mark.asyncio
     async def test_semantic_search_not_initialized(self, mock_metadata):
         """Test semantic_search raises if not initialized."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         service = SearchService(
             metadata_store=mock_metadata,
             enforce_permissions=False,
         )
 
-        with pytest.raises(ValueError, match="not initialized"):
+        with pytest.raises(ValueError, match="not available"):
             await service.semantic_search(query="test")
 
     @pytest.mark.asyncio
     async def test_initialize_semantic_search_basic(self, mock_metadata):
         """Test initialize_semantic_search can be called."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         service = SearchService(
             metadata_store=mock_metadata,
@@ -235,41 +210,6 @@ class TestSearchServiceSmoke:
 
 
 # =============================================================================
-# SkillService Smoke Tests
-# =============================================================================
-
-
-class TestSkillServiceSmoke:
-    """Smoke tests for SkillService."""
-
-    def test_skill_service_init(self):
-        """Test SkillService can be instantiated with a gateway."""
-        from unittest.mock import MagicMock
-
-        from nexus.bricks.skills.skill_service_adapter import SkillService
-
-        mock_gateway = MagicMock()
-        service = SkillService(gateway=mock_gateway)
-        # After Issue #2035, SkillService uses protocol adapters (_fs, _perms)
-        assert service._fs is not None
-        assert service._perms is not None
-
-    @pytest.mark.asyncio
-    async def test_skills_discover_requires_gateway(self):
-        """Test skills_discover requires a properly configured gateway."""
-        from unittest.mock import MagicMock
-
-        from nexus.bricks.skills.skill_service_adapter import SkillService
-
-        mock_gateway = MagicMock()
-        mock_gateway.get_context.return_value = None
-        service = SkillService(gateway=mock_gateway)
-        # Service should be initialized even with mock gateway
-        assert service._fs is not None
-        assert service._perms is not None
-
-
-# =============================================================================
 # MountService Smoke Tests
 # =============================================================================
 
@@ -277,19 +217,19 @@ class TestSkillServiceSmoke:
 class TestMountServiceSmoke:
     """Smoke tests for MountService."""
 
-    def test_mount_service_init(self, mock_router):
+    def test_mount_service_init(self, mock_dlc):
         """Test MountService can be instantiated."""
-        from nexus.services.mount.mount_service import MountService
+        from nexus.bricks.mount.mount_service import MountService
 
-        service = MountService(router=mock_router)
-        assert service.router is mock_router
+        service = MountService(dlc=mock_dlc)
+        assert service._dlc is mock_dlc
 
     @pytest.mark.asyncio
-    async def test_list_mounts_basic(self, mock_router):
+    async def test_list_mounts_basic(self, mock_dlc):
         """Test list_mounts can be called."""
-        from nexus.services.mount.mount_service import MountService
+        from nexus.bricks.mount.mount_service import MountService
 
-        service = MountService(router=mock_router)
+        service = MountService(dlc=mock_dlc)
 
         # Should return list (may be empty)
         result = await service.list_mounts()
@@ -336,52 +276,40 @@ class TestReBACServiceSmoke:
 class TestServiceIntegrationSmoke:
     """Smoke test for service integration patterns."""
 
-    def test_all_services_can_coexist(self, mock_metadata, mock_cas, mock_router):
+    def test_all_services_can_coexist(self, mock_metadata, mock_cas, mock_dlc):
         """Test that all services can be instantiated together."""
-        from unittest.mock import MagicMock
 
-        from nexus.bricks.llm.llm_service import LLMService
+        from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
         from nexus.bricks.mcp.mcp_service import MCPService
+        from nexus.bricks.mount.mount_service import MountService
         from nexus.bricks.rebac.rebac_service import ReBACService
-        from nexus.bricks.skills.skill_service_adapter import SkillService
-        from nexus.services.mount.mount_service import MountService
-        from nexus.services.oauth.oauth_service import OAuthService
-        from nexus.services.search.search_service import SearchService
-        from nexus.services.versioning.version_service import VersionService
-
-        # Create mock gateway for SkillService
-        mock_gateway = MagicMock()
+        from nexus.bricks.search.search_service import SearchService
+        from nexus.bricks.versioning.version_service import VersionService
 
         # Create all services
         version_svc = VersionService(
             metadata_store=mock_metadata,
             cas_store=mock_cas,
-            router=mock_router,
+            dlc=mock_dlc,
         )
         mcp_svc = MCPService(filesystem=None)
-        llm_svc = LLMService(nexus_fs=None)
-        oauth_svc = OAuthService(oauth_factory=None, token_manager=None)
+        oauth_svc = OAuthCredentialService(oauth_factory=None, token_manager=None)
         search_svc = SearchService(metadata_store=mock_metadata, enforce_permissions=False)
-        skill_svc = SkillService(gateway=mock_gateway)
-        mount_svc = MountService(router=mock_router)
+        mount_svc = MountService(dlc=mock_dlc)
         rebac_svc = ReBACService(rebac_manager=None, enforce_permissions=False)
 
         # Verify all instantiated
         assert version_svc is not None
         assert mcp_svc is not None
-        assert llm_svc is not None
         assert oauth_svc is not None
         assert search_svc is not None
-        assert skill_svc is not None
         assert mount_svc is not None
         assert rebac_svc is not None
 
         # Verify they have expected attributes
         assert hasattr(version_svc, "list_versions")
         assert hasattr(mcp_svc, "mcp_mount")
-        assert hasattr(llm_svc, "llm_read")
-        assert hasattr(oauth_svc, "oauth_list_providers")
+        assert hasattr(oauth_svc, "list_providers")
         assert hasattr(search_svc, "semantic_search")
-        assert hasattr(skill_svc, "discover")  # SkillService uses discover() not skills_list()
         assert hasattr(mount_svc, "list_mounts")
         assert hasattr(rebac_svc, "rebac_check")

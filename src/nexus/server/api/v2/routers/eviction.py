@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from nexus.server.api.v2.dependencies import _get_require_auth
+from nexus.server.dependencies import get_operation_context
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,14 @@ async def _get_eviction_manager(request: Request) -> Any:
 )
 async def evict_agent(
     agent_id: str,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     eviction_manager: Any = Depends(_get_eviction_manager),
 ) -> EvictResponse:
     """Manually evict a specific agent."""
+    # Only admins or the agent itself can trigger eviction
+    ctx = get_operation_context(auth_result)
+    if not ctx.is_admin and ctx.subject_id != agent_id:
+        raise HTTPException(status_code=403, detail=f"Not authorized to evict agent '{agent_id}'")
     try:
         result = await eviction_manager.evict_agent(agent_id)
     except ValueError as exc:

@@ -379,13 +379,13 @@ def main():
     print(f"Skip API calls: {args.skip_api}")
 
     # Import after path setup
-    from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
+    from nexus.backends.connectors.calendar.connector import PathCalendarBackend
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
     # Create backend
     db_path = Path(args.db).expanduser()
-    backend = GoogleCalendarConnectorBackend(
+    backend = PathCalendarBackend(
         token_manager_db=str(db_path),
         user_email=args.user,
     )

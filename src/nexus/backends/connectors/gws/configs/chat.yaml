@@ -1,0 +1,31 @@
+version: 1
+type: cli
+cli: gws
+service: chat
+auth:
+  provider: google
+  scopes:
+    - https://www.googleapis.com/auth/chat.messages
+    - https://www.googleapis.com/auth/chat.spaces
+read:
+  list_command: spaces.messages.list
+  get_command: spaces.messages.get
+  format: json
+write:
+  - path: "messages/_new.yaml"
+    operation: send_message
+    schema_ref: nexus.backends.connectors.gws.schemas.SendMessageSchema
+    command: spaces.messages.create
+    traits:
+      reversibility: none
+      confirm: user
+  - path: "spaces/_new.yaml"
+    operation: create_space
+    schema_ref: nexus.backends.connectors.gws.schemas.CreateSpaceSchema
+    command: spaces.create
+    traits:
+      reversibility: full
+      confirm: explicit
+sync:
+  delta_command: "spaces.messages.list --after {since}"
+  state_field: eventTime

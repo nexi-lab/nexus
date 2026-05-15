@@ -1,7 +1,7 @@
-"""Workspace manifest for snapshot and overlay operations.
+"""Workspace manifest for snapshot operations.
 
-Provides a shared dataclass for workspace snapshot manifests, used by both
-WorkspaceManager (snapshot/restore/diff) and OverlayResolver (base layer resolution).
+Provides a shared dataclass for workspace snapshot manifests, used by
+WorkspaceManager (snapshot/restore/diff).
 
 The manifest maps relative file paths to their content hashes and metadata.
 It is stored as JSON in CAS, with entries sorted by path for deterministic hashing.
@@ -12,7 +12,7 @@ JSON format (backward-compatible with existing snapshots):
         "rel/path/other.py": {"hash": "def456...", "size": 512, "mime_type": "text/x-python"}
     }
 
-Issue #1264: Extracted from WorkspaceManager to enable DRY sharing with OverlayResolver.
+Issue #1264: Extracted from WorkspaceManager as a shared contract.
 Pattern follows: chunked_storage.py (ChunkInfo + ChunkedReference)
 """
 
@@ -26,18 +26,18 @@ class ManifestEntry:
     """A single file entry in a workspace manifest.
 
     Attributes:
-        content_hash: BLAKE3/SHA-256 hash of the file content (CAS key)
+        content_id: BLAKE3/SHA-256 hash of the file content (CAS key)
         size: File size in bytes
         mime_type: MIME type of the file (optional)
     """
 
-    content_hash: str
+    content_id: str
     size: int
     mime_type: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict."""
-        result: dict[str, Any] = {"hash": self.content_hash, "size": self.size}
+        result: dict[str, Any] = {"hash": self.content_id, "size": self.size}
         # Always include mime_type in serialized format
         result["mime_type"] = self.mime_type
         return result
@@ -46,7 +46,7 @@ class ManifestEntry:
     def from_dict(cls, data: dict[str, Any]) -> "ManifestEntry":
         """Deserialize from JSON dict."""
         return cls(
-            content_hash=data["hash"],
+            content_id=data["hash"],
             size=data["size"],
             mime_type=data.get("mime_type"),
         )
@@ -56,9 +56,8 @@ class ManifestEntry:
 class WorkspaceManifest:
     """Manifest of all files in a workspace snapshot.
 
-    Maps relative file paths to their content metadata. Used as:
-    - Snapshot format for WorkspaceManager (create/restore/diff)
-    - Base layer for OverlayResolver (Issue #1264)
+    Maps relative file paths to their content metadata. Used as the
+    snapshot format for WorkspaceManager (create/restore/diff).
 
     Entries are sorted by path for deterministic JSON serialization,
     ensuring the same workspace state produces the same manifest hash.
@@ -136,18 +135,18 @@ class WorkspaceManifest:
         This is the primary constructor used by WorkspaceManager.create_snapshot().
 
         Args:
-            file_entries: List of (rel_path, content_hash, size, mime_type) tuples.
-                         Must already be filtered (no directories, no missing etags).
+            file_entries: List of (rel_path, content_id, size, mime_type) tuples.
+                         Must already be filtered (no directories, no missing content_ids).
 
         Returns:
             WorkspaceManifest with entries sorted by path
         """
         entries = {
             rel_path: ManifestEntry(
-                content_hash=content_hash,
+                content_id=content_id,
                 size=size,
                 mime_type=mime_type,
             )
-            for rel_path, content_hash, size, mime_type in file_entries
+            for rel_path, content_id, size, mime_type in file_entries
         }
         return cls(entries=entries)

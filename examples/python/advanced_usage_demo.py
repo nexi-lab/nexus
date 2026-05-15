@@ -38,7 +38,7 @@ def print_section(title: str):
     print(f"{'=' * 60}\n")
 
 
-def main():
+async def main():
     # Get server URL and API key from environment
     server_url = os.environ.get("SERVER_URL") or os.environ.get("NEXUS_URL")
     api_key = os.environ.get("NEXUS_API_KEY")
@@ -76,7 +76,7 @@ def main():
 
         # Create main workspace directory
         try:
-            nx.sys_mkdir("/workspace/demo-project", parents=True)
+            nx.mkdir("/workspace/demo-project", parents=True)
             print("✓ Created: /workspace/demo-project")
         except Exception as e:
             if "already exists" in str(e).lower():
@@ -129,7 +129,7 @@ def main():
 
         for dir_path in directories:
             try:
-                nx.sys_mkdir(dir_path, parents=True)
+                nx.mkdir(dir_path, parents=True)
                 print(f"✓ Created: {dir_path}")
             except Exception as e:
                 if "already exists" in str(e).lower():
@@ -200,11 +200,11 @@ def main():
         print_section("6. File Operations")
 
         # Check if file exists
-        if nx.sys_access(config_path):
+        if await nx.access(config_path):
             print(f"✓ Config file exists: {config_path}")
 
         # Check if directory exists
-        if nx.sys_is_directory("/workspace/demo-project/data"):
+        if await nx.is_directory("/workspace/demo-project/data"):
             print("✓ Data directory exists")
 
         # Update the config file to create a new version

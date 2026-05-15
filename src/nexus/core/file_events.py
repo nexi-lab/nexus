@@ -5,7 +5,6 @@ FileEvent is the single kernel-defined I/O event type, analogous to Linux
 
 - KernelDispatch OBSERVE phase (local, fire-and-forget)
 - EventBus (distributed delivery via Dragonfly/NATS)
-- Layer 1 inotify/FSEvents (OS-native, via ``from_file_change()``)
 
 Per NEXUS-LEGO-ARCHITECTURE, data types can be defined in lower tiers and used
 by higher tiers. FileEvent is a kernel data type consumed by all layers.
@@ -25,14 +24,31 @@ class FileEventType(StrEnum):
     FILE_WRITE = "file_write"
     FILE_DELETE = "file_delete"
     FILE_RENAME = "file_rename"
+    FILE_COPY = "file_copy"
     METADATA_CHANGE = "metadata_change"  # chmod, chown, truncate (Issue #1115)
     DIR_CREATE = "dir_create"
     DIR_DELETE = "dir_delete"
-    # Issue #1129: Bidirectional sync events
-    SYNC_TO_BACKEND_REQUESTED = "sync_to_backend_requested"
-    SYNC_TO_BACKEND_COMPLETED = "sync_to_backend_completed"
-    SYNC_TO_BACKEND_FAILED = "sync_to_backend_failed"
     CONFLICT_DETECTED = "conflict_detected"
+    # Mount/unmount lifecycle events (Step C: unified into OBSERVE phase)
+    MOUNT = "mount"
+    UNMOUNT = "unmount"
+
+
+# ── Bitmask positions for Rust ObserverRegistry filtering (Issue #1748) ──
+
+FILE_EVENT_BIT: dict[FileEventType, int] = {
+    FileEventType.FILE_WRITE: 1 << 0,
+    FileEventType.FILE_DELETE: 1 << 1,
+    FileEventType.FILE_RENAME: 1 << 2,
+    FileEventType.METADATA_CHANGE: 1 << 3,
+    FileEventType.DIR_CREATE: 1 << 4,
+    FileEventType.DIR_DELETE: 1 << 5,
+    FileEventType.CONFLICT_DETECTED: 1 << 6,
+    FileEventType.FILE_COPY: 1 << 7,
+    FileEventType.MOUNT: 1 << 8,
+    FileEventType.UNMOUNT: 1 << 9,
+}
+ALL_FILE_EVENTS: int = (1 << 10) - 1  # 0x3FF — matches all event types
 
 
 @dataclass(frozen=True)
@@ -42,27 +58,30 @@ class FileEvent:
     Analogous to Linux ``fsnotify_event``. Carries all context that consumers
     might need; each consumer extracts what it requires and ignores the rest.
 
-    Used by KernelDispatch OBSERVE phase, EventBus distributed delivery,
-    and Layer 1 inotify/FSEvents (via ``from_file_change()``).
+    Used by KernelDispatch OBSERVE phase and EventBus distributed delivery.
     """
 
     type: FileEventType | str
     path: str
-    zone_id: str | None = None  # None for Layer 1 (local) events
+    zone_id: str | None = None  # Kernel namespace partition (None for Layer 1 local events)
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     old_path: str | None = None
     size: int | None = None
-    etag: str | None = None
+    content_id: str | None = None
     agent_id: str | None = None
-    revision: int | None = None
     vector_clock: str | None = None
+    sequence_number: int | None = None  # Monotonic ordering within a zone (#2755)
 
     # Identity & write-specific context
     user_id: str | None = None
     version: int | None = None  # write-specific: file version counter
+    gen: int | None = None  # write-specific: content generation counter
     is_new: bool = False  # write-specific: True if file was created (not overwritten)
     new_path: str | None = None  # rename-specific: destination path
+    old_content_id: str | None = (
+        None  # write-specific: previous content hash (for overwrite detection)
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -79,22 +98,26 @@ class FileEvent:
             result["old_path"] = self.old_path
         if self.size is not None:
             result["size"] = self.size
-        if self.etag is not None:
-            result["etag"] = self.etag
+        if self.content_id is not None:
+            result["content_id"] = self.content_id
         if self.agent_id is not None:
             result["agent_id"] = self.agent_id
-        if self.revision is not None:
-            result["revision"] = self.revision
         if self.vector_clock is not None:
             result["vector_clock"] = self.vector_clock
+        if self.sequence_number is not None:
+            result["sequence_number"] = self.sequence_number
         if self.user_id is not None:
             result["user_id"] = self.user_id
         if self.version is not None:
             result["version"] = self.version
+        if self.gen is not None:
+            result["gen"] = self.gen
         if self.is_new:
             result["is_new"] = self.is_new
         if self.new_path is not None:
             result["new_path"] = self.new_path
+        if self.old_content_id is not None:
+            result["old_content_id"] = self.old_content_id
         return result
 
     def to_json(self) -> str:
@@ -112,14 +135,16 @@ class FileEvent:
             event_id=data.get("event_id", str(uuid.uuid4())),
             old_path=data.get("old_path"),
             size=data.get("size"),
-            etag=data.get("etag"),
+            content_id=data.get("content_id"),
             agent_id=data.get("agent_id"),
-            revision=data.get("revision"),
             vector_clock=data.get("vector_clock"),
+            sequence_number=data.get("sequence_number"),
             user_id=data.get("user_id"),
             version=data.get("version"),
+            gen=data.get("gen"),
             is_new=data.get("is_new", False),
             new_path=data.get("new_path"),
+            old_content_id=data.get("old_content_id"),
         )
 
     @classmethod
@@ -128,46 +153,6 @@ class FileEvent:
         if isinstance(json_str, bytes):
             json_str = json_str.decode("utf-8")
         return cls.from_dict(json.loads(json_str))
-
-    @classmethod
-    def from_file_change(
-        cls,
-        change: Any,  # FileChange from services/watch/file_watcher.py (avoid circular import)
-        zone_id: str | None = None,
-    ) -> "FileEvent":
-        """Create FileEvent from Layer 1 FileChange.
-
-        Maps ChangeType to FileEventType:
-        - CREATED → FILE_WRITE (new file created)
-        - MODIFIED → FILE_WRITE (file content changed)
-        - DELETED → FILE_DELETE
-        - RENAMED → FILE_RENAME
-
-        Args:
-            change: FileChange from services/watch/file_watcher.py
-            zone_id: Optional zone ID to associate
-
-        Returns:
-            FileEvent with unified format
-        """
-        # Map ChangeType string values to FileEventType
-        change_type = change.type.value if hasattr(change.type, "value") else change.type
-
-        type_mapping = {
-            "created": FileEventType.FILE_WRITE,
-            "modified": FileEventType.FILE_WRITE,
-            "deleted": FileEventType.FILE_DELETE,
-            "renamed": FileEventType.FILE_RENAME,
-        }
-
-        event_type = type_mapping.get(change_type, change_type)
-
-        return cls(
-            type=event_type,
-            path=change.path,
-            zone_id=zone_id,
-            old_path=getattr(change, "old_path", None),
-        )
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, FileEvent):
@@ -219,7 +204,7 @@ class FileEvent:
 
         # Glob pattern match — delegate to path_utils for consistency
         if "*" in pattern or "?" in pattern:
-            from nexus.lib.path_utils import path_matches_pattern
+            from nexus.core.path_utils import path_matches_pattern
 
             if path_matches_pattern(self.path, pattern):
                 return True

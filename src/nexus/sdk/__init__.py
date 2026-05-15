@@ -1,5 +1,7 @@
 """
-Nexus SDK - Clean programmatic interface for third-party tools.
+Nexus = filesystem/context plane.
+
+Nexus SDK - clean programmatic interface for third-party tools.
 
 This module provides a clean, stable API for building custom tools and interfaces
 on top of Nexus, without any CLI dependencies. Use this SDK to build:
@@ -11,14 +13,23 @@ on top of Nexus, without any CLI dependencies. Use this SDK to build:
 
 The SDK interface is stable and semantic-versioned separately from CLI changes.
 
-Quick Start (Server Mode - Recommended):
+Quick Start (Local - Verified):
     >>> from nexus.sdk import connect
     >>>
-    >>> # Start server first: nexus serve --host 0.0.0.0 --port 2026
+    >>> nx = connect(config={"profile": "embedded", "data_dir": "./nexus-data"})
+    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = nx.sys_read("/workspace/file.txt")
+
+Quick Start (Remote):
+    >>> from nexus.sdk import connect
+    >>>
+    >>> # Start server first:
+    >>> #   export NEXUS_GRPC_PORT=2126
+    >>> #   nexusd --host 0.0.0.0 --port 2026
     >>> # Set environment: export NEXUS_URL=http://localhost:2026
     >>>
-    >>> # Connect to Nexus server (thin HTTP client)
-    >>> nx = connect()
+    >>> # Connect to Nexus server (thin remote client)
+    >>> nx = connect(config={"profile": "remote", "url": "http://localhost:2026"})
     >>>
     >>> # File operations
     >>> nx.sys_write("/workspace/file.txt", b"Hello World")
@@ -30,25 +41,21 @@ Quick Start (Server Mode - Recommended):
     >>> python_files = nx.glob("**/*.py")
     >>> todos = nx.grep("TODO", file_pattern="**/*.py")
 
-Quick Start (Standalone Mode - Development Only):
-    >>> # No server required, but less suitable for production
-    >>> nx = connect(config={"mode": "standalone", "data_dir": "./nexus-data"})
-    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
-
 Configuration:
-    >>> # Server mode with auto-discovery (recommended)
+    >>> # Remote mode with auto-discovery
     >>> # Checks NEXUS_URL and NEXUS_API_KEY environment variables
-    >>> nx = connect()
+    >>> nx = connect(config={"profile": "remote"})
     >>>
     >>> # Server mode with explicit config
     >>> nx = connect(config={
+    ...     "profile": "remote",
     ...     "url": "http://localhost:2026",
     ...     "api_key": "your-api-key"
     ... })
     >>>
-    >>> # Standalone mode (development/testing only)
+    >>> # Local mode
     >>> nx = connect(config={
-    ...     "mode": "standalone",
+    ...     "profile": "embedded",
     ...     "data_dir": "./nexus-data"
     ... })
     >>>
@@ -67,8 +74,9 @@ __all__ = [
     "NexusFS",
     # Backends
     "Backend",
-    "LocalBackend",
-    "GCSBackend",
+    "CASLocalBackend",
+    "PathLocalBackend",
+    "CASGCSBackend",
     # Exceptions
     "NexusError",
     "FileNotFoundError",
@@ -77,18 +85,6 @@ __all__ = [
     "InvalidPathError",
     "MetadataError",
     "ValidationError",
-    # Skills System
-    "SkillRegistry",
-    "SkillExporter",
-    "SkillManager",
-    "SkillParser",
-    "Skill",
-    "SkillMetadata",
-    "SkillNotFoundError",
-    "SkillDependencyError",
-    "SkillManagerError",
-    "SkillParseError",
-    "SkillExportError",
     # Permissions
     "OperationContext",
     "PermissionEnforcer",
@@ -97,35 +93,18 @@ __all__ = [
     "ReBACTuple",
     "Entity",
     "WILDCARD_SUBJECT",
-    "ConsistencyLevel",
     "CheckResult",
     "GraphLimitExceeded",
 ]
 
 # Re-export from core modules with cleaner names
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 
-from nexus.backends.backend import Backend
-from nexus.backends.gcs import GCSBackend
-from nexus.backends.local import LocalBackend
-from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
-from nexus.bricks.rebac.enforcer import PermissionEnforcer
-from nexus.bricks.rebac.manager import (
-    CheckResult,
-    ConsistencyLevel,
-    GraphLimitExceeded,
-    ReBACManager,
-)
-from nexus.bricks.skills.exporter import SkillExporter, SkillExportError
-from nexus.bricks.skills.manager import SkillManager, SkillManagerError
-from nexus.bricks.skills.models import Skill, SkillMetadata
-from nexus.bricks.skills.parser import SkillParseError, SkillParser
-from nexus.bricks.skills.registry import (
-    SkillDependencyError,
-    SkillNotFoundError,
-    SkillRegistry,
-)
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.cas_gcs import CASGCSBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.config import NexusConfig as Config
 from nexus.config import load_config
 from nexus.contracts.exceptions import (
@@ -141,12 +120,65 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.exceptions import (
     NexusPermissionError as PermissionError,
 )
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as Filesystem
+
+# ReBAC types canonical in contracts — always available (#3230)
+from nexus.contracts.rebac_types import WILDCARD_SUBJECT, CheckResult, Entity, GraphLimitExceeded
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.nexus_fs import NexusFS as Filesystem
+
+# =============================================================================
+# LAZY IMPORTS for optional bricks (#3230)
+# =============================================================================
+# These ReBAC implementation types require the rebac brick to be installed.
+# They are loaded on-demand via __getattr__ to allow `import nexus.sdk` to
+# succeed without bricks.rebac installed.
+
+_LAZY_REBAC_IMPORTS: dict[str, tuple[str, str]] = {
+    "ReBACTuple": ("nexus.bricks.rebac.domain", "ReBACTuple"),
+    "PermissionEnforcer": ("nexus.bricks.rebac.enforcer", "PermissionEnforcer"),
+    "ReBACManager": ("nexus.bricks.rebac.manager", "ReBACManager"),
+}
+
+_lazy_imports_cache: dict[str, Any] = {}
 
 
-def connect(
+def __getattr__(name: str) -> Any:
+    """Lazy import for optional brick dependencies.
+
+    ReBAC implementation types (ReBACTuple, PermissionEnforcer, ReBACManager)
+    are loaded on first access. If the rebac brick is not installed, a clear
+    ImportError is raised.
+    """
+    if name in _lazy_imports_cache:
+        return _lazy_imports_cache[name]
+
+    if name in _LAZY_REBAC_IMPORTS:
+        module_path, attr_name = _LAZY_REBAC_IMPORTS[name]
+        import importlib
+
+        try:
+            module = importlib.import_module(module_path)
+        except ModuleNotFoundError as exc:
+            raise ImportError(
+                f"nexus.sdk.{name} requires the ReBAC brick. "
+                f"Install it with: pip install nexus[rebac]"
+            ) from exc
+        value = getattr(module, attr_name)
+        _lazy_imports_cache[name] = value
+        return value
+
+    raise AttributeError(f"module 'nexus.sdk' has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include lazy imports in dir() for discoverability."""
+    module_attrs = list(globals().keys())
+    module_attrs.extend(_LAZY_REBAC_IMPORTS.keys())
+    return module_attrs
+
+
+async def connect(
     config: str | Path | dict | Config | None = None,
 ) -> Filesystem:
     """

@@ -14,6 +14,7 @@ Related: Issue #1459 Phase 15+, Performance optimization
 import logging
 import threading
 import time as time_module
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -23,7 +24,7 @@ from sqlalchemy.exc import OperationalError
 
 from nexus.bricks.rebac.domain import Entity
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS, ConsistencyLevel
+from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import NamespaceConfig
 
 logger = logging.getLogger(__name__)
+
+SQLITE_ENTITY_CHUNK_SIZE = 400
 
 
 class BulkPermissionChecker:
@@ -103,7 +106,6 @@ class BulkPermissionChecker:
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
-        consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Check permissions for multiple (subject, permission, object) tuples in batch.
 
@@ -115,10 +117,11 @@ class BulkPermissionChecker:
         3. Runs permission checks against the cached graph
         4. Returns all results in a single call
 
+        Always uses cached (eventual) consistency.
+
         Args:
             checks: List of (subject, permission, object) tuples to check
             zone_id: Zone ID to scope all checks
-            consistency: Consistency level (EVENTUAL, BOUNDED, STRONG)
 
         Returns:
             Dict mapping each check tuple to its result (True/False)
@@ -155,14 +158,12 @@ class BulkPermissionChecker:
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
 
         # PHASE 0: L1 in-memory cache
-        cache_misses = self._phase_l1_cache(checks, zone_id, consistency, results, bulk_start)
+        cache_misses = self._phase_l1_cache(checks, zone_id, results, bulk_start)
         if not cache_misses:
             return results
 
         # PHASE 0.5: Tiger Cache
-        cache_misses = self._phase_tiger_cache(
-            cache_misses, zone_id, consistency, results, bulk_start
-        )
+        cache_misses = self._phase_tiger_cache(cache_misses, zone_id, results, bulk_start)
         if not cache_misses:
             return results
 
@@ -195,7 +196,6 @@ class BulkPermissionChecker:
                 cache_misses,
                 tuples_graph,
                 zone_id,
-                consistency,
                 results,
                 bulk_memo_cache,
                 memo_stats,
@@ -214,7 +214,6 @@ class BulkPermissionChecker:
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
-        consistency: ConsistencyLevel,
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool],
         bulk_start: float,
     ) -> list[tuple[tuple[str, str], str, tuple[str, str]]]:
@@ -222,17 +221,11 @@ class BulkPermissionChecker:
         l1_start = time_module.perf_counter()
         l1_hits = 0
         l1_cache_enabled = self._l1_cache is not None
-        logger.debug(
-            f"[BULK-DEBUG] L1 cache enabled: {l1_cache_enabled}, consistency: {consistency}"
-        )
+        logger.debug(f"[BULK-DEBUG] L1 cache enabled: {l1_cache_enabled}")
 
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
 
-        if (
-            l1_cache_enabled
-            and self._l1_cache is not None
-            and consistency == ConsistencyLevel.EVENTUAL
-        ):
+        if l1_cache_enabled and self._l1_cache is not None:
             l1_cache_stats = self._l1_cache.get_stats()
             logger.debug(f"[BULK-DEBUG] L1 cache stats before lookup: {l1_cache_stats}")
 
@@ -255,13 +248,13 @@ class BulkPermissionChecker:
             if not cache_misses:
                 total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
                 logger.debug(
-                    f"[BULK-PERF] ✅ All {len(checks)} checks satisfied from L1 cache in {total_elapsed:.1f}ms"
+                    "[BULK-PERF] All %d checks satisfied from L1 cache in %.1fms",
+                    len(checks),
+                    total_elapsed,
                 )
         else:
             cache_misses = list(checks)
-            logger.debug(
-                f"[BULK-DEBUG] Skipping L1 cache (enabled={l1_cache_enabled}, consistency={consistency})"
-            )
+            logger.debug("[BULK-DEBUG] Skipping L1 cache (not available)")
 
         return cache_misses
 
@@ -269,12 +262,11 @@ class BulkPermissionChecker:
         self,
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
-        consistency: ConsistencyLevel,
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool],
         bulk_start: float,
     ) -> list[tuple[tuple[str, str], str, tuple[str, str]]]:
         """Phase 0.5: Tiger Cache bitmap lookup. Returns remaining misses."""
-        if not (self._tiger_cache and consistency == ConsistencyLevel.EVENTUAL):
+        if not self._tiger_cache:
             return cache_misses
 
         tiger_start = time_module.perf_counter()
@@ -313,7 +305,8 @@ class BulkPermissionChecker:
         if not tiger_remaining:
             total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
             logger.debug(
-                f"[BULK-PERF] ✅ All checks satisfied from L1 + Tiger cache in {total_elapsed:.1f}ms"
+                "[BULK-PERF] All checks satisfied from L1 + Tiger cache in %.1fms",
+                total_elapsed,
             )
 
         return tiger_remaining
@@ -382,15 +375,14 @@ class BulkPermissionChecker:
                         f"[BULK-UNNEST] Fetched {cross_zone_count} cross-zone tuples in single query"
                     )
 
-                # Compute parent relationships in memory
-                if ancestor_paths:
-                    computed_parent_count = self._compute_parent_tuples(
-                        ancestor_paths, tuples_graph
+            # Compute parent relationships in memory (needed for directory
+            # inheritance regardless of zone isolation setting)
+            if ancestor_paths:
+                computed_parent_count = self._compute_parent_tuples(ancestor_paths, tuples_graph)
+                if computed_parent_count > 0:
+                    logger.debug(
+                        f"Computed {computed_parent_count} parent tuples in memory for file hierarchy"
                     )
-                    if computed_parent_count > 0:
-                        logger.debug(
-                            f"Computed {computed_parent_count} parent tuples in memory for file hierarchy"
-                        )
 
             logger.debug(
                 f"Fetched {len(tuples_graph)} tuples in bulk for graph computation (includes parent hierarchy)"
@@ -405,14 +397,30 @@ class BulkPermissionChecker:
         zone_id: str,
         now_iso: str,
     ) -> list[dict[str, Any]]:
-        """Fetch ALL tuples for entities in ONE query using UNNEST (PostgreSQL) or VALUES (SQLite)."""
+        """Fetch all tuples for entities using UNNEST or chunked SQLite VALUES."""
         if not entities:
             return []
 
+        is_postgresql = self._engine.dialect.name == "postgresql"
+        if not is_postgresql and len(entities) > SQLITE_ENTITY_CHUNK_SIZE:
+            rows: list[dict[str, Any]] = []
+            seen: set[tuple[str, ...]] = set()
+            for entity_chunk in self._chunked(entities, SQLITE_ENTITY_CHUNK_SIZE):
+                chunk_rows = self._fetch_all_tuples_single_query(
+                    conn,
+                    entity_chunk,
+                    zone_id,
+                    now_iso,
+                )
+                for row in chunk_rows:
+                    row_key = self._tuple_row_key(row)
+                    if row_key not in seen:
+                        seen.add(row_key)
+                        rows.append(row)
+            return rows
+
         entity_types = [e[0] for e in entities]
         entity_ids = [e[1] for e in entities]
-
-        is_postgresql = self._engine.dialect.name == "postgresql"
 
         if is_postgresql:
             if self._enforce_zone_isolation:
@@ -504,19 +512,7 @@ class BulkPermissionChecker:
                 """)
 
         result = conn.execute(stmt, params)
-        return [
-            {
-                "subject_type": row.subject_type,
-                "subject_id": row.subject_id,
-                "subject_relation": row.subject_relation,
-                "relation": row.relation,
-                "object_type": row.object_type,
-                "object_id": row.object_id,
-                "conditions": row.conditions,
-                "expires_at": row.expires_at,
-            }
-            for row in result
-        ]
+        return [self._row_to_tuple_dict(row) for row in result]
 
     def _fetch_cross_zone_tuples(
         self,
@@ -528,6 +524,17 @@ class BulkPermissionChecker:
         """Fetch cross-zone share tuples and append to tuples_graph. Returns count added."""
         cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
         is_postgresql = self._engine.dialect.name == "postgresql"
+
+        if not is_postgresql and len(all_subjects_list) > SQLITE_ENTITY_CHUNK_SIZE:
+            cross_zone_count = 0
+            for subject_chunk in self._chunked(all_subjects_list, SQLITE_ENTITY_CHUNK_SIZE):
+                cross_zone_count += self._fetch_cross_zone_tuples(
+                    conn,
+                    subject_chunk,
+                    tuples_graph,
+                    now_iso,
+                )
+            return cross_zone_count
 
         subject_types = [s[0] for s in all_subjects_list]
         subject_ids = [s[1] for s in all_subjects_list]
@@ -590,21 +597,42 @@ class BulkPermissionChecker:
         result = conn.execute(stmt, cross_zone_params)
         cross_zone_count = 0
         for row in result:
-            tuples_graph.append(
-                {
-                    "subject_type": row.subject_type,
-                    "subject_id": row.subject_id,
-                    "subject_relation": row.subject_relation,
-                    "relation": row.relation,
-                    "object_type": row.object_type,
-                    "object_id": row.object_id,
-                    "conditions": row.conditions,
-                    "expires_at": row.expires_at,
-                }
-            )
+            tuples_graph.append(self._row_to_tuple_dict(row))
             cross_zone_count += 1
 
         return cross_zone_count
+
+    @staticmethod
+    def _chunked(items: list[tuple[str, str]], chunk_size: int) -> Iterator[list[tuple[str, str]]]:
+        """Yield fixed-size chunks sized for SQLite parameter limits."""
+        for start in range(0, len(items), chunk_size):
+            yield items[start : start + chunk_size]
+
+    @staticmethod
+    def _row_to_tuple_dict(row: Any) -> dict[str, Any]:
+        return {
+            "subject_type": row.subject_type,
+            "subject_id": row.subject_id,
+            "subject_relation": row.subject_relation,
+            "relation": row.relation,
+            "object_type": row.object_type,
+            "object_id": row.object_id,
+            "conditions": row.conditions,
+            "expires_at": row.expires_at,
+        }
+
+    @staticmethod
+    def _tuple_row_key(row: dict[str, Any]) -> tuple[str, ...]:
+        return (
+            repr(row.get("subject_type")),
+            repr(row.get("subject_id")),
+            repr(row.get("subject_relation")),
+            repr(row.get("relation")),
+            repr(row.get("object_type")),
+            repr(row.get("object_id")),
+            repr(row.get("conditions")),
+            repr(row.get("expires_at")),
+        )
 
     def _compute_parent_tuples(
         self,
@@ -661,22 +689,22 @@ class BulkPermissionChecker:
         """Phase 2a: Try Rust acceleration. Returns True if successful."""
         from nexus.bricks.rebac.utils.fast import (
             check_permissions_bulk_with_fallback,
-            is_rust_available,
         )
 
-        rust_available = is_rust_available()
-        logger.warning(
-            f"[BULK-DEBUG] cache_misses={len(cache_misses)}, rust_available={rust_available}, tuples_graph={len(tuples_graph)}"
+        logger.debug(
+            "[BULK] cache_misses=%d, tuples_graph=%d",
+            len(cache_misses),
+            len(tuples_graph),
         )
 
-        if not (rust_available and len(cache_misses) >= 1):
+        if any(t.get("conditions") for t in tuples_graph):
+            logger.debug("[BULK] Skipping Rust acceleration for conditioned tuples")
+            return False
+
+        if len(cache_misses) < 1:
             return False
 
         try:
-            logger.warning(
-                f"⚡ [BULK-DEBUG] Attempting Rust acceleration for {len(cache_misses)} checks"
-            )
-
             # Get all namespace configs
             object_types = {obj[0] for _, _, obj in cache_misses}
             namespace_configs: dict[str, Any] = {}
@@ -700,7 +728,11 @@ class BulkPermissionChecker:
                 tuples_graph,
                 namespace_configs,
                 force_python=False,
-                tuple_version=self._tuple_version,
+                # Force a fresh Rust graph build per bulk-check call.
+                # The Rust GRAPH_CACHE is process-global, so small integer
+                # tuple_version values can collide across manager instances
+                # and leak stale results between tests/call sites.
+                tuple_version=time.time_ns(),
             )
             rust_elapsed = time.perf_counter() - rust_start
             per_check_us = (rust_elapsed / len(cache_misses)) * 1_000_000
@@ -743,13 +775,14 @@ class BulkPermissionChecker:
                 ),
             )
 
-            logger.warning(
-                f"✅ [BULK-DEBUG] Rust acceleration successful for {len(cache_misses)} checks"
+            logger.debug(
+                "[BULK] Rust acceleration successful for %d checks",
+                len(cache_misses),
             )
             return True
 
         except (RuntimeError, ValueError) as e:
-            logger.warning(f"[BULK-DEBUG] Rust acceleration failed: {e}, falling back to Python")
+            logger.debug("[BULK] Rust acceleration failed: %s, falling back to Python", e)
             return False
 
     def _phase_python_compute(
@@ -757,14 +790,14 @@ class BulkPermissionChecker:
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]],
         tuples_graph: list[dict[str, Any]],
         zone_id: str,
-        consistency: ConsistencyLevel,
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool],
         bulk_memo_cache: dict[tuple[str, str, str, str, str], bool],
         memo_stats: dict[str, int],
     ) -> None:
         """Phase 2b: Python fallback computation."""
-        logger.warning(
-            f"🐍 [BULK-DEBUG] Using SLOW Python path for {len(cache_misses)} checks (rust_available=False)"
+        logger.debug(
+            "[BULK] Using Python fallback for %d checks (rust_available=False)",
+            len(cache_misses),
         )
         for check in cache_misses:
             subject, permission, obj = check
@@ -783,14 +816,11 @@ class BulkPermissionChecker:
                 )
             except (RuntimeError, ValueError, OperationalError) as e:
                 logger.warning(f"Bulk check failed for {check}, falling back: {e}")
-                result = self._rebac_check_single(
-                    subject, permission, obj, zone_id=zone_id, consistency=consistency
-                )
+                result = self._rebac_check_single(subject, permission, obj, zone_id=zone_id)
 
             results[check] = result
 
-            if consistency == ConsistencyLevel.EVENTUAL:
-                self._cache_result(subject_entity, permission, obj_entity, result, zone_id)
+            self._cache_result(subject_entity, permission, obj_entity, result, zone_id)
 
         # Write-through to Tiger Cache after Python fallback
         self._write_through_tiger_cache(
@@ -812,23 +842,37 @@ class BulkPermissionChecker:
         tiger_writes = 0
         tiger_updates: dict[tuple[str, str, str, str, str], set[int]] = {}
 
-        for check in cache_misses:
-            subject, permission, obj = check
-            result = get_result(check)
+        # Issue #3192: Batch fetch int IDs first to avoid N individual DB round-trips
+        positive_checks = [
+            (subject, permission, obj)
+            for subject, permission, obj in cache_misses
+            if get_result((subject, permission, obj))
+        ]
+        if not positive_checks:
+            return
 
-            if result:
+        resource_keys = [(obj[0], obj[1]) for _, _, obj in positive_checks]
+        int_id_map = self._tiger_cache._resource_map.get_int_ids_batch(resource_keys)
+
+        # For resources not yet in the map, create them individually (rare path)
+        for key in resource_keys:
+            if key not in int_id_map:
                 try:
-                    resource_int_id = self._tiger_cache._resource_map.get_or_create_int_id(
-                        obj[0], obj[1]
-                    )
-                    if resource_int_id > 0:
-                        group_key = (subject[0], subject[1], permission, obj[0], zone_id)
-                        if group_key not in tiger_updates:
-                            tiger_updates[group_key] = set()
-                        tiger_updates[group_key].add(resource_int_id)
-                        tiger_writes += 1
+                    int_id = self._tiger_cache._resource_map.get_or_create_int_id(key[0], key[1])
+                    if int_id > 0:
+                        int_id_map[key] = int_id
                 except (KeyError, ValueError) as e:
-                    logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
+                    logger.debug(f"[TIGER] Failed to get int_id for {key}: {e}")
+
+        for subject, permission, obj in positive_checks:
+            resource_key = (obj[0], obj[1])
+            resource_int_id = int_id_map.get(resource_key, 0)
+            if resource_int_id > 0:
+                group_key = (subject[0], subject[1], permission, obj[0], zone_id)
+                if group_key not in tiger_updates:
+                    tiger_updates[group_key] = set()
+                tiger_updates[group_key].add(resource_int_id)
+                tiger_writes += 1
 
         # Bulk add to Tiger Cache bitmaps (memory)
         for group_key, int_ids in tiger_updates.items():

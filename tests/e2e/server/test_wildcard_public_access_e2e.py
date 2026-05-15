@@ -10,7 +10,6 @@ Usage:
     uv run pytest tests/e2e/test_wildcard_public_access_e2e.py -v --override-ini="addopts="
 """
 
-import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,11 +18,13 @@ import httpx
 import pytest
 from sqlalchemy import create_engine, text
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # JWT secret must match conftest.py
 JWT_SECRET = "test-secret-key-for-e2e-12345"
 
 
-def create_test_user(db_path: Path, zone_id: str = "root") -> dict:
+def create_test_user(db_path: Path, zone_id: str = ROOT_ZONE_ID) -> dict:
     """Create a test user and return auth info."""
     import jwt
 
@@ -57,7 +58,7 @@ def write_rebac_tuple(
     relation: str,
     object_type: str,
     object_id: str,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     subject_zone_id: str | None = None,
     object_zone_id: str | None = None,
 ) -> str:
@@ -162,47 +163,51 @@ class TestWildcardDirectDB:
     """Direct database tests for wildcard - doesn't require full server."""
 
     @pytest.fixture
-    def db_engine(self, isolated_db):
+    def namespace_store(self):
+        """Create a MetastoreNamespaceStore backed by an in-memory NexusFS stub."""
+        from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+            MetastoreNamespaceStore,
+        )
+        from tests.testkit.metadata import InMemoryNexusFS
+
+        return MetastoreNamespaceStore(InMemoryNexusFS())
+
+    @pytest.fixture
+    def db_engine(self, isolated_db, namespace_store):
         """Create database with ReBAC tables using ORM models."""
+        from nexus.bricks.rebac.domain import NamespaceConfig
         from nexus.storage.models import Base
 
         engine = create_engine(f"sqlite:///{isolated_db}")
         Base.metadata.create_all(engine)
 
-        # Insert file namespace with reader -> read permission
-        config = json.dumps(
-            {
-                "relations": {"reader": {}, "writer": {}, "owner": {}},
-                "permissions": {
-                    "read": {"union": ["reader", "writer", "owner"]},
-                    "write": {"union": ["writer", "owner"]},
+        # Insert file namespace with reader -> read permission via MetastoreNamespaceStore
+        namespace_store.create_or_update(
+            NamespaceConfig(
+                namespace_id="file_ns",
+                object_type="file",
+                config={
+                    "relations": {"reader": {}, "writer": {}, "owner": {}},
+                    "permissions": {
+                        "read": {"union": ["reader", "writer", "owner"]},
+                        "write": {"union": ["writer", "owner"]},
+                    },
                 },
-            }
-        )
-        now = datetime.now(UTC).isoformat()
-        with engine.connect() as conn:
-            conn.execute(
-                text(
-                    "INSERT OR IGNORE INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at) "
-                    "VALUES (:id, :type, :config, :now, :now)"
-                ),
-                {"id": "file_ns", "type": "file", "config": config, "now": now},
+                created_at=datetime.now(UTC),
             )
-            conn.commit()
+        )
 
         yield engine
         engine.dispose()
 
     @pytest.fixture
-    def async_manager(self, db_engine, isolated_db):
+    def async_manager(self, db_engine, namespace_store):
         """Create AsyncReBACManager for testing."""
-        from nexus.bricks.rebac.async_manager import AsyncReBACManager
-        from nexus.bricks.rebac.manager import ReBACManager
+        from nexus.bricks.rebac.manager import AsyncReBACManager, ReBACManager
 
-        # Use the existing sync db_engine directly — avoids MissingGreenlet
-        # errors that arise from using async_engine.sync_engine with
-        # asyncio.to_thread() in AsyncReBACManager.
-        sync_manager = ReBACManager(db_engine, enable_tiger_cache=False)
+        sync_manager = ReBACManager(
+            db_engine, enable_tiger_cache=False, namespace_store=namespace_store
+        )
         manager = AsyncReBACManager(sync_manager)
         yield manager
 
@@ -292,7 +297,7 @@ class TestWildcardDirectDB:
             subject=("user", "anyone"),
             permission="read",
             object=("file", "/public/readonly.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert result is True
 
@@ -301,7 +306,7 @@ class TestWildcardDirectDB:
             subject=("user", "anyone"),
             permission="write",
             object=("file", "/public/readonly.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert result is False, "Wildcard reader should not grant write permission"
 
@@ -310,43 +315,51 @@ class TestWildcardPerformance:
     """Performance tests to verify wildcard check doesn't impact performance."""
 
     @pytest.fixture
-    def db_engine(self, isolated_db):
+    def namespace_store(self):
+        """Create a MetastoreNamespaceStore backed by an in-memory NexusFS stub."""
+        from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+            MetastoreNamespaceStore,
+        )
+        from tests.testkit.metadata import InMemoryNexusFS
+
+        return MetastoreNamespaceStore(InMemoryNexusFS())
+
+    @pytest.fixture
+    def db_engine(self, isolated_db, namespace_store):
         """Create database with ReBAC tables using ORM models."""
+        from nexus.bricks.rebac.domain import NamespaceConfig
         from nexus.storage.models import Base
 
         engine = create_engine(f"sqlite:///{isolated_db}")
         Base.metadata.create_all(engine)
 
-        config = json.dumps(
-            {
-                "relations": {"reader": {}, "writer": {}},
-                "permissions": {"read": ["reader", "writer"], "write": ["writer"]},
-            }
-        )
-        now = datetime.now(UTC).isoformat()
-        with engine.connect() as conn:
-            conn.execute(
-                text(
-                    "INSERT OR IGNORE INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at) "
-                    "VALUES (:id, :type, :config, :now, :now)"
-                ),
-                {"id": "file_ns", "type": "file", "config": config, "now": now},
+        # Insert file namespace via MetastoreNamespaceStore
+        namespace_store.create_or_update(
+            NamespaceConfig(
+                namespace_id="file_ns",
+                object_type="file",
+                config={
+                    "relations": {"reader": {}, "writer": {}},
+                    "permissions": {"read": ["reader", "writer"], "write": ["writer"]},
+                },
+                created_at=datetime.now(UTC),
             )
-            conn.commit()
+        )
 
         yield engine
         engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_wildcard_check_performance(self, db_engine, isolated_db):
+    async def test_wildcard_check_performance(self, db_engine, namespace_store, isolated_db):
         """Benchmark wildcard check to ensure no performance regression."""
         import time
 
-        from nexus.bricks.rebac.async_manager import AsyncReBACManager
-        from nexus.bricks.rebac.manager import ReBACManager
+        from nexus.bricks.rebac.manager import AsyncReBACManager, ReBACManager
 
         # Use the existing sync db_engine directly — avoids MissingGreenlet.
-        sync_manager = ReBACManager(db_engine, enable_tiger_cache=False)
+        sync_manager = ReBACManager(
+            db_engine, enable_tiger_cache=False, namespace_store=namespace_store
+        )
         manager = AsyncReBACManager(sync_manager)
 
         # Insert many tuples to simulate real workload
@@ -379,7 +392,7 @@ class TestWildcardPerformance:
                 subject=("user", f"nonexistent-user-{i}"),
                 permission="read",
                 object=("file", f"/files/doc-{i % 1000}.txt"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
             # Should be False (no wildcard, no direct grant)
             assert result is False

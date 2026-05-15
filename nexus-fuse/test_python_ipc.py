@@ -58,21 +58,21 @@ def main() -> None:
 
         # Test 5: Exists check
         print("6. Checking file exists...")
-        assert client.sys_access("/python-rust-test.txt"), "File should exist"
-        assert not client.sys_access("/nonexistent.txt"), "Nonexistent file should not exist"
+        assert client.access("/python-rust-test.txt"), "File should exist"
+        assert not client.access("/nonexistent.txt"), "Nonexistent file should not exist"
         print("   ✓ Exists check successful\n")
 
         # Test 6: Rename file
         print("7. Renaming file...")
         client.sys_rename("/python-rust-test.txt", "/python-rust-renamed.txt")
-        assert client.sys_access("/python-rust-renamed.txt"), "Renamed file should exist"
-        assert not client.sys_access("/python-rust-test.txt"), "Old file should not exist"
+        assert client.access("/python-rust-renamed.txt"), "Renamed file should exist"
+        assert not client.access("/python-rust-test.txt"), "Old file should not exist"
         print("   ✓ Rename successful\n")
 
         # Test 7: Delete file
         print("8. Deleting file...")
         client.sys_unlink("/python-rust-renamed.txt")
-        assert not client.sys_access("/python-rust-renamed.txt"), "Deleted file should not exist"
+        assert not client.access("/python-rust-renamed.txt"), "Deleted file should not exist"
         print("   ✓ Delete successful\n")
 
         # Test 8: Error handling (404)

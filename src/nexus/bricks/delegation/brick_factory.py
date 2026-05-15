@@ -17,5 +17,4 @@ def create(ctx: Any, system: dict[str, Any]) -> Any:
         record_store=ctx.record_store,
         rebac_manager=system["rebac_manager"],
         entity_registry=system.get("entity_registry"),
-        reputation_service=system.get("reputation_service"),
     )

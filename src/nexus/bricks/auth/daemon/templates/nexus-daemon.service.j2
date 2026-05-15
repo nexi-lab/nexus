@@ -1,0 +1,14 @@
+[Unit]
+Description=Nexus daemon (profile={profile})
+After=default.target network-online.target
+
+[Service]
+Type=simple
+ExecStart={executable} daemon run --profile {profile}
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:{stdout_path}
+StandardError=append:{stderr_path}
+
+[Install]
+WantedBy=default.target

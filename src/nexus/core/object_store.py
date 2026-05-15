@@ -7,58 +7,30 @@ Design:
     - ABC (not Protocol) -- concrete defaults for streaming, batch, capability flags
     - 6 abstract methods: write_content, read_content, delete_content,
       get_content_size, mkdir, rmdir
-    - WriteResult returned from write operations (content_hash + size)
-    - No HandlerResponse -- callers get raw types, errors are exceptions
+    - WriteResult returned from write operations (content_id + size)
+    - Callers get raw types, errors are exceptions
 """
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from nexus.contracts.types import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
-_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-
-
-def _validate_hash(content_hash: str) -> None:
-    """Validate that a content hash is a well-formed SHA-256 hex string.
-
-    Args:
-        content_hash: Value to validate
-
-    Raises:
-        ValueError: If content_hash is not a 64-character lowercase hex string
-    """
-    if not _HASH_PATTERN.match(content_hash):
-        raise ValueError(
-            f"Invalid SHA-256 content hash: {content_hash!r} "
-            f"(expected 64-character lowercase hex string)"
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class WriteResult:
-    """Result of a content write operation.
-
-    Attributes:
-        content_hash: SHA-256 hex digest of the written content.
-        size: Content size in bytes (0 = unknown / not tracked).
-    """
-
-    content_hash: str
-    size: int = 0
+# Re-export WriteResult for backward compatibility — canonical home is contracts.types
+__all__ = ["ObjectStoreABC", "WriteResult"]
 
 
 class ObjectStoreABC(ABC):
     """ObjectStore pillar -- kernel ``file_operations`` contract.
 
     Linux analogue: ``struct file_operations``.
-    Exception-based errors (no HandlerResponse).
+    Exception-based errors.
 
     Subclasses must implement the 6 abstract methods.  Streaming, batch,
     capability flags, and lifecycle have concrete defaults that work out of
@@ -73,21 +45,31 @@ class ObjectStoreABC(ABC):
         """Backend identifier name (e.g. ``"local"``, ``"gcs"``, ``"s3"``)."""
         ...
 
-    # === CAS Content Operations (4 abstract) ===
+    # === Content Operations (4 abstract) ===
 
     @abstractmethod
-    def write_content(self, content: bytes, context: OperationContext | None = None) -> WriteResult:
+    def write_content(
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        offset: int = 0,
+        context: OperationContext | None = None,
+    ) -> WriteResult:
         """Write content to storage and return a ``WriteResult``.
-
-        If content already exists (same hash), deduplication is handled
-        internally.
 
         Args:
             content: File content as bytes.
-            context: Operation context (optional, for user-scoped backends).
+            content_id: Target address for the content.
+                CAS backends: ignored (address = hash of content).
+                PAS backends: blob path where content will be stored.
+            context: Operation context (optional, for auth / cross-cutting).
+            offset: Byte offset for partial write (POSIX pwrite semantics).
+                0 = whole-file replace (default, backward compatible).
+                >0 = splice ``content`` at offset within existing content.
 
         Returns:
-            ``WriteResult`` with ``content_hash`` and ``size``.
+            ``WriteResult`` with ``content_id``, ``version``, and ``size``.
 
         Raises:
             BackendError: If write operation fails.
@@ -95,31 +77,32 @@ class ObjectStoreABC(ABC):
         ...
 
     @abstractmethod
-    def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
-        """Read content by its hash.
+    def read_content(self, content_id: str, context: OperationContext | None = None) -> bytes:
+        """Read content by its opaque identifier.
 
         Args:
-            content_hash: SHA-256 hash as hex string.
+            content_id: Opaque content identifier (e.g. SHA-256 hash for CAS,
+                version ID for path-based backends).
             context: Operation context (optional).
 
         Returns:
             File content as bytes.
 
         Raises:
-            NexusFileNotFoundError: If content does not exist.
+            NexusFileNotFoundError: If content does not exist locally.
             BackendError: If read operation fails.
         """
         ...
 
     @abstractmethod
-    def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
-        """Delete content by hash.
+    def delete_content(self, content_id: str, context: OperationContext | None = None) -> None:
+        """Delete content by identifier.
 
-        Decrements reference count. Only deletes actual data when the
-        reference count reaches zero.
+        Addressing-agnostic: CAS backends may defer actual deletion until
+        garbage collection; PAS backends delete the blob at the given path.
 
         Args:
-            content_hash: SHA-256 hash as hex string.
+            content_id: Opaque content identifier.
             context: Operation context (optional).
 
         Raises:
@@ -129,11 +112,11 @@ class ObjectStoreABC(ABC):
         ...
 
     @abstractmethod
-    def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
+    def get_content_size(self, content_id: str, context: OperationContext | None = None) -> int:
         """Get content size in bytes.
 
         Args:
-            content_hash: SHA-256 hash as hex string.
+            content_id: Opaque content identifier.
             context: Operation context (optional).
 
         Returns:
@@ -146,9 +129,24 @@ class ObjectStoreABC(ABC):
 
     # === Streaming (concrete defaults) ===
 
+    @staticmethod
+    def _validate_stream_chunk_size(chunk_size: int) -> None:
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
+    @classmethod
+    def _validate_stream_range(cls, start: int, end: int, chunk_size: int) -> None:
+        if start < 0:
+            raise ValueError(f"start must be non-negative, got {start}")
+        if end < start:
+            raise ValueError(f"end ({end}) must be >= start ({start})")
+        cls._validate_stream_chunk_size(chunk_size)
+
     def write_stream(
         self,
         chunks: Iterator[bytes],
+        content_id: str = "",
+        *,
         context: OperationContext | None = None,
     ) -> WriteResult:
         """Write content from an iterator of chunks.
@@ -159,40 +157,42 @@ class ObjectStoreABC(ABC):
 
         Args:
             chunks: Iterator yielding byte chunks.
+            content_id: Target address (see ``write_content``).
             context: Operation context (optional).
 
         Returns:
-            ``WriteResult`` with ``content_hash`` and ``size``.
+            ``WriteResult`` with ``content_id``, ``version``, and ``size``.
         """
         content = b"".join(chunks)
-        return self.write_content(content, context=context)
+        return self.write_content(content, content_id, context=context)
 
     def stream_content(
         self,
-        content_hash: str,
+        content_id: str,
         chunk_size: int = 8192,
         context: OperationContext | None = None,
     ) -> Iterator[bytes]:
-        """Stream content by hash in chunks (generator).
+        """Stream content in chunks (generator).
 
         Default implementation reads the full content and yields slices.
         Backends with seekable storage should override for efficiency.
 
         Args:
-            content_hash: SHA-256 hash as hex string.
+            content_id: Opaque content identifier.
             chunk_size: Size of each chunk in bytes (default: 8 KiB).
             context: Operation context (optional).
 
         Yields:
             Chunks of file content.
         """
-        content = self.read_content(content_hash, context=context)
+        self._validate_stream_chunk_size(chunk_size)
+        content = self.read_content(content_id, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
     def stream_range(
         self,
-        content_hash: str,
+        content_id: str,
         start: int,
         end: int,
         chunk_size: int = 8192,
@@ -204,7 +204,7 @@ class ObjectStoreABC(ABC):
         with seekable storage should override for efficiency.
 
         Args:
-            content_hash: Content identifier (hash).
+            content_id: Opaque content identifier.
             start: First byte position (inclusive, 0-based).
             end: Last byte position (inclusive, 0-based).
             chunk_size: Size of each yielded chunk in bytes.
@@ -213,7 +213,8 @@ class ObjectStoreABC(ABC):
         Yields:
             Chunks covering the requested range.
         """
-        content = self.read_content(content_hash, context=context)
+        self._validate_stream_range(start, end, chunk_size)
+        content = self.read_content(content_id, context=context)
         sliced = content[start : end + 1]
         for i in range(0, len(sliced), chunk_size):
             yield sliced[i : i + chunk_size]
@@ -267,63 +268,99 @@ class ObjectStoreABC(ABC):
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: OperationContext | None = None,
         *,
         contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
-        """Read multiple content items by their hashes.
+        """Read multiple content items by their identifiers.
 
-        Default implementation calls ``read_content()`` for each hash.
+        Default implementation calls ``read_content()`` for each id.
         Backends should override for better performance (e.g. batch RPCs).
 
         Unlike ``read_content()``, missing content is indicated by
         ``None`` values in the result dict rather than raising.
 
         Args:
-            content_hashes: List of SHA-256 hashes.
+            content_ids: List of opaque content identifiers.
             context: Shared operation context (fallback).
-            contexts: Per-hash operation contexts mapping
-                ``content_hash -> OperationContext``.
+            contexts: Per-id operation contexts mapping
+                ``content_id -> OperationContext``.
 
         Returns:
-            Dict mapping ``content_hash -> bytes | None``.
+            Dict mapping ``content_id -> bytes | None``.
         """
         result: dict[str, bytes | None] = {}
-        for content_hash in content_hashes:
-            ctx = contexts.get(content_hash, context) if contexts else context
+        for content_id in content_ids:
+            ctx = contexts.get(content_id, context) if contexts else context
             try:
-                result[content_hash] = self.read_content(content_hash, context=ctx)
+                result[content_id] = self.read_content(content_id, context=ctx)
             except Exception:
-                result[content_hash] = None
+                result[content_id] = None
         return result
 
-    # === Capability Flags (concrete defaults, all False) ===
+    def batch_write_content(
+        self,
+        items: list[tuple[str, bytes]],
+        context: OperationContext | None = None,
+        *,
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, WriteResult | None]:
+        """Write multiple content items in a single batch.
 
-    @property
-    def user_scoped(self) -> bool:
-        """Whether this backend requires per-user credentials (OAuth-based)."""
-        return False
+        Default implementation calls ``write_content()`` for each item.
+        Backends should override for better performance (e.g. batch RPCs).
 
-    @property
-    def has_token_manager(self) -> bool:
-        """Whether this backend manages OAuth tokens."""
-        return False
+        Args:
+            items: List of ``(content_id, data)`` tuples. For CAS backends
+                content_id is ignored; for PAS backends it is the blob path.
+            context: Shared operation context (fallback).
+            contexts: Per-id operation contexts mapping
+                ``content_id -> OperationContext``.
 
-    @property
-    def supports_rename(self) -> bool:
-        """Whether this backend supports direct file rename/move."""
-        return False
+        Returns:
+            Dict mapping ``content_id -> WriteResult | None``.
+            ``None`` indicates a failed write for that item.
+        """
+        result: dict[str, WriteResult | None] = {}
+        for content_id, data in items:
+            ctx = contexts.get(content_id, context) if contexts else context
+            try:
+                result[content_id] = self.write_content(data, content_id, context=ctx)
+            except Exception:
+                result[content_id] = None
+        return result
 
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        """Whether this backend supports Rust-accelerated parallel mmap reads."""
-        return False
+    def batch_delete_content(
+        self,
+        content_ids: list[str],
+        context: OperationContext | None = None,
+        *,
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, bool]:
+        """Delete multiple content items in a single batch.
 
-    @property
-    def is_passthrough(self) -> bool:
-        """Whether this backend is a PassthroughBackend for same-box mode."""
-        return False
+        Default implementation calls ``delete_content()`` for each id.
+        Backends should override for better performance (e.g. batch RPCs).
+
+        Args:
+            content_ids: List of opaque content identifiers.
+            context: Shared operation context (fallback).
+            contexts: Per-id operation contexts mapping
+                ``content_id -> OperationContext``.
+
+        Returns:
+            Dict mapping ``content_id -> bool`` (True = deleted, False = failed).
+        """
+        result: dict[str, bool] = {}
+        for content_id in content_ids:
+            ctx = contexts.get(content_id, context) if contexts else context
+            try:
+                self.delete_content(content_id, context=ctx)
+                result[content_id] = True
+            except Exception:
+                result[content_id] = False
+        return result
 
     # === Lifecycle ===
 

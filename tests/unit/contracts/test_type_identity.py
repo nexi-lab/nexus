@@ -1,49 +1,13 @@
-"""Import path identity tests for contracts/ type promotions (Issue #2190).
+"""Import path identity tests for contracts/ type promotions (Issue #2190, #3230).
 
 Verifies that types imported from canonical (contracts/) and legacy (shim)
 paths resolve to the **same Python object** — ensuring isinstance checks,
 dict keys, pickling, etc. all work identically regardless of import path.
 """
 
+import pytest
 
-class TestLLMTypesIdentity:
-    """Verify nexus.contracts.llm_types ↔ nexus.bricks.llm identity."""
-
-    def test_message_identity(self) -> None:
-        from nexus.bricks.llm import Message as shim
-        from nexus.contracts.llm_types import Message as canonical
-
-        assert canonical is shim
-
-    def test_message_role_identity(self) -> None:
-        from nexus.bricks.llm import MessageRole as shim
-        from nexus.contracts.llm_types import MessageRole as canonical
-
-        assert canonical is shim
-
-    def test_content_type_identity(self) -> None:
-        from nexus.bricks.llm import ContentType as shim
-        from nexus.contracts.llm_types import ContentType as canonical
-
-        assert canonical is shim
-
-    def test_text_content_identity(self) -> None:
-        from nexus.bricks.llm import TextContent as shim
-        from nexus.contracts.llm_types import TextContent as canonical
-
-        assert canonical is shim
-
-    def test_image_content_identity(self) -> None:
-        from nexus.bricks.llm import ImageContent as shim
-        from nexus.contracts.llm_types import ImageContent as canonical
-
-        assert canonical is shim
-
-    def test_image_detail_identity(self) -> None:
-        from nexus.bricks.llm import ImageDetail as shim
-        from nexus.contracts.llm_types import ImageDetail as canonical
-
-        assert canonical is shim
+pytest.importorskip("pyroaring")
 
 
 class TestReBACTypesIdentity:
@@ -58,5 +22,21 @@ class TestReBACTypesIdentity:
     def test_wildcard_subject_identity(self) -> None:
         from nexus.bricks.rebac.domain import WILDCARD_SUBJECT as shim
         from nexus.contracts.rebac_types import WILDCARD_SUBJECT as canonical
+
+        assert canonical is shim
+
+
+class TestOAuthTypesIdentity:
+    """Verify nexus.contracts.oauth_types ↔ nexus.bricks.auth.oauth.config identity (#3230)."""
+
+    def test_oauth_config_identity(self) -> None:
+        from nexus.bricks.auth.oauth.config import OAuthConfig as shim
+        from nexus.contracts.oauth_types import OAuthConfig as canonical
+
+        assert canonical is shim
+
+    def test_oauth_provider_config_identity(self) -> None:
+        from nexus.bricks.auth.oauth.config import OAuthProviderConfig as shim
+        from nexus.contracts.oauth_types import OAuthProviderConfig as canonical
 
         assert canonical is shim

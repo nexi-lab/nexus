@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.services.protocols.zone_lifecycle import ZonePhase
-from nexus.services.zone_lifecycle import ZoneLifecycleService
+from nexus.contracts.protocols.zone_lifecycle import ZonePhase
+from nexus.services.lifecycle.zone_lifecycle import ZoneLifecycleService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -103,6 +103,25 @@ class TestWriteGating:
 # ---------------------------------------------------------------------------
 # Phase transitions
 # ---------------------------------------------------------------------------
+
+
+class TestReservedZoneGuard:
+    """Issue #3897: deprovisioning the default ROOT_ZONE_ID must be refused."""
+
+    @pytest.mark.asyncio
+    async def test_root_zone_deprovision_raises_value_error(self):
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        svc = ZoneLifecycleService(session_factory=_make_session_factory())
+        zone = _make_zone_model(zone_id=ROOT_ZONE_ID)
+        session = _make_session(zone)
+
+        with pytest.raises(ValueError, match=f"reserved zone {ROOT_ZONE_ID!r}"):
+            await svc.deprovision_zone(ROOT_ZONE_ID, session)
+
+        # Zone state untouched: phase remains Active, no commit attempted.
+        assert zone.phase == "Active"
+        session.commit.assert_not_called()
 
 
 class TestPhaseTransitions:
@@ -208,7 +227,7 @@ class TestPartialFailure:
         session = _make_session(zone)
 
         # Patch the timeout to be short for test
-        with patch("nexus.services.zone_lifecycle._FINALIZER_TIMEOUT_S", 0.01):
+        with patch("nexus.services.lifecycle.zone_lifecycle._FINALIZER_TIMEOUT_S", 0.01):
             result = await svc.deprovision_zone("test-zone", session)
 
         assert result.phase == ZonePhase.TERMINATING

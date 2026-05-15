@@ -6,7 +6,7 @@ explicit, structured degradation signals.  The server layer can map
 
 Usage:
     result = OperationResult(
-        value={"etag": "abc123", "version": 2},
+        value={"content_id": "abc123", "version": 2},
         warnings=(
             OperationWarning("degraded", "tiger_cache", "cache update failed"),
         ),

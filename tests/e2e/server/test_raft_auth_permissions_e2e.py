@@ -111,8 +111,8 @@ def db_auth_server(
             sys.executable,
             "-c",
             (
-                "from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                "from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}', "
                 "'--auth-type', 'database', '--init'])"
             ),
@@ -720,7 +720,8 @@ class TestLockApiAuth:
         resp = admin_client.delete(f"/api/v2/locks{path}?lock_id={lock_id}&force=true")
         assert resp.status_code == 200
 
-    def test_write_with_lock_via_rpc(self, admin_client: httpx.Client) -> None:
+    @pytest.mark.asyncio
+    async def test_write_with_lock_via_rpc(self, admin_client: httpx.Client) -> None:
         """Test write(lock=True) through the full RPC stack with auth (#1143).
 
         This exercises: HTTP → auth → RPC dispatch → WriteParams(lock=True)

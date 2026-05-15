@@ -9,14 +9,13 @@ Uses Nats-Msg-Id header for server-side deduplication.
 Optional dependency: ``pip install nexus-ai-fs[nats-export]``
 """
 
-from __future__ import annotations
-
-import json
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.file_events import FileEvent
+from nexus.services.event_bus.types import serialize_event
 
 if TYPE_CHECKING:
     from nexus.services.event_log.exporters.config import NatsExporterConfig
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 class NatsExporter:
     """NATS JetStream event stream exporter implementing EventStreamExporterProtocol."""
 
-    def __init__(self, config: NatsExporterConfig) -> None:
+    def __init__(self, config: "NatsExporterConfig") -> None:
         self._config = config
         self._nc: Any | None = None
         self._js: Any | None = None
@@ -79,26 +78,30 @@ class NatsExporter:
     async def publish(self, event: FileEvent) -> None:
         """Publish a single event to NATS JetStream."""
         js = await self._ensure_connection()
-        payload = json.dumps(event.to_dict()).encode("utf-8")
-        await js.publish(
-            self._subject(event),
-            payload,
-            headers={"Nats-Msg-Id": event.event_id},
-        )
+        payload = serialize_event(event)
+        send_timeout = getattr(self._config, "send_timeout", 10.0)
+        async with asyncio.timeout(send_timeout):
+            await js.publish(
+                self._subject(event),
+                payload,
+                headers={"Nats-Msg-Id": event.event_id},
+            )
 
     async def publish_batch(self, events: list[FileEvent]) -> list[str]:
         """Publish a batch of events to NATS JetStream."""
         js = await self._ensure_connection()
         failed_ids: list[str] = []
+        send_timeout = getattr(self._config, "send_timeout", 10.0)
 
         for event in events:
             try:
-                payload = json.dumps(event.to_dict()).encode("utf-8")
-                await js.publish(
-                    self._subject(event),
-                    payload,
-                    headers={"Nats-Msg-Id": event.event_id},
-                )
+                payload = serialize_event(event)
+                async with asyncio.timeout(send_timeout):
+                    await js.publish(
+                        self._subject(event),
+                        payload,
+                        headers={"Nats-Msg-Id": event.event_id},
+                    )
             except Exception:
                 logger.warning(
                     "NATS publish failed for event %s",

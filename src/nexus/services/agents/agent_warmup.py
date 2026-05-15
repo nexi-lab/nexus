@@ -24,18 +24,20 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from nexus.contracts.agent_types import AgentState
 from nexus.contracts.agent_warmup_types import (
     STANDARD_WARMUP,
     WarmupContext,
     WarmupResult,
     WarmupStep,
 )
-
-if TYPE_CHECKING:
-    from nexus.services.agents.agent_registry import AgentRegistry
+from nexus.contracts.process_types import (
+    AgentError,
+    AgentSignal,
+    AgentState,
+    InvalidTransitionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +62,13 @@ class AgentWarmupService:
 
     def __init__(
         self,
-        agent_registry: "AgentRegistry",
+        agent_registry: Any,
         namespace_manager: Any | None = None,
         enabled_bricks: frozenset[str] | None = None,
         cache_store: Any | None = None,
         mcp_config: dict[str, Any] | None = None,
     ) -> None:
-        self._registry = agent_registry
+        self._agent_registry = agent_registry
         self._namespace_manager = namespace_manager
         self._enabled_bricks = enabled_bricks or frozenset()
         self._cache_store = cache_store
@@ -122,7 +124,7 @@ class AgentWarmupService:
         start = time.monotonic()
 
         # Edge case 1: Verify agent exists
-        record = self._registry.get(agent_id)
+        record = self._agent_registry.get(agent_id)
         if record is None:
             return WarmupResult(
                 success=False,
@@ -132,13 +134,32 @@ class AgentWarmupService:
             )
 
         # Edge case 2: Already CONNECTED → skip (idempotent)
-        if record.state is AgentState.CONNECTED:
-            logger.info("[WARMUP] Agent %s already CONNECTED, skipping warmup", agent_id)
+        if record.state == AgentState.BUSY:
+            logger.info("[WARMUP] Agent %s already BUSY, skipping warmup", agent_id)
             return WarmupResult(
                 success=True,
                 agent_id=agent_id,
                 duration_ms=_elapsed_ms(start),
             )
+
+        if record.state == AgentState.REGISTERED:
+            try:
+                self._agent_registry.update_state(agent_id, AgentState.WARMING_UP.value)
+                record = self._agent_registry.get(agent_id)
+                if record is None:
+                    raise AgentError(f"agent {agent_id} disappeared during warmup")
+            except (InvalidTransitionError, AgentError) as exc:
+                logger.warning(
+                    "[WARMUP] Failed to transition agent %s into WARMING_UP: %s",
+                    agent_id,
+                    exc,
+                )
+                return WarmupResult(
+                    success=False,
+                    agent_id=agent_id,
+                    error=str(exc),
+                    duration_ms=_elapsed_ms(start),
+                )
 
         # Edge case 5: Empty step list → immediate transition
         if not steps:
@@ -148,7 +169,7 @@ class AgentWarmupService:
         ctx = WarmupContext(
             agent_id=agent_id,
             agent_record=record,
-            agent_registry=self._registry,
+            agent_registry=self._agent_registry,
             namespace_manager=self._namespace_manager,
             enabled_bricks=self._enabled_bricks,
             cache_store=self._cache_store,
@@ -254,13 +275,17 @@ class AgentWarmupService:
         - Agent unregistered during warmup (ValueError)
         - Concurrent warmup (StaleAgentError / InvalidTransitionError)
         """
-        from nexus.services.agents.agent_registry import InvalidTransitionError, StaleAgentError
-
         try:
-            self._registry.transition(
-                agent_id, AgentState.CONNECTED, expected_generation=expected_generation
-            )
-        except (ValueError, InvalidTransitionError, StaleAgentError) as exc:
+            # CAS check: verify generation hasn't changed
+            current = self._agent_registry.get(agent_id)
+            if current is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
+            if current.generation != expected_generation:
+                raise InvalidTransitionError(
+                    f"stale generation for {agent_id}: expected {expected_generation}, got {current.generation}"
+                )
+            self._agent_registry.signal(agent_id, AgentSignal.SIGCONT)
+        except (ValueError, InvalidTransitionError, AgentError) as exc:
             logger.warning("[WARMUP] Failed to transition agent %s to CONNECTED: %s", agent_id, exc)
             return WarmupResult(
                 success=False,

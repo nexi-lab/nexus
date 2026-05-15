@@ -128,8 +128,14 @@ def _get_require_auth() -> Any:
 
 
 def _get_workflow_engine(request: Request) -> Any:
-    """Get WorkflowEngine from app state (set by lifespan)."""
+    """Get WorkflowEngine from app state or NexusFS."""
     engine = getattr(request.app.state, "workflow_engine", None)
+    if not engine:
+        nx = getattr(request.app.state, "nexus_fs", None)
+        if nx is not None:
+            engine = getattr(nx, "_workflow_engine", None) or getattr(nx, "workflow_engine", None)
+        if engine:
+            request.app.state.workflow_engine = engine
     if not engine:
         raise HTTPException(status_code=503, detail="Workflow engine not available")
 

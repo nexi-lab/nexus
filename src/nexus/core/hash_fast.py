@@ -3,6 +3,8 @@
 This module provides BLAKE3 hashing for content-addressable storage,
 with ~3x speedup over SHA-256.
 
+# RUST_FALLBACK: hash_fast — hash_content, hash_content_smart have Rust equivalents in nexus_runtime.
+
 Usage:
     from nexus.core.hash_fast import hash_content, hash_content_smart
 
@@ -22,29 +24,22 @@ import hashlib
 import logging
 from typing import Any
 
+# RUST_FALLBACK: hash_content_py, hash_content_smart_py
+# Priority 1: Rust-accelerated BLAKE3
+from nexus._rust_compat import RUST_EXTENSION_INSTALLED as _RUST_EXT_INSTALLED
+from nexus._rust_compat import RUST_HASH_AVAILABLE, hash_content_py, hash_content_smart_py
+
 logger = logging.getLogger(__name__)
 
 # --- Backend availability detection ---
 
-_RUST_AVAILABLE = False
 _PYTHON_BLAKE3_AVAILABLE = False
 _python_blake3: Any = None
-_rust_hash_content: Any = None
-_rust_hash_content_smart: Any = None
 
-# Priority 1: Rust-accelerated BLAKE3
-try:
-    from nexus_fast import hash_content_py, hash_content_smart_py
-
-    _rust_hash_content = hash_content_py
-    _rust_hash_content_smart = hash_content_smart_py
-    _RUST_AVAILABLE = True
-    logger.debug("Using Rust BLAKE3 acceleration")
-except (ImportError, AttributeError):
-    logger.warning(
-        "Rust BLAKE3 extension not available — falling back to Python blake3. "
-        "Install with: pip install nexus-ai-fs[rust] or maturin develop --release"
-    )
+_rust_hash_content: Any = hash_content_py
+_rust_hash_content_smart: Any = hash_content_smart_py
+# Uses capability-group flag — hash stays on Rust even if unrelated groups are stale
+_RUST_AVAILABLE = RUST_HASH_AVAILABLE
 
 # Priority 2: Python blake3 package (Issue #582, #833)
 try:
@@ -84,6 +79,18 @@ def hash_content(content: bytes) -> str:
         result = _python_blake3.blake3(content).hexdigest()
         return result
 
+    # If nexus_runtime was detected at all (even degraded), refuse SHA-256.
+    # A stale Rust extension with incomplete hash support must not silently
+    # produce incompatible content IDs — fail closed instead.
+    if _RUST_EXT_INSTALLED:
+        raise RuntimeError(
+            "nexus_runtime is installed but BLAKE3 hashing is unavailable (stale build?). "
+            "Rebuild with: pip install -e rust/nexus_pyo3  — or: pip install blake3"
+        )
+    logger.warning(
+        "BLAKE3 unavailable — using SHA-256 fallback. "
+        "Hashes will be INCOMPATIBLE with BLAKE3 nodes. Install: pip install blake3"
+    )
     return hashlib.sha256(content).hexdigest()
 
 
@@ -131,6 +138,13 @@ def hash_content_smart(content: bytes) -> str:
         result = blake3_hasher.hexdigest()
         return result
 
+    # Fail closed under version skew — same guard as hash_content().
+    if _RUST_EXT_INSTALLED:
+        raise RuntimeError(
+            "nexus_runtime is installed but BLAKE3 hashing is unavailable (stale build?). "
+            "Rebuild with: pip install -e rust/nexus_pyo3  — or: pip install blake3"
+        )
+
     # SHA-256 fallback (WARNING: incompatible hashes!)
     if len(content) < threshold:
         return hashlib.sha256(content).hexdigest()
@@ -168,15 +182,34 @@ def get_hash_backend() -> str:
         return "sha256"
 
 
+class _RustOnePassHasher:
+    """Accumulate chunks, then delegate to Rust BLAKE3 one-shot on finalize.
+
+    Used when only the Rust backend is available (no Python blake3 package).
+    Ensures streaming writes produce the same hash as hash_content().
+    """
+
+    __slots__ = ("_chunks",)
+
+    def __init__(self) -> None:
+        self._chunks: list[bytes] = []
+
+    def update(self, data: bytes) -> None:
+        self._chunks.append(data)
+
+    def hexdigest(self) -> str:
+        return hash_content(b"".join(self._chunks))
+
+
 def create_hasher() -> Any:
     """Create an incremental hasher for streaming content.
 
     Returns a hasher object with .update(chunk) and .hexdigest() methods.
-    Uses Python blake3 if available, otherwise SHA-256.
 
-    NOTE: This always uses the Python blake3 or SHA-256 backend.
-    The Rust backend is only available for one-shot hashing via
-    hash_content() and hash_content_smart().
+    Backend priority (matches hash_content() to avoid hash mismatches):
+        1. Python blake3 (incremental, consistent with Rust BLAKE3)
+        2. Rust BLAKE3 via accumulate-then-hash wrapper
+        3. SHA-256 (last resort)
 
     Example:
         >>> hasher = create_hasher()
@@ -186,5 +219,12 @@ def create_hasher() -> Any:
     """
     if _PYTHON_BLAKE3_AVAILABLE:
         return _python_blake3.blake3()
-    else:
-        return hashlib.sha256()
+    if _RUST_AVAILABLE:
+        return _RustOnePassHasher()
+    # Fail closed: stale nexus_runtime must not silently produce SHA-256 CAS blobs.
+    if _RUST_EXT_INSTALLED:
+        raise RuntimeError(
+            "nexus_runtime is installed but BLAKE3 hashing is unavailable (stale build?). "
+            "Rebuild with: pip install -e rust/nexus_pyo3  — or: pip install blake3"
+        )
+    return hashlib.sha256()

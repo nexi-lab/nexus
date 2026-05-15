@@ -1,6 +1,7 @@
 """Agent spec/status/warmup REST API endpoints (Issues #2169, #2172).
 
 Provides:
+- GET  /api/v2/agents                    - List agents in zone
 - GET  /api/v2/agents/{agent_id}/status  - Computed agent status
 - PUT  /api/v2/agents/{agent_id}/spec    - Set agent spec
 - GET  /api/v2/agents/{agent_id}/spec    - Get agent spec
@@ -12,15 +13,70 @@ Note: This module intentionally does NOT use ``from __future__ import annotation
 because FastAPI uses ``eval_str=True`` on dependency signatures at import time.
 """
 
+import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from nexus.server.api.v2.dependencies import _get_require_auth
+from nexus.server.dependencies import get_operation_context
 
 logger = logging.getLogger(__name__)
+
+
+# `agent_registry.get(...)` returns a `nexus_runtime.AgentDescriptor`
+# pyclass in production (epoch-ms ints, dict-shaped external_info), but
+# unit tests fixture the older Python `AgentDescriptor` dataclass
+# (datetimes, dataclass-shaped external_info).  These helpers duck-type
+# both shapes so the endpoint stays single-source-of-truth at the
+# router and the test fixtures don't need to construct a pyclass.
+
+
+def _descriptor_updated_at_iso(desc: Any) -> str:
+    from datetime import UTC, datetime
+
+    ms = getattr(desc, "updated_at_ms", None)
+    if ms is not None:
+        return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
+    updated_at = desc.updated_at
+    return updated_at.isoformat() if updated_at else ""
+
+
+def _descriptor_last_heartbeat_iso(desc: Any) -> str | None:
+    from datetime import UTC, datetime
+
+    ext = desc.external_info
+    if ext is None:
+        return None
+    if isinstance(ext, dict):
+        ms = ext.get("last_heartbeat_ms")
+        return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat() if ms else None
+    last_hb = getattr(ext, "last_heartbeat", None)
+    return last_hb.isoformat() if last_hb else None
+
+
+def _descriptor_connection_id(desc: Any) -> str | None:
+    ext = desc.external_info
+    if ext is None:
+        return None
+    if isinstance(ext, dict):
+        return ext.get("connection_id")
+    return getattr(ext, "connection_id", None)
+
+
+def _authorize_agent_access(auth_result: dict, agent_id: str, action: str = "access") -> None:
+    """Verify caller is authorized to act on this agent."""
+    ctx = get_operation_context(auth_result)
+    if ctx.is_admin:
+        return
+    if ctx.subject_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not authorized to {action} agent '{agent_id}'",
+        )
+
 
 router = APIRouter(tags=["agents"])
 
@@ -119,6 +175,26 @@ class WarmupResponse(BaseModel):
     duration_ms: float = 0.0
 
 
+class AgentListItem(BaseModel):
+    """Summary of an agent for list responses."""
+
+    agent_id: str
+    owner_id: str
+    zone_id: str | None
+    name: str | None
+    state: str
+    generation: int
+
+
+class AgentListResponse(BaseModel):
+    """Paginated agent list response."""
+
+    agents: list[AgentListItem]
+    total: int
+    limit: int
+    offset: int
+
+
 # ---------------------------------------------------------------------------
 # Helpers (DRY fix — Issue #2172)
 # ---------------------------------------------------------------------------
@@ -155,17 +231,144 @@ def _spec_to_response(stored: Any) -> AgentSpecResponse:
 # ---------------------------------------------------------------------------
 
 
-async def _get_async_agent_registry(request: Request) -> Any:
-    """Get AsyncAgentRegistry from app state."""
-    registry = getattr(request.app.state, "async_agent_registry", None)
-    if registry is None:
-        raise HTTPException(status_code=503, detail="Agent registry not available")
-    return registry
+async def _get_agent_registry(request: Request) -> Any:
+    """Get AgentRegistry from app state (optional — may be None)."""
+    return getattr(request.app.state, "agent_registry", None)
+
+
+async def _require_agent_registry(request: Request) -> Any:
+    """Get AgentRegistry, raising 503 if unavailable."""
+    pt = getattr(request.app.state, "agent_registry", None)
+    if pt is None:
+        raise HTTPException(status_code=503, detail="AgentRegistry not available")
+    return pt
+
+
+async def _get_nexus_fs(request: Request) -> Any:
+    """Get NexusFS from app state (optional — may be None)."""
+    return getattr(request.app.state, "nexus_fs", None)
+
+
+async def _get_vfs(request: Request) -> Any:
+    """Get VFS (NexusFS) from app state."""
+    vfs = getattr(request.app.state, "nexus_fs", None)
+    if vfs is None:
+        raise HTTPException(status_code=503, detail="VFS not available")
+    return vfs
 
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/api/v2/agents",
+    response_model=AgentListResponse,
+    summary="List agents in zone",
+    description="Returns a paginated list of agents registered in the specified zone.",
+)
+async def list_agents(
+    zone_id: str = Query(default="root", description="Zone to list agents from"),
+    limit: int = Query(default=50, ge=1, le=200, description="Max agents to return"),
+    offset: int = Query(default=0, ge=0, description="Agents to skip"),
+    _auth: dict = Depends(_get_require_auth()),
+    agent_registry: Any = Depends(_get_agent_registry),
+    nexus_fs: Any = Depends(_get_nexus_fs),
+) -> AgentListResponse:
+    """List agents in a zone with pagination.
+
+    Merges two sources:
+    - AgentRegistry: currently running agents (in-memory)
+    - Database: registered agent identities (APIKeyModel with subject_type=agent)
+
+    Running agents show their live state; registered-but-not-running agents
+    show as "registered".
+    """
+    # 1. Running agents from AgentRegistry (if available)
+    #    Use connection_id (real agent name) as key when available,
+    #    so delegation-created workers show as "researcher" not "35c2c87cb31d"
+    running_map: dict[str, Any] = {}
+    if agent_registry is not None:
+        for a in agent_registry.list_processes(zone_id=zone_id):
+            ext_conn = _descriptor_connection_id(a)
+            agent_id = ext_conn if ext_conn else a.pid
+            running_map[agent_id] = AgentListItem(
+                agent_id=agent_id,
+                owner_id=a.owner_id,
+                zone_id=a.zone_id,
+                name=a.name,
+                state=str(a.state),
+                generation=a.generation,
+            )
+
+    # 2. Registered agents from API key database (best-effort)
+    #    Cross-reference with delegation_records to distinguish top-level
+    #    registered agents from delegation-created workers.
+    try:
+        session_factory = getattr(nexus_fs, "SessionLocal", None) if nexus_fs else None
+        if session_factory is not None:
+            from sqlalchemy import select
+
+            from nexus.storage.models.agents import DelegationRecordModel
+            from nexus.storage.models.auth import APIKeyModel
+
+            session = session_factory()
+            try:
+                # Find all delegated worker agent IDs
+                delegated_ids: set[str] = set()
+                try:
+                    deleg_rows = session.scalars(
+                        select(DelegationRecordModel.agent_id).where(
+                            DelegationRecordModel.status == "active"
+                        )
+                    ).all()
+                    delegated_ids = set(deleg_rows)
+                except Exception:
+                    pass
+
+                # #3871 round 6: filter via api_key_zones junction so the
+                # zone_id query parameter actually scopes the listing. Pre-#3871
+                # this used APIKeyModel.zone_id, which is now NULL for keys
+                # minted post-Phase 2 — that allowed cross-zone leakage where
+                # an agent in 'ops' could be listed under '?zone_id=eng'.
+                from nexus.storage.models.auth import APIKeyZoneModel
+
+                rows = session.execute(
+                    select(APIKeyModel, APIKeyZoneModel.zone_id)
+                    .join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
+                    .where(
+                        APIKeyModel.subject_type == "agent",
+                        APIKeyModel.revoked == 0,
+                        APIKeyZoneModel.zone_id == zone_id,
+                    )
+                ).all()
+                for key, key_zone_id in rows:
+                    aid = key.subject_id
+                    if aid and aid not in running_map:
+                        state = "delegated" if aid in delegated_ids else "registered"
+                        running_map[aid] = AgentListItem(
+                            agent_id=aid,
+                            owner_id=key.user_id or "",
+                            zone_id=key_zone_id,
+                            name=key.name or aid,
+                            state=state,
+                            generation=0,
+                        )
+            finally:
+                session.close()
+    except Exception:
+        logger.debug("Could not fetch registered agents from database", exc_info=True)
+
+    all_agents = sorted(running_map.values(), key=lambda a: a.agent_id)
+    total = len(all_agents)
+    page = all_agents[offset : offset + limit]
+    return AgentListResponse(
+        agents=page,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(
@@ -180,37 +383,24 @@ async def _get_async_agent_registry(request: Request) -> Any:
 )
 async def get_agent_status(
     agent_id: str,
-    _auth: dict = Depends(_get_require_auth()),
-    registry: Any = Depends(_get_async_agent_registry),
+    auth_result: dict = Depends(_get_require_auth()),
+    agent_registry: Any = Depends(_require_agent_registry),
 ) -> AgentStatusResponse:
     """Get computed status for an agent."""
-    status = await registry.get_status(agent_id)
-    if status is None:
+    _authorize_agent_access(auth_result, agent_id, "read status of")
+    desc = agent_registry.get(agent_id)
+    if desc is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
     return AgentStatusResponse(
-        phase=str(status.phase),
-        observed_generation=status.observed_generation,
-        conditions=[
-            AgentConditionModel(
-                type=c.type,
-                status=c.status,
-                reason=c.reason,
-                message=c.message,
-                last_transition=c.last_transition.isoformat(),
-                observed_generation=c.observed_generation,
-            )
-            for c in status.conditions
-        ],
-        resource_usage=AgentResourceUsageModel(
-            tokens_used=status.resource_usage.tokens_used,
-            storage_used_mb=status.resource_usage.storage_used_mb,
-            context_usage_pct=status.resource_usage.context_usage_pct,
-        ),
-        last_heartbeat=status.last_heartbeat.isoformat() if status.last_heartbeat else None,
-        last_activity=status.last_activity.isoformat() if status.last_activity else None,
-        inbox_depth=status.inbox_depth,
-        context_usage_pct=status.context_usage_pct,
+        phase=str(desc.state),
+        observed_generation=desc.generation,
+        conditions=[],
+        resource_usage=AgentResourceUsageModel(),
+        last_heartbeat=_descriptor_last_heartbeat_iso(desc),
+        last_activity=_descriptor_updated_at_iso(desc),
+        inbox_depth=0,
+        context_usage_pct=0.0,
     )
 
 
@@ -226,46 +416,47 @@ async def get_agent_status(
 async def set_agent_spec(
     agent_id: str,
     body: AgentSpecRequest,
-    _auth: dict = Depends(_get_require_auth()),
-    registry: Any = Depends(_get_async_agent_registry),
+    auth_result: dict = Depends(_get_require_auth()),
+    agent_registry: Any = Depends(_require_agent_registry),
+    vfs: Any = Depends(_get_vfs),
 ) -> AgentSpecResponse:
     """Set the desired state spec for an agent."""
-    from nexus.contracts.agent_types import AgentResources, AgentSpec, QoSClass
+    _authorize_agent_access(auth_result, agent_id, "set spec for")
 
+    desc = agent_registry.get(agent_id)
+    if desc is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+    import json as _json
+
+    from nexus.contracts.types import parse_operation_context
+
+    spec_data = body.model_dump()
+    # Increment spec_generation
+    spec_path = f"/{desc.zone_id}/agents/{agent_id}/settings.json"
+    existing_gen = 0
     try:
-        qos = QoSClass(body.qos_class)
-    except ValueError:
-        valid = [e.value for e in QoSClass]
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid qos_class {body.qos_class!r}. Valid: {', '.join(valid)}",
-        ) from None
+        ctx = parse_operation_context(None)
+        raw = await asyncio.to_thread(vfs.sys_read, spec_path, context=ctx)
+        if raw:
+            existing = _json.loads(raw if isinstance(raw, str) else raw.decode())
+            existing_gen = existing.get("spec_generation", 0)
+    except Exception:
+        pass
+    spec_data["spec_generation"] = existing_gen + 1
 
-    spec = AgentSpec(
+    ctx = parse_operation_context(None)
+    vfs.write(spec_path, _json.dumps(spec_data).encode(), context=ctx)
+
+    return AgentSpecResponse(
         agent_type=body.agent_type,
-        capabilities=frozenset(body.capabilities),
-        resource_requests=AgentResources(
-            token_budget=body.resource_requests.token_budget,
-            token_request=body.resource_requests.token_request,
-            storage_limit_mb=body.resource_requests.storage_limit_mb,
-            context_limit=body.resource_requests.context_limit,
-        ),
-        resource_limits=AgentResources(
-            token_budget=body.resource_limits.token_budget,
-            token_request=body.resource_limits.token_request,
-            storage_limit_mb=body.resource_limits.storage_limit_mb,
-            context_limit=body.resource_limits.context_limit,
-        ),
-        qos_class=qos,
+        capabilities=sorted(body.capabilities),
+        resource_requests=body.resource_requests,
+        resource_limits=body.resource_limits,
+        qos_class=body.qos_class,
         zone_affinity=body.zone_affinity,
+        spec_generation=spec_data["spec_generation"],
     )
-
-    try:
-        stored = await registry.set_spec(agent_id, spec)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    return _spec_to_response(stored)
 
 
 @router.get(
@@ -276,15 +467,38 @@ async def set_agent_spec(
 )
 async def get_agent_spec(
     agent_id: str,
-    _auth: dict = Depends(_get_require_auth()),
-    registry: Any = Depends(_get_async_agent_registry),
+    auth_result: dict = Depends(_get_require_auth()),
+    agent_registry: Any = Depends(_require_agent_registry),
+    vfs: Any = Depends(_get_vfs),
 ) -> AgentSpecResponse:
     """Get the stored spec for an agent."""
-    stored = await registry.get_spec(agent_id)
-    if stored is None:
+    _authorize_agent_access(auth_result, agent_id, "read spec of")
+
+    desc = agent_registry.get(agent_id)
+    if desc is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' has no spec")
 
-    return _spec_to_response(stored)
+    import json as _json
+
+    from nexus.contracts.types import parse_operation_context
+
+    spec_path = f"/{desc.zone_id}/agents/{agent_id}/settings.json"
+    try:
+        ctx = parse_operation_context(None)
+        raw = await asyncio.to_thread(vfs.sys_read, spec_path, context=ctx)
+        data = _json.loads(raw if isinstance(raw, str) else raw.decode())
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' has no spec") from exc
+
+    return AgentSpecResponse(
+        agent_type=data.get("agent_type", "unknown"),
+        capabilities=sorted(data.get("capabilities", [])),
+        resource_requests=AgentResourcesModel(**data.get("resource_requests", {})),
+        resource_limits=AgentResourcesModel(**data.get("resource_limits", {})),
+        qos_class=data.get("qos_class", "standard"),
+        zone_affinity=data.get("zone_affinity"),
+        spec_generation=data.get("spec_generation", 0),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -313,10 +527,11 @@ async def _get_warmup_service(request: Request) -> Any:
 async def warmup_agent(
     agent_id: str,
     body: WarmupRequest | None = None,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     warmup_service: Any = Depends(_get_warmup_service),
 ) -> WarmupResponse:
     """Trigger agent warmup."""
+    _authorize_agent_access(auth_result, agent_id, "warm up")
     from datetime import timedelta
 
     from nexus.contracts.agent_warmup_types import WarmupStep
@@ -343,4 +558,76 @@ async def warmup_agent(
         failed_step=result.failed_step,
         error=result.error,
         duration_ms=result.duration_ms,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Agent permissions
+# ---------------------------------------------------------------------------
+
+
+class PermissionTuple(BaseModel):
+    """Single ReBAC permission tuple."""
+
+    relation: str
+    object_type: str
+    object_id: str
+    zone_id: str | None = None
+
+
+class AgentPermissionsResponse(BaseModel):
+    """Response listing an agent's permissions."""
+
+    agent_id: str
+    permissions: list[PermissionTuple]
+    total: int
+
+
+@router.get(
+    "/api/v2/agents/{agent_id}/permissions",
+    response_model=AgentPermissionsResponse,
+    summary="List agent permissions",
+    description="Returns ReBAC permission tuples for the specified agent.",
+)
+async def get_agent_permissions(
+    agent_id: str,
+    _auth: dict = Depends(_get_require_auth()),
+    nexus_fs: Any = Depends(_get_nexus_fs),
+) -> AgentPermissionsResponse:
+    """List ReBAC permission tuples for an agent."""
+    tuples: list[PermissionTuple] = []
+    try:
+        # Use ReBACManager directly (available on NexusFS via __getattr__ → _SERVICE_ALIASES)
+        session_factory = getattr(nexus_fs, "SessionLocal", None)
+        if session_factory is not None:
+            from sqlalchemy import select
+
+            from nexus.storage.models.permissions import ReBACTupleModel
+
+            session = session_factory()
+            try:
+                rows = session.scalars(
+                    select(ReBACTupleModel).where(
+                        ReBACTupleModel.subject_type == "agent",
+                        ReBACTupleModel.subject_id == agent_id,
+                    )
+                ).all()
+                for row in rows:
+                    tuples.append(
+                        PermissionTuple(
+                            relation=row.relation,
+                            object_type=row.object_type,
+                            object_id=row.object_id,
+                            zone_id=getattr(row, "zone_id", None),
+                        )
+                    )
+            finally:
+                session.close()
+    except Exception:
+        logger.debug("Could not fetch permissions for agent %s", agent_id, exc_info=True)
+
+    return AgentPermissionsResponse(
+        agent_id=agent_id,
+        permissions=tuples,
+        total=len(tuples),
     )

@@ -1,0 +1,2060 @@
+"""ContentMixin — content I/O operations (sys_read, sys_write, Tier 2 read/write).
+
+Extracts all file content read/write methods from NexusFS. Depends on
+InternalMixin (context helpers, .readme overlay, _dispatch_write_events)
+and DispatchMixin (resolve_read, resolve_write, resolve_delete) via MRO.
+
+Mixin rules (Phase 6 established):
+  • ``from __future__ import annotations`` + TYPE_CHECKING stubs
+  • Single stub: ``_kernel: Any`` — other NexusFS attrs accessed via MRO
+  • Listed BEFORE NexusFilesystemABC in MRO
+  • @rpc_expose decorators stay on mixin methods
+  • No new ``type: ignore``
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import (
+    ConflictError,
+    NexusFileNotFoundError,
+)
+from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.types import OperationContext
+from nexus.lib import io_metrics
+from nexus.lib.rpc_decorator import rpc_expose
+
+if TYPE_CHECKING:
+    pass
+
+logger = logging.getLogger(__name__)
+
+
+def emit_op_completed(
+    *,
+    agent_id: str | None,
+    op: str,
+    path: str,
+    bytes_count: int,
+    latency_ms: int,
+    trace_id: str | None = None,
+) -> None:
+    """Emit an OP ActivityEvent for self-observability (issue #4081).
+
+    Called from dispatch post-hooks on success paths. Path predicates
+    and agent-id checks live in JsonlActivitySink; keep this helper
+    unconditional so other sinks (SQLite, etc.) get every record.
+    """
+    from nexus.contracts.protocols.activity import EventKind, Result, emit
+
+    emit(
+        kind=EventKind.OP,
+        result=Result.OK,
+        actor_agent=agent_id,
+        latency_ms=latency_ms,
+        trace_id=trace_id,
+        meta={"op": op, "path": path, "bytes": bytes_count},
+    )
+
+
+class ContentMixin:
+    """Content I/O: sys_read, sys_write, and Tier 2 convenience methods."""
+
+    _kernel: Any  # Rust Kernel
+    _zone_id: str
+    metadata: Any
+    _driver_coordinator: Any
+
+    # =================================================================
+    # Core VFS File Operations (Issue #899)
+    # =================================================================
+
+    # =========================================================================
+    # VFS I/O Lock — kernel-internal path-level read/write protection
+    # =========================================================================
+
+    # VFS I/O locking deleted — Rust kernel LockManager handles all I/O lock
+    # acquire/release internally in sys_read/sys_write/sys_copy/sys_unlink/sys_rename.
+    #
+    # Federation remote content fetch is now handled inside Rust `sys_read`
+    # (see `Kernel::try_remote_fetch` in rust/kernel/src/kernel.rs): when
+    # metadata exists but the local CAS blob doesn't, Rust parses the origin
+    # from `backend_name` and pulls the blob via `ZoneApiService.ReadBlob`
+    # (R20.18.7 co-located on the raft port).
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def sys_read(
+        self,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        timeout_ms: int | None = None,
+    ) -> bytes | dict[str, Any]:
+        """Read file content as bytes (POSIX pread(2)).
+
+        DT_REG / DT_PIPE return ``bytes``. DT_STREAM returns
+        ``{"data": bytes, "next_offset": int}`` so consumers can advance
+        their cursor without decoding the 4-byte LE frame header.
+
+        Rust Kernel.sys_read handles ALL entry types end-to-end (DT_REG,
+        DT_PIPE, DT_STREAM) including IPC blocking waits with timeout.
+
+        Args:
+            timeout_ms: For DT_PIPE / DT_STREAM, how long to block waiting
+                for data. ``0`` is O_NONBLOCK (nowait pop, return immediately
+                with empty data if pipe drained). Default ``None`` uses the
+                long-poll default (5000 ms). Hot polling loops MUST pass
+                ``timeout_ms=0`` to avoid blocking the asyncio event loop —
+                the Rust kernel's ``pipe_read_blocking`` releases the GIL
+                but a 5 s wait per empty poll still starves uvicorn's
+                accept loop. Issue #3699.
+        """
+
+        start = time.perf_counter()
+        try:
+            context = self._parse_context(context)
+            _handled, _resolve_hint = self.resolve_read(path, context=context)
+            if _handled:
+                content = _resolve_hint or b""
+                if offset or count is not None:
+                    content = (
+                        content[offset : offset + count] if count is not None else content[offset:]
+                    )
+                io_metrics.record_read(
+                    tier="virtual",
+                    bytes_read=len(content),
+                    latency_seconds=time.perf_counter() - start,
+                )
+                return content
+
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+
+            # ── KERNEL (Rust — pre-hooks + route + backend read + IPC blocking) ──
+            # Rust sys_read handles ALL entry types end-to-end:
+            #   DT_REG: backend read + federation remote fetch
+            #   DT_PIPE: nowait pop → blocking wait (timeout_ms)
+            #   DT_STREAM: offset read → blocking wait (timeout_ms)
+            #
+            # Slim-package mode: ``nexus-fs`` can ship without ``nexus_runtime``,
+            # in which case ``self._kernel`` is None.
+            if self._kernel is None:
+                raise NexusFileNotFoundError(path)
+            _rust_ctx = self._build_rust_ctx(context, _is_admin)
+            # DT_STREAM uses 30s timeout (long-poll); DT_PIPE uses 5s.
+            # The caller's `offset` param doubles as the stream cursor position.
+            # ``timeout_ms=0`` from the caller selects O_NONBLOCK (Issue #3699).
+            _timeout_ms = 5000 if timeout_ms is None else int(timeout_ms)
+            result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
+
+            # DT_STREAM: return dict with next_offset for cursor advancement.
+            # This is a Python API contract that callers depend on.
+            if result.entry_type == 4:  # DT_STREAM
+                payload = bytes(result.data) if result.data else b""
+                io_metrics.record_read(
+                    tier="backend",
+                    bytes_read=len(payload),
+                    latency_seconds=time.perf_counter() - start,
+                )
+                return {
+                    "data": payload,
+                    "next_offset": result.stream_next_offset or 0,
+                }
+
+            # DT_PIPE / DT_REG: return bytes.
+            data = result.data or b""
+
+            if offset or count is not None:
+                data = data[offset : offset + count] if count is not None else data[offset:]
+
+            # POST-INTERCEPT: hooks dispatched via Rust dispatch_post_hooks
+            zone_id, agent_id, _ = self._get_context_identity(context)
+            if result.post_hook_needed:
+                from nexus.contracts.vfs_hooks import ReadHookContext
+
+                _read_ctx = ReadHookContext(
+                    path=path,
+                    context=context,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    content=data,
+                    content_id=result.content_id,
+                )
+                self._kernel.dispatch_post_hooks("read", _read_ctx)
+                data = _read_ctx.content or data
+
+            _latency_ms = int((time.perf_counter() - start) * 1000)
+            emit_op_completed(
+                agent_id=agent_id,
+                op="read",
+                path=path,
+                bytes_count=len(data),
+                latency_ms=_latency_ms,
+            )
+            io_metrics.record_read(
+                tier="backend",
+                bytes_read=len(data),
+                latency_seconds=time.perf_counter() - start,
+            )
+            return data
+        except Exception:
+            io_metrics.record_read(
+                tier="error",
+                bytes_read=0,
+                latency_seconds=time.perf_counter() - start,
+            )
+            raise
+
+    @rpc_expose(description="Read multiple files in a single RPC call")
+    def read_bulk(
+        self,
+        paths: list[str],
+        context: OperationContext | None = None,
+        return_metadata: bool = False,
+        skip_errors: bool = True,
+    ) -> dict[str, bytes | dict[str, Any] | None]:
+        """
+        Read multiple files in a single RPC call for improved performance.
+
+        This method is optimized for bulk operations like grep, where many files
+        need to be read. It batches permission checks and reduces RPC overhead.
+
+        Args:
+            paths: List of virtual paths to read
+            context: Optional operation context for permission checks
+            return_metadata: If True, return dicts with content and metadata
+            skip_errors: If True, skip files that can't be read and return None.
+                        If False, raise exception on first error.
+
+        Returns:
+            Dict mapping path -> content (or None if skip_errors=True and read failed)
+            If return_metadata=False: {path: bytes}
+            If return_metadata=True: {path: {content, content_id, version, ...}}
+
+        Performance:
+            - Single RPC call instead of N calls
+            - Batch permission checks (one DB query instead of N)
+            - Reduced network round trips
+            - Expected speedup: 2-5x for 50+ files
+
+        Examples:
+            >>> # Read multiple files at once
+            >>> results = nx.read_bulk(["/file1.txt", "/file2.txt", "/file3.txt"])
+            >>> print(results["/file1.txt"])  # b'content'
+            >>> print(results["/file2.txt"])  # b'content' or None if failed
+
+            >>> # With metadata
+            >>> results = nx.read_bulk(["/file1.txt"], return_metadata=True)
+            >>> print(results["/file1.txt"]["content"])
+            >>> print(results["/file1.txt"]["content_id"])
+        """
+
+        bulk_start = time.time()
+        results: dict[str, bytes | dict[str, Any] | None] = {}
+
+        # Small-batch fast path: <=4 paths → sequential sys_read (no batch overhead).
+        # Avoids permission-check batching, metadata batching, and logging for tiny requests.
+        if len(paths) <= 4:
+            zone_id, agent_id, is_admin = self._get_context_identity(context)
+            _rust_ctx = self._build_rust_ctx(context, is_admin)
+            for path in paths:
+                try:
+                    result = self._kernel.sys_read(path, _rust_ctx)
+                    content = result.data or b""
+                    if return_metadata:
+                        stat = self._kernel.sys_stat(path, ROOT_ZONE_ID)
+                        results[path] = {
+                            "content": content,
+                            "content_id": stat["content_id"] if stat else None,
+                            "version": stat["version"] if stat else 0,
+                            "gen": stat.get("gen", 0) if stat else 0,
+                            "modified_at": stat["modified_at"] if stat else None,
+                            "size": len(content),
+                        }
+                    else:
+                        results[path] = content
+                except NexusFileNotFoundError:
+                    if skip_errors:
+                        results[path] = None
+                    else:
+                        raise
+                except Exception as e:
+                    logger.warning(
+                        "[READ-BULK] Failed to read %s: %s: %s", path, type(e).__name__, e
+                    )
+                    if skip_errors:
+                        results[path] = None
+                    else:
+                        raise
+            return results
+
+        # Batch permission check via shared helper (hook_count fast path).
+        perm_start = time.time()
+        try:
+            allowed_set = self._batch_permission_check(paths, context)
+        except Exception as e:
+            logger.error("[READ-BULK] Permission check failed: %s", e)
+            if not skip_errors:
+                raise
+            allowed_set = set()
+
+        perm_elapsed = time.time() - perm_start
+        logger.info(
+            f"[READ-BULK] Permission check: {len(allowed_set)}/{len(paths)} allowed in {perm_elapsed * 1000:.1f}ms"
+        )
+
+        # Mark denied files
+        for path in paths:
+            if path not in allowed_set:
+                results[path] = None
+
+        # Read allowed files via Rust kernel sys_read (single path per call).
+        # Rust kernel handles: validate → route → dcache → metastore → backend read.
+        read_start = time.time()
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+
+        # Batch metadata lookup (needed for return_metadata=True)
+        batch_meta: dict[str, dict[str, Any] | None] | None = None
+        if return_metadata:
+            meta_start = time.time()
+            allowed_paths = list(allowed_set)
+            batch_meta = dict(
+                zip(
+                    allowed_paths,
+                    self._kernel.stat_batch(allowed_paths, ROOT_ZONE_ID),
+                    strict=True,
+                )
+            )
+            meta_elapsed = (time.time() - meta_start) * 1000
+            logger.info(
+                f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
+            )
+
+        for path in allowed_set:
+            try:
+                bulk_content: bytes | None = None
+                try:
+                    result = self._kernel.sys_read(path, _rust_ctx)
+                    bulk_content = result.data or b""
+                except NexusFileNotFoundError:
+                    bulk_content = None
+                if bulk_content is None:
+                    if skip_errors:
+                        results[path] = None
+                        continue
+                    raise NexusFileNotFoundError(path)
+                content = bulk_content
+                if return_metadata:
+                    assert batch_meta is not None
+                    stat = batch_meta.get(path)
+                    results[path] = {
+                        "content": bulk_content,
+                        "content_id": stat["content_id"] if stat else None,
+                        "version": stat["version"] if stat else 0,
+                        "gen": stat.get("gen", 0) if stat else 0,
+                        "modified_at": stat["modified_at"] if stat else None,
+                        "size": len(bulk_content),
+                    }
+                else:
+                    results[path] = bulk_content
+            except NexusFileNotFoundError:
+                if skip_errors:
+                    results[path] = None
+                else:
+                    raise
+            except Exception as e:
+                logger.warning("[READ-BULK] Failed to read %s: %s: %s", path, type(e).__name__, e)
+                if skip_errors:
+                    results[path] = None
+                else:
+                    raise
+
+        read_elapsed = time.time() - read_start
+        bulk_elapsed = time.time() - bulk_start
+
+        logger.info(
+            f"[READ-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
+            f"(perm={perm_elapsed * 1000:.0f}ms, read={read_elapsed * 1000:.0f}ms)"
+        )
+
+        return results
+
+    @rpc_expose(description="Read a byte range from a file")
+    def read_range(
+        self,
+        path: str,
+        start: int,
+        end: int,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """
+        Read a specific byte range from a file.
+
+        This method enables memory-efficient streaming by allowing clients to
+        fetch file content in chunks without loading the entire file into memory.
+
+        Args:
+            path: Virtual path to read
+            start: Start byte offset (inclusive, 0-indexed)
+            end: End byte offset (exclusive)
+            context: Optional operation context for permission checks
+
+        Returns:
+            bytes: Content from start to end (exclusive)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            BackendError: If read operation fails
+            AccessDeniedError: If access is denied
+            PermissionError: If user doesn't have read permission
+            ValueError: If start/end are invalid (negative, start > end, etc.)
+
+        Example:
+            >>> # Read first 1MB of a large file
+            >>> chunk = nx.read_range("/workspace/large.bin", 0, 1024 * 1024)
+
+            >>> # Stream a file in chunks
+            >>> offset = 0
+            >>> chunk_size = 65536
+            >>> while True:
+            ...     chunk = nx.read_range("/workspace/large.bin", offset, offset + chunk_size)
+            ...     if not chunk:
+            ...         break
+            ...     process(chunk)
+            ...     offset += len(chunk)
+        """
+        # Validate range parameters
+        if start < 0:
+            raise ValueError(f"start must be non-negative, got {start}")
+        if end < start:
+            raise ValueError(f"end ({end}) must be >= start ({start})")
+
+        path = self._validate_path(path)
+        context = self._parse_context(context)
+
+        # FAST PATH: check virtual path resolvers first
+        _handled, _resolve_hint = self.resolve_read(path, context=context)
+        if _handled:
+            return (_resolve_hint or b"")[start:end]
+
+        # Use Rust sys_read with offset/count for range reads
+        content = self.sys_read(path, count=end, offset=0, context=context)
+        # read_range targets DT_REG; the dict shape is DT_STREAM-only.
+        assert isinstance(content, bytes)
+        return content[start:end]
+
+    @rpc_expose(description="Stream file content in chunks")
+    def stream(
+        self, path: str, chunk_size: int = 65536, context: OperationContext | None = None
+    ) -> Any:
+        """
+        Stream file content in chunks without loading entire file into memory.
+
+        This is a memory-efficient alternative to read() for large files.
+        Yields chunks as an iterator, allowing processing of files larger than RAM.
+
+        Args:
+            path: Virtual path to stream
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Optional operation context for permission checks
+
+        Yields:
+            bytes: Chunks of file content
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            BackendError: If stream operation fails
+            AccessDeniedError: If access is denied
+            PermissionError: If user doesn't have read permission
+
+        Example:
+            >>> # Stream large file efficiently
+            >>> for chunk in nx.stream("/workspace/large_file.bin"):
+            ...     process(chunk)  # Memory usage = chunk_size, not file_size
+
+            >>> # Stream to output
+            >>> import sys
+            >>> for chunk in nx.stream("/workspace/video.mp4", chunk_size=1024*1024):  # 1MB chunks
+            ...     sys.stdout.buffer.write(chunk)
+        """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
+        path = self._validate_path(path)
+
+        # Route through sys_read — Rust handles pre-hooks, CAS, federation,
+        # external connector dispatch.  Chunked Rust reads are future work.
+        data = self.sys_read(path, context=context)
+        # stream() chunks DT_REG content; the dict shape is DT_STREAM-only.
+        assert isinstance(data, bytes)
+        for pos in range(0, len(data), chunk_size):
+            yield data[pos : pos + chunk_size]
+
+    @rpc_expose(description="Stream a byte range of file content")
+    def stream_range(
+        self,
+        path: str,
+        start: int,
+        end: int,
+        chunk_size: int = 65536,
+        context: OperationContext | None = None,
+    ) -> Any:
+        """Stream a byte range [start, end] of file content.
+
+        This is the kernel-level range streaming method.  HTTP routers use
+        this (via ``build_range_response``) to implement RFC 9110 Range
+        requests without bypassing the ObjectStore abstraction.
+
+        Args:
+            path: Virtual path to stream
+            start: Start byte offset (inclusive)
+            end: End byte offset (inclusive)
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Optional operation context for permission checks
+
+        Yields:
+            bytes: Chunks of file content within the requested range
+        """
+        if start < 0:
+            raise ValueError(f"start must be non-negative, got {start}")
+        if end < start:
+            raise ValueError(f"end ({end}) must be >= start ({start})")
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
+        path = self._validate_path(path)
+
+        # Route through sys_read with offset/count — Rust handles hooks,
+        # CAS routing, federation, external connectors.
+        data = self.sys_read(path, count=end - start + 1, offset=start, context=context)
+        # stream_range targets DT_REG; the dict shape is DT_STREAM-only.
+        assert isinstance(data, bytes)
+        for pos in range(0, len(data), chunk_size):
+            yield data[pos : pos + chunk_size]
+
+    @rpc_expose(description="Write file content from stream")
+    def write_stream(
+        self,
+        path: str,
+        chunks: Iterator[bytes],
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """
+        Write file content from an iterator of chunks.
+
+        This is a memory-efficient alternative to write() for large files.
+        Accepts chunks as an iterator, computing hash incrementally.
+
+        Args:
+            path: Virtual path to write
+            chunks: Iterator yielding byte chunks
+            context: Optional operation context for permission checks
+
+        Returns:
+            Dict with metadata about the written file:
+                - content_id: Content hash of the written content
+                - version: New version number
+                - modified_at: Modification timestamp
+                - size: File size in bytes
+
+        Raises:
+            InvalidPathError: If path is invalid
+            BackendError: If write operation fails
+            AccessDeniedError: If access is denied
+            PermissionError: If path is read-only or user doesn't have write permission
+
+        Example:
+            >>> # Stream large file without loading into memory
+            >>> def file_chunks(path, chunk_size=8192):
+            ...     with open(path, 'rb') as f:
+            ...         while chunk := f.read(chunk_size):
+            ...             yield chunk
+            >>> result = nx.write_stream("/workspace/large.bin", file_chunks("/tmp/large.bin"))
+        """
+        path = self._validate_path(path)
+
+        # Collect chunks and delegate to write() — Rust sys_write handles
+        # CAS, metastore, OBSERVE, hooks atomically.
+        data = b"".join(chunks)
+        return self.write(path, data, context=context)
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def sys_write(
+        self,
+        path: str,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Write content to a file (POSIX write(2)).
+
+        Thin async wrapper around Rust Kernel.sys_write (CAS I/O is pure Rust,
+        zero GIL). Metastore.put stays in Python [TRANSITIONAL] — migrates to
+        Rust metastore in PR 7.
+        """
+        _start = time.perf_counter()
+        # Normalize input
+        if isinstance(buf, str):
+            buf = buf.encode("utf-8")
+        if count is not None:
+            buf = buf[:count]
+
+        # [TRANSITIONAL] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
+        context = self._parse_context(context)
+
+        _handled, _result = self.resolve_write(path, buf, context=context)
+        if _handled:
+            base: dict[str, Any] = {"path": path, "bytes_written": len(buf)}
+            if isinstance(_result, dict):
+                base.update(_result)
+            return base
+
+        # ── KERNEL (pure Rust — DT_REG via CAS, DT_PIPE/DT_STREAM via IPC, zero GIL) ──
+        _is_admin = (
+            getattr(context, "is_admin", False)
+            if context is not None and not isinstance(context, dict)
+            else (context.get("is_admin", False) if isinstance(context, dict) else False)
+        )
+        _rust_ctx = self._build_rust_ctx(context, _is_admin)
+        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        if result.hit:
+            io_metrics.record_write_backend_rpc()
+
+        # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
+        if result.hit and result.post_hook_needed:
+            # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache.
+            # old_metadata fields come from Rust (dcache/metastore snapshot taken
+            # before the write) — no Python metadata.get() round-trip needed.
+            zone_id, agent_id, _ = self._get_context_identity(context)
+            _old_metadata: FileMetadata | None = None
+            if not result.is_new:
+                _mod_at = (
+                    datetime.fromtimestamp(result.old_modified_at_ms / 1000.0, UTC)
+                    if result.old_modified_at_ms is not None
+                    else None
+                )
+                _old_metadata = FileMetadata(
+                    path=path,
+                    size=result.old_size or 0,
+                    content_id=result.old_content_id,
+                    version=result.old_version or 1,
+                    gen=max(result.gen - 1, 0),
+                    modified_at=_mod_at,
+                )
+            from nexus.contracts.vfs_hooks import WriteHookContext
+
+            _ctx = context or OperationContext(user_id="anonymous", groups=[])
+            _meta_obj = FileMetadata(
+                path=path,
+                size=result.size,
+                content_id=result.content_id,
+                version=result.version,
+                gen=result.gen,
+                zone_id=zone_id,
+            )
+            self._kernel.dispatch_post_hooks(
+                "write",
+                WriteHookContext(
+                    path=path,
+                    content=buf,
+                    context=_ctx,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    is_new_file=result.is_new,
+                    content_id=result.content_id or "",
+                    metadata=_meta_obj,
+                    old_metadata=_old_metadata.to_dict() if _old_metadata else None,
+                    new_version=result.version,
+                ),
+            )
+
+        _write_latency_ms = int((time.perf_counter() - _start) * 1000)
+        if result.hit:
+            _, _write_agent_id, _ = self._get_context_identity(context)
+            emit_op_completed(
+                agent_id=_write_agent_id,
+                op="write",
+                path=path,
+                bytes_count=len(buf),
+                latency_ms=_write_latency_ms,
+            )
+        return {"path": path, "bytes_written": len(buf)}
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def read(
+        self,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        return_metadata: bool = False,
+    ) -> bytes | dict[str, Any]:
+        """Read with optional metadata (VFS convenience).
+
+        Composes sys_stat + sys_read.  POSIX pread semantics.
+
+        Args:
+            path: Virtual file path.
+            count: Max bytes to read (None = entire file).
+            offset: Byte offset to start reading from.
+            context: Operation context.
+            return_metadata: If True, return dict with content + metadata.
+
+        Returns:
+            bytes if return_metadata=False, else dict with content + metadata.
+        """
+        content = self.sys_read(path, count=count, offset=offset, context=context)
+
+        if not return_metadata:
+            return content
+
+        # Compose with sys_stat for metadata
+        meta_dict = self.sys_stat(path, context=context)
+        result: dict[str, Any] = {"content": content}
+        if meta_dict:
+            result.update(
+                {
+                    "content_id": meta_dict.get("content_id"),
+                    "version": meta_dict.get("version"),
+                    "gen": meta_dict.get("gen"),
+                    "modified_at": meta_dict.get("modified_at"),
+                    "size": len(content),
+                }
+            )
+        return result
+
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
+    def write(
+        self,
+        path: str,
+        buf: bytes | str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        ttl: float | None = None,
+    ) -> dict[str, Any]:
+        """Write with metadata return (Tier 2 convenience).
+
+        Thin wrapper over ``Kernel::sys_write`` (F2 C4). The kernel owns
+        routing, the VFS write lock, backend content write, metadata build,
+        per-mount metastore.put, and the OBSERVE dispatch. Python dispatches
+        INTERCEPT POST hooks and returns a metadata dict.
+
+        OCC (if_match, if_none_match) is NOT here — use ``lib.occ.occ_write()``
+        to compose OCC + write at the caller level (RPC handler, CLI, SDK).
+
+        Distributed locking is NOT here — use ``lock()``/``unlock()`` or
+        ``with locked(path)`` to compose locking at the caller level.
+        See Issue #1323.
+
+        Args:
+            path: Virtual file path.
+            buf: File content as bytes or str.
+            count: Max bytes to write (None = len(buf)).
+            offset: Byte offset for partial write (POSIX pwrite semantics).
+                0 (default) is a full-file write. >0 splices ``buf`` at
+                ``offset`` within the existing file; gap past EOF is
+                zero-filled. Threaded into ``Kernel::sys_write`` (R20.10).
+            context: Operation context.
+            ttl: TTL in seconds for ephemeral content (Issue #3405). Threaded
+                onto the context's ``ttl_seconds`` field; kernel hot path
+                picks it up if the mount supports TTL bucketing.
+
+        Returns:
+            Dict with metadata (content_id, version, modified_at, size).
+        """
+
+        if isinstance(buf, str):
+            buf = buf.encode("utf-8")
+        if count is not None:
+            buf = buf[:count]
+
+        # #4005 round-9: serialize same-path writes under the OCC per-path
+        # RLock so an edit(if_match=...) read-modify-write is atomic against
+        # plain writes too. Without this, a plain ``write`` committed
+        # between an edit's content_id check and its final write would
+        # silently lose the edit's intended state. RLock means OCC callers
+        # that already hold the lock pass through without deadlocking.
+        # NOTE: develop (#12f) dropped the explicit self._validate_path here
+        # — Rust kernel re-canonicalizes via path_utils.validate_path before
+        # sys_write. _occ_path_lock canonicalizes its own key internally
+        # (lib.occ._canonical_lock_key) so surface aliases hash identically.
+        from nexus.lib.occ import _occ_path_lock
+
+        with _occ_path_lock(path):
+            return self._write_locked(path, buf, offset=offset, context=context, ttl=ttl)
+
+    def _write_locked(
+        self,
+        path: str,
+        buf: bytes,
+        *,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        ttl: float | None = None,
+    ) -> dict[str, Any]:
+        """Inner write body — caller holds ``_occ_path_lock(path)``."""
+        # Issue #4081: capture timing for OP event emission. Mirrors sys_write.
+        _write_locked_start = time.perf_counter()
+
+        # PRE-DISPATCH: virtual path resolvers (e.g. /__sys__ writers).
+        _handled, _result = self.resolve_write(path, buf, context=context)
+        if _handled:
+            return _result
+
+        # Thread TTL into context (Issue #3405)
+        if ttl is not None and ttl > 0:
+            context = self._ensure_context_ttl(context, ttl)
+
+        # Route through Rust sys_write — handles create-on-write, backend I/O,
+        # metadata build+put, dcache update, and OBSERVE dispatch.
+        context = self._parse_context(context)
+        _is_admin = getattr(context, "is_admin", False) if context else False
+
+        # Issue #3786: zone_perms is not passed through the Rust boundary, so the
+        # Python PermissionHook receives a rebuilt OperationContext with empty zone_perms.
+        # Pre-check here using the original Python context (zone_perms intact) before
+        # crossing into Rust. Mirrors PermissionEnforcer logic: any non-root zone_perms
+        # grant on the token → use zone_perms as auth (covers both multi-zone and
+        # single-zone tokens; Codex Round 10 finding #1).
+        _zone_perms = getattr(context, "zone_perms", ()) if context else ()
+        _zone_perms_grants_write = False
+        # Only enforce zone_perms when the token explicitly grants named non-root zones.
+        # zone_perms=(("root","rw"),) is the OperationContext.__post_init__ default for
+        # root-zone/admin contexts — it signals "unrestricted" not "root-only".
+        _has_real_zone_perms = any(z != "root" for z, _ in _zone_perms) if _zone_perms else False
+        if _has_real_zone_perms and not _is_admin:
+            from nexus.contracts.exceptions import PermissionDeniedError
+
+            _path_zone: str | None = None
+            if path.startswith("/zone/"):
+                _parts = path[6:].split("/", 1)
+                if _parts:
+                    _path_zone = _parts[0]
+            if _path_zone and _path_zone != "root":
+                _allowed = False
+                for _zone, _perms in _zone_perms:
+                    if _zone == _path_zone:
+                        if "w" in _perms or "x" in _perms:
+                            _allowed = True
+                            _zone_perms_grants_write = True
+                        else:
+                            raise PermissionDeniedError(
+                                f"Access denied: zone {_path_zone!r} is read-only for this token",
+                                path=path,
+                            )
+                        break
+                if not _allowed:
+                    raise PermissionDeniedError(
+                        f"Access denied: zone {_path_zone!r} not in token's zone_perms allow-list",
+                        path=path,
+                    )
+
+        # When the pre-check above grants the write, we DO NOT escalate the
+        # context to admin.  The Python PermissionHook (which fires from
+        # inside Rust sys_write) receives a context with stripped zone_perms
+        # after the Rust→Python rebuild; the PermissionEnforcer's zone_perms
+        # fast-path (enforcer.py §"Issue #3786") resurrects them from the
+        # subject-keyed cache populated at authenticate_sync time and grants
+        # the write under the caller's real identity.
+        #
+        # An earlier revision forged is_admin=True + WRITE_ALL/MANAGE_ZONES
+        # here so the hook's admin bypass would short-circuit the cross-zone
+        # gate.  That worked but caused audit logs and POST hooks to attribute
+        # the write to a synthetic admin instead of the federation token's
+        # subject (Codex Round 2 flagged this).  Trusting the cache fast-path
+        # keeps the original caller identity intact end-to-end.
+        _ = _zone_perms_grants_write  # kept as a hook for future propagation work
+
+        _rust_ctx = self._build_rust_ctx(context, _is_admin)
+
+        # Tier 1 sys_write: Rust handles create-on-write (implicit create
+        # when offset==0 and entry absent), backend I/O, metadata build+put,
+        # dcache update, and OBSERVE dispatch.  Matches develop — Tier 2
+        # write() wraps sys_write with a redundant create-on-miss fallback
+        # that is never exercised under implicit-create and adds PyO3
+        # dispatch overhead on macOS CI (5× slower).
+        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        if result.hit:
+            io_metrics.record_write_backend_rpc()
+
+        # Reconstruct old_metadata from Rust result (atomic snapshot taken
+        # during write — no TOCTOU gap, no extra PyO3 round-trip).
+        _old_meta: FileMetadata | None = None
+        if not result.is_new:
+            _mod_at = (
+                datetime.fromtimestamp(result.old_modified_at_ms / 1000.0, UTC)
+                if result.old_modified_at_ms is not None
+                else None
+            )
+            _old_meta = FileMetadata(
+                path=path,
+                size=result.old_size or 0,
+                content_id=result.old_content_id,
+                version=result.old_version or 1,
+                gen=max(result.gen - 1, 0),
+                modified_at=_mod_at,
+            )
+
+        # POST-INTERCEPT hooks
+        zone_id, agent_id, _ = self._get_context_identity(context)
+        _ctx = context or OperationContext(user_id="anonymous", groups=[])
+        _cid = result.content_id or ""
+        from nexus.contracts.vfs_hooks import WriteHookContext
+
+        self._kernel.dispatch_post_hooks(
+            "write",
+            WriteHookContext(
+                path=path,
+                content=buf,
+                context=_ctx,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_new_file=result.is_new,
+                content_id=_cid,
+                metadata=FileMetadata(
+                    path=path,
+                    size=result.size,
+                    content_id=result.content_id,
+                    version=result.version,
+                    gen=result.gen,
+                    zone_id=zone_id,
+                ),
+                old_metadata=_old_meta.to_dict() if _old_meta else None,
+                new_version=result.version,
+            ),
+        )
+
+        # Issue #4081: emit OP event for self-observability. Only on hit
+        # (mirrors the io_metrics gate for sys_write — a miss is not a
+        # completed write).
+        if result.hit:
+            emit_op_completed(
+                agent_id=agent_id,
+                op="write",
+                path=path,
+                bytes_count=len(buf),
+                latency_ms=int((time.perf_counter() - _write_locked_start) * 1000),
+            )
+
+        return {
+            "content_id": _cid,
+            "version": result.version,
+            "gen": result.gen,
+            "modified_at": None,
+            "size": result.size,
+        }
+
+    # _write_internal + _write_content deleted — Rust sys_write handles:
+    # routing, VFS lock, backend write, metadata build+put, dcache update.
+    # write() and sys_write() call Rust kernel directly.
+
+    def atomic_update(
+        self,
+        path: str,
+        update_fn: Callable[[bytes], bytes],
+        context: OperationContext | None = None,
+        timeout: float = 30.0,
+        ttl: float = 30.0,
+    ) -> dict[str, Any]:
+        """Atomically read-modify-write a file with distributed locking.
+
+        This is the recommended API for concurrent file updates where you need
+        to read existing content, modify it, and write back atomically.
+
+        The operation:
+        1. Acquires distributed lock on the path
+        2. Reads current file content
+        3. Applies your update function
+        4. Writes modified content
+        5. Releases lock (even on failure)
+
+        For multiple operations within one lock, use ``with locked()`` instead.
+
+        Args:
+            path: Virtual path to update
+            update_fn: Function that transforms content (bytes -> bytes).
+                      Receives current file content, returns new content.
+            context: Operation context (optional)
+            timeout: Maximum time to wait for lock in seconds (default: 30.0)
+            ttl: Lock TTL in seconds (default: 30.0)
+
+        Returns:
+            Dict with metadata about the written file:
+                - content_id: Content hash of the new content
+                - version: New version number
+                - modified_at: Modification timestamp
+                - size: File size in bytes
+
+        Raises:
+            LockTimeout: If lock cannot be acquired within timeout
+            NexusFileNotFoundError: If file doesn't exist
+            BackendError: If read or write operation fails
+
+        Example:
+            >>> # Increment a counter atomically
+            >>> import json
+            >>> nx.atomic_update(
+            ...     "/counters/visits.json",
+            ...     lambda c: json.dumps({"count": json.loads(c)["count"] + 1}).encode()
+            ... )
+
+            >>> # Append to a log file atomically
+            >>> nx.atomic_update(
+            ...     "/logs/access.log",
+            ...     lambda c: c + b"New log entry\\n"
+            ... )
+
+            >>> # Update config safely across multiple agents
+            >>> nx.atomic_update(
+            ...     "/shared/config.json",
+            ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
+            ... )
+        """
+        lock_id = self.lock(path, timeout=timeout, ttl=ttl, context=context)
+        if lock_id is None:
+            from nexus.contracts.exceptions import LockTimeout
+
+            raise LockTimeout(path=path, timeout=timeout)
+        try:
+            content = self.sys_read(path, context=context)
+            new_content = update_fn(content)
+            return self.write(path, new_content, context=context)
+        finally:
+            self.unlock(lock_id, path, context=context)
+
+    def _write_buffer_flush_target(
+        self,
+        path: str | None = None,
+        zone_id: str | None = None,
+        context: OperationContext | None = None,
+    ) -> tuple[str | None, str]:
+        effective_path = self._validate_path(path) if path is not None else None
+        effective_zone = zone_id or self._zone_id
+
+        caller_zone, _, is_admin = self._get_context_identity(context)
+        zone_perms = self._context_zone_perms(context)
+        if caller_zone == ROOT_ZONE_ID and len(zone_perms) > 1 and not is_admin:
+            target_zone = self._embedded_zone(effective_path)
+            requested_zone = zone_id if zone_id and zone_id != self._zone_id else None
+            if target_zone and requested_zone and target_zone != requested_zone:
+                from nexus.contracts.exceptions import AccessDeniedError
+
+                raise AccessDeniedError(
+                    f"Path zone {target_zone!r} does not match requested zone {requested_zone!r}",
+                    effective_path,
+                )
+            target_zone = target_zone or requested_zone
+            if target_zone is None:
+                from nexus.contracts.exceptions import AccessDeniedError
+
+                raise AccessDeniedError(
+                    "Multi-zone write buffer flush requires zone_id or zone-scoped path",
+                    effective_path,
+                )
+            self._require_write_buffer_zone(context, target_zone)
+            from nexus.lib.zone_scoping import scope_single_path
+
+            prefix = f"/zone/{target_zone}"
+            effective_path = (
+                prefix
+                if effective_path is None
+                else scope_single_path(effective_path, prefix, target_zone)
+            )
+            effective_zone = self._zone_id
+            return effective_path, effective_zone
+
+        if caller_zone and caller_zone != ROOT_ZONE_ID:
+            self._require_write_buffer_zone(context, caller_zone)
+            from nexus.lib.zone_scoping import scope_single_path
+
+            prefix = f"/zone/{caller_zone}"
+            effective_path = (
+                prefix
+                if effective_path is None
+                else scope_single_path(effective_path, prefix, caller_zone)
+            )
+            effective_zone = self._zone_id
+
+        return effective_path, effective_zone
+
+    def _context_zone_perms(
+        self, context: OperationContext | dict | None
+    ) -> tuple[tuple[str, str], ...]:
+        if context is None:
+            context = self._resolve_cred(None)
+        raw = (
+            context.get("zone_perms", ())
+            if isinstance(context, dict)
+            else getattr(context, "zone_perms", ())
+        )
+        return tuple((str(zone), str(perms)) for zone, perms in raw or ())
+
+    def _require_write_buffer_zone(
+        self,
+        context: OperationContext | dict | None,
+        requested_zone: str,
+    ) -> None:
+        caller_zone, _, is_admin = self._get_context_identity(context)
+        if is_admin:
+            return
+        zone_perms = self._context_zone_perms(context)
+        if zone_perms:
+            for zone, perms in zone_perms:
+                if zone == requested_zone and ("w" in perms or "x" in perms):
+                    return
+            from nexus.contracts.exceptions import AccessDeniedError
+
+            raise AccessDeniedError(
+                f"Write buffer flush requires write access to zone {requested_zone!r}",
+            )
+        if caller_zone == requested_zone or (
+            caller_zone == ROOT_ZONE_ID and requested_zone == ROOT_ZONE_ID
+        ):
+            return
+        from nexus.contracts.exceptions import AccessDeniedError
+
+        raise AccessDeniedError(
+            f"Write buffer flush zone {requested_zone!r} is outside caller zone {caller_zone!r}",
+        )
+
+    @staticmethod
+    def _embedded_zone(path: str | None) -> str | None:
+        if path is None:
+            return None
+        if path.startswith("/zone/"):
+            tail = path.removeprefix("/zone/")
+            return tail.split("/", 1)[0] or None
+        if path.startswith("/tenant:"):
+            tail = path.removeprefix("/tenant:")
+            return tail.split("/", 1)[0] or None
+        return None
+
+    def flush_write_buffer(
+        self,
+        path: str | None = None,
+        zone_id: str | None = None,
+        *,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Force buffered kernel writes to backend/metastore."""
+        effective_path, effective_zone = self._write_buffer_flush_target(path, zone_id, context)
+        result = self._kernel.flush_write_buffer(effective_path, effective_zone)
+        return {
+            "flushed": int(getattr(result, "flushed", 0)),
+            "failed": int(getattr(result, "failed", 0)),
+            "errors": list(getattr(result, "errors", [])),
+        }
+
+    def fsync(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Flush buffered writes for one path."""
+        return self.flush_write_buffer(path, self._zone_id, context=context)
+
+    def sync(
+        self,
+        zone_id: str | None = None,
+        *,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Flush buffered writes for this filesystem zone."""
+        return self.flush_write_buffer(None, zone_id or self._zone_id, context=context)
+
+    @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
+    def append(
+        self,
+        path: str,
+        content: bytes | str,
+        *,
+        context: OperationContext | None = None,
+        if_match: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Append content to an existing file or create a new file if it doesn't exist.
+
+        This is an efficient way to add content to files without reading the entire
+        file separately, particularly useful for:
+        - Writing JSONL (JSON Lines) logs incrementally
+        - Appending to log files
+        - Building append-only data structures
+        - Streaming data collection
+
+        Args:
+            path: Virtual path to append to
+            content: Content to append as bytes or str (str will be UTF-8 encoded)
+            context: Optional operation context for permission checks (uses default if not provided)
+            if_match: Optional content_id for optimistic concurrency control.
+                     If provided, append only succeeds if current file content_id matches this value.
+                     Prevents concurrent modification conflicts.
+            force: If True, skip version check and append unconditionally (dangerous!)
+
+        Returns:
+            Dict with metadata about the written file:
+                - content_id: Content hash (SHA-256) of the final content (after append)
+                - version: New version number
+                - modified_at: Modification timestamp
+                - size: Final file size in bytes
+
+        Raises:
+            InvalidPathError: If path is invalid
+            BackendError: If append operation fails
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
+            PermissionError: If path is read-only or user doesn't have write permission
+            ConflictError: If if_match is provided and doesn't match current content_id
+            NexusFileNotFoundError: If file doesn't exist during read (should not happen in normal flow)
+
+        Examples:
+            >>> # Append to a log file
+            >>> nx.append("/workspace/app.log", "New log entry\\n")
+
+            >>> # Build JSONL file incrementally
+            >>> import json
+            >>> for record in records:
+            ...     line = json.dumps(record) + "\\n"
+            ...     nx.append("/workspace/data.jsonl", line)
+
+            >>> # Append with optimistic concurrency control
+            >>> result = nx.read("/workspace/log.txt", return_metadata=True)
+            >>> try:
+            ...     nx.append("/workspace/log.txt", "New entry\\n", if_match=result['content_id'])
+            ... except ConflictError:
+            ...     print("File was modified by another process!")
+
+            >>> # Create new file if doesn't exist
+            >>> nx.append("/workspace/new.txt", "First line\\n")
+        """
+        # Auto-convert str to bytes for convenience
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+
+        path = self._validate_path(path)
+
+        # #4005 round-10: append is read-modify-write — always serialize
+        # the whole sequence under the per-path OCC lock so a concurrent
+        # plain write or write_batch can't commit between our read and
+        # the final write. Inner write() reuses the same RLock so this is
+        # reentrant. Plain (no if_match, no force) appends still benefit:
+        # without the lock, two concurrent appends could both read the
+        # same pre-state and produce content that drops one append.
+        from nexus.lib.occ import _occ_path_lock
+
+        with _occ_path_lock(path):
+            # Try to read existing content if file exists
+            # For non-existent files, we'll create them (existing_content stays empty)
+            existing_content = b""
+            try:
+                result = self.read(path, context=context, return_metadata=True)
+                # Tier 2 read(return_metadata=True) always returns dict
+                assert isinstance(result, dict), "Expected dict when return_metadata=True"
+
+                existing_content = result["content"]
+
+                # If if_match is provided, verify it matches current content_id.
+                if if_match is not None and not force:
+                    current_content_id = result.get("content_id")
+                    if current_content_id != if_match:
+                        from nexus.contracts.exceptions import ConflictError
+
+                        raise ConflictError(
+                            path=path,
+                            expected_content_id=if_match,
+                            current_content_id=current_content_id or "(no content_id)",
+                        )
+            except Exception as e:
+                # If file doesn't exist, treat as empty (will create new file)
+                from nexus.contracts.exceptions import NexusFileNotFoundError
+
+                if not isinstance(e, NexusFileNotFoundError):
+                    # Re-raise unexpected errors (including PermissionError)
+                    raise
+                # For FileNotFoundError, continue with empty content
+                # write() will check if user has permission to create the file
+
+            # Combine existing content with new content
+            final_content = existing_content + content
+
+            # Use the existing write method (acquires the same RLock — reentrant).
+            return self.write(
+                path,
+                final_content,
+                context=context,
+            )
+
+    @rpc_expose(description="Apply surgical search/replace edits to a file")
+    def edit(
+        self,
+        path: str,
+        edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
+        *,
+        context: OperationContext | None = None,
+        if_match: str | None = None,
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Apply surgical search/replace edits to a file.
+
+        This enables precise file modifications without rewriting entire files,
+        reducing token cost and errors when used with LLMs.
+
+        Issue #800: Add edit engine with search/replace for surgical file edits.
+
+        Uses a layered matching strategy:
+        1. Exact match (fast path)
+        2. Whitespace-normalized match
+        3. Fuzzy match (Levenshtein similarity)
+
+        Args:
+            path: Virtual path to edit
+            edits: List of edit operations. Each edit can be:
+                - Tuple: (old_str, new_str) - simple search/replace
+                - Dict: {"old_str": str, "new_str": str, "hint_line": int | None,
+                         "allow_multiple": bool} - full control
+                - EditOperation: Direct EditOperation instance
+            context: Optional operation context for permission checks
+            if_match: Optional content_id for optimistic concurrency control.
+                If provided, edit fails if file changed since read.
+            fuzzy_threshold: Similarity threshold (0.0-1.0) for fuzzy matching.
+                Default 0.85. Use 1.0 for exact matching only.
+            preview: If True, return preview without writing. Default False.
+
+        Returns:
+            Dict containing:
+                - success: bool - True if all edits applied
+                - diff: str - Unified diff of changes
+                - matches: list[dict] - Info about each match (type, line, similarity)
+                - applied_count: int - Number of edits applied
+                - content_id: str - New content_id (if not preview)
+                - version: int - New version (if not preview)
+                - errors: list[str] - Error messages if any edits failed
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            AccessDeniedError: If access is denied
+            PermissionError: If path is read-only
+            ConflictError: If if_match doesn't match current content_id
+
+        Examples:
+            >>> # Simple search/replace
+            >>> result = nx.edit("/code/main.py", [
+            ...     ("def foo():", "def bar():"),
+            ...     ("return x", "return x + 1"),
+            ... ])
+            >>> print(result['diff'])
+
+            >>> # With optimistic concurrency
+            >>> content = nx.read("/code/main.py", return_metadata=True)
+            >>> result = nx.edit(
+            ...     "/code/main.py",
+            ...     [("old_text", "new_text")],
+            ...     if_match=content['content_id']
+            ... )
+
+            >>> # Preview without writing
+            >>> result = nx.edit("/code/main.py", edits, preview=True)
+            >>> if result['success']:
+            ...     print(result['diff'])
+
+            >>> # With fuzzy matching
+            >>> result = nx.edit("/code/main.py", [
+            ...     {"old_str": "def foo():", "new_str": "def bar():", "hint_line": 42}
+            ... ], fuzzy_threshold=0.8)
+        """
+
+        path = self._validate_path(path)
+
+        # #4005 round-8: serialize the if_match read-modify-write under the
+        # same per-path OCC lock occ_write_sync uses. Without this, a
+        # concurrent write could commit between our content_id check and
+        # the final write below, lost-updating the caller's intent.
+        # Plain edits (no if_match) skip the lock — same fast path as
+        # occ_write_sync.
+        if if_match is None:
+            return self._edit_locked(
+                path,
+                edits,
+                context=context,
+                if_match=if_match,
+                preview=preview,
+                fuzzy_threshold=fuzzy_threshold,
+            )
+
+        from nexus.lib.occ import _occ_path_lock
+
+        with _occ_path_lock(path):
+            return self._edit_locked(
+                path,
+                edits,
+                context=context,
+                if_match=if_match,
+                preview=preview,
+                fuzzy_threshold=fuzzy_threshold,
+            )
+
+    def _edit_locked(
+        self,
+        path: str,
+        edits: list,
+        *,
+        context: object | None = None,
+        if_match: str | None = None,
+        preview: bool = False,
+        fuzzy_threshold: float = 1.0,
+    ) -> dict:
+        """Inner edit body — caller holds ``_occ_path_lock(path)`` when if_match."""
+        from nexus.utils.edit_engine import EditEngine
+        from nexus.utils.edit_engine import EditOperation as EditOp
+
+        # Read current content with metadata (via Tier 2 convenience)
+        result = self.read(path, context=context, return_metadata=True)
+        assert isinstance(result, dict), "Expected dict when return_metadata=True"
+
+        content_bytes: bytes = result["content"]
+        current_content_id = result.get("content_id")
+
+        # Check content_id if provided (optimistic concurrency control)
+        if if_match is not None and current_content_id != if_match:
+            raise ConflictError(
+                path=path,
+                expected_content_id=if_match,
+                current_content_id=current_content_id or "(no content_id)",
+            )
+
+        # Decode content to string for editing
+        try:
+            content = content_bytes.decode("utf-8")
+        except UnicodeDecodeError as e:
+            return {
+                "success": False,
+                "diff": "",
+                "matches": [],
+                "applied_count": 0,
+                "errors": [f"File is not valid UTF-8 text: {e}"],
+            }
+
+        # Convert edits to EditOperation instances
+        edit_operations: list[EditOp] = []
+        for edit in edits:
+            if isinstance(edit, EditOp):
+                edit_operations.append(edit)
+            elif isinstance(edit, tuple | list) and len(edit) >= 2:
+                # Handle both tuple and list (JSON deserializes tuples as lists)
+                edit_operations.append(EditOp(old_str=edit[0], new_str=edit[1]))
+            elif isinstance(edit, dict):
+                edit_operations.append(
+                    EditOp(
+                        old_str=edit["old_str"],
+                        new_str=edit["new_str"],
+                        hint_line=edit.get("hint_line"),
+                        allow_multiple=edit.get("allow_multiple", False),
+                    )
+                )
+            else:
+                return {
+                    "success": False,
+                    "diff": "",
+                    "matches": [],
+                    "applied_count": 0,
+                    "errors": [
+                        f"Invalid edit format: expected tuple (old, new), dict, or EditOperation, got {type(edit)}"
+                    ],
+                }
+
+        # Apply edits
+        engine = EditEngine(
+            fuzzy_threshold=fuzzy_threshold,
+            enable_fuzzy=fuzzy_threshold < 1.0,
+        )
+        edit_result = engine.apply_edits(content, edit_operations)
+
+        # Convert matches to serializable dicts
+        matches_list = [
+            {
+                "edit_index": m.edit_index,
+                "match_type": m.match_type,
+                "similarity": m.similarity,
+                "line_start": m.line_start,
+                "line_end": m.line_end,
+                "original_text": m.original_text[:200] if m.original_text else "",
+                "search_strategy": m.search_strategy,
+                "match_count": m.match_count,
+            }
+            for m in edit_result.matches
+        ]
+
+        # If edits failed, return error without writing
+        if not edit_result.success:
+            return {
+                "success": False,
+                "diff": edit_result.diff,
+                "matches": matches_list,
+                "applied_count": edit_result.applied_count,
+                "errors": edit_result.errors,
+            }
+
+        # If preview mode, return without writing
+        if preview:
+            return {
+                "success": True,
+                "diff": edit_result.diff,
+                "matches": matches_list,
+                "applied_count": edit_result.applied_count,
+                "preview": True,
+                "new_content": edit_result.content,
+            }
+
+        # Write the edited content. OCC check already done above (line 3117-3123).
+        new_content_bytes = edit_result.content.encode("utf-8")
+        write_result = self.write(
+            path,
+            new_content_bytes,
+            context=context,
+        )
+
+        return {
+            "success": True,
+            "diff": edit_result.diff,
+            "matches": matches_list,
+            "applied_count": edit_result.applied_count,
+            "content_id": write_result.get("content_id"),
+            "version": write_result.get("version"),
+            "gen": write_result.get("gen"),
+            "size": write_result.get("size"),
+            "modified_at": write_result.get("modified_at"),
+        }
+
+    @rpc_expose(description="Write multiple files in a single transaction")
+    def write_batch(
+        self, files: list[tuple[str, bytes]], context: OperationContext | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Write multiple files in a single round-trip for improved performance.
+
+        This is 13x faster than calling write() multiple times for small files
+        because it uses a single database transaction instead of N transactions.
+
+        **Atomicity**: best-effort. For CAS backends (the common case) each file
+        is written independently via content-addressed storage, so a mid-batch
+        failure leaves already-written files on disk. No rollback or compensation
+        is performed. Callers that need true all-or-nothing semantics should use
+        separate write() calls inside an explicit transaction (if supported) or
+        implement idempotent retries using the returned content_ids.
+
+        Args:
+            files: List of (path, content) tuples to write
+            context: Optional operation context for permission checks (uses default if not provided)
+
+        Returns:
+            List of metadata dicts for each file (in same order as input):
+                - content_id: Content hash (SHA-256) of the written content
+                - version: New version number
+                - modified_at: Modification timestamp
+                - size: File size in bytes
+
+        Raises:
+            InvalidPathError: If any path is invalid
+            BackendError: If write operation fails
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
+            PermissionError: If any path is read-only or user doesn't have write permission
+
+        Examples:
+            >>> # Write 100 small files in a single batch (13x faster!)
+            >>> files = [(f"/logs/file_{i}.txt", b"log data") for i in range(100)]
+            >>> results = nx.write_batch(files)
+            >>> print(f"Wrote {len(results)} files")
+
+            >>> # Best-effort batch write (not all-or-nothing; see docstring)
+            >>> files = [
+            ...     ("/config/setting1.json", b'{"enabled": true}'),
+            ...     ("/config/setting2.json", b'{"timeout": 30}'),
+            ... ]
+            >>> nx.write_batch(files)
+        """
+        if not files:
+            return []
+
+        # Validate paths
+        validated_files: list[tuple[str, bytes]] = []
+        for path, content in files:
+            validated_path = self._validate_path(path)
+            validated_files.append((validated_path, content))
+
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        paths = [p for p, _ in validated_files]
+
+        # #4005 round-10: write_batch is a public mutation entrypoint and
+        # must participate in the same per-path OCC lock contract that
+        # write/edit use, otherwise a concurrent edit(if_match=...) on one
+        # of these paths can be silently overwritten between its
+        # content_id check and its final write. Acquire each unique path
+        # lock in deterministic sorted order to avoid lock-ordering
+        # deadlocks across concurrent batch writers, then run the batch
+        # body under all of them via ExitStack.
+        from contextlib import ExitStack
+
+        from nexus.lib.occ import _occ_path_lock
+
+        with ExitStack() as _stack:
+            for _p in sorted(set(paths)):
+                _stack.enter_context(_occ_path_lock(_p))
+            return self._write_batch_locked(
+                validated_files, paths, context, zone_id, agent_id, is_admin
+            )
+
+    def _write_batch_locked(
+        self,
+        validated_files: list[tuple[str, bytes]],
+        paths: list[str],
+        context: OperationContext | None,
+        zone_id: str | None,
+        agent_id: str | None,
+        is_admin: bool,
+    ) -> list[dict[str, Any]]:
+        """Inner write_batch body — caller holds _occ_path_lock for every path."""
+        # Get existing metadata for pre-hooks and is_new detection
+        existing_metadata = dict(
+            zip(paths, self._kernel.stat_batch(list(paths), ROOT_ZONE_ID), strict=True)
+        )
+
+        # PRE-INTERCEPT: pre-write hooks per file in batch
+        from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
+
+        for path in paths:
+            meta = existing_metadata.get(path)
+            self._kernel.dispatch_pre_hooks(
+                "write",
+                _WHC(
+                    path=path,
+                    content=b"",
+                    context=context,
+                    old_metadata=meta,
+                ),
+            )
+
+        # ── KERNEL: Rust batch write (validate + route + lock + write + metastore + dcache) ──
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        rust_results = self._kernel.sys_write_batch(validated_files, _rust_ctx)
+
+        now = datetime.now(UTC)
+        metadata_list: list[FileMetadata] = []
+        results: list[dict[str, Any]] = []
+
+        for i, (path, content) in enumerate(validated_files):
+            r = rust_results[i]
+            if r.hit:
+                io_metrics.record_write_backend_rpc()
+                results.append(
+                    {
+                        "content_id": r.content_id,
+                        "version": r.version,
+                        "gen": r.gen,
+                        "modified_at": now,
+                        "size": r.size,
+                    }
+                )
+                metadata_list.append(
+                    FileMetadata(
+                        path=path,
+                        size=r.size,
+                        content_id=r.content_id,
+                        version=r.version,
+                        gen=r.gen,
+                        zone_id=zone_id or ROOT_ZONE_ID,
+                    )
+                )
+            else:
+                # Fallback: Rust batch missed (new file — doesn't exist in
+                # metastore yet). Use Tier 2 self.write() which composes
+                # create-on-write + sys_write, so new files are created via
+                # route-scoped metastore put. The raw sys_write alone returns
+                # a miss (hit=false) without creating the file (POSIX write(2)
+                # contract: file must already exist).
+                #
+                # self.write() dispatches its own post-hooks for this single
+                # file — the batch post-hook below will also fire, but that
+                # is harmless (write_batch hooks expect per-item metadata
+                # that is already in metadata_list regardless).
+                wr = self.write(path, content, context=context)
+                results.append(
+                    {
+                        "content_id": wr.get("content_id", ""),
+                        "version": wr.get("version", 1),
+                        "gen": wr.get("gen", 0),
+                        "modified_at": now,
+                        "size": wr.get("size", len(content)),
+                    }
+                )
+                metadata_list.append(
+                    FileMetadata(
+                        path=path,
+                        size=wr.get("size", len(content)),
+                        content_id=wr.get("content_id", ""),
+                        version=wr.get("version", 1),
+                        gen=wr.get("gen", 0),
+                        zone_id=zone_id or ROOT_ZONE_ID,
+                    )
+                )
+
+        # Rust sys_write_batch already persisted metadata (commit_metadata per-mount
+        # + ms.put_batch for global items) and updated dcache. No Python put needed.
+
+        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
+        items = [
+            (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
+        ]
+        from nexus.contracts.vfs_hooks import WriteBatchHookContext
+
+        self._dispatch_batch_post_hook(
+            "write_batch",
+            WriteBatchHookContext(items=items, context=context, zone_id=zone_id, agent_id=agent_id),
+        )
+
+        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
+        for metadata in metadata_list:
+            old_meta = existing_metadata.get(metadata.path)
+            _ = old_meta is None  # is_new removed with notify
+
+        # Issue #1682: Hierarchy tuples + owner grants moved to post_write_batch hooks.
+
+        return results
+
+    def _dispatch_batch_post_hook(self, event_name: str, ctx: Any) -> None:
+        """Dispatch a post-batch hook if any listeners are registered.
+
+        Shared by write_batch and read_batch to avoid duplicating the
+        hook_count guard + dispatch_post_hooks call.
+        """
+        if self._kernel.hook_count(event_name) > 0:
+            self._kernel.dispatch_post_hooks(event_name, ctx)
+
+    @rpc_expose(description="Read multiple files atomically in a single round-trip")
+    def read_batch(
+        self,
+        paths: list[str],
+        *,
+        partial: bool = False,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Read multiple files in a single round-trip for improved performance.
+
+        Uses the Rust kernel's parallel sys_read_batch (rayon par_iter) for all
+        paths, then a single metadata.get_batch() call — no N+1 queries.
+
+        Args:
+            paths:   List of virtual paths to read.
+            partial: If False (default), raises NexusFileNotFoundError on
+                     the first path that is missing or inaccessible.
+                     If True, returns a per-item result for every path
+                     (successful reads and errors alike).
+            context: Optional operation context for permission checks.
+
+        Returns:
+            List of dicts in the same order as *paths*.
+
+            Successful item::
+
+                {
+                    "path":        str,
+                    "content":     bytes,
+                    "content_id":  str | None,   # from actual read bytes (r.content_id)
+                    "version":     int,           # from pre-read metadata snapshot
+                    "modified_at": datetime | None,  # from pre-read metadata snapshot
+                    "size":        int,
+                }
+
+            **Note on consistency**: ``content_id`` reflects the actual bytes returned
+            (authoritative). ``version`` and ``modified_at`` come from a metadata
+            snapshot taken *before* the reads, so under concurrent writes they
+            may not match the returned content. Use ``content_id`` for cache validation
+            or optimistic concurrency; do not rely on ``version``/``modified_at``
+            being coherent with the content under concurrent updates.
+
+            Failed item (only possible when partial=True)::
+
+                {
+                    "path":  str,
+                    "error": "not_found",
+                }
+
+        Raises:
+            InvalidPathError:       If any path is invalid (always, even in partial mode).
+            NexusFileNotFoundError: If any path is missing and partial=False.
+            NexusPermissionError:   If access is denied and partial=False.
+        """
+        io_metrics.record_read_batch_size(len(paths))
+        if not paths:
+            return []
+
+        # Validate all paths up-front — invalid paths always raise, even in partial mode.
+        validated_paths: list[str] = [self._validate_path(p) for p in paths]
+
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+
+        # PRE-INTERCEPT: batch permission check via shared helper.
+        allowed_set = self._batch_permission_check(validated_paths, context)
+        denied_paths = set(validated_paths) - allowed_set
+        if denied_paths and not partial:
+            from nexus.contracts.exceptions import NexusPermissionError
+
+            _first = next(iter(denied_paths))
+            raise NexusPermissionError(f"Permission denied: {_first}")
+        allowed_paths: list[str] = [p for p in validated_paths if p in allowed_set]
+
+        # Batch metadata fetch — one query for all allowed paths.
+        batch_meta = (
+            dict(
+                zip(
+                    allowed_paths,
+                    self._kernel.stat_batch(list(allowed_paths), ROOT_ZONE_ID),
+                    strict=True,
+                )
+            )
+            if allowed_paths
+            else {}
+        )
+
+        # Finding #3 — DoS guard: reject batches whose declared metadata size exceeds
+        # the per-request ceiling.  Uses metadata sizes already fetched, so no extra
+        # round-trip is needed.  External-mount / virtual paths that lack metadata
+        # entries contribute 0 to the total; their own backends enforce their limits.
+        #
+        # IMPORTANT: iterate over allowed_paths (with duplicates), NOT over
+        # batch_meta.values() (unique keys).  A request repeating the same large file
+        # N times would otherwise bypass the cap since the dict only stores one entry
+        # per unique path.
+        _MAX_BATCH_READ_BYTES = 100 * 1024 * 1024  # 100 MB
+        if allowed_paths and batch_meta:
+            _total_declared = sum(
+                batch_meta[p].get("size", 0)
+                for p in allowed_paths
+                if batch_meta.get(p) is not None  # value may be None for missing files
+            )
+            if _total_declared > _MAX_BATCH_READ_BYTES:
+                raise ValueError(
+                    f"Batch read aggregate declared size {_total_declared} bytes exceeds "
+                    f"{_MAX_BATCH_READ_BYTES // (1024 * 1024)} MB limit"
+                )
+
+        # KERNEL: parallel Rust read for all allowed paths.
+        # Task 10 — pass new tuple shape (path, offset=0, length=None) so the
+        # Rust kernel surfaces per-item error_kind instead of collapsing all
+        # failures to data=None (legacy behaviour).
+        rust_results = (
+            self._kernel.sys_read_batch([(p, 0, None) for p in allowed_paths], _rust_ctx)
+            if allowed_paths
+            else []
+        )
+
+        results: list[dict[str, Any]] = []
+        hit_items: list[tuple[str, dict[str, Any] | None]] = []  # for post-hooks
+
+        # Check once whether any per-file "read" post-hooks are registered.
+        # These hooks (e.g. DynamicViewerReadHook) may transform or redact content.
+        # Finding #1 — we must fire them per-item so batch semantics match single read().
+        _has_read_hooks = self._kernel.hook_count("read") > 0
+
+        # Map allowed_paths → rust_results (same order, guaranteed by sys_read_batch).
+        allowed_iter = iter(rust_results)
+
+        # Cumulative byte counter — tracks actual bytes loaded across both the
+        # CAS fast path and the fallback read() path.  External/virtual paths have
+        # no metadata entry so they contribute 0 to the upfront declared-size check;
+        # their actual content is captured here to close that gap.
+        _loaded_bytes = 0
+
+        for path in validated_paths:
+            if path in denied_paths:
+                results.append({"path": path, "error": "permission_denied"})
+                continue
+
+            r = next(allowed_iter)
+            meta = batch_meta.get(path)
+
+            # Task 10 — explicit per-item error_kind from new kernel ABI.
+            # The new sys_read_batch (tuple-shape) surfaces "not_found",
+            # "permission_denied", "invalid_path", "io_error" directly instead
+            # of collapsing them to data=None.  Handle before the legacy
+            # data=None fallback so the correct exception / error key is used.
+            # Tolerate legacy/test-double result shapes that only carry
+            # data/content_id/gen — they lack the error_kind discriminant.
+            _error_kind = getattr(r, "error_kind", "") or ""
+            _error_message = getattr(r, "error_message", "") or ""
+            if _error_kind:
+                # "unsupported" is the kernel's signal that this path's
+                # entry type cannot use the batch fast path (DT_PIPE /
+                # DT_STREAM today). Fall through to the legacy single-
+                # file fallback below — which handles pipes/streams,
+                # virtual resolvers, and external connectors — instead
+                # of raising. Strict/partial behavior for the actual
+                # fallback result is decided by self.read().
+                if _error_kind == "unsupported":
+                    pass  # falls through to `r.data is None` block below
+                elif not partial:
+                    if _error_kind == "not_found":
+                        raise NexusFileNotFoundError(path)
+                    if _error_kind == "permission_denied":
+                        from nexus.contracts.exceptions import NexusPermissionError
+
+                        raise NexusPermissionError(_error_message or path)
+                    if _error_kind == "invalid_path":
+                        from nexus.contracts.exceptions import InvalidPathError
+
+                        raise InvalidPathError(_error_message or path)
+                    # io_error or other unknown kind
+                    raise OSError(f"read_batch({path}): {_error_message}")
+                else:
+                    # partial mode — per-item error dict
+                    _err: dict[str, Any] = {"path": path, "error": _error_kind}
+                    if _error_kind == "io_error" and _error_message:
+                        _err["message"] = _error_message
+                    results.append(_err)
+                    continue
+
+            if r.data is None:
+                # Finding #2 — sys_read_batch returns data=None not only for missing CAS
+                # files but also for: DT_PIPE / DT_STREAM entries, backend read errors,
+                # lock timeouts, route misses, and external connector paths.  A bare
+                # data=None must not be treated as "file not found" for all of these.
+                #
+                # Delegate to the full single-file read() path, which correctly handles:
+                #   • virtual resolver paths (resolve_read)
+                #   • external connector mounts (ExternalRouteResult)
+                #   • DT_PIPE / DT_STREAM entry types
+                #   • standard per-file read hooks (DynamicViewerReadHook, etc.)
+                #
+                # Only NexusFileNotFoundError from read() is classified as "not found";
+                # any other exception is a real failure and either propagates (strict
+                # mode) or surfaces as a per-item "read_error" (partial mode).
+                #
+                # Resolver permission errors and parser failures are NOT caught here —
+                # they propagate through read() just as they would via the single-file
+                # endpoint.
+                try:
+                    content = self.read(path, context=context)
+                    content_bytes_len = (
+                        len(content.get("data") or b"")
+                        if isinstance(content, dict)
+                        else len(content)
+                    )
+                    _loaded_bytes += content_bytes_len
+                    if _loaded_bytes > _MAX_BATCH_READ_BYTES:
+                        raise ValueError(
+                            f"Batch read aggregate size exceeded "
+                            f"{_MAX_BATCH_READ_BYTES // (1024 * 1024)} MB limit"
+                        )
+                    results.append(
+                        {
+                            "path": path,
+                            "content": content,
+                            "content_id": meta.get("content_id") if meta else None,
+                            "version": meta.get("version", 0) if meta else 0,
+                            "gen": meta.get("gen", 0) if meta else 0,
+                            "modified_at": meta.get("modified_at") if meta else None,
+                            "size": content_bytes_len,
+                        }
+                    )
+                    hit_items.append((path, meta))
+                    continue
+                except NexusFileNotFoundError:
+                    pass  # Confirmed missing — fall through to not_found handling.
+                except Exception:
+                    # Real failure (backend error, permission denied, lock timeout…).
+                    # In partial mode return a per-item error so the rest of the batch
+                    # is not aborted.  In strict mode re-raise so the caller sees the
+                    # actual failure.
+                    if not partial:
+                        raise
+                    results.append({"path": path, "error": "read_error"})
+                    continue
+
+                if not partial:
+                    raise NexusFileNotFoundError(path)
+                results.append({"path": path, "error": "not_found"})
+                continue
+
+            content = bytes(r.data) if r.data else b""
+            _loaded_bytes += len(content)
+            if _loaded_bytes > _MAX_BATCH_READ_BYTES:
+                raise ValueError(
+                    f"Batch read aggregate size exceeded "
+                    f"{_MAX_BATCH_READ_BYTES // (1024 * 1024)} MB limit"
+                )
+
+            # Finding #1 — per-item "read" post-hook (mirrors read() at line ~1285).
+            # Ensures content-transforming hooks such as DynamicViewerReadHook fire
+            # for every successfully read item, preventing authorization bypass via
+            # the batch endpoint.
+            if _has_read_hooks:
+                from nexus.contracts.vfs_hooks import ReadHookContext
+
+                _read_ctx = ReadHookContext(
+                    path=path,
+                    context=context,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    content=content,
+                    content_id=r.content_id,
+                )
+                self._kernel.dispatch_post_hooks("read", _read_ctx)
+                content = _read_ctx.content or content
+
+            io_metrics.record_read_bytes(
+                tier="batch",
+                bytes_read=len(content),
+            )
+
+            # Use r.content_id as the primary content_id — it reflects the actual bytes
+            # returned by this read, not the pre-read metadata snapshot (which can be
+            # stale under concurrent writes).  Fall back to meta.content_id only when the
+            # Rust result has no content_id (older backends / degenerate path).
+            _content_id = r.content_id or (meta.get("content_id") if meta else None)
+            results.append(
+                {
+                    "path": path,
+                    "content": content,
+                    "content_id": _content_id,
+                    "version": meta.get("version", 0) if meta else 0,
+                    "gen": r.gen,
+                    "modified_at": meta.get("modified_at") if meta else None,
+                    "size": len(content),
+                }
+            )
+            hit_items.append((path, meta))
+
+        # POST-INTERCEPT: batch post-hook (only if listeners registered).
+        from nexus.contracts.vfs_hooks import ReadBatchHookContext
+
+        self._dispatch_batch_post_hook(
+            "read_batch",
+            ReadBatchHookContext(
+                items=hit_items, context=context, zone_id=zone_id, agent_id=agent_id
+            ),
+        )
+
+        return results

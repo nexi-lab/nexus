@@ -7,14 +7,12 @@ Uses ordering key = zone_id for ordered delivery within a zone.
 Optional dependency: ``pip install nexus-ai-fs[pubsub]``
 """
 
-from __future__ import annotations
-
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.file_events import FileEvent
+from nexus.services.event_bus.types import serialize_event
 
 if TYPE_CHECKING:
     from nexus.services.event_log.exporters.config import PubSubExporterConfig
@@ -25,7 +23,7 @@ logger = logging.getLogger(__name__)
 class PubSubExporter:
     """Google Pub/Sub event stream exporter implementing EventStreamExporterProtocol."""
 
-    def __init__(self, config: PubSubExporterConfig) -> None:
+    def __init__(self, config: "PubSubExporterConfig") -> None:
         self._config = config
         self._publisher: Any | None = None
 
@@ -58,7 +56,7 @@ class PubSubExporter:
         publisher = await self._ensure_publisher()
         zone = event.zone_id or ROOT_ZONE_ID
         topic = self._topic_path(zone)
-        data = json.dumps(event.to_dict()).encode("utf-8")
+        data = serialize_event(event)
 
         kwargs: dict[str, Any] = {}
         if self._config.ordering_enabled:
@@ -83,7 +81,7 @@ class PubSubExporter:
 
         for zone, zone_events in by_zone.items():
             topic = self._topic_path(zone)
-            messages = [json.dumps(ev.to_dict()).encode("utf-8") for ev in zone_events]
+            messages = [serialize_event(ev) for ev in zone_events]
             try:
                 kwargs: dict[str, Any] = {}
                 if self._config.ordering_enabled:

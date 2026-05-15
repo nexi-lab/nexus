@@ -1,0 +1,10 @@
+# Canonical author mappings — merges contributor identities
+# Format: Canonical Name <canonical@email> Name-in-commit <email-in-commit>
+
+# Ethan Song (elfenlieds7 / songym)
+Ethan Song <elfenliedsp@gmail.com> elfenlieds7 <elfenliedsp@gmail.com>
+Ethan Song <elfenliedsp@gmail.com> elfenlieds7 <songym@sudoprivacy.com>
+Ethan Song <elfenliedsp@gmail.com> songym <songym@sudoprivacy.com>
+Ethan Song <elfenliedsp@gmail.com> songym <songym@users.noreply.github.com>
+Ethan Song <elfenliedsp@gmail.com> Ethan Song <songym@sudoprivacy.com>
+Ethan Song <elfenliedsp@gmail.com> Ethan Song <songym@EthandeMacBook-Pro.local>

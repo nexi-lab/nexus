@@ -37,7 +37,7 @@ def print_section(title: str):
     print(f"{'=' * 60}\n")
 
 
-def main():
+async def main():
     # Get server URL and API key from environment
     server_url = os.environ.get("SERVER_URL") or os.environ.get("NEXUS_URL")
     api_key = os.environ.get("NEXUS_API_KEY")
@@ -94,11 +94,11 @@ def main():
 
         # Clean up any existing demo directory first
         with suppress(Exception):
-            nx.sys_rmdir(base_path, recursive=True)
+            await nx.sys_rmdir(base_path, recursive=True)
 
         # Create demo directory with parents flag
         try:
-            nx.sys_mkdir(base_path, parents=True)
+            nx.mkdir(base_path, parents=True)
             print(f"✓ Created directory: {base_path}")
         except Exception as e:
             if "already exists" in str(e).lower():
@@ -134,7 +134,7 @@ def main():
 
         for path in nested_paths:
             try:
-                nx.sys_mkdir(path, parents=True)
+                nx.mkdir(path, parents=True)
                 print(f"✓ Created: {path}")
             except Exception as e:
                 if "already exists" in str(e).lower():
@@ -155,8 +155,8 @@ def main():
         ]
 
         for path in test_paths:
-            exists = nx.sys_access(path)
-            is_dir = nx.sys_is_directory(path) if exists else False
+            exists = await nx.access(path)
+            is_dir = await nx.is_directory(path) if exists else False
             if exists:
                 path_type = "directory" if is_dir else "file"
                 print(f"✓ {path} - exists ({path_type})")
@@ -170,7 +170,7 @@ def main():
         print(f"📂 Contents of {base_path}:")
         contents = nx.sys_readdir(base_path, recursive=False)
         for item in sorted(contents):
-            is_dir = nx.sys_is_directory(item)
+            is_dir = await nx.is_directory(item)
             icon = "📁" if is_dir else "📄"
             print(f"   {icon} {item}")
 
@@ -178,7 +178,7 @@ def main():
         print(f"\n📂 All items in {base_path} (recursive):")
         all_items = nx.sys_readdir(base_path, recursive=True)
         for item in sorted(all_items):
-            is_dir = nx.sys_is_directory(item)
+            is_dir = await nx.is_directory(item)
             icon = "📁" if is_dir else "📄"
             depth = item.count("/") - base_path.count("/")
             indent = "   " + "  " * depth
@@ -207,7 +207,7 @@ def main():
         ]
 
         for path in check_paths:
-            is_dir = nx.sys_is_directory(path)
+            is_dir = await nx.is_directory(path)
             path_type = "directory" if is_dir else "file"
             icon = "📁" if is_dir else "📄"
             print(f"   {icon} {path} → {path_type}")
@@ -219,14 +219,14 @@ def main():
 
         print(f"Attempting to create existing directory: {existing_dir}")
         try:
-            nx.sys_mkdir(existing_dir, exist_ok=False)
+            nx.mkdir(existing_dir, exist_ok=False)
             print("✗ Should have raised FileExistsError")
         except Exception as e:
             print(f"✓ Correctly raised error: {e.__class__.__name__}")
 
         print("\nWith exist_ok=True:")
         try:
-            nx.sys_mkdir(existing_dir, exist_ok=True)
+            nx.mkdir(existing_dir, exist_ok=True)
             print("✓ No error raised for existing directory")
         except Exception as e:
             print(f"✗ Unexpected error: {e}")
@@ -236,15 +236,15 @@ def main():
 
         # Create a temporary directory to remove
         temp_dir = f"{base_path}/temp"
-        nx.sys_mkdir(temp_dir)
+        nx.mkdir(temp_dir)
         print(f"✓ Created temp directory: {temp_dir}")
 
         # Remove empty directory
-        nx.sys_rmdir(temp_dir)
+        await nx.sys_rmdir(temp_dir)
         print(f"✓ Removed empty directory: {temp_dir}")
 
         # Verify it's gone
-        if not nx.sys_is_directory(temp_dir):
+        if not await nx.is_directory(temp_dir):
             print(f"✓ Verified: {temp_dir} no longer exists")
 
         # Recursive directory removal
@@ -252,7 +252,7 @@ def main():
 
         # Create a directory with content
         test_tree = f"{base_path}/test-tree"
-        nx.sys_mkdir(f"{test_tree}/level1/level2", parents=True)
+        nx.mkdir(f"{test_tree}/level1/level2", parents=True)
         nx.sys_write(f"{test_tree}/file1.txt", b"content")
         nx.sys_write(f"{test_tree}/level1/file2.txt", b"content")
         print(f"✓ Created test directory tree: {test_tree}")
@@ -260,14 +260,14 @@ def main():
         # Try to remove non-empty directory without recursive
         print("\nAttempting to remove non-empty directory without recursive=True:")
         try:
-            nx.sys_rmdir(test_tree, recursive=False)
+            await nx.sys_rmdir(test_tree, recursive=False)
             print("✗ Should have raised error")
         except Exception as e:
             print(f"✓ Correctly raised error: {e.__class__.__name__}")
 
         # Remove with recursive=True
         print("\nRemoving with recursive=True:")
-        nx.sys_rmdir(test_tree, recursive=True)
+        await nx.sys_rmdir(test_tree, recursive=True)
         print(f"✓ Removed directory tree: {test_tree}")
 
         # Permission checks
@@ -295,7 +295,7 @@ def main():
         print("Creating project structure:")
         for path in project_structure:
             try:
-                nx.sys_mkdir(path, parents=True, exist_ok=True)
+                nx.mkdir(path, parents=True, exist_ok=True)
                 print(f"  📁 {path}")
             except Exception as e:
                 print(f"  ⚠️  {path}: {e}")

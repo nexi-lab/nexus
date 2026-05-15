@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 from nexus.contracts.exceptions import CircuitOpenError
+from nexus.contracts.types import OperationContext
+from nexus.lib.context_utils import get_subject_from_context
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -192,7 +194,7 @@ class ReBACService(ReBACShareMixin):
 
         Returns:
             Dict with tuple_id, revision, and consistency_token (Issue #1081).
-            Use revision with consistency_mode="at_least_as_fresh" for read-your-writes.
+            Use revision for audit trail.
 
         Raises:
             PermissionError: If caller lacks permission to grant
@@ -384,16 +386,12 @@ class ReBACService(ReBACShareMixin):
         object: tuple[str, str],
         context: Any = None,
         zone_id: str | None = None,
-        consistency_mode: str | None = None,  # Issue #1081
-        min_revision: int | None = None,  # Issue #1081
     ) -> bool:
-        """Check if subject has permission on object (Issue #1081).
+        """Check if subject has permission on object.
 
         Uses relationship graph traversal to determine access, supporting both
         direct relationships and inherited permissions through group membership.
-
-        Supports ABAC-style contextual conditions (time windows, IP allowlists, etc.)
-        and per-request consistency modes aligned with SpiceDB/Zanzibar.
+        Always uses cached (eventual) consistency.
 
         Args:
             subject: Subject tuple e.g., ("user", "alice")
@@ -401,11 +399,6 @@ class ReBACService(ReBACShareMixin):
             object: Object tuple e.g., ("file", "/doc.txt")
             context: Optional ABAC context for condition evaluation (time, ip, device, attributes)
             zone_id: Zone ID for multi-zone isolation
-            consistency_mode: Per-request consistency mode (Issue #1081):
-                - "minimize_latency" (default): Use cache for fastest response
-                - "at_least_as_fresh": Cache must be >= min_revision
-                - "fully_consistent": Bypass cache entirely
-            min_revision: Minimum acceptable revision (required for at_least_as_fresh)
 
         Returns:
             True if permission granted, False otherwise
@@ -415,28 +408,10 @@ class ReBACService(ReBACShareMixin):
             RuntimeError: If ReBAC manager not available
 
         Examples:
-            # Check read access (default: minimize_latency)
             can_read = await rebac.rebac_check(
                 subject=("user", "alice"),
                 permission="read",
                 object=("file", "/doc.txt")
-            )
-
-            # Check after a write with read-your-writes guarantee
-            can_read = await rebac.rebac_check(
-                subject=("user", "alice"),
-                permission="read",
-                object=("file", "/doc.txt"),
-                consistency_mode="at_least_as_fresh",
-                min_revision=123  # From previous write result
-            )
-
-            # Security audit: bypass all caches
-            can_read = await rebac.rebac_check(
-                subject=("user", "alice"),
-                permission="read",
-                object=("file", "/doc.txt"),
-                consistency_mode="fully_consistent"
             )
         """
 
@@ -457,32 +432,17 @@ class ReBACService(ReBACShareMixin):
                 elif hasattr(context, "zone_id"):
                     effective_zone_id = context.zone_id
 
-            # Issue #1081: Build consistency requirement from API params
-            consistency = None
-            if consistency_mode or min_revision is not None:
-                from nexus.contracts.rebac_types import (
-                    ConsistencyMode,
-                    ConsistencyRequirement,
-                )
+            manager_context = None if isinstance(context, OperationContext) else context
 
-                mode = ConsistencyMode.MINIMIZE_LATENCY
-                if consistency_mode == "at_least_as_fresh":
-                    mode = ConsistencyMode.AT_LEAST_AS_FRESH
-                elif consistency_mode == "fully_consistent":
-                    mode = ConsistencyMode.FULLY_CONSISTENT
-
-                consistency = ConsistencyRequirement(mode=mode, min_revision=min_revision)
-
-            # Check permission with optional ABAC context and consistency
+            # Check permission with optional ABAC context (always cached consistency)
             # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
             result: bool = self._rebac_manager.rebac_check(
                 subject=subject,
                 permission=permission,
                 object=object,
-                context=context,
+                context=manager_context,
                 zone_id=effective_zone_id,
-                consistency=consistency,
             )
 
             return result
@@ -867,6 +827,38 @@ class ReBACService(ReBACShareMixin):
 
         return await self._run_in_thread(_list_tuples_sync)
 
+    async def list_accessible_zones(
+        self,
+        subject: tuple[str, str],
+    ) -> list[str]:
+        """List zone IDs that a subject has membership access to.
+
+        Queries ReBAC tuples where the subject has a zone-level relation
+        (member, owner, admin, viewer) and the object type is "zone".
+
+        This is the canonical way to discover which zones a user/agent
+        can access for federated operations (Issue #3147).
+
+        Args:
+            subject: Subject tuple e.g., ("user", "alice") or ("agent", "bot_1")
+
+        Returns:
+            List of zone IDs the subject can access (deduplicated, stable order).
+        """
+        tuples = await self.rebac_list_tuples(
+            subject=subject,
+            relation_in=["member", "owner", "admin", "viewer"],
+        )
+        seen: set[str] = set()
+        zones: list[str] = []
+        for t in tuples:
+            obj_type = t.get("object_type", "")
+            obj_id = t.get("object_id", "")
+            if obj_type == "zone" and obj_id and obj_id not in seen:
+                seen.add(obj_id)
+                zones.append(obj_id)
+        return zones
+
     @rpc_expose(description="List objects a subject has a specific relation to")
     async def rebac_list_objects(
         self,
@@ -1123,8 +1115,8 @@ class ReBACService(ReBACShareMixin):
             try:
                 await self._run_in_thread(self._rebac_manager.rebac_delete, obj_id)
                 deleted += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Best-effort cleanup failed for object '%s': %s", obj_id, exc)
         return deleted
 
     # =========================================================================
@@ -1599,61 +1591,6 @@ class ReBACService(ReBACShareMixin):
     # Helper Methods
     # =========================================================================
 
-    def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
-        """Extract subject from operation context.
-
-        Args:
-            context: Operation context (OperationContext or dict)
-
-        Returns:
-            Subject tuple (type, id) or None if not found
-
-        Examples:
-            >>> context = {"subject": ("user", "alice")}
-            >>> self._get_subject_from_context(context)
-            ('user', 'alice')
-
-            >>> context = OperationContext(user_id="alice", groups=[])
-            >>> self._get_subject_from_context(context)
-            ('user', 'alice')
-        """
-        if not context:
-            return None
-
-        # Handle dict format (used by RPC server and tests)
-        if isinstance(context, dict):
-            subject = context.get("subject")
-            if subject and isinstance(subject, tuple) and len(subject) == 2:
-                return (str(subject[0]), str(subject[1]))
-
-            # Construct from subject_type + subject_id
-            subject_type = context.get("subject_type", "user")
-            subject_id = context.get("subject_id") or context.get("user_id")
-            if subject_id:
-                return (subject_type, subject_id)
-
-            return None
-
-        # Handle OperationContext format - use get_subject() method
-        if hasattr(context, "get_subject") and callable(context.get_subject):
-            result = context.get_subject()
-            if result is not None:
-                return (str(result[0]), str(result[1]))
-            return None
-
-        # Fallback: construct from attributes
-        if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
-            subject_type = getattr(context, "subject_type", "user")
-            subject_id = getattr(context, "subject_id", None) or getattr(context, "user_id", None)
-            if subject_id:
-                return (subject_type, subject_id)
-
-        # Last resort: use user field
-        if hasattr(context, "user_id") and context.user_id:
-            return ("user", context.user_id)
-
-        return None
-
     def _check_share_permission(
         self,
         resource: tuple[str, str],
@@ -1730,7 +1667,7 @@ class ReBACService(ReBACShareMixin):
                     "ReBAC manager is not available. Ensure ReBACService is properly initialized."
                 )
             has_permission = self._rebac_manager.rebac_check(
-                subject=self._get_subject_from_context(context) or ("user", op_context.user_id),
+                subject=get_subject_from_context(context) or ("user", op_context.user_id),
                 permission="owner",  # Only owners can manage permissions
                 object=resource,
                 context=context,
@@ -1749,7 +1686,7 @@ class ReBACService(ReBACShareMixin):
             # If enforcer denied, also check direct ownership via ReBAC
             # (direct_owner relation may not imply execute in the permission graph)
             if not has_permission and self._rebac_manager:
-                subject = self._get_subject_from_context(context) or ("user", op_context.user_id)
+                subject = get_subject_from_context(context) or ("user", op_context.user_id)
                 has_permission = self._rebac_manager.rebac_check(
                     subject=subject,
                     permission="owner",
@@ -2219,53 +2156,15 @@ class ReBACService(ReBACShareMixin):
 
     def namespace_list_sync(self) -> list[dict[str, Any]]:
         """List all registered namespace configurations (sync)."""
-        import json as _json
-
-        from sqlalchemy import select
-
-        from nexus.storage.models.permissions import ReBACNamespaceModel as RN
-
         mgr = self._require_manager()
-
-        stmt = select(RN).order_by(RN.object_type)
-
-        with mgr.engine.connect() as conn:
-            result = conn.execute(stmt)
-            namespaces = []
-            for row in result:
-                namespaces.append(
-                    {
-                        "namespace_id": row.namespace_id,
-                        "object_type": row.object_type,
-                        "config": _json.loads(row.config),
-                        "created_at": row.created_at,
-                        "updated_at": row.updated_at,
-                    }
-                )
-            return namespaces
+        result: list[dict[str, Any]] = mgr.list_namespaces()
+        return result
 
     def namespace_delete_sync(self, object_type: str) -> bool:
         """Delete a namespace configuration (sync)."""
-        from sqlalchemy import delete, select
-
-        from nexus.storage.models.permissions import ReBACNamespaceModel as RN
-
         mgr = self._require_manager()
-
-        with mgr.engine.begin() as conn:
-            # Check if namespace exists
-            exists = conn.execute(
-                select(RN.namespace_id).where(RN.object_type == object_type)
-            ).fetchone()
-            if exists is None:
-                return False
-
-            conn.execute(delete(RN).where(RN.object_type == object_type))
-
-        cache = getattr(mgr, "_cache", None)
-        if cache is not None:
-            cache.clear()
-        return True
+        deleted: bool = mgr.delete_namespace(object_type)
+        return deleted
 
     # =========================================================================
     # Sync: Sharing, Privacy, Dynamic Viewer, Tiger Cache

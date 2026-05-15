@@ -6,7 +6,7 @@ both kernel (``nexus.core``) and presentation (``nexus.fuse``) layers.
 When a user requests ``file_parsed.xlsx.md``, the system:
 1. Recognizes it as a virtual view request
 2. Reads the original ``file.xlsx``
-3. Parses it using the appropriate parser (MarkItDown)
+3. Parses it using the appropriate parser (pdf-inspector)
 4. Returns the parsed text content
 
 Virtual views are read-only and don't create actual files.
@@ -50,25 +50,42 @@ PARSEABLE_EXTENSIONS = {
 }
 
 
-def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str, str | None]:
-    """Parse virtual path to extract original path and view type.
+def is_parseable_path(path: str) -> bool:
+    """Case-insensitive membership test against ``PARSEABLE_EXTENSIONS``.
+
+    Real filenames arrive with mixed casing (``Report.PDF``, ``Deck.Docx``);
+    naïve ``path.endswith(".pdf")`` misses them, which means the parse-aware
+    indexer silently falls back to raw-byte decoding.  Use this helper
+    everywhere parseable detection matters.
+    """
+    lower = path.lower()
+    return any(lower.endswith(ext) for ext in PARSEABLE_EXTENSIONS)
+
+
+def parse_virtual_path(path: str, check_fn: Callable[[str], Any]) -> tuple[str, str | None, Any]:
+    """Parse virtual path to extract original path, view type, and check result.
 
     Args:
         path: Virtual path (e.g., "/file_parsed.xlsx.md" or "/document_parsed.pdf.md")
-        exists_fn: Function to check if a path exists
+        check_fn: Function to verify the original file exists.  Can be:
+            - ``metadata.exists`` (returns bool) — for simple existence checks
+            - ``metadata.get``   (returns FileMetadata | None) — when the caller
+              needs the metadata anyway (avoids a redundant second lookup)
+            The result is tested for truthiness and passed through as the
+            third element of the return tuple.
 
     Returns:
-        Tuple of (original_path, view_type)
+        Tuple of (original_path, view_type, check_result)
         - original_path: Original file path without virtual suffix
         - view_type: "md" or None for raw/binary access
+        - check_result: Return value of check_fn(original_path), or None
+          when the path is not a virtual view
 
     Examples:
         >>> parse_virtual_path("/file_parsed.xlsx.md", exists_fn)
-        ("/file.xlsx", "md")
+        ("/file.xlsx", "md", True)
         >>> parse_virtual_path("/file.txt", exists_fn)
-        ("/file.txt", None)  # Actual .txt file, not a virtual view
-        >>> parse_virtual_path("/file_parsed.xlsx", exists_fn)
-        ("/file_parsed.xlsx", None)  # Missing .md extension
+        ("/file.txt", None, None)
     """
     # Handle _parsed.{ext}.md virtual views
     # Pattern: file_parsed.{ext}.md → file.{ext}
@@ -95,12 +112,15 @@ def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str
                 original_ext = ext_with_md[:-3]  # Remove .md
                 original_path = base_path + original_ext
 
-                # Check if the original file exists
-                if exists_fn(original_path):
-                    return (original_path, "md")
+                # Only treat as virtual view if the extension is parseable
+                # and the original file exists
+                if original_ext in PARSEABLE_EXTENSIONS:
+                    result = check_fn(original_path)
+                    if result:
+                        return (original_path, "md", result)
 
     # Not a virtual view, return as-is
-    return (path, None)
+    return (path, None, None)
 
 
 def get_parsed_content(

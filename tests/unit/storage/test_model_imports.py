@@ -18,24 +18,19 @@ EXPECTED_MODELS = [
     # Filesystem
     "DirectoryEntryModel",
     "FileMetadataModel",
-    "ContentChunkModel",
     "WorkspaceSnapshotModel",
     "DocumentChunkModel",
     # Permissions
     "ReBACTupleModel",
-    "ReBACNamespaceModel",
     "ReBACGroupClosureModel",
     "ReBACChangelogModel",
     "ReBACVersionSequenceModel",
-    "FileSystemVersionSequenceModel",
-    "ReBACCheckCacheModel",
     "TigerResourceMapModel",
     "TigerCacheModel",
     "TigerCacheQueueModel",
     "TigerDirectoryGrantsModel",
     # Memory
     "MemoryModel",
-    "MemoryConfigModel",
     "EntityRegistryModel",
     "EntityModel",
     "RelationshipModel",
@@ -44,6 +39,7 @@ EXPECTED_MODELS = [
     "UserModel",
     "UserOAuthAccountModel",
     "APIKeyModel",
+    "APIKeyZoneModel",
     "OAuthAPIKeyModel",
     "OAuthCredentialModel",
     "ZoneModel",
@@ -61,32 +57,15 @@ EXPECTED_MODELS = [
     "ShareLinkAccessLogModel",
     # Infrastructure
     "SandboxMetadataModel",
-    "MountConfigModel",
     "SystemSettingsModel",
     "SubscriptionModel",
     "MigrationHistoryModel",
-    "WorkspaceConfigModel",
-    "UserSessionModel",
+    # Path Registration (Issue #189 — merged WorkspaceConfig + MemoryConfig)
+    "PathRegistrationModel",
     # Agents
-    "AgentRecordModel",
     "AgentEventModel",
     # Delegation (Issue #1271)
     "DelegationRecordModel",
-    # ACE
-    "TrajectoryModel",
-    "TrajectoryFeedbackModel",
-    "PlaybookModel",
-    # Sync
-    "SyncJobModel",
-    "BackendChangeLogModel",
-    "SyncBacklogModel",
-    "ConflictLogModel",
-    # Namespace
-    "PersistentNamespaceViewModel",
-    # Reputation & Trust (Issue #1356)
-    "DisputeModel",
-    "ReputationEventModel",
-    "ReputationScoreModel",
     # Chunked Uploads (Issue #788)
     "UploadSessionModel",
     # Spending Policy (Issue #1358)
@@ -99,15 +78,11 @@ EXPECTED_MODELS = [
     "SecretsAuditLogModel",
     # Scheduler (Issue #1469)
     "ScheduledTaskModel",
-    # Sync
-    "PendingOperationModel",
     # Identity
     "AgentKeyModel",
     "AgentCredentialModel",
     # Permissions
     "AdminBypassAuditModel",
-    # A2A
-    "A2ATaskModel",
     # Dead Letter Queue (Issue #1138)
     "DeadLetterModel",
     # Transactional Snapshots (Issue #1752)
@@ -118,6 +93,18 @@ EXPECTED_MODELS = [
     # Credentials & Access Manifests (Issues #1753, #1754)
     "AgentCredentialModel",
     "AccessManifestModel",
+    # DataHub Knowledge Platform (Issue #2929)
+    "EntityAspectModel",
+    "MetadataChangeLogModel",
+    # Lineage Tracking (Issue #3417)
+    "LineageReverseIndexModel",
+    # Secrets Store
+    "SecretStoreModel",
+    "SecretStoreVersionModel",
+    # Per-directory semantic index scoping (Issue #3698)
+    "IndexedDirectoryModel",
+    # Global path+title index for lightweight locate() (Issue #3725)
+    "DocumentSkeletonModel",
 ]
 
 

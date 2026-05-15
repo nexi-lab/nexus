@@ -33,15 +33,15 @@ class CollisionDetail:
 
     Attributes:
         path: The virtual path that collided
-        existing_etag: Content hash of existing file
-        imported_etag: Content hash of imported file
+        existing_content_id: Content hash of existing file
+        imported_content_id: Content hash of imported file
         resolution: How the collision was resolved
         message: Human-readable description
     """
 
     path: str
-    existing_etag: str | None
-    imported_etag: str | None
+    existing_content_id: str | None
+    imported_content_id: str | None
     resolution: str
     message: str
 

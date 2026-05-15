@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+    from nexus.core.nexus_fs import NexusFS
 
 
 @dataclass
@@ -114,7 +114,7 @@ class DataMigrator:
         )
     """
 
-    def __init__(self, nx: "NexusFilesystemABC") -> None:
+    def __init__(self, nx: "NexusFS") -> None:
         """Initialize data migrator.
 
         Args:
@@ -122,7 +122,7 @@ class DataMigrator:
         """
         self.nx = nx
 
-    def import_from_s3(
+    async def import_from_s3(
         self,
         bucket: str,
         prefix: str,
@@ -185,7 +185,7 @@ class DataMigrator:
             full_target = f"{target_path.rstrip('/')}/{relative_path}"
 
             # Check if exists
-            if not options.overwrite and self.nx.sys_access(full_target):
+            if not options.overwrite and self.nx.access(full_target):
                 result.files_skipped += 1
                 continue
 
@@ -200,7 +200,7 @@ class DataMigrator:
                 content = response["Body"].read()
 
                 # Write to Nexus
-                self.nx.sys_write(full_target, content)
+                self.nx.write(full_target, content)
 
                 result.files_imported += 1
                 result.bytes_transferred += len(content)
@@ -212,7 +212,7 @@ class DataMigrator:
         result.duration_seconds = time.time() - start_time
         return result
 
-    def import_from_gcs(
+    async def import_from_gcs(
         self,
         bucket: str,
         prefix: str,
@@ -276,7 +276,7 @@ class DataMigrator:
             full_target = f"{target_path.rstrip('/')}/{relative_path}"
 
             # Check if exists
-            if not options.overwrite and self.nx.sys_access(full_target):
+            if not options.overwrite and self.nx.access(full_target):
                 result.files_skipped += 1
                 continue
 
@@ -291,7 +291,7 @@ class DataMigrator:
                 content = blob.download_as_bytes()
 
                 # Write to Nexus
-                self.nx.sys_write(full_target, content)
+                self.nx.write(full_target, content)
 
                 result.files_imported += 1
                 result.bytes_transferred += len(content)
@@ -303,7 +303,7 @@ class DataMigrator:
         result.duration_seconds = time.time() - start_time
         return result
 
-    def import_from_local(
+    async def import_from_local(
         self,
         source_path: str,
         target_path: str,
@@ -349,7 +349,7 @@ class DataMigrator:
             full_target = f"{target_path.rstrip('/')}/{relative_path}"
 
             # Check if exists
-            if not options.overwrite and self.nx.sys_access(full_target):
+            if not options.overwrite and self.nx.access(full_target):
                 result.files_skipped += 1
                 continue
 
@@ -364,7 +364,7 @@ class DataMigrator:
                 content = local_path.read_bytes()
 
                 # Write to Nexus
-                self.nx.sys_write(full_target, content)
+                self.nx.write(full_target, content)
 
                 result.files_imported += 1
                 result.bytes_transferred += len(content)
@@ -423,7 +423,7 @@ class DataMigrator:
         Yields:
             FileInfo for each matching blob
         """
-        blobs = bucket.list_blobs(prefix=prefix)
+        blobs = bucket.list_keys(prefix=prefix)
 
         for blob in blobs:
             # Skip directories

@@ -215,7 +215,7 @@ class TestFireAndForget:
 
         fire_and_forget(append_value())
         # Give the background loop a moment to process.
-        time.sleep(0.1)
+        time.sleep(0.05)
         assert result_holder == [42]
 
     def test_from_async_context(self) -> None:
@@ -238,7 +238,7 @@ class TestFireAndForget:
         with patch("nexus.lib.sync_bridge.logger") as mock_logger:
             fire_and_forget(_fail())
             # Give background loop time to process.
-            time.sleep(0.1)
+            time.sleep(0.05)
             # The warning callback should have fired.
             assert mock_logger.warning.called
 

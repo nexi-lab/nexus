@@ -23,7 +23,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from cachetools import TTLCache
+# Issue #3192: Rust-backed TTLCache for lock-free cache internals
+from cachebox import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class IteratorCache:
         >>> # First request - compute and cache
         >>> cursor_id, results, total = cache.get_or_create(
         ...     query_hash="incoming:user123",
-        ...     zone_id="root",
+        ...     zone_id=ROOT_ZONE_ID,
         ...     compute_fn=lambda: fetch_all_shares("user123")
         ... )
         >>> # Subsequent page - fetch from cache

@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 from nexus.storage.models._base import Base
 from nexus.storage.record_store import RecordStoreABC
@@ -99,7 +100,7 @@ def _create_record(logger: ExchangeAuditLogger) -> str:
         amount=Decimal("10"),
         status="settled",
         application="gateway",
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
         transfer_id=None,
     )
 

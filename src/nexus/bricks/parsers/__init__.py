@@ -24,13 +24,12 @@ from nexus.bricks.parsers.detection import (
     is_compressed,
     prepare_content_for_parsing,
 )
-from nexus.bricks.parsers.markitdown_parser import MarkItDownParser
 from nexus.bricks.parsers.registry import ParserRegistry
 from nexus.bricks.parsers.types import ImageData, ParseResult, TextChunk
 
 
 def create_default_parse_fn() -> Callable[[bytes, str], bytes | None]:
-    """Create a parse callback using MarkItDownParser.
+    """Create a parse callback using PdfInspectorParser.
 
     Returns a ``(content, path) -> bytes | None`` callable suitable for
     passing as ``parse_fn`` to :func:`nexus.lib.virtual_views.get_parsed_content`.
@@ -49,7 +48,6 @@ __all__ = [
     "ParseResult",
     "TextChunk",
     "ImageData",
-    "MarkItDownParser",
     # Detection utilities
     "detect_mime_type",
     "detect_encoding",

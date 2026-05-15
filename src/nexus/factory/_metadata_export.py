@@ -25,7 +25,7 @@ def create_metadata_export_service(nx: Any) -> Any:
 
         # Build created_by string from default context
         created_by = None
-        default_ctx = getattr(nx, "_default_context", None)
+        default_ctx = getattr(nx, "_init_cred", None)
         if default_ctx is not None:
             parts = []
             user = getattr(default_ctx, "user_id", None)

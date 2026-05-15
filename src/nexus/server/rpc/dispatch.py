@@ -63,67 +63,70 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_admin_list_keys,
         handle_admin_revoke_key,
         handle_admin_update_key,
+        handle_admin_write_permission,
     )
     from nexus.server.rpc.handlers.delta import (
         handle_delta_read,
         handle_delta_write,
     )
     from nexus.server.rpc.handlers.filesystem import (
+        handle_ainitialize_semantic_search,
         handle_copy,
-        handle_delete,
-        handle_exists,
-        handle_get_metadata,
         handle_glob,
         handle_grep,
-        handle_is_directory,
-        handle_list,
-        handle_mkdir,
-        handle_read_async,
-        handle_rename,
-        handle_rmdir,
         handle_search,
+        handle_semantic_search,
         handle_semantic_search_index,
-        handle_set_metadata,
-        handle_write,
+    )
+    from nexus.server.rpc.handlers.hub_admin import (
+        handle_hub_admin_status,
+        handle_hub_admin_token_create,
+        handle_hub_admin_token_list,
+        handle_hub_admin_token_revoke,
     )
 
+    # Kernel syscalls (sys_*, mkdir, rmdir, access, is_directory, locks
+    # + aliases) are NOT in this table — they're routed by the thin
+    # dispatcher in ``nexus.server._kernel_syscall_dispatch`` which the
+    # gRPC servicer's ``Call`` handler consults BEFORE calling
+    # ``dispatch_method``.  Source of truth: PyKernel ``#[pymethods]`` in
+    # ``rust/kernel/src/generated_kernel_abi_pyo3.rs``.
     return {
-        # Core filesystem syscalls (sys_ prefix — Linux VFS aligned)
-        "sys_read": DispatchEntry(handle_read_async, is_async=True),
-        "sys_write": DispatchEntry(
-            handle_write, event_type="file_write", event_size_key="bytes_written"
-        ),
-        "sys_access": DispatchEntry(handle_exists),
-        "sys_readdir": DispatchEntry(handle_list),
-        "sys_unlink": DispatchEntry(handle_delete, event_type="file_delete"),
-        "sys_rename": DispatchEntry(
-            handle_rename,
-            event_type="file_rename",
-            event_path_attr="new_path",
-            event_old_path_attr="old_path",
-        ),
-        "copy": DispatchEntry(handle_copy),
-        "sys_mkdir": DispatchEntry(handle_mkdir, event_type="dir_create"),
-        "sys_rmdir": DispatchEntry(handle_rmdir, event_type="dir_delete"),
-        "sys_stat": DispatchEntry(handle_get_metadata),
-        "sys_setattr": DispatchEntry(handle_set_metadata),
-        "sys_is_directory": DispatchEntry(handle_is_directory),
         # User-space utilities (not syscalls, but dispatched via RPC)
+        "copy": DispatchEntry(handle_copy),
         "glob": DispatchEntry(handle_glob),
-        "grep": DispatchEntry(handle_grep),
+        "grep": DispatchEntry(handle_grep, is_async=True),
         "search": DispatchEntry(handle_search),
         # Delta sync
-        "delta_read": DispatchEntry(handle_delta_read),
-        "delta_write": DispatchEntry(handle_delta_write),
+        "delta_read": DispatchEntry(handle_delta_read, is_async=True),
+        "delta_write": DispatchEntry(handle_delta_write, is_async=True),
         # Semantic search
+        "semantic_search": DispatchEntry(handle_semantic_search, is_async=True),
         "semantic_search_index": DispatchEntry(handle_semantic_search_index, is_async=True),
+        "ainitialize_semantic_search": DispatchEntry(
+            handle_ainitialize_semantic_search, is_async=True
+        ),
         # Memory API — moved to MemoryService @rpc_expose (Issue #12)
         # Admin API
+        "admin_write_permission": DispatchEntry(handle_admin_write_permission),
         "admin_create_key": DispatchEntry(handle_admin_create_key, pass_auth_provider=True),
         "admin_list_keys": DispatchEntry(handle_admin_list_keys, pass_auth_provider=True),
         "admin_get_key": DispatchEntry(handle_admin_get_key, pass_auth_provider=True),
         "admin_revoke_key": DispatchEntry(handle_admin_revoke_key, pass_auth_provider=True),
         "admin_update_key": DispatchEntry(handle_admin_update_key, pass_auth_provider=True),
+        "hub_admin_token_create": DispatchEntry(
+            handle_hub_admin_token_create,
+            pass_auth_provider=True,
+        ),
+        "hub_admin_token_list": DispatchEntry(
+            handle_hub_admin_token_list,
+            pass_auth_provider=True,
+        ),
+        "hub_admin_token_revoke": DispatchEntry(
+            handle_hub_admin_token_revoke,
+            pass_auth_provider=True,
+        ),
+        "hub_admin_status": DispatchEntry(handle_hub_admin_status, pass_auth_provider=True),
     }
 
 
@@ -290,5 +293,4 @@ async def _auto_dispatch(
     elif asyncio.iscoroutinefunction(func):
         return await func(**kwargs)
     else:
-        timeout = 300.0 if method == "sync_mount" else None
-        return await to_thread_with_timeout(func, timeout=timeout, **kwargs)
+        return await to_thread_with_timeout(func, **kwargs)

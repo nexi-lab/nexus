@@ -15,10 +15,10 @@ from nexus.contracts.noop_rebac import (
     NoOpPermissionEnforcer,
     NoOpReBACManager,
 )
+from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
+from nexus.contracts.protocols.permission_enforcer import PermissionEnforcerProtocol
+from nexus.contracts.protocols.rebac import ReBACBrickProtocol
 from nexus.contracts.rebac_types import WriteResult
-from nexus.services.protocols.entity_registry import EntityRegistryProtocol
-from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
-from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 # ── Protocol compliance ─────────────────────────────────────────────
 
@@ -260,7 +260,7 @@ class TestBootDemotion:
         """
         from nexus.factory._helpers import _make_gate
 
-        # Simulate brick_on returning False for 'permissions'
+        # Simulate svc_on returning False for 'permissions'
         # (canonical brick name per deployment_profile.py BRICK_PERMISSIONS)
         gate = _make_gate(lambda name: name != "permissions")
         assert gate("permissions") is False

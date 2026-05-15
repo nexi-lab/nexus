@@ -1,63 +1,42 @@
-"""DT_PIPE-backed write observer — async RecordStore sync via kernel IPC.
+"""OBSERVE-phase observer for RecordStore audit trail + versioning.
 
-Replaces BufferedRecordStoreWriteObserver's WriteBuffer (deque + threading.Thread)
-with DT_PIPE kernel IPC (~5us per enqueue vs ~0.1ms amortized).
-
-Implements WriteObserverProtocol. The kernel calls on_write()/on_delete()/
-on_rename()/on_write_batch()/on_mkdir()/on_rmdir() synchronously after
-Metastore mutations. This observer serializes each event to JSON and writes
-it into a DT_PIPE ring buffer via PipeManager.pipe_write_nowait() (~5us).
-
-A background asyncio consumer task drains the pipe, batches events, and
-flushes them to RecordStore in a single transaction:
-  - OperationLogger: audit trail (who did what, when)
-  - VersionRecorder: file version history
+Receives FILE_WRITE / FILE_DELETE / FILE_RENAME / DIR_CREATE / DIR_DELETE
+events from the Rust kernel and flushes them to RecordStore in debounced
+batches.
 
 Issue #809: Decouple write_observer.on_write() sync DB write from hot path.
-Issue #808: Follows WorkflowDispatchService DT_PIPE pattern.
 
 Architecture:
-    Kernel hot path (sync)
-      -> PipedRecordStoreWriteObserver.on_write()
-        -> JSON serialize -> pipe_write_nowait()  # ~5us
-        -> PipeFullError? -> drop + warn
-
-    Background consumer (async)
-      -> _consume() loop
-        -> pipe_read() (async, blocking)
-        -> batch coalesce (drain available events)
+    Rust kernel sys_write / sys_unlink / sys_mkdir
+      -> dispatch_observers (Rust MutationObserver trait)
+        -> accumulate event in deque + reset debounce timer
+        -> threading.Timer fires _flush()
         -> single RecordStore transaction (OperationLogger + VersionRecorder)
-        -> retry with exponential backoff on failure
 """
 
-import asyncio
-import contextlib
-import json
 import logging
+import threading
 import time
 from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.metadata import FileMetadata
-
 if TYPE_CHECKING:
+    from nexus.core.file_events import FileEvent
     from nexus.storage.record_store import RecordStoreABC
-    from nexus.system_services.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
 
-# Pipe path and capacity (parallel to WorkflowDispatchService constants)
-_AUDIT_PIPE_PATH = "/nexus/pipes/audit-events"
-_AUDIT_PIPE_CAPACITY = 65_536  # 64KB
-
 # Consumer batch processing
-_MAX_BATCH_DRAIN = 100  # Max events to drain per batch
+_MAX_BATCH_DRAIN = 100  # Max events to drain per flush
 _MAX_RETRIES = 3
+_DEBOUNCE_S = 0.2  # Debounce window (200ms) — same as former linger_s
 
 
-def _metadata_from_dict(d: dict[str, Any]) -> FileMetadata:
+def _metadata_from_dict(d: dict[str, Any]) -> Any:
     """Reconstruct FileMetadata from to_dict() output."""
+    from nexus.contracts.metadata import FileMetadata
+
     if d.get("created_at") and isinstance(d["created_at"], str):
         d["created_at"] = datetime.fromisoformat(d["created_at"])
     if d.get("modified_at") and isinstance(d["modified_at"], str):
@@ -65,18 +44,15 @@ def _metadata_from_dict(d: dict[str, Any]) -> FileMetadata:
     return FileMetadata(**d)
 
 
-class PipedRecordStoreWriteObserver:
-    """DT_PIPE-backed write observer for async RecordStore sync.
+class RecordStoreWriteObserver:
+    """OBSERVE-phase observer for RecordStore audit trail + versioning.
 
-    Implements WriteObserverProtocol. Enqueues events into a DT_PIPE ring
-    buffer via PipeManager (~5us). A background consumer flushes batches
-    to RecordStore (OperationLogger + VersionRecorder).
+    Receives mutation events from the Rust kernel and flushes them to
+    RecordStore (OperationLogger + VersionRecorder) in debounced batches.
 
-    Lifecycle:
-        1. Created in factory (system tier) with record_store
-        2. PipeManager injected via set_pipe_manager() (deferred)
-        3. start() creates pipe, drains pre-startup buffer, spawns consumer
-        4. stop() cancels consumer, flushes remaining events
+    Registration:
+        Enlisted via factory orchestrator; events dispatched by the Rust
+        kernel's MutationObserver trait (not Python on_mutation).
     """
 
     def __init__(
@@ -84,140 +60,171 @@ class PipedRecordStoreWriteObserver:
         record_store: "RecordStoreABC",
         *,
         strict_mode: bool = True,
+        event_signal: "Any | None" = None,
+        debounce_seconds: float = _DEBOUNCE_S,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
+        self._event_signal = event_signal  # Issue #3193: wake delivery worker
+        self._debounce = debounce_seconds
 
-        # Pipe state (deferred injection)
-        self._pipe_manager: PipeManager | None = None
-        self._pipe_ready = False
-        self._consumer_task: asyncio.Task[None] | None = None
-
-        # Pre-startup buffer: holds events before pipe is ready
-        self._pre_buffer: deque[bytes] = deque(maxlen=1000)
+        # Debounce state — protected by _lock
+        self._pending: deque[dict[str, Any]] = deque(maxlen=10_000)
+        self._timer: threading.Timer | None = None
+        self._lock = threading.Lock()
 
         # Metrics
-        self._total_enqueued = 0
         self._total_flushed = 0
         self._total_failed = 0
         self._total_retries = 0
         self._total_dropped = 0
 
+        # Post-flush hooks: called after successful commit (Issue #2978)
+        # Used by CatalogService for async-on-write extraction
+        self._post_flush_hooks: list[Any] = []
+
+    def register_post_flush_hook(self, hook: Any) -> None:
+        """Register a callback invoked after each successful flush.
+
+        Hooks receive the list of flushed events. They run AFTER the
+        audit trail commit, so failures do not block the audit path.
+        Used by CatalogService for async-on-write extraction (Issue #2978).
+        """
+        self._post_flush_hooks.append(hook)
+
     # ------------------------------------------------------------------
-    # Deferred injection
+    # Event intake — called by SyncAuditWriteInterceptor post-hooks
     # ------------------------------------------------------------------
 
-    def set_pipe_manager(self, pm: "PipeManager") -> None:
-        """Inject PipeManager after factory boot."""
-        self._pipe_manager = pm
-
-    # ------------------------------------------------------------------
-    # WriteObserverProtocol — sync hot path
-    # ------------------------------------------------------------------
+    def _enqueue(self, event: dict[str, Any]) -> None:
+        """Add event to pending deque and reset debounce timer."""
+        with self._lock:
+            self._pending.append(event)
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = threading.Timer(self._debounce, self._flush)
+            self._timer.daemon = True
+            self._timer.start()
 
     def on_write(
         self,
-        metadata: FileMetadata,
+        metadata: Any,
         *,
         is_new: bool,
         path: str,
-        old_metadata: FileMetadata | None = None,
+        old_metadata: Any | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
     ) -> None:
-        """Enqueue a write event via DT_PIPE. Returns in ~5us."""
-        event = {
-            "op": "write",
-            "path": path,
-            "is_new": is_new,
-            "zone_id": zone_id,
-            "agent_id": agent_id,
-            "snapshot_hash": old_metadata.etag if old_metadata else None,
-            "metadata_snapshot": old_metadata.to_dict() if old_metadata else None,
-            "metadata": metadata.to_dict(),
-        }
-        self._enqueue(event)
+        """Accept a write event from SyncAuditWriteInterceptor."""
+        self._enqueue(
+            {
+                "op": "write",
+                "path": path,
+                "is_new": is_new,
+                "zone_id": zone_id,
+                "agent_id": agent_id,
+                "snapshot_hash": old_metadata.content_id if old_metadata else None,
+                "metadata_snapshot": old_metadata.to_dict() if old_metadata else None,
+                "metadata": metadata.to_dict() if hasattr(metadata, "to_dict") else metadata,
+            }
+        )
 
     def on_write_batch(
         self,
-        items: list[tuple[FileMetadata, bool]],
+        items: list[tuple[Any, bool]],
         *,
         zone_id: str | None = None,
         agent_id: str | None = None,
         urgency: str | None = None,  # noqa: ARG002
     ) -> None:
-        """Enqueue a batch of write events via DT_PIPE."""
+        """Accept a batch write event from SyncAuditWriteInterceptor."""
         for metadata, is_new in items:
-            event = {
-                "op": "write",
-                "path": metadata.path,
-                "is_new": is_new,
-                "zone_id": zone_id,
-                "agent_id": agent_id,
-                "snapshot_hash": metadata.etag,
-                "metadata": metadata.to_dict(),
-            }
-            self._enqueue(event)
-
-    def on_rename(
-        self,
-        old_path: str,
-        new_path: str,
-        *,
-        metadata: FileMetadata | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-    ) -> None:
-        """Enqueue a rename event via DT_PIPE."""
-        event = {
-            "op": "rename",
-            "path": old_path,
-            "new_path": new_path,
-            "zone_id": zone_id,
-            "agent_id": agent_id,
-            "snapshot_hash": metadata.etag if metadata else None,
-            "metadata_snapshot": metadata.to_dict() if metadata else None,
-        }
-        self._enqueue(event)
+            self._enqueue(
+                {
+                    "op": "write",
+                    "path": metadata.path,
+                    "is_new": is_new,
+                    "zone_id": zone_id,
+                    "agent_id": agent_id,
+                    "snapshot_hash": None,
+                    "metadata_snapshot": None,
+                    "metadata": metadata.to_dict() if hasattr(metadata, "to_dict") else metadata,
+                }
+            )
 
     def on_delete(
         self,
-        path: str,
         *,
-        metadata: FileMetadata | None = None,
+        path: str,
+        metadata: Any | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
     ) -> None:
-        """Enqueue a delete event via DT_PIPE."""
-        event = {
-            "op": "delete",
-            "path": path,
-            "zone_id": zone_id,
-            "agent_id": agent_id,
-            "snapshot_hash": metadata.etag if metadata else None,
-            "metadata_snapshot": metadata.to_dict() if metadata else None,
-        }
-        self._enqueue(event)
+        """Accept a delete event from SyncAuditWriteInterceptor."""
+        self._enqueue(
+            {
+                "op": "delete",
+                "path": path,
+                "zone_id": zone_id,
+                "agent_id": agent_id,
+                "snapshot_hash": metadata.content_id if metadata else None,
+                "metadata_snapshot": metadata.to_dict()
+                if metadata and hasattr(metadata, "to_dict")
+                else None,
+            }
+        )
+
+    def on_rename(
+        self,
+        *,
+        old_path: str,
+        new_path: str,
+        metadata: Any | None = None,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        """Accept a rename event from SyncAuditWriteInterceptor."""
+        self._enqueue(
+            {
+                "op": "rename",
+                "path": old_path,
+                "new_path": new_path,
+                "zone_id": zone_id,
+                "agent_id": agent_id,
+                "snapshot_hash": metadata.content_id if metadata else None,
+                "metadata_snapshot": metadata.to_dict()
+                if metadata and hasattr(metadata, "to_dict")
+                else None,
+            }
+        )
 
     def on_mkdir(
         self,
-        path: str,
         *,
+        path: str,
         zone_id: str | None = None,
         agent_id: str | None = None,
     ) -> None:
-        """Enqueue a mkdir event via DT_PIPE."""
-        self._enqueue({"op": "mkdir", "path": path, "zone_id": zone_id, "agent_id": agent_id})
+        """Accept a mkdir event from SyncAuditWriteInterceptor."""
+        self._enqueue(
+            {
+                "op": "mkdir",
+                "path": path,
+                "zone_id": zone_id,
+                "agent_id": agent_id,
+            }
+        )
 
     def on_rmdir(
         self,
-        path: str,
         *,
+        path: str,
         zone_id: str | None = None,
         agent_id: str | None = None,
         recursive: bool = False,
     ) -> None:
-        """Enqueue a rmdir event via DT_PIPE."""
+        """Accept an rmdir event from SyncAuditWriteInterceptor."""
         self._enqueue(
             {
                 "op": "rmdir",
@@ -229,210 +236,395 @@ class PipedRecordStoreWriteObserver:
         )
 
     # ------------------------------------------------------------------
-    # Internal enqueue
+    # Debounce flush
     # ------------------------------------------------------------------
 
-    def _enqueue(self, event: dict[str, Any]) -> None:
-        """Serialize and write to pipe (or pre-startup buffer)."""
-        data = json.dumps(event).encode()
-        self._total_enqueued += 1
+    def _flush(self) -> None:
+        """Fire after debounce window -- flush events to RecordStore."""
+        with self._lock:
+            events = list(self._pending)
+            self._pending.clear()
+            self._timer = None
 
-        if self._pipe_manager is not None and self._pipe_ready:
-            from nexus.core.pipe import PipeFullError
-
-            try:
-                self._pipe_manager.pipe_write_nowait(_AUDIT_PIPE_PATH, data)
-            except PipeFullError:
-                self._total_dropped += 1
-                logger.warning(
-                    "Audit pipe full, dropping event: %s:%s", event.get("op"), event.get("path")
-                )
-        else:
-            # Pre-startup: buffer in memory (deque with maxlen=1000)
-            self._pre_buffer.append(data)
-
-    # ------------------------------------------------------------------
-    # Async lifecycle (follows WorkflowDispatchService pattern)
-    # ------------------------------------------------------------------
-
-    async def start(self) -> None:
-        """Create audit pipe, drain pre-startup buffer, spawn consumer."""
-        if self._pipe_ready:
+        if not events:
             return
 
-        if self._pipe_manager is None:
-            return  # CLI mode — no pipe manager
+        # Batch: take up to _MAX_BATCH_DRAIN at a time, retry remainder
+        self._flush_batch(events)
 
-        from nexus.core.pipe import PipeError
-
-        try:
-            self._pipe_manager.create(
-                _AUDIT_PIPE_PATH,
-                capacity=_AUDIT_PIPE_CAPACITY,
-                owner_id="kernel",
-            )
-        except PipeError:
-            self._pipe_manager.open(_AUDIT_PIPE_PATH, capacity=_AUDIT_PIPE_CAPACITY)
-
-        self._pipe_ready = True
-
-        # Drain pre-startup buffer into pipe
-        from nexus.core.pipe import PipeFullError
-
-        while self._pre_buffer:
-            data = self._pre_buffer.popleft()
-            try:
-                self._pipe_manager.pipe_write_nowait(_AUDIT_PIPE_PATH, data)
-            except PipeFullError:
-                self._total_dropped += 1
-                logger.warning("Audit pipe full during pre-startup drain, dropping event")
-
-        self._consumer_task = asyncio.create_task(self._consume())
-
-    async def stop(self) -> None:
-        """Cancel consumer task for graceful shutdown."""
-        if self._consumer_task is not None and not self._consumer_task.done():
-            self._consumer_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._consumer_task
-            self._consumer_task = None
-        self._pipe_ready = False
-
-    # ------------------------------------------------------------------
-    # Background consumer
-    # ------------------------------------------------------------------
-
-    async def _consume(self) -> None:
-        """Background consumer: read from pipe, batch, flush to RecordStore."""
-        from nexus.core.pipe import PipeClosedError, PipeEmptyError, PipeNotFoundError
-
-        assert self._pipe_manager is not None
-
-        pipe_mgr = self._pipe_manager
-        while True:
-            # Block until first event arrives
-            try:
-                first = await pipe_mgr.pipe_read(_AUDIT_PIPE_PATH)
-            except (PipeClosedError, PipeNotFoundError):
-                logger.debug("Audit pipe closed, consumer exiting")
-                break
-
-            # Drain available events for batching
-            batch: list[dict[str, Any]] = [json.loads(first)]
-            for _ in range(_MAX_BATCH_DRAIN - 1):
-                try:
-                    data = await pipe_mgr.pipe_read(_AUDIT_PIPE_PATH, blocking=False)
-                    batch.append(json.loads(data))
-                except (PipeEmptyError, PipeClosedError, PipeNotFoundError):
-                    break
-
-            await self._flush_batch(batch)
-
-    async def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
+    def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
         """Flush a batch of events to RecordStore in a single transaction."""
-        from nexus.storage.operation_logger import OperationLogger
-        from nexus.storage.version_recorder import VersionRecorder
-
         t0 = time.monotonic()
         try:
-            with self._session_factory() as session:
-                op_logger = OperationLogger(session)
-                recorder = VersionRecorder(session)
-
-                for event in events:
-                    op = event["op"]
-                    zone_id = event.get("zone_id")
-                    agent_id = event.get("agent_id")
-
-                    if op == "write":
-                        op_logger.log_operation(
-                            operation_type="write",
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            snapshot_hash=event.get("snapshot_hash"),
-                            metadata_snapshot=event.get("metadata_snapshot"),
-                            status="success",
-                        )
-                        md = _metadata_from_dict(event["metadata"])
-                        recorder.record_write(md, is_new=event["is_new"])
-
-                    elif op == "delete":
-                        op_logger.log_operation(
-                            operation_type="delete",
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            snapshot_hash=event.get("snapshot_hash"),
-                            metadata_snapshot=event.get("metadata_snapshot"),
-                            status="success",
-                        )
-                        recorder.record_delete(event["path"])
-
-                    elif op == "rename":
-                        op_logger.log_operation(
-                            operation_type="rename",
-                            path=event["path"],
-                            new_path=event.get("new_path"),
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            snapshot_hash=event.get("snapshot_hash"),
-                            metadata_snapshot=event.get("metadata_snapshot"),
-                            status="success",
-                        )
-
-                    elif op == "mkdir":
-                        op_logger.log_operation(
-                            operation_type="mkdir",
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            status="success",
-                        )
-
-                    elif op == "rmdir":
-                        op_type = "rmdir_recursive" if event.get("recursive") else "rmdir"
-                        op_logger.log_operation(
-                            operation_type=op_type,
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            status="success",
-                        )
-
-                session.commit()
+            self._flush_batch_sync(events)
 
             duration = time.monotonic() - t0
             self._total_flushed += len(events)
-            logger.debug(
-                "PipedRecordStoreWriteObserver flushed %d events in %.3fs",
+
+            # Issue #3193: signal delivery worker immediately after commit
+            if self._event_signal is not None:
+                self._event_signal.set()
+
+            logger.info(
+                "[OBSERVE] Flushed %d audit events in %.3fs",
                 len(events),
                 duration,
             )
+
+            # Post-flush hooks: extraction, etc. (Issue #2978)
+            # Runs AFTER commit — failures do not block audit trail.
+            for hook in self._post_flush_hooks:
+                try:
+                    hook(events)
+                except Exception as hook_err:
+                    logger.debug(
+                        "Post-flush hook %s failed (non-critical): %s",
+                        getattr(hook, "__name__", hook),
+                        hook_err,
+                    )
 
         except Exception as e:
             if attempt < _MAX_RETRIES:
                 self._total_retries += 1
                 wait = 0.1 * (2**attempt)  # 100ms, 200ms, 400ms
                 logger.warning(
-                    "PipedRecordStoreWriteObserver flush failed "
-                    "(attempt %d/%d, retry in %.1fs): %s",
+                    "RecordStoreWriteObserver flush failed (attempt %d/%d, retry in %.1fs): %s",
                     attempt + 1,
                     _MAX_RETRIES,
                     wait,
                     e,
                 )
-                await asyncio.sleep(wait)
-                await self._flush_batch(events, attempt=attempt + 1)
+                threading.Timer(wait, self._flush_batch, args=(events, attempt + 1)).start()
             else:
                 self._total_failed += len(events)
                 logger.error(
-                    "PipedRecordStoreWriteObserver flush FAILED after %d retries, "
+                    "RecordStoreWriteObserver flush FAILED after %d retries, "
                     "dropping %d events: %s",
                     _MAX_RETRIES,
                     len(events),
                     e,
                 )
+
+    # ------------------------------------------------------------------
+    # Flush sync (for CLI shutdown / close callbacks)
+    # ------------------------------------------------------------------
+
+    def flush_sync(self) -> int:
+        """Synchronously flush all pending events to the DB.
+
+        Used by CLI shutdown path (NexusFS.close) where no asyncio loop
+        is running. Returns count of flushed events.
+        """
+        with self._lock:
+            events = list(self._pending)
+            self._pending.clear()
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+
+        if not events:
+            return 0
+
+        try:
+            self._flush_batch_sync(events)
+            count = len(events)
+            self._total_flushed += count
+            logger.debug("flush_sync: flushed %d events", count)
+            return count
+        except Exception as e:
+            logger.error("flush_sync failed, %d events lost: %s", len(events), e)
+            self._total_failed += len(events)
+            return 0
+
+    async def flush(self, timeout: float = 5.0) -> int:  # noqa: ARG002
+        """Flush pending events. Async signature for protocol compat.
+
+        Delegates to flush_sync() since no pipe draining is needed.
+        """
+        return self.flush_sync()
+
+    # ------------------------------------------------------------------
+    # Event conversion: FileEvent -> audit dict
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _file_event_to_dict(event: "FileEvent") -> dict[str, Any] | None:
+        """Convert a kernel FileEvent to the dict format used by _process_events_in_session."""
+        from nexus.core.file_events import FileEventType
+
+        etype = event.type if isinstance(event.type, str) else event.type.value
+
+        if etype == FileEventType.FILE_WRITE:
+            return {
+                "op": "write",
+                "path": event.path,
+                "is_new": event.is_new,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+                "snapshot_hash": event.old_content_id,
+                "metadata_snapshot": None,
+                "metadata": event.to_dict(),
+            }
+        elif etype == FileEventType.FILE_DELETE:
+            return {
+                "op": "delete",
+                "path": event.path,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+                "snapshot_hash": event.content_id,
+                "metadata_snapshot": None,
+            }
+        elif etype == FileEventType.FILE_RENAME:
+            return {
+                "op": "rename",
+                "path": event.old_path or event.path,
+                "new_path": event.new_path or event.path,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+                "snapshot_hash": event.content_id,
+                "metadata_snapshot": None,
+            }
+        elif etype == FileEventType.DIR_CREATE:
+            return {
+                "op": "mkdir",
+                "path": event.path,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+            }
+        elif etype == FileEventType.DIR_DELETE:
+            return {
+                "op": "rmdir",
+                "path": event.path,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+                "recursive": False,
+            }
+        else:
+            return None  # Unsupported event type — ignore
+
+    # ------------------------------------------------------------------
+    # DB flush logic (shared by _flush_batch and flush_sync)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_urn(path: str, zone_id: str | None) -> str:
+        """Build a locator URN for a file from its virtual path.
+
+        Delegates to NexusURN.for_file() -- single source of truth for
+        URN construction (Issue #2978, Issue #2929 Key Decision #3).
+        """
+        from nexus.contracts.urn import NexusURN
+
+        return str(NexusURN.for_file(zone_id or "default", path))
+
+    def _record_mcl_for_event(
+        self,
+        session: Any,
+        event: dict[str, Any],
+    ) -> None:
+        """Record MCL entry for a single event. Non-critical, uses savepoint.
+
+        MCL failures must NEVER corrupt the outer session transaction.
+        """
+        try:
+            from nexus.storage.mcl_recorder import MCLRecorder
+
+            op = event["op"]
+            zone_id = event.get("zone_id")
+            agent_id = event.get("agent_id")
+            path = event["path"]
+            changed_by = agent_id or "system"
+
+            with session.begin_nested():
+                recorder = MCLRecorder(session)
+                if op == "write":
+                    urn = self._build_urn(path, zone_id)
+                    recorder.record_file_write(
+                        entity_urn=urn,
+                        metadata_dict=event.get("metadata"),
+                        zone_id=zone_id,
+                        changed_by=changed_by,
+                        previous_metadata=event.get("metadata_snapshot"),
+                    )
+                elif op == "delete":
+                    from nexus.storage.aspect_service import AspectService
+
+                    urn = self._build_urn(path, zone_id)
+                    recorder.record_file_delete(
+                        entity_urn=urn,
+                        zone_id=zone_id,
+                        changed_by=changed_by,
+                        previous_metadata=event.get("metadata_snapshot"),
+                    )
+                    AspectService(session).soft_delete_entity_aspects(urn)
+                elif op == "rename":
+                    old_urn = self._build_urn(path, zone_id)
+                    new_path = event.get("new_path", "")
+                    new_urn = self._build_urn(new_path, zone_id)
+                    recorder.record_file_delete(
+                        entity_urn=old_urn,
+                        zone_id=zone_id,
+                        changed_by=changed_by,
+                        previous_metadata=event.get("metadata_snapshot"),
+                    )
+                    recorder.record_file_write(
+                        entity_urn=new_urn,
+                        metadata_dict=event.get("metadata_snapshot"),
+                        zone_id=zone_id,
+                        changed_by=changed_by,
+                    )
+        except Exception:
+            logger.debug(
+                "MCL recording failed for %s:%s (non-critical)", event.get("op"), event.get("path")
+            )
+
+    def _process_events_in_session(self, session: Any, events: list[dict[str, Any]]) -> None:
+        """Dispatch events to OperationLogger + VersionRecorder within a session.
+
+        Shared by ``_flush_batch()`` and ``flush_sync()``.
+        Caller is responsible for ``session.commit()``.
+        """
+        from nexus.storage.operation_logger import OperationLogger
+        from nexus.storage.version_recorder import VersionRecorder
+
+        op_logger = OperationLogger(session)
+        recorder = VersionRecorder(session)
+
+        for event in events:
+            op = event["op"]
+            zone_id = event.get("zone_id")
+            agent_id = event.get("agent_id")
+
+            if op == "write":
+                urn = self._build_urn(event["path"], zone_id)
+                op_logger.log_operation(
+                    operation_type="write",
+                    path=event["path"],
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    snapshot_hash=event.get("snapshot_hash"),
+                    metadata_snapshot=event.get("metadata"),
+                    status="success",
+                    entity_urn=urn,
+                    aspect_name="file_metadata",
+                    change_type="upsert",
+                )
+                md = _metadata_from_dict(event["metadata"])
+                recorder.record_write(md, is_new=event["is_new"])
+
+            elif op == "delete":
+                urn = self._build_urn(event["path"], zone_id)
+                op_logger.log_operation(
+                    operation_type="delete",
+                    path=event["path"],
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    snapshot_hash=event.get("snapshot_hash"),
+                    metadata_snapshot=event.get("metadata_snapshot"),
+                    status="success",
+                    entity_urn=urn,
+                    aspect_name="file_metadata",
+                    change_type="delete",
+                )
+                recorder.record_delete(event["path"])
+                from nexus.storage.aspect_service import AspectService
+
+                AspectService(session).soft_delete_entity_aspects(urn)
+
+            elif op == "rename":
+                old_urn = self._build_urn(event["path"], zone_id)
+                new_path = event.get("new_path", "")
+                new_urn = self._build_urn(new_path, zone_id)
+                op_logger.log_operation(
+                    operation_type="rename",
+                    path=event["path"],
+                    new_path=new_path,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    snapshot_hash=event.get("snapshot_hash"),
+                    metadata_snapshot=event.get("metadata_snapshot"),
+                    status="success",
+                    entity_urn=old_urn,
+                    aspect_name="file_metadata",
+                    change_type="delete",
+                )
+                op_logger.log_operation(
+                    operation_type="rename",
+                    path=new_path,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    metadata_snapshot=event.get("metadata_snapshot"),
+                    status="success",
+                    entity_urn=new_urn,
+                    aspect_name="file_metadata",
+                    change_type="upsert",
+                )
+                if new_path:
+                    recorder.record_rename(event["path"], new_path, zone_id=zone_id)
+
+            elif op == "mkdir":
+                op_logger.log_operation(
+                    operation_type="mkdir",
+                    path=event["path"],
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    status="success",
+                )
+
+            elif op == "rmdir":
+                op_type = "rmdir_recursive" if event.get("recursive") else "rmdir"
+                op_logger.log_operation(
+                    operation_type=op_type,
+                    path=event["path"],
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    status="success",
+                )
+
+    def _flush_batch_sync(self, events: list[dict[str, Any]]) -> None:
+        """Synchronous flush: critical writes first, MCL second.
+
+        Phase 1 commits operation_log + file_paths + version_history.
+        Phase 2 records MCL entries in a separate session so failures
+        cannot corrupt the critical writes.
+        """
+        # Phase 1: Critical writes (operation_log + version_history)
+        session = self._session_factory()
+        try:
+            self._process_events_in_session(session, events)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+        # Phase 2: MCL recording (non-critical, separate session)
+        mcl_session = None
+        try:
+            mcl_session = self._session_factory()
+            for event in events:
+                if event.get("op") in ("write", "delete", "rename"):
+                    self._record_mcl_for_event(mcl_session, event)
+            mcl_session.commit()
+        except Exception as mcl_err:
+            if mcl_session is not None:
+                mcl_session.rollback()
+            logger.debug("MCL batch recording failed (non-critical): %s", mcl_err)
+        finally:
+            if mcl_session is not None:
+                mcl_session.close()
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def cancel(self) -> None:
+        """Cancel any pending debounce timer (for clean shutdown)."""
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
 
     # ------------------------------------------------------------------
     # Observability
@@ -442,10 +634,13 @@ class PipedRecordStoreWriteObserver:
     def metrics(self) -> dict[str, int]:
         """Return observer metrics."""
         return {
-            "total_enqueued": self._total_enqueued,
             "total_flushed": self._total_flushed,
             "total_failed": self._total_failed,
             "total_retries": self._total_retries,
             "total_dropped": self._total_dropped,
-            "pre_buffer_size": len(self._pre_buffer),
+            "pending_events": len(self._pending),
         }
+
+
+# Backward-compat alias so existing imports don't break during migration
+PipedRecordStoreWriteObserver = RecordStoreWriteObserver

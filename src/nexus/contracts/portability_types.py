@@ -33,7 +33,7 @@ class MetastoreWriteProtocol(MetastoreReadProtocol, Protocol):
 class ContentBackendProtocol(Protocol):
     """Narrow backend surface for reading content blobs."""
 
-    def read_content(self, content_hash: str) -> Any:
+    def read_content(self, content_id: str) -> Any:
         """Read a content blob by its CAS hash."""
         ...
 
@@ -46,8 +46,8 @@ class PortabilityFSProtocol(Protocol):
     defines the minimal surface the portability export/import services
     need from NexusFS.
 
-    Method names use the sys_ prefix to match NexusFS's POSIX-inspired
-    syscall API (sys_read, sys_write, sys_unlink, etc.).
+    Bricks access content/metadata through these properties, not through
+    the full NexusFS syscall API.
     """
 
     @property
@@ -55,18 +55,12 @@ class PortabilityFSProtocol(Protocol):
         """Metastore for reading/writing file metadata."""
         ...
 
-    @property
-    def backend(self) -> Any:
-        """Backend for reading content blobs."""
+    def sys_read(self, path: str, **kwargs: Any) -> bytes | None:
+        """Read file content by path. R20.18.x routes through the
+        kernel's mount LPM; replaced the `backend.read_content(hash)`
+        direct access NexusFS no longer exposes."""
         ...
 
-    def sys_write(
-        self,
-        path: str,
-        content: bytes,
-        context: Any = None,
-        *,
-        force: bool = False,
-    ) -> Any:
-        """Write content to a file (POSIX write(2))."""
+    def write(self, path: str, buf: bytes, **kwargs: Any) -> dict[str, Any]:
+        """Write file content. Used by import_zone to restore blobs."""
         ...

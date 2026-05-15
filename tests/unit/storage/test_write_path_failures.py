@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.metadata import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel
@@ -27,14 +28,13 @@ from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
 def _make_metadata(
     path: str = "/test/file.txt",
-    etag: str | None = "sha256-abc",
+    content_id: str | None = "sha256-abc",
     backend_name: str = "local",
     physical_path: str = "/data/abc123",
     size: int = 1024,
     mime_type: str | None = "text/plain",
     version: int = 1,
     zone_id: str | None = "root",
-    created_by: str | None = "user-1",
     owner_id: str | None = "owner-1",
     is_directory: bool = False,
     created_at: datetime | None = None,
@@ -43,14 +43,11 @@ def _make_metadata(
     now = datetime(2026, 2, 10, 12, 0, 0)
     return FileMetadata(
         path=path,
-        backend_name=backend_name,
-        physical_path=physical_path,
         size=size,
-        etag=etag,
+        content_id=content_id,
         mime_type=mime_type,
         version=version,
         zone_id=zone_id,
-        created_by=created_by,
         owner_id=owner_id,
         entry_type=DT_DIR if is_directory else DT_REG,
         created_at=created_at or now,
@@ -168,7 +165,7 @@ class TestBatchWriteErrorHandling:
         with contextlib.suppress(Exception):
             write_observer.on_write_batch(
                 [(_make_metadata(), True)],
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
         # Error was silently suppressed — this is the bug
@@ -248,7 +245,7 @@ class TestVersionRecorderEdgeCases:
 
             # Now try to update (not create) — should fall back to create
             recorder3 = VersionRecorder(session)
-            recorder3.record_write(_make_metadata(etag="new-content"), is_new=False)
+            recorder3.record_write(_make_metadata(content_id="new-content"), is_new=False)
             session.commit()
 
             # Should have one active entry
@@ -263,7 +260,7 @@ class TestVersionRecorderEdgeCases:
                 .all()
             )
             assert len(active) == 1
-            assert active[0].content_hash == "new-content"
+            assert active[0].content_id == "new-content"
         finally:
             session.close()
 
@@ -277,7 +274,7 @@ class TestVersionRecorderEdgeCases:
         session = session_factory()
         try:
             recorder = VersionRecorder(session)
-            recorder.record_write(_make_metadata(etag="first"), is_new=True)
+            recorder.record_write(_make_metadata(content_id="first"), is_new=True)
             session.commit()
 
             # Second create at same path (simulates race condition)
@@ -286,7 +283,7 @@ class TestVersionRecorderEdgeCases:
             # or create a duplicate depending on unique constraint
             recorder2 = VersionRecorder(session)
             try:
-                recorder2.record_write(_make_metadata(etag="second"), is_new=True)
+                recorder2.record_write(_make_metadata(content_id="second"), is_new=True)
                 session.commit()
             except Exception:
                 session.rollback()
@@ -301,7 +298,7 @@ class TestVersionRecorderEdgeCases:
 
         session = session_factory()
         try:
-            metadata = _make_metadata(size=0, etag="empty-hash")
+            metadata = _make_metadata(size=0, content_id="empty-hash")
             recorder = VersionRecorder(session)
             recorder.record_write(metadata, is_new=True)
             session.commit()

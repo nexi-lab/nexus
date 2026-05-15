@@ -239,7 +239,7 @@ def get_nexus_tools() -> list[BaseTool]:
             return f"Error finding files: {str(e)}"
 
     @tool
-    def read_file(
+    async def read_file(
         read_cmd: str,
         config: RunnableConfig,
         state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
@@ -418,7 +418,7 @@ def get_nexus_tools() -> list[BaseTool]:
             return f"Error reading file: {str(e)}\nUsage: read_file('[cat|less] path')"
 
     @tool
-    def write_file(
+    async def write_file(
         path: str,
         content: str,
         config: RunnableConfig,
@@ -447,7 +447,7 @@ def get_nexus_tools() -> list[BaseTool]:
             nx.sys_write(path, content_bytes)
 
             # Verify write was successful
-            if nx.sys_access(path):
+            if nx.access(path):
                 size = len(content_bytes)
                 return f"Successfully wrote {size} bytes to {path}"
             else:
@@ -675,8 +675,11 @@ def get_nexus_tools() -> list[BaseTool]:
         try:
             nx = _get_nexus_client(config)
 
-            # Query active memories using RemoteMemory API
-            memories = nx.memory.query(state="active", limit=100)
+            # Query active memories via _memory_provider (Issue #1410)
+            _provider = getattr(nx, "_memory_provider", None)
+            if _provider is None:
+                return "Memory system not available"
+            memories = _provider.get_or_create().query(state="active", limit=100)
 
             if not memories:
                 return "No memories found"

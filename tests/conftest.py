@@ -14,8 +14,57 @@ Usage:
 """
 
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+# Ensure local src is in path for worktree development
+_src_path = Path(__file__).parent.parent / "src"
+if str(_src_path) not in sys.path:
+    sys.path.insert(0, str(_src_path))
+
+# ---------------------------------------------------------------------------
+# Issue #3712: auto-rebuild stale nexus_runtime binary before test runs.
+# Activated only when NEXUS_RUST_EDITABLE=1 (opt-in for local dev).
+# CI pre-builds the binary from source, so the hook is not needed there.
+# ---------------------------------------------------------------------------
+if os.environ.get("NEXUS_RUST_EDITABLE") == "1":
+    try:
+        import maturin_import_hook
+
+        maturin_import_hook.install()
+    except ImportError:
+        pass  # maturin-import-hook not installed — skip (warn below)
+
+# ---------------------------------------------------------------------------
+# Issue #3399: default to sync write observer in tests.
+# The piped observer spawns a background consumer task per NexusFS instance;
+# with 10K+ tests this adds significant startup/shutdown overhead and can
+# cause CI timeouts.  Tests that specifically need the piped observer create
+# it directly (e.g. test_piped_write_observer_flush.py).
+# ---------------------------------------------------------------------------
+os.environ.setdefault("NEXUS_ENABLE_WRITE_BUFFER", "false")
+
+# ---------------------------------------------------------------------------
+# OAuthCrypto: allow ephemeral keys in the test suite.
+# Tests do not persist secrets across process restarts, so the production
+# fail-loud default (which prevents silent data loss on the next boot) is
+# overly strict for test fixtures that call ``OAuthCrypto()`` with no
+# wired settings_store or explicit key. Tests that specifically exercise
+# the fail-loud contract use ``monkeypatch.delenv`` to remove this flag.
+# See ``tests/unit/lib/oauth/test_crypto_fail_loud.py``.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("NEXUS_ALLOW_EPHEMERAL_OAUTH_KEY", "1")
+
+
+def __getattr__(name: str):
+    if name == "make_test_nexus":
+        from tests.testkit import make_test_nexus
+
+        return make_test_nexus
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # ---------------------------------------------------------------------------
 # Hypothesis profiles (Issue #1303)
@@ -29,6 +78,7 @@ try:
         "dev",
         max_examples=10,
         deadline=500,
+        suppress_health_check=[HealthCheck.too_slow],
     )
 
     hypothesis_settings.register_profile(
@@ -78,6 +128,15 @@ def pytest_collection_modifyitems(config, items):
             if "quarantine" in item.keywords:
                 item.add_marker(skip_quarantine)
 
+    # sandbox_memory tests are skipped by default (RSS sampling is flaky on
+    # shared CI runners).  Only run when explicitly selected: -m sandbox_memory
+    marker_expr = config.option.markexpr if hasattr(config.option, "markexpr") else ""
+    if "sandbox_memory" not in marker_expr:
+        skip_mem = pytest.mark.skip(reason="SANDBOX memory benchmark: run with -m sandbox_memory")
+        for item in items:
+            if "sandbox_memory" in item.keywords:
+                item.add_marker(skip_mem)
+
 
 # ---------------------------------------------------------------------------
 # Autouse fixtures for test isolation (reset module-level singletons)
@@ -92,129 +151,6 @@ if _HAS_STRUCTLOG:
         structlog.contextvars.clear_contextvars()
         yield
         structlog.contextvars.clear_contextvars()
-
-
-def make_test_nexus(
-    tmp_path,
-    *,
-    backend=None,
-    permissions=None,
-    parsing=None,
-    cache=None,
-    memory=None,
-    distributed=None,
-    services=None,
-    system_services=None,
-    is_admin=False,
-    record_store=None,
-    use_raft=False,
-    metadata_store=None,
-):
-    """Create a NexusFS instance for testing with sensible defaults.
-
-    Defaults: permissions off, no auto-parse, no distributed features.
-    Avoids heavy I/O (event bus, lock manager, workflows) for fast tests.
-
-    A default LocalBackend is created and mounted at ``/`` (root) unless
-    a custom ``backend`` is provided. This mirrors ``create_nexus_fs()``
-    in the factory (``router.add_mount("/", backend)``).
-
-    Args:
-        tmp_path: pytest tmp_path fixture for backend/metadata storage.
-        backend: Backend to mount at ``/``. Default: LocalBackend(tmp_path / "data").
-        permissions: PermissionConfig override. Default: enforce=False.
-        parsing: ParseConfig override. Default: auto_parse=False.
-        cache: CacheConfig override.
-        memory: MemoryConfig override.
-        distributed: DistributedConfig override. Default: all disabled.
-        services: KernelServices override.
-        system_services: SystemServices override.
-        is_admin: Admin flag.
-        record_store: Optional RecordStoreABC.
-        use_raft: Use RaftMetadataStore (requires Python 3.13).
-        metadata_store: Override metadata store. Default: DictMetastore or Raft.
-
-    Returns:
-        NexusFS instance ready for testing.
-    """
-    from nexus.core.config import (
-        DistributedConfig,
-        ParseConfig,
-        PermissionConfig,
-    )
-    from nexus.core.nexus_fs import NexusFS
-
-    if permissions is None:
-        permissions = PermissionConfig(enforce=False)
-    if parsing is None:
-        parsing = ParseConfig(auto_parse=False)
-    if distributed is None:
-        distributed = DistributedConfig(
-            enable_events=False,
-            enable_locks=False,
-            enable_workflows=False,
-        )
-
-    if metadata_store is None:
-        if use_raft:
-            from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-            metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
-        else:
-            from tests.helpers.dict_metastore import DictMetastore
-
-            metadata_store = DictMetastore()
-
-    nx = NexusFS(
-        metadata_store=metadata_store,
-        record_store=record_store,
-        is_admin=is_admin,
-        permissions=permissions,
-        parsing=parsing,
-        cache=cache,
-        memory=memory,
-        distributed=distributed,
-        kernel_services=services,
-        system_services=system_services,
-    )
-
-    # Mount backend at root (same as factory/orchestrator.py: router.add_mount("/", backend))
-    if backend is None:
-        from pathlib import Path
-
-        from nexus.backends.local import LocalBackend
-
-        data_dir = Path(tmp_path) / "data"
-        data_dir.mkdir(exist_ok=True)
-        backend = LocalBackend(root_path=str(data_dir))
-    nx.router.add_mount("/", backend)
-
-    # Wire PermissionCheckHook via DI (same as factory/orchestrator.py, Issue #899)
-    from nexus.services.permissions.checker import PermissionChecker
-    from nexus.services.permissions.permission_hook import PermissionCheckHook
-
-    _checker = PermissionChecker(
-        permission_enforcer=nx._permission_enforcer,
-        metadata_store=nx.metadata,
-        default_context=nx._default_context,
-        enforce_permissions=nx._enforce_permissions,
-    )
-    _perm_hook = PermissionCheckHook(
-        checker=_checker,
-        metadata_store=nx.metadata,
-        default_context=nx._default_context,
-        enforce_permissions=nx._enforce_permissions,
-        permission_enforcer=nx._permission_enforcer,
-        descendant_checker=getattr(nx, "_descendant_checker", None),
-    )
-    nx._dispatch.register_intercept_read(_perm_hook)
-    nx._dispatch.register_intercept_write(_perm_hook)
-    nx._dispatch.register_intercept_delete(_perm_hook)
-    nx._dispatch.register_intercept_rename(_perm_hook)
-    nx._dispatch.register_intercept_mkdir(_perm_hook)
-    nx._dispatch.register_intercept_rmdir(_perm_hook)
-
-    return nx
 
 
 @pytest.fixture(autouse=True)

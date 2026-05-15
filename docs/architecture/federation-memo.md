@@ -110,9 +110,12 @@ Per-operation parameter (`consistency="sc"` or `"ec"`), not per-zone. SC uses Ra
 5.2 Raft Local:         Client → NexusFS.write() → RaftMetadataStore (PyO3 ~5us) → redb → Backend
 5.3 Raft Distributed:   Client → NexusFS.write() → ZoneConsensus.propose() → gRPC replicate
                                                   → Majority ACK → StateMachine.apply() on all → redb
+                                                  → per-voter dcache.evict(key)  ← cache coherence
 ```
 
 raft-rs only handles consensus (log replication, election). Transport (gRPC) is our responsibility.
+
+Cache coherence: every voter's `StateMachine.apply` fires the invalidation callback the kernel DLC installed at mount time (see KERNEL-ARCHITECTURE §4 DLC row), so a leader-forwarded follower write — or any replicated mutation — evicts stale dcache entries on nodes that didn't originate the write. Without this step, `sys_stat` / `sys_read` on non-writer voters would keep returning the pre-write `etag` from local dcache even after raft applied the new state.
 
 ---
 
@@ -152,16 +155,52 @@ Creates a **new independent zone**. All participants are **equal Voters** (not L
 
 ### 6.3 Peer Discovery: No Custom DNS
 
-Standard OS DNS + static bootstrap + Raft membership exchange covers all scenarios.
+Standard OS DNS + bootstrap + Raft membership exchange covers all scenarios.
 
 | Layer | Mechanism | When |
 |-------|-----------|------|
-| Bootstrap | `NEXUS_PEERS` env var | First cluster formation |
+| Bootstrap | `NEXUS_BOOTSTRAP_NEW=1` (founder) or JoinZone RPC against `NEXUS_PEERS` (joiner) | First cluster formation |
 | First contact | OS DNS (hostname → IP) | `join_zone(peers=["2@bob:2126"])` |
-| After join | `JoinZoneResponse.ClusterConfig` | Returns all voter NodeInfo |
+| After join | Leader snapshot installs authoritative `ConfState` | After AddNode commits |
 | Ongoing | Raft `ConfChange` | Automatic membership propagation |
 
 Path resolution across zones is **all local** (~5us per hop) because mounting = Voter = full local replica. No network hops on the read path.
+
+#### 6.3.1 Bootstrap
+
+Etcd / TiKV-style opaque IDs + leader-driven `AddNode`.
+
+- **Identity** — `node_id` is an opaque random `u64` minted at first daemon boot, persisted as 8 bytes BE u64 to `<NEXUS_DATA_DIR>/.node_id`.  Decoupling identity from hostname lets a wiped follower rejoin under a fresh ID; the leader's `Progress[new_id]` is created with `matched=0` by `AddNode`, so the first heartbeat carries `m.commit=0` — within `RaftLog::commit_to`'s safe range on a fresh follower (`last_index=0`).  Pinned by [`test_handle_heartbeat_on_empty_follower_with_stale_commit_panics`](../../rust/raft/src/raft/storage.rs).
+- **Address book** — `NEXUS_PEERS` is a hostname → endpoint mapping for OTHER nodes only that seeds the transport peer map.  Self joins the cluster through `create_zone(self)` (founder) or `AddNode(self)` on the leader (joiner) — never through the address book.  Boot fails loud (`peer list contains self ...`) when `NEXUS_PEERS` includes the local node so the joiner-loop self-RPC stall surfaces at parse time, not after `Zone 'root' registered`.  `ConfState` lives in raft storage and is mutated only by `ConfChange` (AddNode / RemoveNode) driven by JoinZone.
+- **Bootstrap mode** — operator declares intent up front via `NEXUS_BOOTSTRAP_MODE` (or `--bootstrap-mode` for `nexusd-cluster`).  The validator runs once at boot and rejects any state × flag combination that does not match the declared mode, so misconfiguration surfaces before the gRPC server starts rather than as a silent stall later.  See [`BootstrapMode`](../../rust/raft/src/distributed_coordinator.rs).
+
+  | Mode | Required state | Required flags | Forbidden flags | Bootstrap dispatch |
+  |------|---------------|----------------|-----------------|---------------------|
+  | `static` | Empty data dir | `NEXUS_BOOTSTRAP_NEW=1` (founder) **or** `NEXUS_PEERS` non-empty (joiner) | — | Founder: `create_zone("root")` 1-voter.  Joiner: loop on JoinZone RPC against `NEXUS_PEERS`, indefinite |
+  | `dynamic` | Empty data dir | — | `NEXUS_BOOTSTRAP_NEW`, `NEXUS_PEERS` | Daemon comes up rootless; runtime API (`nexusd-cluster share`/`join`, Python `federation_create_zone`) drives zone formation |
+  | `restart` | Data dir holds `<dir>/root/raft/` | — | `NEXUS_BOOTSTRAP_NEW`, `NEXUS_PEERS` | Resume from persisted ConfState — state on disk is the SSOT, env flags would be ambiguous |
+
+- **Wipe-rejoin** — wiping `<NEXUS_DATA_DIR>` mints a fresh `node_id` on the next boot; the daemon JoinZones, the leader commits `AddNode(new_id)`.
+
+##### Witness
+
+The standalone witness binary derives `node_id = hostname_to_node_id(hostname)` (SHA-256 of hostname).  Witnesses live at well-known addresses, so binding identity to hostname is sufficient for them.
+
+#### 6.3.2 Federation Control-Plane API Surface
+
+The federation control plane has two layers; they are NOT shortcuts for each other and live at different trust boundaries.
+
+| Operation | Syscall path (preferred) | RPC path (legacy / pending migration) | Notes |
+|-----------|--------------------------|----------------------------------------|-------|
+| **Create zone (mount-tied)** | `sys_setattr(path, DT_MOUNT, zone_id, source=None)` | `federation_create_zone(zone_id)` + `federation_mount(parent, path, zone)` | Syscall is the architectural target — service tier should always go through syscall. The two-step RPC pattern remains for legacy callers. |
+| **Join zone (mount-tied)** | `sys_setattr(path, DT_MOUNT, zone_id, source="http://leader:2126")` | `federation_join(peer_addr, remote_path, local_path)` (share-registry-based) | Syscall covers raw cluster join via leader address; the RPC covers subtree share/join via the raft-replicated share registry — two distinct workflows. |
+| **Unmount zone** | `sys_unlink(mount_path)` | `federation_unmount(parent_zone, path)` | Equivalent surfaces. |
+| **Remove zone (standalone)** | (no syscall — zone removal without a path has no filesystem analog) | `federation_remove_zone(zone_id, force=false)` | Cluster-control plane only. Cascade-unmount happens inside the impl. |
+| **Read replicated state** | `sys_read(path)` / `sys_stat(path)` / `sys_readdir(path)` | — | Filesystem syscalls reach federated zones via the mount table; no special federation API needed. |
+
+The `_nr.federation_create_zone` / `federation_remove_zone` / `federation_join_zone` PyO3 bindings are direct service-tier shortcuts to the `DistributedCoordinator` HAL trait. They predate the syscall-only contract and are scheduled for removal once all callers migrate. **Do not add new callers** — go through `sys_setattr` / `sys_unlink` instead.
+
+Architectural principle: service tier (`@rpc_expose` methods in `nexus.server.rpc.services.*`) interacts with the kernel **only** through syscalls — same trust boundary as any external user. Direct PyO3 trait shortcuts collapse the boundary and make permission / audit / hook injection harder to reason about.
 
 ### 6.4 DT_MOUNT Entry Structure
 
@@ -233,7 +272,6 @@ Documented in `document-ai/notes/` discussions; brief summary for reference:
 - **Memory/Cache tiering**: L0 kernel (redb ~50ns), L1 Dragonfly (~1ms), L2 PostgreSQL (~5ms). L0 stays in kernel; L1/L2 hot-pluggable.
 - **Identity: PCB-based binding**: Immutable identity at process spawn. Progressive isolation: Host Process → Docker → Wasm.
 - **Auth: Verify/Sign split**: Kernel = `verify_token()` ~50ns. Driver = `login()` ~50-500ms (DB + OAuth).
-- **Nexus native IPC**: `DT_PIPE` inode, ring buffer at `/nexus/pipes/{name}`. Observable, persistent, Raft-replicated.
 - **Container I/O monopoly**: `--network none`, single mount `/mnt/nexus`, `--read-only`.
 - **Runtime hot-swapping**: Linux `modprobe`/`rmmod` semantics for drivers. Phases: Constructor DI → DriverRegistry → state migration.
 
@@ -265,18 +303,28 @@ Federation has two I/O planes with different routing strategies:
 | **Metadata** | Transparent DI proxy | `FederatedMetadataProxy` wraps MetastoreABC, zone-routes all ops |
 | **Content** | PRE-DISPATCH resolver | `FederationContentResolver` intercepts read/delete before kernel |
 
+**Zone-aware path routing:** PathRouter canonicalizes all paths to
+`/{zone_id}/{path}` and does zone-canonical LPM. For local-zone paths,
+FederationContentResolver fast-exits without metadata lookup (~0 cost).
+Cross-zone paths still require metadata lookup to determine content locality
+(CAS blobs are node-specific). See `KERNEL-ARCHITECTURE.md` §4.
+
 #### Content CRUD Status
 
 | Operation | Mechanism | Routing |
 |-----------|-----------|---------|
-| **Read** | `FederationContentResolver.try_read()` | Remote: gRPC Read RPC + progressive replication to local CAS |
+| **Read** | `FederationContentResolver.try_read()` | Local zone: fast-exit (no metadata lookup). Remote: gRPC Read/StreamRead RPC |
 | **Write** | Always local (by design) | `FederatedMetadataProxy` enriches `backend_name` with node address (`local@host:port`) |
-| **Delete** | `FederationContentResolver.try_delete()` | Remote: gRPC Delete RPC delegates full `sys_unlink` to origin peer |
+| **Delete** | `FederationContentResolver.try_delete()` | Local zone: fast-exit. Remote: gRPC Delete RPC delegates `sys_unlink` to origin peer |
 | **Rename** | Metadata-only (CAS content stays at same hash) | Cross-zone rename blocked by `FederatedMetadataProxy` |
+
+Streaming reads: `FederationContentResolver.try_read()` uses a size threshold —
+< 1MB: unary gRPC `Read` RPC; >= 1MB: `StreamRead` RPC (chunked, CAS-aware for
+CDC files). No local persistence on read — content stays on the origin node only.
 
 #### CAS Semantics in Federation
 
-CAS stores each file as **one immutable blob keyed by SHA-256 hash**. "Modifying" a file (including `append()`) creates a **new blob with a new hash**. Properties: no partial reads, safe progressive replication (hash-verified), conflicts only at metadata level.
+CAS stores each file as **one immutable blob keyed by SHA-256 hash**. "Modifying" a file (including `append()`) creates a **new blob with a new hash**. Properties: no partial reads, safe remote read (hash-verified), conflicts only at metadata level.
 
 #### Caveat 1: Concurrent Multi-Node Write (Last-Writer-Wins)
 
@@ -286,13 +334,13 @@ Two nodes writing to the same path: Raft totally orders the two metadata proposa
 
 #### Caveat 2: Cross-Node Append = Full Read-Modify-Write
 
-`append()` = `sys_read()` + concatenate + `sys_write()`. In federation, appending 1 byte to a 100MB file on another node transfers the entire file over the network, creates a new complete blob, and orphans the old blob + progressive replication copy.
+`append()` = `sys_read()` + concatenate + `sys_write()`. In federation, appending 1 byte to a 100MB file on another node transfers the entire file over the network, creates a new complete blob, and orphans the old blob.
 
 Acceptable for v1: most federation is read-heavy; frequent cross-node appends are rare.
 
 #### Caveat 3: Content Availability on Writer Node Failure
 
-Content exists only on writer's CAS until another node reads it (progressive replication). Writer failure before any read → `NexusFileNotFoundError`. Future: eager replication, CacheStore L2, WAL read-repair.
+Content exists only on writer's CAS until another node reads it. Writer failure before any read → `NexusFileNotFoundError`. Future: eager replication, CacheStore L2, WAL read-repair.
 
 #### Caveat 4: CAS Orphan Accumulation (Standard Pattern — Needs GC)
 
@@ -331,6 +379,41 @@ Single-node GC is straightforward (scan local ObjectStore vs local Metastore).
 Federation GC requires node-level reconciliation: each node scans its local ObjectStore
 against the Raft-replicated Metastore to find locally-held orphans.
 
+### 7j. DT_PIPE / DT_STREAM Federation Design
+
+Both IPC primitives have Raft-replicated metadata but in-process heap data
+(MemoryPipeBackend for DT_PIPE, StreamBuffer for DT_STREAM). Federation extends
+IPC I/O transparently via origin-aware routing. DT_STREAM uses the same
+`stream@host:port` pattern as DT_PIPE's `pipe@host:port`.
+
+#### Metadata: `backend_name` Encoding
+
+PipeManager embeds the creator node's advertise address in `backend_name`:
+
+| Mode | `backend_name` | Meaning |
+|------|---------------|---------|
+| Single-node | `pipe` / `stream` | No origin, always local |
+| Federated | `pipe@host:port` / `stream@host:port` | Origin node address for remote proxy |
+
+#### Read/Write Routing
+
+`BackendAddress.parse(backend_name)` extracts the origin. NexusFS dispatches:
+
+- **Local** (`origin == self` or no origin): Direct MemoryPipeBackend via PipeManager (~0.5us)
+- **Remote** (`origin != self`): gRPC `Call` RPC to origin node, which executes
+  `sys_read`/`sys_write` locally and returns the result
+
+The remote path reuses existing gRPC auth/zone/error infrastructure — no new proto RPCs.
+
+#### sys_write: Always Local (Design Decision)
+
+`sys_write` is always local by design. The writer node becomes the content origin:
+- Regular files: `FederatedMetadataProxy` enriches `backend_name` with writer's address
+- Pipes: PipeManager embeds `self_address` in `backend_name` at creation time
+
+Remote nodes read from the origin. There is no write-forwarding or write-proxying.
+This is consistent with HDFS/GFS where writes go to a local DataNode/ChunkServer.
+
 ---
 
 ## 8. Key Files Reference
@@ -349,6 +432,8 @@ against the Raft-replicated Metastore to find locally-held orphans.
 | FederationContentResolver | `src/nexus/raft/federation_content_resolver.py` |
 | ZonePathResolver | `src/nexus/raft/zone_path_resolver.py` |
 | BackendAddress | `src/nexus/contracts/backend_address.py` |
+| ChannelFactory | `src/nexus/grpc/channel_factory.py` |
+| PipeManager | `src/nexus/core/pipe_manager.py` |
 | VFS gRPC proto | `proto/nexus/grpc/vfs/vfs.proto` |
 | VFS gRPC servicer | `src/nexus/grpc/servicer.py` |
 | Data architecture | `docs/architecture/data-storage-matrix.md` |

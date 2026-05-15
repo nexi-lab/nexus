@@ -82,8 +82,8 @@ async def main():
         print()
 
         # Create directories
-        nx.sys_mkdir(f"{demo_base}/docs", parents=True)
-        nx.sys_mkdir(f"{demo_base}/reports", parents=True)
+        nx.mkdir(f"{demo_base}/docs", parents=True)
+        nx.mkdir(f"{demo_base}/reports", parents=True)
 
         # Create sample documentation
         auth_doc = """# Authentication System
@@ -345,7 +345,7 @@ ACTION ITEMS FOR Q1 2025:
         print("════════════════════════════════════════════════════════════")
         print()
 
-        nx.sys_rmdir(demo_base, recursive=True, force=True)
+        await nx.sys_rmdir(demo_base, recursive=True, force=True)
         print("✓ Cleaned up demo files")
         print()
 

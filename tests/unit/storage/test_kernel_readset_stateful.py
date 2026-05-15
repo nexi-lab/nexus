@@ -14,6 +14,10 @@ Invariants checked after every rule:
 
 import os
 
+import pytest
+
+pytest.importorskip("hypothesis")
+
 from hypothesis import settings
 from hypothesis import strategies as st
 from hypothesis.stateful import (

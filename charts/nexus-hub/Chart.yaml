@@ -1,0 +1,16 @@
+apiVersion: v2
+name: nexus-hub
+description: Kubernetes deployment for Nexus hub mode
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/nexi-lab/nexus
+sources:
+  - https://github.com/nexi-lab/nexus
+maintainers:
+  - name: Nexus Team
+keywords:
+  - nexus
+  - mcp
+  - context
+  - hub

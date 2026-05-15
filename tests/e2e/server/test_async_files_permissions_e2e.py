@@ -117,8 +117,8 @@ def server():
             PYTHON,
             "-c",
             (
-                "from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                "from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{data_dir}'])"
             ),
         ],
@@ -225,7 +225,7 @@ def test_write(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     data = resp.json()
     assert data["version"] == 1
     assert data["size"] == len("Hello E2E!")
-    assert "etag" in data
+    assert "content_id" in data
 
 
 def test_read(base_url: str, client: httpx.Client, user_headers: dict) -> None:

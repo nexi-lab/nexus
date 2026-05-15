@@ -1,22 +1,69 @@
-"""Skill documentation generator — extracted from SkillDocMixin.
+"""Readme documentation generator.
 
 Converts connector metadata (Pydantic schemas, operation traits, error
-registries) into SKILL.md markdown and writes skill directories.
+registries) into README.md markdown.
 """
 
-import logging
 import posixpath
 from typing import Any
 
+import yaml
 from pydantic import BaseModel
 
 from nexus.backends.connectors.base import ConfirmLevel, ErrorDef, OpTraits
 
-logger = logging.getLogger(__name__)
+
+def resolve_readme_short_description(
+    connector_class: type[Any],
+    explicit: str = "",
+) -> str:
+    """Resolve the one-line README frontmatter description for a connector."""
+    if explicit.strip():
+        return explicit.strip()
+
+    module_path = getattr(connector_class, "__module__", "")
+    class_name = getattr(connector_class, "__name__", "")
+
+    try:
+        from nexus.backends._manifest import CONNECTOR_MANIFEST
+
+        for entry in CONNECTOR_MANIFEST:
+            if (
+                entry.module_path == module_path
+                and entry.class_name == class_name
+                and entry.description
+            ):
+                return entry.description
+    except Exception:
+        pass
+
+    try:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        for info in ConnectorRegistry.list_all():
+            if info.connector_class is connector_class and info.description:
+                return info.description
+    except Exception:
+        pass
+
+    return ""
 
 
-class SkillDocGenerator:
-    """Generate SKILL.md documentation from connector metadata.
+def render_connector_readme(backend: Any, mount_path: str) -> str:
+    """Render a connector README and normalize generated frontmatter."""
+    text: str = backend.generate_readme(mount_path)
+    try:
+        generator = backend.get_doc_generator()
+    except Exception:
+        return text
+
+    if isinstance(generator, ReadmeDocGenerator):
+        return generator.ensure_frontmatter(text)
+    return text
+
+
+class ReadmeDocGenerator:
+    """Generate README.md documentation from connector metadata.
 
     Parameters
     ----------
@@ -30,8 +77,8 @@ class SkillDocGenerator:
         Error code → ErrorDef mapping.
     examples:
         Example files: ``{"create_meeting.yaml": "content..."}``.
-    skill_dir:
-        Directory name for skill docs (default: ``".skill"``).
+    readme_dir:
+        Directory name for readme docs (default: ``".readme"``).
     nested_examples:
         Configurable nested-field examples (overrides defaults).
     """
@@ -43,33 +90,92 @@ class SkillDocGenerator:
         operation_traits: dict[str, OpTraits],
         error_registry: dict[str, ErrorDef],
         examples: dict[str, str],
-        skill_dir: str = ".skill",
+        readme_dir: str = ".readme",
+        short_description: str = "",
         nested_examples: dict[str, list[str]] | None = None,
         field_examples: dict[str, str] | None = None,
+        write_paths: dict[str, str] | None = None,
     ) -> None:
         self._skill_name = skill_name
         self._schemas = schemas
         self._operation_traits = operation_traits
         self._error_registry = error_registry
         self._examples = examples
-        self._skill_dir = skill_dir
+        self._readme_dir = readme_dir
+        self._short_description = short_description
         self._nested_examples = nested_examples or {}
         self._field_examples = field_examples or {}
+        # operation_name -> write path (e.g., "send_email" -> "SENT/_new.yaml")
+        self._write_paths = write_paths or {}
+        # Optional directory structure description (set by connector)
+        self._directory_structure: str | None = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def generate_skill_doc(self, mount_path: str) -> str:
-        """Auto-generate SKILL.md from connector metadata.
+    def get_schema(self, op_name: str) -> type[BaseModel] | None:
+        """Return the Pydantic schema class for an operation, or ``None``.
+
+        Public lookup used by the ``.readme/`` overlay resolver to render
+        ``schemas/<op>.yaml`` paths without touching the private
+        ``_schemas`` dict.
+        """
+        return self._schemas.get(op_name)
+
+    def _generate_frontmatter(self) -> str:
+        """Generate YAML frontmatter for the README.
+
+        Returns:
+            YAML frontmatter as string with leading/trailing ---.
+        """
+        frontmatter = {
+            "title": self._format_display_name(),
+            "description": self._short_description,
+        }
+        yaml_str = yaml.safe_dump(frontmatter, default_flow_style=False, sort_keys=False)
+        return f"---\n{yaml_str}---"
+
+    def ensure_frontmatter(self, markdown: str) -> str:
+        """Return markdown with required frontmatter fields present."""
+        if markdown.startswith("---\n"):
+            closing = markdown.find("\n---", 4)
+            if closing != -1:
+                raw_frontmatter = markdown[4:closing]
+                suffix = markdown[closing + len("\n---") :]
+                try:
+                    frontmatter = yaml.safe_load(raw_frontmatter) or {}
+                except yaml.YAMLError:
+                    frontmatter = {}
+                if isinstance(frontmatter, dict):
+                    changed = False
+                    if not frontmatter.get("title"):
+                        frontmatter["title"] = self._format_display_name()
+                        changed = True
+                    if not frontmatter.get("description") and self._short_description:
+                        frontmatter["description"] = self._short_description
+                        changed = True
+                    if not changed:
+                        return markdown
+                    yaml_str = yaml.safe_dump(
+                        frontmatter, default_flow_style=False, sort_keys=False
+                    )
+                    return f"---\n{yaml_str}---{suffix}"
+        body = markdown.lstrip("\n")
+        return f"{self._generate_frontmatter()}\n\n{body}"
+
+    def generate_readme(self, mount_path: str) -> str:
+        """Auto-generate README.md from connector metadata.
 
         Args:
             mount_path: The mount path for this connector.
 
         Returns:
-            Generated SKILL.md content as string.
+            Generated README.md content as string.
         """
         lines = [
+            self._generate_frontmatter(),
+            "",
             f"# {self._format_display_name()} Connector",
             "",
             "## Mount Path",
@@ -77,8 +183,14 @@ class SkillDocGenerator:
             "",
         ]
 
-        if self._schemas:
-            lines.extend(self._generate_operations_section())
+        # Directory structure (if provided)
+        if self._directory_structure:
+            lines.extend(
+                ["## Directory Structure", "", "```", self._directory_structure, "```", ""]
+            )
+
+        # Read patterns + write operations (Issue #3148)
+        lines.extend(self._generate_read_patterns_section(mount_path))
 
         if self._operation_traits:
             lines.extend(self._generate_required_format_section())
@@ -88,62 +200,192 @@ class SkillDocGenerator:
 
         return "\n".join(lines)
 
-    def get_skill_path(self, mount_path: str) -> str:
-        """Get the full path to the .skill directory."""
-        return posixpath.join(mount_path.rstrip("/"), self._skill_dir)
+    def get_readme_path(self, mount_path: str) -> str:
+        """Get the full path to the .readme directory."""
+        return posixpath.join(mount_path.rstrip("/"), self._readme_dir)
 
-    def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
-        """Generate and write .skill/ directory to the filesystem.
+    def _generate_read_patterns_section(self, mount_path: str) -> list[str]:
+        """Generate Read Patterns section showing how to list, cat, grep content.
 
-        Creates:
-            <mount_path>/.skill/
-                SKILL.md           # Main documentation
-                examples/          # Example YAML files
-                    <example>.yaml
+        Provides agents with L0-L1 discovery: how to explore connector content
+        before attempting write operations. Issue #3148.
+        """
+        mp = mount_path.rstrip("/")
+        lines = [
+            "## Read Patterns",
+            "",
+            "### List content",
+            "```bash",
+            f"nexus ls {mp}/",
+            "```",
+            "",
+            "### Read a file",
+            "```bash",
+            f"nexus cat {mp}/<path>",
+            "```",
+            "",
+            "### Search content",
+            "```bash",
+            f'nexus grep "keyword" {mp}/',
+            "```",
+            "",
+        ]
+
+        # Add write operations with exact paths and inline schemas
+        if self._schemas:
+            lines.extend(["## Operations", ""])
+
+            for op_name, schema in self._schemas.items():
+                traits = self._operation_traits.get(op_name, OpTraits())
+                display = op_name.replace("_", " ").title()
+                write_path = self._write_paths.get(op_name, "_new.yaml")
+
+                lines.append(f"### {display}")
+                lines.append("")
+                lines.append(f"Write to `{mp}/{write_path}`:")
+                lines.append(f"- Reversibility: **{traits.reversibility.value}**")
+                lines.append(f"- Confirm: **{traits.confirm.value}**")
+
+                if traits.confirm == ConfirmLevel.USER:
+                    lines.append("- **⚠ IRREVERSIBLE** — requires `user_confirmed: true`")
+
+                lines.append("")
+                lines.append("```yaml")
+
+                if traits.confirm >= ConfirmLevel.INTENT:
+                    lines.append("# agent_intent: <why you are doing this — min 10 chars>")
+                if traits.confirm >= ConfirmLevel.EXPLICIT:
+                    lines.append("# confirm: true")
+                if traits.confirm == ConfirmLevel.USER:
+                    lines.append("# user_confirmed: true  # ask user first")
+
+                # Inline schema fields
+                for field_name, field_info in schema.model_fields.items():
+                    if field_name in ("agent_intent", "confirm", "user_confirmed"):
+                        continue
+                    required = field_info.is_required()
+                    req_tag = "REQUIRED" if required else "optional"
+                    desc = field_info.description or ""
+                    example = self._get_field_example(
+                        field_name, field_info, field_info.annotation, required
+                    )
+                    lines.append(
+                        f"{field_name}: {example}  # {req_tag}{' — ' + desc if desc else ''}"
+                    )
+
+                lines.append("```")
+                lines.append("")
+
+                for warning in traits.warnings:
+                    lines.append(f"> **Warning:** {warning}")
+                    lines.append("")
+
+            lines.append("")
+
+        # Add schema discovery
+        lines.extend(
+            [
+                "### Schema discovery",
+                "```bash",
+                f"nexus mounts skills {mp}",
+                f"nexus mounts schema {mp} <operation>",
+                "```",
+                "",
+            ]
+        )
+
+        return lines
+
+    def generate_schema_yaml(self, op_name: str, schema: type[BaseModel]) -> str:
+        """Generate an annotated YAML schema file for a single operation.
+
+        Each field includes type, required/optional, constraints, and description
+        from Pydantic field metadata. This is the L2 discovery layer that agents
+        use to construct valid writes.
 
         Args:
-            mount_path: The mount path for this connector.
-            filesystem: NexusFS instance to write to (optional).
+            op_name: Operation name (e.g., "send_email").
+            schema: Pydantic model class.
 
         Returns:
-            Dict of written paths: {"skill_md": path, "examples": [paths...]}.
+            Annotated YAML content as string.
         """
-        result: dict[str, Any] = {"skill_md": None, "examples": []}
+        traits = self._operation_traits.get(op_name, OpTraits())
+        lines = [
+            f"# Schema: {op_name}",
+            f"# Connector: {self._format_display_name()}",
+            f"# Reversibility: {traits.reversibility.value}",
+            f"# Confirm level: {traits.confirm.value}",
+            "#",
+        ]
 
-        if not self._skill_name:
-            logger.warning("Cannot write skill docs: skill_name not configured")
-            return result
+        if traits.confirm >= ConfirmLevel.INTENT:
+            lines.append("# agent_intent: <required, min 10 chars — why you are doing this>")
+        if traits.confirm >= ConfirmLevel.EXPLICIT:
+            lines.append("# confirm: true  # REQUIRED")
 
-        skill_dir = self.get_skill_path(mount_path)
+        lines.append("")
 
-        if filesystem is None:
-            logger.debug("No filesystem provided for %s", self._skill_name)
-            return result
+        for field_name, field_info in schema.model_fields.items():
+            if field_name in ("agent_intent", "confirm", "user_confirmed"):
+                continue
 
-        try:
-            filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
+            annotation = field_info.annotation
+            required = field_info.is_required()
+            description = field_info.description or ""
+            req_label = "required" if required else "optional"
 
-            skill_md_path = posixpath.join(skill_dir, "SKILL.md")
-            content = self.generate_skill_doc(mount_path)
-            filesystem.write(skill_md_path, content.encode("utf-8"))
-            result["skill_md"] = skill_md_path
-            logger.info("Generated SKILL.md at %s", skill_md_path)
+            # Type name
+            type_name = self._get_type_name(annotation)
 
-            if self._examples:
-                examples_dir = posixpath.join(skill_dir, "examples")
-                filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
+            # Constraints from metadata
+            constraints = self._get_field_constraints(field_info)
+            constraint_str = f", {constraints}" if constraints else ""
 
-                for filename, file_content in self._examples.items():
-                    example_path = posixpath.join(examples_dir, filename)
-                    filesystem.write(example_path, file_content.encode("utf-8"))
-                    result["examples"].append(example_path)
-                    logger.debug("Generated example at %s", example_path)
+            comment = f"# {req_label}, {type_name}{constraint_str}"
+            if description:
+                comment += f" — {description}"
 
-            return result
+            lines.append(comment)
 
-        except Exception as e:
-            logger.warning("Failed to write skill docs to %s: %s", skill_dir, e)
-            return result
+            example = self._get_field_example(field_name, field_info, annotation, required)
+            lines.append(f"{field_name}: {example}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _get_type_name(annotation: Any) -> str:
+        """Get human-readable type name from annotation."""
+        if annotation is None:
+            return "any"
+        origin = getattr(annotation, "__origin__", None)
+        if origin is list:
+            args = getattr(annotation, "__args__", ())
+            inner = args[0].__name__ if args else "any"
+            return f"list[{inner}]"
+        if origin is dict:
+            return "dict"
+        if hasattr(annotation, "__name__"):
+            return str(annotation.__name__)
+        return str(annotation)
+
+    @staticmethod
+    def _get_field_constraints(field_info: Any) -> str:
+        """Extract constraint string from Pydantic field metadata."""
+        parts = []
+        for meta in field_info.metadata or []:
+            if hasattr(meta, "min_length") and meta.min_length is not None:
+                parts.append(f"min_length={meta.min_length}")
+            if hasattr(meta, "max_length") and meta.max_length is not None:
+                parts.append(f"max_length={meta.max_length}")
+            if hasattr(meta, "ge") and meta.ge is not None:
+                parts.append(f"min={meta.ge}")
+            if hasattr(meta, "le") and meta.le is not None:
+                parts.append(f"max={meta.le}")
+            if hasattr(meta, "pattern") and meta.pattern is not None:
+                parts.append(f"pattern={meta.pattern}")
+        return ", ".join(parts)
 
     # ------------------------------------------------------------------
     # Section generators

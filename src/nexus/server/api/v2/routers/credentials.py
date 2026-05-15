@@ -18,9 +18,27 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from nexus.contracts.credential_types import Ability, Capability
-from nexus.server.dependencies import require_auth
+from nexus.server.dependencies import get_operation_context, require_auth
+from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
+
+
+def _authorize_agent_credential_access(
+    auth_result: dict[str, Any],
+    agent_id: str,
+    action: str = "access",
+) -> None:
+    """Verify caller is authorized to manage an agent's credentials."""
+    ctx = get_operation_context(auth_result)
+    if ctx.is_admin:
+        return
+    if ctx.subject_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not authorized to {action} credentials for agent '{agent_id}'",
+        )
+
 
 router = APIRouter(tags=["credentials"])
 
@@ -87,6 +105,10 @@ def _get_key_service(request: Request) -> Any:
     return svc
 
 
+def _get_zone_registry(request: Request) -> Any | None:
+    return getattr(request.app.state, "zone_registry", None)
+
+
 def _parse_capabilities(raw: list[CapabilityRequest]) -> list[Capability]:
     """Convert Pydantic models to domain Capability objects."""
     import types
@@ -111,196 +133,236 @@ def _parse_capabilities(raw: list[CapabilityRequest]) -> list[Capability]:
 @router.post("/api/v2/credentials/issue")
 async def issue_credential(
     body: IssueCredentialRequest,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
     credential_service: Any = Depends(_get_credential_service),
     key_service: Any = Depends(_get_key_service),
 ) -> dict:
     """Issue a JWT-VC capability credential to an agent.
 
-    Requires authentication. The agent must have a provisioned identity (DID).
+    Requires authentication. The caller must own the target agent (matching
+    subject_id) or be an admin.
     """
-    # Resolve agent's DID
-    keys = await asyncio.to_thread(key_service.get_active_keys, body.agent_id)
-    if not keys:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No identity found for agent '{body.agent_id}'. Register the agent first.",
-        )
+    _authorize_agent_credential_access(auth_result, body.agent_id, "issue")
+    ctx = get_operation_context(auth_result)
 
-    subject_did = keys[0].did
+    async def _issue() -> dict[str, Any]:
+        # Resolve agent's DID
+        keys = await asyncio.to_thread(key_service.get_active_keys, body.agent_id)
+        if not keys:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No identity found for agent '{body.agent_id}'. Register the agent first.",
+            )
 
-    try:
-        capabilities = _parse_capabilities(body.capabilities)
-        claims = await asyncio.to_thread(
-            credential_service.issue_credential,
-            body.agent_id,
-            subject_did,
-            capabilities,
-            ttl_seconds=body.ttl_seconds,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        subject_did = keys[0].did
 
-    return {
-        "credential_id": claims.credential_id,
-        "issuer_did": claims.issuer_did,
-        "subject_did": claims.subject_did,
-        "capabilities": [cap.to_dict() for cap in claims.capabilities],
-        "issued_at": claims.issued_at,
-        "expires_at": claims.expires_at,
-        "delegation_depth": claims.delegation_depth,
-    }
+        try:
+            capabilities = _parse_capabilities(body.capabilities)
+            claims = await asyncio.to_thread(
+                credential_service.issue_credential,
+                body.agent_id,
+                subject_did,
+                capabilities,
+                ttl_seconds=body.ttl_seconds,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return {
+            "credential_id": claims.credential_id,
+            "issuer_did": claims.issuer_did,
+            "subject_did": claims.subject_did,
+            "capabilities": [cap.to_dict() for cap in claims.capabilities],
+            "issued_at": claims.issued_at,
+            "expires_at": claims.expires_at,
+            "delegation_depth": claims.delegation_depth,
+        }
+
+    return await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _issue)
 
 
 @router.post("/api/v2/credentials/verify")
 async def verify_credential(
     body: VerifyCredentialRequest,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
     credential_service: Any = Depends(_get_credential_service),
 ) -> dict:
     """Verify a JWT-VC capability credential.
 
     Returns the parsed claims if valid, or an error if invalid.
     """
-    try:
-        claims = await asyncio.to_thread(
-            credential_service.verify_credential,
-            body.token,
-        )
-    except ValueError as exc:
-        return {"valid": False, "error": str(exc)}
+    ctx = get_operation_context(auth_result)
 
-    return {
-        "valid": True,
-        "credential_id": claims.credential_id,
-        "issuer_did": claims.issuer_did,
-        "subject_did": claims.subject_did,
-        "capabilities": [cap.to_dict() for cap in claims.capabilities],
-        "expires_at": claims.expires_at,
-        "delegation_depth": claims.delegation_depth,
-    }
+    async def _verify() -> dict[str, Any]:
+        try:
+            claims = await asyncio.to_thread(
+                credential_service.verify_credential,
+                body.token,
+            )
+        except ValueError as exc:
+            return {"valid": False, "error": str(exc)}
+
+        return {
+            "valid": True,
+            "credential_id": claims.credential_id,
+            "issuer_did": claims.issuer_did,
+            "subject_did": claims.subject_did,
+            "capabilities": [cap.to_dict() for cap in claims.capabilities],
+            "expires_at": claims.expires_at,
+            "delegation_depth": claims.delegation_depth,
+        }
+
+    return await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _verify)
 
 
 @router.delete("/api/v2/credentials/{credential_id}")
 async def revoke_credential(
     credential_id: str,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
     credential_service: Any = Depends(_get_credential_service),
 ) -> dict:
     """Revoke a credential by ID."""
-    revoked = await asyncio.to_thread(
-        credential_service.revoke_credential,
-        credential_id,
-    )
+    ctx = get_operation_context(auth_result)
 
-    if not revoked:
-        raise HTTPException(status_code=404, detail="Credential not found")
+    async def _revoke() -> dict[str, Any]:
+        revoked = await asyncio.to_thread(
+            credential_service.revoke_credential,
+            credential_id,
+        )
 
-    return {"revoked": True, "credential_id": credential_id}
+        if not revoked:
+            raise HTTPException(status_code=404, detail="Credential not found")
+
+        return {"revoked": True, "credential_id": credential_id}
+
+    return await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _revoke)
 
 
 @router.get("/api/v2/credentials/{credential_id}")
 async def get_credential_status(
     credential_id: str,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
     credential_service: Any = Depends(_get_credential_service),
 ) -> dict:
     """Get the status of a credential."""
-    status = await asyncio.to_thread(
-        credential_service.get_credential_status,
-        credential_id,
-    )
+    ctx = get_operation_context(auth_result)
 
-    if status is None:
-        raise HTTPException(status_code=404, detail="Credential not found")
+    async def _get() -> dict[str, Any]:
+        status = await asyncio.to_thread(
+            credential_service.get_credential_status,
+            credential_id,
+        )
 
-    return {
-        "credential_id": status.credential_id,
-        "issuer_did": status.issuer_did,
-        "subject_did": status.subject_did,
-        "subject_agent_id": status.subject_agent_id,
-        "is_active": status.is_active,
-        "created_at": status.created_at.isoformat() if status.created_at else None,
-        "expires_at": status.expires_at.isoformat() if status.expires_at else None,
-        "revoked_at": status.revoked_at.isoformat() if status.revoked_at else None,
-        "delegation_depth": status.delegation_depth,
-        "parent_credential_id": status.parent_credential_id,
-    }
+        if status is None:
+            raise HTTPException(status_code=404, detail="Credential not found")
+
+        return {
+            "credential_id": status.credential_id,
+            "issuer_did": status.issuer_did,
+            "subject_did": status.subject_did,
+            "subject_agent_id": status.subject_agent_id,
+            "is_active": status.is_active,
+            "created_at": status.created_at.isoformat() if status.created_at else None,
+            "expires_at": status.expires_at.isoformat() if status.expires_at else None,
+            "revoked_at": status.revoked_at.isoformat() if status.revoked_at else None,
+            "delegation_depth": status.delegation_depth,
+            "parent_credential_id": status.parent_credential_id,
+        }
+
+    return await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _get)
 
 
 @router.get("/api/v2/agents/{agent_id}/credentials")
 async def list_agent_credentials(
     agent_id: str,
+    request: Request,
     active_only: bool = True,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any] = Depends(require_auth),
     credential_service: Any = Depends(_get_credential_service),
 ) -> dict:
     """List credentials for an agent."""
-    credentials = await asyncio.to_thread(
-        credential_service.list_agent_credentials,
-        agent_id,
-        active_only=active_only,
-    )
+    _authorize_agent_credential_access(auth_result, agent_id, "list")
+    ctx = get_operation_context(auth_result)
 
-    return {
-        "agent_id": agent_id,
-        "count": len(credentials),
-        "credentials": [
-            {
-                "credential_id": c.credential_id,
-                "issuer_did": c.issuer_did,
-                "subject_did": c.subject_did,
-                "is_active": c.is_active,
-                "created_at": c.created_at.isoformat() if c.created_at else None,
-                "expires_at": c.expires_at.isoformat() if c.expires_at else None,
-                "revoked_at": c.revoked_at.isoformat() if c.revoked_at else None,
-                "delegation_depth": c.delegation_depth,
-            }
-            for c in credentials
-        ],
-    }
+    async def _list() -> dict[str, Any]:
+        credentials = await asyncio.to_thread(
+            credential_service.list_agent_credentials,
+            agent_id,
+            active_only=active_only,
+        )
+
+        return {
+            "agent_id": agent_id,
+            "count": len(credentials),
+            "credentials": [
+                {
+                    "credential_id": c.credential_id,
+                    "issuer_did": c.issuer_did,
+                    "subject_did": c.subject_did,
+                    "is_active": c.is_active,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "expires_at": c.expires_at.isoformat() if c.expires_at else None,
+                    "revoked_at": c.revoked_at.isoformat() if c.revoked_at else None,
+                    "delegation_depth": c.delegation_depth,
+                }
+                for c in credentials
+            ],
+        }
+
+    return await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _list)
 
 
 @router.post("/api/v2/credentials/delegate")
 async def delegate_credential(
     body: DelegateCredentialRequest,
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
     credential_service: Any = Depends(_get_credential_service),
     key_service: Any = Depends(_get_key_service),
 ) -> dict:
     """Delegate attenuated capabilities to another agent.
 
     The delegated capabilities must be a subset of the parent credential.
+    Caller must own the parent credential (verified by service via token claims).
     """
-    # Resolve delegate's DID
-    keys = await asyncio.to_thread(key_service.get_active_keys, body.delegate_agent_id)
-    if not keys:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No identity found for delegate agent '{body.delegate_agent_id}'.",
-        )
+    ctx = get_operation_context(auth_result)
 
-    delegate_did = keys[0].did
+    async def _delegate() -> dict[str, Any]:
+        # Resolve delegate's DID
+        keys = await asyncio.to_thread(key_service.get_active_keys, body.delegate_agent_id)
+        if not keys:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No identity found for delegate agent '{body.delegate_agent_id}'.",
+            )
 
-    try:
-        capabilities = _parse_capabilities(body.capabilities)
-        claims = await asyncio.to_thread(
-            credential_service.delegate_credential,
-            body.parent_token,
-            body.delegate_agent_id,
-            delegate_did,
-            capabilities,
-            ttl_seconds=body.ttl_seconds,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        delegate_did = keys[0].did
 
-    return {
-        "credential_id": claims.credential_id,
-        "issuer_did": claims.issuer_did,
-        "subject_did": claims.subject_did,
-        "capabilities": [cap.to_dict() for cap in claims.capabilities],
-        "expires_at": claims.expires_at,
-        "delegation_depth": claims.delegation_depth,
-        "parent_credential_id": claims.parent_credential_id,
-    }
+        try:
+            capabilities = _parse_capabilities(body.capabilities)
+            claims = await asyncio.to_thread(
+                credential_service.delegate_credential,
+                body.parent_token,
+                body.delegate_agent_id,
+                delegate_did,
+                capabilities,
+                ttl_seconds=body.ttl_seconds,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return {
+            "credential_id": claims.credential_id,
+            "issuer_did": claims.issuer_did,
+            "subject_did": claims.subject_did,
+            "capabilities": [cap.to_dict() for cap in claims.capabilities],
+            "expires_at": claims.expires_at,
+            "delegation_depth": claims.delegation_depth,
+            "parent_credential_id": claims.parent_credential_id,
+        }
+
+    return await run_zone_scoped(_get_zone_registry(request), ctx.zone_id, _delegate)

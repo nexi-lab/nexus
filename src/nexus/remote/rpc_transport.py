@@ -1,12 +1,12 @@
 """Sync gRPC transport client for the REMOTE deployment profile.
 
 Client-side gRPC transport that replaces the duplicated HTTP/JSON-RPC
-transport (httpx + tenacity) in ``RemoteBackend`` and ``RemoteMetastore``
+transport (httpx + tenacity) in ``RemoteBackend`` and ``RemoteMetastore`` (now Rust)
 with a single gRPC channel.
 
 Phase 1 (PR #2667): Generic ``call_rpc()`` — method name + JSON payload.
 Phase 2: Typed methods (``read_file``, ``write_file``, ``delete_file``,
-``stream_read``, ``ping``) with native ``bytes`` fields — no JSON/base64
+``ping``) with native ``bytes`` fields — no JSON/base64
 overhead for content operations.
 
 Generic ``call_rpc()`` stays for 25+ service proxy methods and metadata ops.
@@ -19,9 +19,12 @@ Issue #1202: gRPC for REMOTE profile.
 from __future__ import annotations
 
 import logging
+import re as _re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import grpc
+from google.protobuf.message import Message as ProtobufMessage
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -33,6 +36,9 @@ from nexus.contracts.exceptions import (
     RemoteConnectionError,
     RemoteTimeoutError,
 )
+from nexus.grpc import initialize_pb2
+from nexus.grpc.capability_discovery import PROTOCOL_VERSION
+from nexus.grpc.defaults import build_channel_options
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
@@ -42,20 +48,87 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 64 MB max message size (matches server config)
-_MAX_MESSAGE_LENGTH = 64 * 1024 * 1024
+# Heuristic for credential-shaped key names (Issue #4083 rounds 2-3).
+# Recursive redactor walks every dict / list at any depth and replaces
+# values whose key matches this regex. Round-3 reviewer finding: a
+# top-level allowlist (mount_overrides, auth_token, ...) missed nested
+# headers/env, sandbox_api_key, nexus_api_key, and any future RPC param
+# shape. Heuristic-shaped redaction is the safer default: it errs on the
+# side of over-redacting in DEBUG logs (operators see structure, not
+# values) rather than leaking a freshly-added secret-shaped param.
+_SENSITIVE_KEY_RE = _re.compile(
+    r"(?i)(secret|token|password|passwd|credential|api[_-]?key|"
+    r"access[_-]?key|session[_-]?token|authorization|auth[_-]?key|"
+    r"private[_-]?key)"
+)
 
-_CHANNEL_OPTIONS = [
-    ("grpc.max_send_message_length", _MAX_MESSAGE_LENGTH),
-    ("grpc.max_receive_message_length", _MAX_MESSAGE_LENGTH),
-    ("grpc.keepalive_time_ms", 30_000),
-    ("grpc.keepalive_timeout_ms", 10_000),
-    ("grpc.keepalive_permit_without_calls", 1),
-]
+# Top-level RPC params known to carry secret material as VALUES even when
+# their KEY name doesn't match the heuristic. Used in addition to the
+# recursive scan.
+_SENSITIVE_TOP_LEVEL: frozenset[str] = frozenset({"mount_overrides", "injections", "credentials"})
+
+
+def _redact_params(params: Any) -> Any:
+    """Return a deep redacted copy of params with credential-shaped keys
+    replaced by ``"***"``.
+
+    Walks dicts and lists recursively. At every level, a key whose name
+    matches ``_SENSITIVE_KEY_RE`` has its value replaced (preserving
+    structure: a dict value becomes a dict of "***", a list becomes a
+    list of "***"). At the top level, ``mount_overrides`` /
+    ``injections`` / ``credentials`` are also redacted regardless of
+    key-name shape.
+
+    The original ``params`` is never mutated.
+    """
+    return _redact(params, top_level=True)
+
+
+def _redact(value: Any, *, top_level: bool) -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            key_str = k if isinstance(k, str) else ""
+            sensitive = bool(_SENSITIVE_KEY_RE.search(key_str)) or (
+                top_level and key_str in _SENSITIVE_TOP_LEVEL
+            )
+            if sensitive and v is not None:
+                if isinstance(v, dict):
+                    out[k] = _redact_dict_to_stars(v)
+                elif isinstance(v, list):
+                    out[k] = ["***" for _ in v]
+                else:
+                    out[k] = "***"
+            else:
+                out[k] = _redact(v, top_level=False)
+        return out
+    if isinstance(value, list):
+        return [_redact(item, top_level=False) for item in value]
+    return value
+
+
+def _redact_dict_to_stars(d: dict[str, Any]) -> dict[str, Any]:
+    """Recursively replace every leaf value with ``"***"`` while preserving
+    keys at every level so the redacted log still shows the call shape."""
+    out: dict[str, Any] = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out[k] = _redact_dict_to_stars(v)
+        elif isinstance(v, list):
+            out[k] = ["***" for _ in v]
+        else:
+            out[k] = "***"
+    return out
+
+
+_CHANNEL_OPTIONS = build_channel_options(
+    keepalive_time_ms=30_000,
+    keepalive_timeout_ms=10_000,
+)
 
 
 class RPCTransport:
-    """Sync gRPC transport — replaces HTTP/JSON-RPC in RemoteBackend & RemoteMetastore.
+    """Sync gRPC transport — replaces HTTP/JSON-RPC in RemoteBackend & RemoteMetastore (now Rust).
 
     Creates a single ``grpc.Channel`` with automatic keepalive and retry.
     All RPC calls go through the generic ``NexusVFSService.Call`` endpoint
@@ -78,10 +151,30 @@ class RPCTransport:
         tls_config: ZoneTlsConfig | None = None,
         peer_ca_pem: bytes | None = None,
     ) -> None:
+        # Strip protocol prefix if present — callers (e.g. FederationHandshake)
+        # may pass the full URL "grpc://host:port".  The loopback check below
+        # operates on the host portion only and would otherwise see
+        # "grpc://localhost" (not "localhost") and reject the connection.
+        #
+        # Track whether the caller asked for a TLS scheme so we can fail
+        # closed if no TLS material is provided — preventing silent
+        # plaintext downgrade for grpcs:// URLs.
+        _scheme_requires_tls = False
+        if server_address.startswith("grpc://"):
+            server_address = server_address[len("grpc://") :]
+        elif server_address.startswith("grpcs://"):
+            server_address = server_address[len("grpcs://") :]
+            _scheme_requires_tls = True
+        if _scheme_requires_tls and tls_config is None:
+            raise ValueError(
+                f"grpcs:// scheme requires TLS configuration (got '{server_address}' "
+                "with no tls_config). Pass a ZoneTlsConfig or use grpc:// for plaintext."
+            )
         self.server_address = server_address
         self._auth_token = auth_token or ""
         self._timeout = timeout
         self._connect_timeout = connect_timeout
+        self.capabilities: dict[str, Any] | None = None
 
         if tls_config is not None:
             root_ca = peer_ca_pem if peer_ca_pem is not None else tls_config.ca_pem
@@ -94,11 +187,184 @@ class RPCTransport:
                 server_address, creds, options=_CHANNEL_OPTIONS
             )
         else:
+            host = server_address.rsplit(":", 1)[0].strip("[]")
+            import ipaddress as _ipaddress
+            import os as _os
+
+            _is_local = host == "localhost"
+            if not _is_local:
+                try:
+                    _is_local = _ipaddress.ip_address(host).is_loopback
+                except ValueError:
+                    _is_local = False
+            # Escape hatch for trusted private networks (docker-compose, k8s
+            # pods on a shared network namespace). Default refuses insecure
+            # non-loopback to prevent accidental plaintext-over-internet.
+            _allow_insecure = _os.environ.get("NEXUS_GRPC_ALLOW_INSECURE", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if not _is_local and not _allow_insecure:
+                raise ValueError(
+                    f"Insecure gRPC channel refused for non-loopback address '{server_address}'. "
+                    "Configure TLS for remote connections, or set "
+                    "NEXUS_GRPC_ALLOW_INSECURE=true for trusted private networks "
+                    "(docker-compose, k8s pod-local)."
+                )
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
         self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
 
+        # Pre-warm: trigger eager TCP/TLS handshake so connection establishment
+        # overlaps with NexusFS construction instead of blocking on first RPC.
+        self._channel_ready = grpc.channel_ready_future(self._channel)
+
         # Reuse BaseRemoteNexusFS error handling (static method access)
         self._error_handler = BaseRemoteNexusFS()
+
+    # ------------------------------------------------------------------
+    # Initialize / capability discovery
+    # ------------------------------------------------------------------
+
+    def _posix_to_dict(self, posix: Any) -> dict[str, bool]:
+        """Convert POSIX capability fields to a stable dict."""
+        keys = ("read", "readdir", "stat", "write", "unlink", "mkdir", "rmdir", "rename", "glob")
+        if isinstance(posix, Mapping):
+            return {key: bool(value) for key, value in posix.items() if key in keys}
+        payload: dict[str, bool] = {}
+        for key in keys:
+            if isinstance(posix, ProtobufMessage):
+                try:
+                    if not posix.HasField(key):
+                        continue
+                except ValueError:
+                    pass
+            elif not hasattr(posix, key):
+                continue
+            payload[key] = bool(getattr(posix, key))
+        return payload
+
+    def _message_field(self, message: Any, field: str) -> Any | None:
+        if message is None:
+            return None
+        if isinstance(message, ProtobufMessage):
+            try:
+                if not message.HasField(field):
+                    return None
+            except ValueError:
+                return None
+        value = getattr(message, field, None)
+        return value if value is not None else None
+
+    def _string_filter_to_dict(self, string_filter: Any) -> dict[str, list[str]]:
+        return {
+            "allow": [str(value) for value in getattr(string_filter, "allow", [])],
+            "deny": [str(value) for value in getattr(string_filter, "deny", [])],
+        }
+
+    def _command_support_to_dict(self, command: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {"supported": bool(getattr(command, "supported", False))}
+        filetype = self._message_field(command, "filetype")
+        if filetype is not None:
+            payload["filetype"] = self._string_filter_to_dict(filetype)
+        return payload
+
+    def _commands_to_dict(self, commands: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for name in ("grep", "glob"):
+            command = self._message_field(commands, name)
+            if command is not None:
+                payload[name] = self._command_support_to_dict(command)
+        return payload
+
+    def _workspace_to_dict(self, workspace: Any) -> dict[str, bool]:
+        return {
+            "snapshot": bool(getattr(workspace, "snapshot", False)),
+            "restore": bool(getattr(workspace, "restore", False)),
+            "watch": bool(getattr(workspace, "watch", False)),
+        }
+
+    def _backend_to_dict(self, backend: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "backend_name": str(getattr(backend, "backend_name", "")),
+            "backend_type": str(getattr(backend, "backend_type", "")),
+            "features": [str(value) for value in getattr(backend, "features", [])],
+            "extensions": [str(value) for value in getattr(backend, "extensions", [])],
+            "rust_native": bool(getattr(backend, "rust_native", False)),
+            "external": bool(getattr(backend, "external", False)),
+        }
+        posix = self._message_field(backend, "posix")
+        if posix is not None:
+            payload["posix"] = self._posix_to_dict(posix)
+        return payload
+
+    def _capabilities_to_dict(self, capabilities: Any) -> dict[str, Any]:
+        if capabilities is None:
+            return {}
+        payload: dict[str, Any] = {}
+        posix = self._message_field(capabilities, "posix")
+        if posix is not None:
+            payload["posix"] = self._posix_to_dict(posix)
+        commands = self._message_field(capabilities, "commands")
+        if commands is not None:
+            payload["commands"] = self._commands_to_dict(commands)
+        workspace = self._message_field(capabilities, "workspace")
+        if workspace is not None:
+            payload["workspace"] = self._workspace_to_dict(workspace)
+        backends = getattr(capabilities, "backends", {})
+        backend_items: Any
+        if isinstance(backends, Mapping):
+            backend_items = backends.items()
+        else:
+            backend_items = getattr(backends, "items", lambda: [])()
+        backend_payload = {
+            str(path): self._backend_to_dict(backend) for path, backend in backend_items
+        }
+        if backend_payload:
+            payload["backends"] = backend_payload
+        extensions = [str(value) for value in getattr(capabilities, "extensions", [])]
+        if extensions:
+            payload["extensions"] = extensions
+        return payload
+
+    def _initialize_response_to_dict(self, response: Any) -> dict[str, Any]:
+        return {
+            "server_name": str(getattr(response, "server_name", "")),
+            "server_version": str(getattr(response, "server_version", "")),
+            "protocol_version": str(getattr(response, "protocol_version", "")),
+            "capabilities": self._capabilities_to_dict(
+                self._message_field(response, "capabilities")
+            ),
+        }
+
+    def initialize(
+        self,
+        *,
+        client_name: str = "nexus-python",
+        client_version: str = "unknown",
+    ) -> dict[str, Any] | None:
+        """Discover server protocol and capability support.
+
+        ``UNIMPLEMENTED`` means the server predates the handshake endpoint; keep
+        legacy behavior by allowing remote operations without client-side gating.
+        """
+        request = initialize_pb2.InitializeRequest(
+            client_name=client_name,
+            client_version=client_version,
+            protocol_version=PROTOCOL_VERSION,
+            auth_token=self._auth_token,
+        )
+        try:
+            response = self._stub.Initialize(request, timeout=self._connect_timeout)
+        except grpc.RpcError as exc:
+            if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
+                self.capabilities = None
+                return None
+            self._raise_transport_error(exc, self._connect_timeout, "Initialize")
+
+        payload = self._initialize_response_to_dict(response)
+        self.capabilities = payload["capabilities"]
+        return payload
 
     # ------------------------------------------------------------------
     # RPC call
@@ -115,6 +381,7 @@ class RPCTransport:
         method: str,
         params: dict[str, Any] | None = None,
         read_timeout: float | None = None,
+        auth_token: str | None = None,
     ) -> Any:
         """Make a gRPC call to the server with automatic retry.
 
@@ -122,6 +389,9 @@ class RPCTransport:
             method: RPC method name (e.g. ``sys_read``).
             params: Parameter dict (JSON-serialised via rpc_codec).
             read_timeout: Per-call timeout override in seconds.
+            auth_token: Override the default auth token for this call.
+                Used by federated search to pass SearchDelegation credentials
+                for cross-zone queries (Issue #3147).
 
         Returns:
             Decoded result from the server.
@@ -132,14 +402,15 @@ class RPCTransport:
             NexusError subclasses: Application-level errors from server.
         """
         payload = encode_rpc_message(params or {})
+        effective_token = auth_token if auth_token is not None else self._auth_token
         request = vfs_pb2.CallRequest(
             method=method,
             payload=payload,
-            auth_token=self._auth_token,
+            auth_token=effective_token,
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
 
-        logger.debug("RPCTransport.call_rpc: %s params=%s", method, params)
+        logger.debug("RPCTransport.call_rpc: %s params=%s", method, _redact_params(params))
 
         try:
             response = self._stub.Call(request, timeout=timeout)
@@ -157,6 +428,9 @@ class RPCTransport:
             self._error_handler._handle_rpc_error(error_dict)
 
         result = decode_rpc_message(response.payload)
+        # Unwrap server envelope: gRPC servicer wraps as {"result": actual_result}
+        if isinstance(result, dict) and "result" in result:
+            result = result["result"]
         logger.debug("RPCTransport.call_rpc OK: %s", method)
         return result
 
@@ -175,13 +449,21 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
-    def read_file(self, path: str, read_timeout: float | None = None) -> bytes:
+    def read_file(
+        self, path: str, *, content_id: str = "", read_timeout: float | None = None
+    ) -> bytes:
         """Read file content via typed Read RPC — no JSON/base64 overhead.
+
+        Args:
+            path: Virtual file path (used for routing on server).
+            content_id: Opaque content identifier. When set, server reads
+                content directly from the backend (no metastore lookup).
+            read_timeout: Optional per-call timeout override.
 
         Returns:
             Raw file content as bytes.
         """
-        request = vfs_pb2.ReadRequest(path=path, auth_token=self._auth_token)
+        request = vfs_pb2.ReadRequest(path=path, auth_token=self._auth_token, content_id=content_id)
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Read(request, timeout=timeout)
@@ -201,16 +483,19 @@ class RPCTransport:
         self,
         path: str,
         content: bytes,
-        etag: str | None = None,
+        content_id: str | None = None,
         read_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Write file content via typed Write RPC — no JSON/base64 overhead.
 
         Returns:
-            Dict with ``etag`` and ``size``.
+            Dict with ``content_id``, ``size``, and ``gen``.
         """
         request = vfs_pb2.WriteRequest(
-            path=path, content=content, auth_token=self._auth_token, etag=etag or ""
+            path=path,
+            content=content,
+            auth_token=self._auth_token,
+            content_id=content_id or "",
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -219,7 +504,7 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Write")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
-        return {"etag": response.etag, "size": response.size}
+        return {"content_id": response.content_id, "size": response.size, "gen": response.gen}
 
     @retry(
         stop=stop_after_attempt(3),
@@ -248,31 +533,12 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return bool(response.success)
 
-    def stream_read(
-        self,
-        path: str,
-        chunk_size: int = 1_048_576,
-        read_timeout: float | None = None,
-    ) -> bytes:
-        """Read large file via streaming RPC — assembles chunks client-side.
-
-        Returns:
-            Complete file content as bytes.
-        """
-        request = vfs_pb2.StreamReadRequest(
-            path=path, auth_token=self._auth_token, chunk_size=chunk_size
-        )
-        timeout = read_timeout if read_timeout is not None else self._timeout
-        chunks: list[bytes] = []
-        try:
-            for chunk in self._stub.StreamRead(request, timeout=timeout):
-                if chunk.is_error:
-                    self._handle_typed_error(chunk.error_payload)
-                chunks.append(chunk.data)
-        except grpc.RpcError as exc:
-            self._raise_transport_error(exc, timeout, "StreamRead")
-        return b"".join(chunks)
-
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._auth_token)
@@ -333,3 +599,49 @@ class RPCTransport:
     def close(self) -> None:
         """Close the gRPC channel."""
         self._channel.close()
+
+
+class RPCTransportPool:
+    """Pool of RPCTransport instances — one per peer address.
+
+    Thread-safe. Replaces PeerChannelPool with a higher-level abstraction
+    that includes retry, auth, and typed RPC methods.
+
+    TLS config is deferred: set via ``set_tls_config()`` after federation
+    bootstrap (not available at NexusFS init time).
+    """
+
+    def __init__(self, *, timeout: float = 30.0) -> None:
+        self._transports: dict[str, RPCTransport] = {}
+        self._tls_config: ZoneTlsConfig | None = None
+        self._timeout = timeout
+        self._lock = __import__("threading").Lock()
+
+    def get(self, address: str) -> RPCTransport:
+        """Get or create a persistent RPCTransport to *address*."""
+        transport = self._transports.get(address)
+        if transport is not None:
+            return transport
+        with self._lock:
+            transport = self._transports.get(address)
+            if transport is not None:
+                return transport
+            transport = RPCTransport(address, timeout=self._timeout, tls_config=self._tls_config)
+            self._transports[address] = transport
+            logger.debug("RPCTransportPool: created transport to %s", address)
+            return transport
+
+    def set_tls_config(self, config: "ZoneTlsConfig") -> None:
+        """Set TLS config for future transports. Existing transports are NOT replaced."""
+        self._tls_config = config
+
+    def close_all(self) -> None:
+        """Close all pooled transports."""
+        with self._lock:
+            for addr, t in self._transports.items():
+                try:
+                    t.close()
+                except Exception:
+                    logger.debug("RPCTransportPool: error closing transport to %s", addr)
+            self._transports.clear()
+        logger.debug("RPCTransportPool: all transports closed")

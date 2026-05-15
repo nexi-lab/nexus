@@ -4,17 +4,18 @@ Publishes FileEvents to Apache Kafka topics using aiokafka.
 Topics: ``{topic_prefix}.{zone_id}`` with LZ4 compression and
 idempotent producer for exactly-once semantics.
 
+Issue #2750: Per-message timeout via ``send_timeout`` config.
+
 Optional dependency: ``pip install nexus-ai-fs[kafka]``
 """
 
-from __future__ import annotations
-
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.core.file_events import FileEvent
+from nexus.services.event_bus.types import FileEvent
 
 if TYPE_CHECKING:
     from nexus.services.event_log.exporters.config import KafkaExporterConfig
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 class KafkaExporter:
     """Kafka event stream exporter implementing EventStreamExporterProtocol."""
 
-    def __init__(self, config: KafkaExporterConfig) -> None:
+    def __init__(self, config: "KafkaExporterConfig") -> None:
         self._config = config
         self._producer: Any | None = None
 
@@ -64,28 +65,35 @@ class KafkaExporter:
         """Publish a single event to Kafka."""
         producer = await self._ensure_producer()
         topic = f"{self._config.topic_prefix}.{event.zone_id or ROOT_ZONE_ID}"
-        await producer.send_and_wait(
-            topic,
-            value=event.to_dict(),
-            key=event.event_id,
-        )
+        send_timeout = getattr(self._config, "send_timeout", 10.0)
+        # Use zone_id as partition key so all events for a zone land in the
+        # same partition, guaranteeing per-zone ordering (#2755).
+        async with asyncio.timeout(send_timeout):
+            await producer.send_and_wait(
+                topic,
+                value=event.to_dict(),
+                key=event.zone_id or ROOT_ZONE_ID,
+            )
 
     async def publish_batch(self, events: list[FileEvent]) -> list[str]:
         """Publish a batch of events, internally chunking to configured batch_size."""
         producer = await self._ensure_producer()
         failed_ids: list[str] = []
         chunk_size = self._config.batch_size
+        send_timeout = getattr(self._config, "send_timeout", 10.0)
 
         for i in range(0, len(events), chunk_size):
             chunk = events[i : i + chunk_size]
             for event in chunk:
                 topic = f"{self._config.topic_prefix}.{event.zone_id or ROOT_ZONE_ID}"
                 try:
-                    await producer.send_and_wait(
-                        topic,
-                        value=event.to_dict(),
-                        key=event.event_id,
-                    )
+                    # zone_id as partition key for per-zone ordering (#2755)
+                    async with asyncio.timeout(send_timeout):
+                        await producer.send_and_wait(
+                            topic,
+                            value=event.to_dict(),
+                            key=event.zone_id or ROOT_ZONE_ID,
+                        )
                 except Exception:
                     logger.warning(
                         "Kafka publish failed for event %s",

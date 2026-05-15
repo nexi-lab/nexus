@@ -89,7 +89,7 @@ def get_db_url_from_docker():
 
 def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
     """Test Gmail connector with real API calls."""
-    from nexus.backends.gmail_connector import GmailConnectorBackend
+    from nexus.backends.connectors.gmail.connector import PathGmailBackend
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
@@ -102,7 +102,7 @@ def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
         print(f"User: {user_email}")
         print(f"Max messages: {max_messages}")
 
-        backend = GmailConnectorBackend(
+        backend = PathGmailBackend(
             token_manager_db=db_url,
             user_email=user_email,
             provider="gmail",

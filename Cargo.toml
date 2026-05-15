@@ -1,30 +1,114 @@
 [workspace]
 resolver = "2"
 members = [
-    "rust/nexus_core",
-    "rust/nexus_pyo3",
-    "rust/nexus_raft",
-    "rust/nexus_wal",
-    "rust/nexus_tasks",
+    # Tier-neutral packages (KERNEL-ARCHITECTURE.md §6):
+    #   contracts/ — types / enums / exceptions / constants (zero deps).
+    #   lib/       — pure-Rust implementations (algorithms + transport
+    #                primitives). Every peer crate depends on it; it
+    #                depends only on `contracts`.
+    "rust/contracts",
+    "rust/lib",
+    # OS proper + driver / service tiers (§6.1).
+    "rust/transport",
+    "rust/kernel",
+    "rust/backends",
+    "rust/services",
+    "rust/raft",
+    # Deployment binaries.
+    "rust/profiles/cluster",
+    # Build artifact: Python wheel cdylib.
+    "rust/nexus-cdylib",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 exclude = ["nexus-fuse"]
 
 [workspace.dependencies]
-nexus_core = { path = "rust/nexus_core" }
+contracts = { path = "rust/contracts" }
+# `lib` is the tier-neutral implementation crate per §6 — algorithms
+# (bitmap, bloom, glob, hash, rebac, search, simd, trigram) plus the
+# `transport_primitives` module (TLS / pool / addressing / TOFU /
+# PeerBlobClient trait). Default build is WASM-clean; `python` and
+# `transport` features are opt-in.
+lib = { path = "rust/lib" }
+transport = { path = "rust/transport" }
+services = { path = "rust/services" }
+# Driver impls. `default-features = false` so transitive workspace
+# consumers (e.g. `nexus-cluster`) can pick a slim driver set without
+# fighting Cargo's feature unification.  Crates that want the full
+# driver matrix (`nexus-cdylib`) opt back in via
+# `default-features = true` plus the `python` feature.
+backends = { path = "rust/backends", default-features = false }
+# `kernel` is rlib-only — the Python entry-point cdylib
+# `nexus_runtime.so` lives in `rust/nexus-cdylib/`. `default-features =
+# false` keeps the kernel runtime defaults (mimalloc allocator, HTTP
+# connector stack, py-hook adapters) off in transitive consumers
+# (backends / services / transport rlibs); `nexus-cdylib` opts back in
+# explicitly. This is the cycle break that lets `<peer-crate> -> kernel`
+# coexist with cdylib registration of peer-crate `#[pyclass]`es.
+kernel = { path = "rust/kernel", default-features = false }
+# raft is an rlib pulled into the `nexus_runtime.so` cdylib via the
+# nexus-cdylib build artifact (alongside kernel). Other crates use raft
+# as a workspace dep too; the `python` + `grpc` feature flags here apply
+# uniformly.
+raft = { path = "rust/raft", default-features = false, features = ["grpc"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-ahash = "0.8"
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
 regex = "1.10"
 memchr = "2.7"
-roaring = "0.10"
+roaring = "0.11"
 globset = "0.4"
 blake3 = "1.5"
-string-interner = "0.17"
+string-interner = "0.20"
 regex-syntax = "0.8"
 crc32fast = "1.4"
+fastcdc = "4.0"
+mimalloc = { version = "0.1", default-features = false }
+tonic = { version = "0.14", features = ["transport", "tls-ring"] }
+prost = "0.14"
+tonic-prost = "0.14"
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
-lto = true
+lto = "thin"
 codegen-units = 1
 opt-level = 3
+strip = "symbols"
+
+# Cluster binary ships standalone for sudowork; size matters more than
+# raw throughput. opt-level="z" picks the cluster code path that
+# minimizes object size. On Linux x86_64 with workspace-wide
+# strip="symbols", the binary lands around 5-6 MB; on Windows MSVC
+# the .exe is closer to 8 MB (PE headers + import tables don't
+# compress as much as stripped ELF). CI's size gate (Group F) checks
+# the Linux artifact.
+[profile.release.package.nexus-cluster]
+opt-level = "z"
+
+# ── Cross-repo dep deduplication ──────────────────────────────────────
+#
+# `nexus-cdylib` git-deps on the sudocode runtime crate (PR-C v1
+# `spawn_task` integration). That sudocode crate in turn git-deps on
+# *this* nexus repo's `kernel` rlib (because sudocode needs the
+# `KernelAbi` trait declaration). Without this `[patch]`, cargo sees
+# the two `kernel` crates — our local path-based `rust/kernel` and
+# sudocode's git-based copy — as distinct, and the `AgentDescriptor`
+# struct sudocode-runtime hands back from `spawn_task` no longer
+# matches the one our cdylib service code uses (E0308 mismatched
+# types pointing at "two different versions of crate kernel").
+#
+# `[patch."https://github.com/nexi-lab/nexus"]` redirects every
+# transitive git-dep on the nexus repo to our workspace member at
+# `rust/kernel`, so kernel-typed values flow through one canonical
+# struct definition end-to-end. Same trick the standard cargo
+# dedup playbook uses for vendored deps.
+[patch."https://github.com/nexi-lab/nexus"]
+kernel = { path = "rust/kernel" }
+contracts = { path = "rust/contracts" }

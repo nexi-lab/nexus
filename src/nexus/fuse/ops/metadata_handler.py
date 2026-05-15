@@ -10,11 +10,12 @@ from fuse import FuseOSError
 from nexus.fuse.filters import is_os_metadata_file
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
+    backend_id_for_path,
     build_dir_attrs,
     cache_file_attrs_from_list,
     check_namespace_visible,
-    dir_cache_key,
     get_metadata,
+    index_cache_scope_id,
     parse_virtual_path_for_fuse,
     resolve_owner_group_to_uid_gid,
     resolve_uid_gid,
@@ -36,18 +37,63 @@ class MetadataHandler:
     def __init__(self, ctx: FUSESharedContext) -> None:
         self._ctx = ctx
 
-    def getattr(self, path: str, _fh: int | None = None) -> dict[str, Any]:
-        """Get file attributes."""
+    async def getattr(self, path: str, _fh: int | None = None) -> dict[str, Any]:
+        """Get file attributes.
+
+        Issue #3397: Integrates lease-based cache coherence inline.
+        Flow: validity check → cache hit → lease validate/acquire → backend fetch → cache
+        """
         ctx = self._ctx
+        coordinator = ctx.cache
+        scope_id = index_cache_scope_id(ctx)
         start_time = time.time()
 
-        # Check cache first
-        cached_attrs = ctx.cache.get_attr(path)
-        if cached_attrs is not None:
-            elapsed = time.time() - start_time
-            if elapsed > 0.001:
-                logger.debug(f"[FUSE-PERF] getattr CACHED: path={path}, {elapsed:.3f}s")
-            return cached_attrs
+        # Step 1: Hot path — validity cache + L1 attr cache (~100ns)
+        if coordinator._check_validity(path):
+            cached = coordinator.get_attr(path, scope_id=scope_id)
+            if cached is not None:
+                return cached
+
+        # Step 2: Validate/acquire lease if lease manager present
+        has_lease = False
+        if coordinator.lease_manager is not None:
+            lease = coordinator._validate_lease(path)
+            if lease is not None:
+                coordinator._set_validity(path, lease.expires_at)
+                cached = coordinator.get_attr(path, scope_id=scope_id)
+                if cached is not None:
+                    return cached
+                has_lease = True
+            else:
+                lease = coordinator._acquire_read_lease(path)
+                has_lease = lease is not None
+        else:
+            # No lease manager — serve from cache if available (backward compat)
+            cached = coordinator.get_attr(path, scope_id=scope_id)
+            if cached is not None:
+                return cached
+            has_lease = True  # always cache when no lease manager
+
+        # Step 3: Backend fetch
+        attrs = await self._fetch_attrs(path)
+
+        # Only cache if we hold a lease (Decision 11A)
+        if has_lease:
+            coordinator.cache_attr(
+                path,
+                attrs,
+                scope_id=scope_id,
+                backend_id=backend_id_for_path(self._ctx, path),
+            )
+
+        elapsed = time.time() - start_time
+        if elapsed > 0.01:
+            logger.info(f"[FUSE-PERF] getattr UNCACHED: path={path}, {elapsed:.3f}s")
+        return attrs
+
+    async def _fetch_attrs(self, path: str) -> dict[str, Any]:
+        """Fetch attrs from backend."""
+        ctx = self._ctx
 
         # Handle virtual views (.raw, .txt, .md)
         original_path, view_type = parse_virtual_path_for_fuse(ctx, path)
@@ -65,29 +111,25 @@ class MetadataHandler:
             ok, rust_meta = try_rust(ctx, "GETATTR", "stat", original_path)
             if ok:
                 if rust_meta.is_directory:
-                    attrs = build_dir_attrs()
+                    return build_dir_attrs()
                 else:
-                    attrs = self._build_file_attrs(rust_meta.size)
-                ctx.cache.cache_attr(path, attrs)
-                elapsed = time.time() - start_time
-                logger.debug(f"[FUSE-PERF] getattr via RUST: path={path}, {elapsed:.3f}s")
-                return attrs
+                    return self._build_file_attrs(rust_meta.size)
 
         # Check if it's a directory
-        if ctx.nexus_fs.sys_is_directory(original_path, context=ctx.context):
-            metadata = get_metadata(ctx, original_path)
+        if ctx.nexus_fs.is_directory(original_path, context=ctx.context):
+            metadata = await get_metadata(ctx, original_path)
             return build_dir_attrs(metadata)
 
         # Validate namespace visibility
-        check_namespace_visible(ctx, original_path)
+        await check_namespace_visible(ctx, original_path)
 
-        if not ctx.nexus_fs.sys_access(original_path):
+        if not ctx.nexus_fs.access(original_path):
             import errno
 
             raise FuseOSError(errno.ENOENT)
 
         # Get file metadata
-        metadata = get_metadata(ctx, original_path)
+        metadata = await get_metadata(ctx, original_path)
 
         # Resolve file size
         file_size = self._resolve_file_size(original_path, metadata, view_type)
@@ -102,7 +144,7 @@ class MetadataHandler:
         uid, gid = resolve_owner_group_to_uid_gid(metadata, uid, gid)
 
         now = time.time()
-        attrs = {
+        return {
             "st_mode": stat.S_IFREG | file_mode,
             "st_nlink": 1,
             "st_size": file_size,
@@ -112,13 +154,6 @@ class MetadataHandler:
             "st_uid": uid,
             "st_gid": gid,
         }
-
-        ctx.cache.cache_attr(path, attrs)
-
-        elapsed = time.time() - start_time
-        if elapsed > 0.01:
-            logger.info(f"[FUSE-PERF] getattr UNCACHED: path={path}, {elapsed:.3f}s")
-        return attrs
 
     def _build_file_attrs(self, file_size: int) -> dict[str, Any]:
         """Construct file attrs dict for Rust-provided metadata."""
@@ -194,20 +229,19 @@ class MetadataHandler:
 
         return stat_size_fallback(ctx, path)
 
-    def readdir(self, path: str, _fh: int | None = None) -> list[str]:
+    async def readdir(self, path: str, _fh: int | None = None) -> list[str]:
         """Read directory contents."""
         ctx = self._ctx
         start_time = time.time()
+        scope_id = index_cache_scope_id(ctx)
 
         # Check readdir cache first
-        cache_key = dir_cache_key(ctx, path)
-        with ctx.dir_cache_lock:
-            cached_entries = ctx.dir_cache.get(cache_key)
+        cached_entries = ctx.cache.get_listing(path, scope_id=scope_id)
         if cached_entries is not None:
             logger.info(
                 f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
             )
-            return cast("list[str]", cached_entries)
+            return cached_entries
 
         logger.info(f"[FUSE-PERF] readdir START: path={path}")
 
@@ -217,16 +251,35 @@ class MetadataHandler:
             entries.append(".raw")
 
         # Rust delegation
-        ok, file_entries = try_rust(ctx, "READDIR", "list", path)
+        ok, file_entries = try_rust(ctx, "READDIR", "sys_readdir", path)
         if ok:
-            entries.extend([f.name for f in file_entries])
+            for f in file_entries:
+                name = f.name
+                if name and name not in entries:
+                    if is_os_metadata_file(name):
+                        continue
+                    entries.append(name)
+
+                    if (
+                        ctx.mode.value != "binary"
+                        and should_add_virtual_views(name)
+                        and f.entry_type != "directory"
+                    ):
+                        last_dot = name.rfind(".")
+                        if last_dot != -1:
+                            base_name = name[:last_dot]
+                            extension = name[last_dot:]
+                            parsed_name = f"{base_name}_parsed{extension}.md"
+                            entries.append(parsed_name)
+
             elapsed = time.time() - start_time
             logger.info(
                 f"[FUSE-PERF] readdir DONE via RUST: path={path}, "
                 f"{len(entries)} entries, {elapsed:.3f}s"
             )
-            with ctx.dir_cache_lock:
-                ctx.dir_cache[cache_key] = entries
+            ctx.cache.cache_listing(
+                path, entries, scope_id=scope_id, backend_id=backend_id_for_path(ctx, path)
+            )
             return entries
 
         # Python path: list from filesystem
@@ -243,11 +296,11 @@ class MetadataHandler:
         for file_info in files:
             if isinstance(file_info, str):
                 file_path = file_info
-                is_dir = ctx.nexus_fs.sys_is_directory(file_path, context=ctx.context)
+                is_dir = ctx.nexus_fs.is_directory(file_path, context=ctx.context)
             else:
                 file_path = str(file_info.get("path", ""))
                 is_dir = file_info.get("is_directory", False)
-                cache_file_attrs_from_list(ctx, file_path, file_info, is_dir)
+                cache_file_attrs_from_list(ctx, file_path, file_info, is_dir, scope_id)
 
             name = file_path.rstrip("/").split("/")[-1]
             if name and name not in entries:
@@ -272,11 +325,13 @@ class MetadataHandler:
         prefetch_max_file_size = ctx.cache_config.get("prefetch_max_file_size", 256_000)
 
         if prefetch_enabled and ctx.context is None and len(files) <= prefetch_max_files:
-            small_files = [
-                f.get("path") if isinstance(f, dict) else f
+            small_files: list[str] = [
+                p
                 for f in files
                 if not (isinstance(f, dict) and f.get("is_directory", False))
                 and (not isinstance(f, dict) or f.get("size", 0) < prefetch_max_file_size)
+                for p in [f.get("path") if isinstance(f, dict) else f]
+                if isinstance(p, str)
             ]
             logger.info(
                 f"[FUSE-PERF] readdir prefetch check: {len(small_files)} small files, "
@@ -288,7 +343,7 @@ class MetadataHandler:
                     prefetch_start = time.time()
                     bulk_content = ctx.nexus_fs.read_bulk(small_files[:500])
                     for fpath, content in bulk_content.items():
-                        if content is not None:
+                        if isinstance(content, bytes):
                             ctx.cache.cache_content(fpath, content)
                     prefetch_elapsed = time.time() - prefetch_start
                     logger.info(
@@ -304,7 +359,8 @@ class MetadataHandler:
             f"{total_elapsed:.3f}s total"
         )
 
-        with ctx.dir_cache_lock:
-            ctx.dir_cache[cache_key] = entries
+        ctx.cache.cache_listing(
+            path, entries, scope_id=scope_id, backend_id=backend_id_for_path(ctx, path)
+        )
 
         return entries

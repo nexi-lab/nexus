@@ -70,7 +70,11 @@ export DEMO_BASE="/workspace/rebac-comprehensive-demo"  # BUGFIX: Export for Pyt
 # scoping — meaning files created by root-zone admin live at /workspace/... while
 # non-admin users see /zone/default/workspace/... (zone-scoped). Using a
 # default-zone admin key ensures consistent path scoping across all operations.
-ADMIN_KEY=$(python3 scripts/create-api-key.py admin "Demo Admin (default zone)" --days 1 --zone-id default --admin 2>/dev/null | grep "API Key:" | awk '{print $3}')
+ADMIN_KEY=$(curl -s -X POST "$NEXUS_URL/api/v2/auth/keys" \
+    -H "Authorization: Bearer $NEXUS_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"user_id":"admin","name":"Demo Admin (default zone)","zone_id":"default","is_admin":true,"expires_days":1}' \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
 if [ -z "$ADMIN_KEY" ]; then
     echo "WARNING: Failed to create default-zone admin key, falling back to root admin"
     ADMIN_KEY="$ROOT_ADMIN_KEY"
@@ -113,7 +117,7 @@ print_info "Cleaning up stale test data..."
 nexus rmdir -r -f $DEMO_BASE 2>/dev/null || true
 nexus rmdir -r -f /workspace/shared-readonly-test 2>/dev/null || true
 
-python3 << 'CLEANUP'
+python3 << 'CLEANUP' || true
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
@@ -121,9 +125,15 @@ import nexus
 nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
 base = os.getenv('DEMO_BASE')
 
+# rebac_list_tuples is no longer exposed on the remote NexusFS shim — skip
+# the SDK-driven tuple cleanup. The direct DB cleanup below handles
+# stale state. (Issue #3951 follow-up: legacy SDK API removed.)
+def _list_tuples(*args, **kwargs):
+    return []
+
 # 1. Delete all tuples related to demo paths (file objects, parent relationships)
 print("  Deleting file object tuples...")
-all_tuples = nx.rebac_list_tuples()
+all_tuples = _list_tuples()
 demo_tuples = [t for t in all_tuples if
                base in str(t.get('object_id', '')) or
                base in str(t.get('subject_id', '')) or
@@ -132,28 +142,28 @@ demo_tuples = [t for t in all_tuples if
 for t in demo_tuples:
     try:
         nx.rebac_delete(t['tuple_id'])
-    except:
+    except Exception:
         pass
 print(f"  Deleted {len(demo_tuples)} tuples related to demo paths")
 
 # 2. Delete all tuples for test users to ensure clean state
 print("  Deleting test user tuples...")
-for user in ['alice', 'bob', 'charlie', 'acme_user']:
-    tuples = nx.rebac_list_tuples(subject=("user", user))
+for user in ['alice', 'bob', 'charlie', 'acme_user', 'scoped-dave', 'multi-eve']:
+    tuples = _list_tuples(subject=("user", user))
     for t in tuples:
         try:
             nx.rebac_delete(t['tuple_id'])
-        except:
+        except Exception:
             pass
 
 # 3. Delete group tuples
 print("  Deleting group tuples...")
 for group in ['project1-editors', 'project1-viewers']:
-    tuples = nx.rebac_list_tuples(subject=("group", group))
+    tuples = _list_tuples(subject=("group", group))
     for t in tuples:
         try:
             nx.rebac_delete(t['tuple_id'])
-        except:
+        except Exception:
             pass
 
 # 4. Clean up stale version history and file_paths from database
@@ -226,18 +236,66 @@ echo ""
 echo "  This is the actual behavior - owners need editor/viewer role for read!"
 echo ""
 
-# Create test users
-ALICE_KEY=$(python3 scripts/create-api-key.py alice "Alice Owner" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
-BOB_KEY=$(python3 scripts/create-api-key.py bob "Bob Editor" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
-CHARLIE_KEY=$(python3 scripts/create-api-key.py charlie "Charlie Viewer" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
+# Helper: create a scoped API key via the REST API (Issue #3128)
+# Usage: create_scoped_key <user_id> <name> [--grant path:role ...] [--expires-days N]
+# Returns: raw API key on stdout
+create_scoped_key() {
+    local user_id="$1"; shift
+    local key_name="$1"; shift
+    local grants_json=""
+    local expires_days=""
 
-# BUGFIX: Ensure test resources exist before assigning permissions
+    # Parse remaining args
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --grant)
+                local path="${2%%:*}"
+                local role="${2##*:}"
+                if [ -z "$grants_json" ]; then
+                    grants_json="[{\"path\":\"$path\",\"role\":\"$role\"}"
+                else
+                    grants_json="$grants_json,{\"path\":\"$path\",\"role\":\"$role\"}"
+                fi
+                shift 2 ;;
+            --expires-days)
+                expires_days="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    [ -n "$grants_json" ] && grants_json="$grants_json]"
+
+    local body="{\"user_id\":\"$user_id\",\"name\":\"$key_name\",\"subject_type\":\"user\""
+    [ -n "$expires_days" ] && body="$body,\"expires_days\":$expires_days"
+    [ -n "$grants_json" ] && body="$body,\"grants\":$grants_json"
+    body="$body}"
+
+    curl -s -X POST "$NEXUS_URL/api/v2/auth/keys" \
+        -H "Authorization: Bearer $NEXUS_API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$body"
+}
+
+# Create test users with scoped grants via REST API (Issue #3128)
 echo "test content" | nexus write $DEMO_BASE/test-file.txt - 2>/dev/null
 print_success "Created test-file.txt"
 
-nexus rebac create user alice direct_owner file $DEMO_BASE/test-file.txt
-nexus rebac create user bob direct_editor file $DEMO_BASE/test-file.txt
-nexus rebac create user charlie direct_viewer file $DEMO_BASE/test-file.txt
+ALICE_RESP=$(create_scoped_key alice "Alice Owner" \
+    --grant "$DEMO_BASE/test-file.txt:owner" --expires-days 1)
+ALICE_KEY=$(echo "$ALICE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])")
+ALICE_KEY_ID=$(echo "$ALICE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
+print_success "Created alice with owner grant on test-file.txt (via REST API)"
+
+BOB_RESP=$(create_scoped_key bob "Bob Editor" \
+    --grant "$DEMO_BASE/test-file.txt:editor" --expires-days 1)
+BOB_KEY=$(echo "$BOB_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])")
+BOB_KEY_ID=$(echo "$BOB_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
+print_success "Created bob with editor grant on test-file.txt (via REST API)"
+
+CHARLIE_RESP=$(create_scoped_key charlie "Charlie Viewer" \
+    --grant "$DEMO_BASE/test-file.txt:viewer" --expires-days 1)
+CHARLIE_KEY=$(echo "$CHARLIE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])")
+CHARLIE_KEY_ID=$(echo "$CHARLIE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
+print_success "Created charlie with viewer grant on test-file.txt (via REST API)"
 
 print_test "Verify alice (owner) has write+execute (but NOT read in this model)"
 if nexus rebac check user alice write file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED" && \
@@ -370,19 +428,12 @@ print_success "Created: $DEMO_BASE/project1/docs/guides/advanced"
 # Grant at top level
 nexus rebac create user bob direct_editor file $DEMO_BASE/project1
 
-# Set up parent relations
-python3 << 'PYTHON_PARENTS'
-import sys, os
-sys.path.insert(0, 'src')
-import nexus
-nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
-base = os.getenv('DEMO_BASE')
-nx.rebac_create(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
-nx.rebac_create(("file", f"{base}/project1/docs/guides"), "parent", ("file", f"{base}/project1/docs"))
-nx.rebac_create(("file", f"{base}/project1/docs/guides/advanced"), "parent", ("file", f"{base}/project1/docs/guides"))
-print("✓ Parent relations created")
-nx.close()
-PYTHON_PARENTS
+# Set up parent relations (driven via CLI; the legacy rebac_create SDK
+# method is no longer on the remote NexusFS shim).
+nexus rebac create file "$DEMO_BASE/project1/docs" parent file "$DEMO_BASE/project1" >/dev/null
+nexus rebac create file "$DEMO_BASE/project1/docs/guides" parent file "$DEMO_BASE/project1/docs" >/dev/null
+nexus rebac create file "$DEMO_BASE/project1/docs/guides/advanced" parent file "$DEMO_BASE/project1/docs/guides" >/dev/null
+echo "✓ Parent relations created"
 
 print_subsection "3.2 Test WRITE on deepest path (bob is editor on parent)"
 
@@ -470,17 +521,8 @@ fi
 
 print_subsection "5.2 List all tuples for a user"
 print_info "Listing all permissions for bob..."
-python3 << 'PYTHON_LIST'
-import sys, os
-sys.path.insert(0, 'src')
-import nexus
-nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
-tuples = nx.rebac_list_tuples(subject=("user", "bob"))
-print(f"Bob has {len(tuples)} permission tuples:")
-for t in tuples[:5]:
-    print(f"  - {t['relation']} on {t['object_type']}:{t['object_id']}")
-nx.close()
-PYTHON_LIST
+# SDK rebac_list_tuples removed from remote shim — use the CLI instead.
+nexus rebac list --subject-type user --subject-id bob 2>/dev/null | head -10 || true
 
 # ════════════════════════════════════════════════════════════
 # Section 6: Negative Test Cases & Edge Cases
@@ -498,21 +540,14 @@ fi
 
 print_subsection "6.2 Attempt to create cycle in parent relations"
 print_test "Creating cycle: A→B→A should fail"
-python3 << 'PYTHON_CYCLE'
-import sys, os
-sys.path.insert(0, 'src')
-import nexus
-nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
-base = os.getenv('DEMO_BASE')
-try:
-    nx.rebac_create(("file", f"{base}/cycleA"), "parent", ("file", f"{base}/cycleB"))
-    nx.rebac_create(("file", f"{base}/cycleB"), "parent", ("file", f"{base}/cycleA"))
-    print("❌ Cycle was allowed (should be prevented!)")
-except Exception as e:
-    # BUGFIX: Backend might not include "cycle" in error text
-    print("✅ Parent cycle rejected (exception raised as expected)")
-nx.close()
-PYTHON_CYCLE
+# Driven via CLI; the legacy rebac_create SDK method is no longer on the
+# remote NexusFS shim.
+nexus rebac create file "$DEMO_BASE/cycleA" parent file "$DEMO_BASE/cycleB" >/dev/null 2>&1 || true
+if nexus rebac create file "$DEMO_BASE/cycleB" parent file "$DEMO_BASE/cycleA" >/dev/null 2>&1; then
+    print_error "❌ Cycle was allowed (should be prevented!)"
+else
+    print_success "✅ Parent cycle rejected"
+fi
 
 print_subsection "6.3 Directory listing with only child read permission"
 print_test "User with read on /project1/file.txt but not /project1 directory"
@@ -657,17 +692,24 @@ else
 fi
 
 print_subsection "8.2 Test cache invalidation on permission DELETE"
-# Get tuple ID via Python SDK
-TUPLE_ID=$(python3 << PYTHON_TUPLE_ID
-import sys, os
-sys.path.insert(0, 'src')
-import nexus
-nx = nexus.connect(config={"mode": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
-tuples = nx.rebac_list_tuples(subject=('user', 'alice'), object=('file', '$DEMO_BASE/cache-test.txt'))
-print(tuples[0]['tuple_id'] if tuples else '')
-nx.close()
-PYTHON_TUPLE_ID
-)
+# Get tuple ID via CLI (rebac_list_tuples SDK method removed from remote shim).
+TUPLE_ID=$(nexus rebac list \
+    --subject-type user --subject-id alice \
+    --object-type file --object-id "$DEMO_BASE/cache-test.txt" \
+    --format json 2>/dev/null \
+    | python3 -c "
+import json, sys
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+rows = payload.get('data') if isinstance(payload, dict) else payload
+if isinstance(rows, dict):
+    rows = rows.get('tuples') or rows.get('data') or []
+if not isinstance(rows, list):
+    rows = []
+print(rows[0].get('tuple_id', '') if rows else '')
+" 2>/dev/null)
 
 print_test "Delete permission and check IMMEDIATELY (no manual cache clear)"
 nexus rebac delete "$TUPLE_ID"
@@ -684,7 +726,11 @@ fi
 print_section "9. Multi-Tenant Isolation"
 
 print_subsection "9.1 Create user in different tenant"
-TENANT_ACME_KEY=$(python3 scripts/create-api-key.py acme_user "ACME Corp User" --days 1 --zone-id acme 2>/dev/null | grep "API Key:" | awk '{print $3}')
+TENANT_ACME_KEY=$(curl -s -X POST "$NEXUS_URL/api/v2/auth/keys" \
+    -H "Authorization: Bearer $NEXUS_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"user_id":"acme_user","name":"ACME Corp User","zone_id":"acme","expires_days":1}' \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
 print_success "Created acme_user (tenant: acme)"
 print_info "Alice, Bob, Charlie are in tenant: default"
 
@@ -699,6 +745,128 @@ else
 fi
 
 export NEXUS_API_KEY="$ADMIN_KEY"
+
+# ════════════════════════════════════════════════════════════
+# Section 10: Scoped API Key Grants (Issue #3128)
+# ════════════════════════════════════════════════════════════
+
+print_section "10. Scoped API Key Grants (Issue #3128)"
+
+print_subsection "10.1 Create scoped key with multiple grants"
+
+# Create two files for scoping
+echo "allowed content" | nexus write $DEMO_BASE/scoped-allowed.txt -
+echo "forbidden content" | nexus write $DEMO_BASE/scoped-forbidden.txt -
+print_success "Created scoped-allowed.txt and scoped-forbidden.txt"
+
+SCOPED_RESP=$(create_scoped_key scoped-dave "Dave Scoped" \
+    --grant "$DEMO_BASE/scoped-allowed.txt:editor" \
+    --expires-days 1)
+SCOPED_KEY=$(echo "$SCOPED_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])")
+SCOPED_KEY_ID=$(echo "$SCOPED_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
+SCOPED_GRANTS=$(echo "$SCOPED_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('grants',[])))")
+print_success "Created scoped key for scoped-dave (grants in response: $SCOPED_GRANTS)"
+
+print_test "Scoped user should have editor access to allowed file"
+if nexus rebac check user scoped-dave write file $DEMO_BASE/scoped-allowed.txt 2>&1 | grep -q "GRANTED"; then
+    print_success "✅ Scoped editor grant works"
+else
+    print_error "❌ Scoped editor grant NOT working"
+fi
+
+print_test "Scoped user should NOT have access to forbidden file"
+if nexus rebac check user scoped-dave read file $DEMO_BASE/scoped-forbidden.txt 2>&1 | grep -q "DENIED"; then
+    print_success "✅ Scoped user denied on ungranteded path"
+else
+    print_error "❌ Scoped user has access to ungranted path"
+fi
+
+print_subsection "10.2 Real I/O with scoped key"
+export NEXUS_API_KEY="$SCOPED_KEY"
+
+print_test "Scoped user writes to allowed file (real I/O)"
+echo "Written by scoped-dave" > /tmp/demo-scoped-write.txt
+if cat /tmp/demo-scoped-write.txt | nexus write $DEMO_BASE/scoped-allowed.txt - 2>/dev/null; then
+    print_success "✅ Scoped write to allowed path succeeded"
+else
+    print_error "❌ Scoped write to allowed path failed"
+fi
+
+print_test "Scoped user denied write to forbidden file (real I/O)"
+if echo "nope" | nexus write $DEMO_BASE/scoped-forbidden.txt - 2>/dev/null; then
+    print_error "❌ Scoped user wrote to forbidden path"
+else
+    print_success "✅ Scoped user correctly denied write to forbidden path"
+fi
+
+export NEXUS_API_KEY="$ADMIN_KEY"
+
+print_subsection "10.3 Revoke scoped key — verify grants cleaned up"
+
+# Create a pre-existing grant for scoped-dave on another file (should survive revocation)
+nexus rebac create user scoped-dave direct_viewer file $DEMO_BASE/scoped-forbidden.txt
+print_info "Created pre-existing grant on scoped-forbidden.txt (NOT from the key)"
+
+print_test "Pre-existing grant exists before revocation"
+if nexus rebac check user scoped-dave read file $DEMO_BASE/scoped-forbidden.txt 2>&1 | grep -q "GRANTED"; then
+    print_success "✅ Pre-existing grant confirmed"
+else
+    print_error "Pre-existing grant missing"
+fi
+
+# Revoke the scoped key via REST API
+REVOKE_RESP=$(curl -s -X DELETE "$NEXUS_URL/api/v2/auth/keys/$SCOPED_KEY_ID" \
+    -H "Authorization: Bearer $NEXUS_API_KEY")
+print_success "Revoked scoped key: $SCOPED_KEY_ID"
+
+print_test "Key's grants should be cleaned up after revocation"
+if nexus rebac check user scoped-dave write file $DEMO_BASE/scoped-allowed.txt 2>&1 | grep -q "DENIED"; then
+    print_success "✅ Key's editor grant on scoped-allowed.txt removed"
+else
+    print_error "❌ Key's grant NOT cleaned up after revocation"
+fi
+
+print_test "Pre-existing grant should SURVIVE key revocation"
+if nexus rebac check user scoped-dave read file $DEMO_BASE/scoped-forbidden.txt 2>&1 | grep -q "GRANTED"; then
+    print_success "✅ Pre-existing grant survived (targeted cleanup works!)"
+else
+    print_error "❌ Pre-existing grant was deleted (blanket cleanup bug!)"
+fi
+
+print_subsection "10.4 Multiple keys for same user — independent grant lifecycles"
+
+# Create two keys for the same user with different grants
+KEY_X_RESP=$(create_scoped_key multi-eve "Eve Key X" \
+    --grant "$DEMO_BASE/scoped-allowed.txt:editor" --expires-days 1)
+KEY_X_ID=$(echo "$KEY_X_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
+
+KEY_Y_RESP=$(create_scoped_key multi-eve "Eve Key Y" \
+    --grant "$DEMO_BASE/scoped-forbidden.txt:viewer" --expires-days 1)
+KEY_Y_ID=$(echo "$KEY_Y_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
+print_success "Created two keys for multi-eve with different grants"
+
+print_test "multi-eve has access to both paths"
+if nexus rebac check user multi-eve write file $DEMO_BASE/scoped-allowed.txt 2>&1 | grep -q "GRANTED" && \
+   nexus rebac check user multi-eve read file $DEMO_BASE/scoped-forbidden.txt 2>&1 | grep -q "GRANTED"; then
+    print_success "✅ Both grants active"
+else
+    print_error "❌ Not all grants active"
+fi
+
+# Revoke key X only
+curl -s -X DELETE "$NEXUS_URL/api/v2/auth/keys/$KEY_X_ID" \
+    -H "Authorization: Bearer $NEXUS_API_KEY" > /dev/null
+print_info "Revoked key X (editor on scoped-allowed.txt)"
+
+print_test "Key X's grant should be gone, key Y's grant should remain"
+if nexus rebac check user multi-eve write file $DEMO_BASE/scoped-allowed.txt 2>&1 | grep -q "DENIED" && \
+   nexus rebac check user multi-eve read file $DEMO_BASE/scoped-forbidden.txt 2>&1 | grep -q "GRANTED"; then
+    print_success "✅ Independent grant lifecycles verified!"
+else
+    KEY_X_CHECK=$(nexus rebac check user multi-eve write file $DEMO_BASE/scoped-allowed.txt 2>&1)
+    KEY_Y_CHECK=$(nexus rebac check user multi-eve read file $DEMO_BASE/scoped-forbidden.txt 2>&1)
+    print_error "❌ Grant lifecycle broken (X: $KEY_X_CHECK, Y: $KEY_Y_CHECK)"
+fi
 
 # ════════════════════════════════════════════════════════════
 # Summary
@@ -719,6 +887,8 @@ echo "║  ✅ Auditability (Concrete Assertions)                            ║
 echo "║  ✅ Negative Test Cases & Edge Cases                              ║"
 echo "║  ✅ Shared Resources (Universal Write Denial)                     ║"
 echo "║  ✅ Multi-Tenant Isolation                                        ║"
+echo "║  ✅ Scoped API Key Grants (Issue #3128)                           ║"
+echo "║  ✅ Targeted Grant Cleanup on Revocation                          ║"
 echo "╚═══════════════════════════════════════════════════════════════════╝"
 echo ""
 print_info "All tests passed! ReBAC system is production-ready."

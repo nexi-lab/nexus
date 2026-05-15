@@ -1,20 +1,18 @@
 """Context versioning commands — workspace branching + explore() (Issue #1315)."""
 
+import asyncio
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, handle_error
-
-console = Console()
+from nexus.cli.theme import console
+from nexus.cli.utils import add_backend_options, handle_error, open_filesystem
 
 
 def _get_branch_service(nx: Any) -> Any:
-    """Extract ContextBranchService from NexusFS (type-safe for mypy)."""
-    _sys = getattr(nx, "_system_services", None)
-    return getattr(_sys, "context_branch_service", None) if _sys else None
+    """Extract ContextBranchService via ServiceRegistry (Issue #1771)."""
+    return nx.service("context_branch") if nx else None
 
 
 @click.group(name="context")
@@ -46,7 +44,8 @@ def commit_cmd(
     workspace: str,
     message: str | None,
     branch: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Create a snapshot and advance branch HEAD.
 
@@ -54,20 +53,25 @@ def commit_cmd(
         nexus context commit /workspace -m "Before refactor"
         nexus context commit /workspace -m "Feature work" -b feature-x
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            svc = _get_branch_service(nx)
+            if not svc:
+                console.print(
+                    "[nexus.error]Context branching not available (service not configured)[/nexus.error]"
+                )
+                return
+            result = svc.commit(workspace, message=message, branch_name=branch)
+            snap = result["snapshot"]
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Committed v{snap['snapshot_number']} on branch '{result['branch']}'"
+            )
+            if snap.get("description"):
+                console.print(f"  Message: {snap['description']}")
+
     try:
-        nx = get_filesystem(backend_config)
-        svc = _get_branch_service(nx)
-        if not svc:
-            console.print("[red]Context branching not available (service not configured)[/red]")
-            return
-        result = svc.commit(workspace, message=message, branch_name=branch)
-        snap = result["snapshot"]
-        console.print(
-            f"[green]✓[/green] Committed v{snap['snapshot_number']} on branch '{result['branch']}'"
-        )
-        if snap.get("description"):
-            console.print(f"  Message: {snap['description']}")
-        nx.close()
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -81,7 +85,8 @@ def branch_cmd(
     workspace: str,
     name: str,
     from_branch: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Create a new named branch.
 
@@ -89,20 +94,23 @@ def branch_cmd(
         nexus context branch /workspace --name feature-x
         nexus context branch /workspace --name hotfix --from-branch main
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            svc = _get_branch_service(nx)
+            if not svc:
+                console.print("[nexus.error]Context branching not available[/nexus.error]")
+                return
+            result = svc.create_branch(workspace, name, from_branch=from_branch)
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Created branch '{result.branch_name}' "
+                f"from '{result.parent_branch or 'main'}'"
+            )
+            if result.fork_point_id:
+                console.print(f"  Fork point: {result.fork_point_id[:12]}...")
+
     try:
-        nx = get_filesystem(backend_config)
-        svc = _get_branch_service(nx)
-        if not svc:
-            console.print("[red]Context branching not available[/red]")
-            return
-        result = svc.create_branch(workspace, name, from_branch=from_branch)
-        console.print(
-            f"[green]✓[/green] Created branch '{result.branch_name}' "
-            f"from '{result.parent_branch or 'main'}'"
-        )
-        if result.fork_point_id:
-            console.print(f"  Fork point: {result.fork_point_id[:12]}...")
-        nx.close()
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -114,7 +122,8 @@ def branch_cmd(
 def checkout_cmd(
     workspace: str,
     target: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Switch to a different branch and restore its workspace state.
 
@@ -122,21 +131,26 @@ def checkout_cmd(
         nexus context checkout /workspace --target feature-x
         nexus context checkout /workspace --target main
     """
-    try:
-        nx = get_filesystem(backend_config)
-        svc = _get_branch_service(nx)
-        if not svc:
-            console.print("[red]Context branching not available[/red]")
-            return
-        result = svc.checkout(workspace, target)
-        console.print(f"[green]✓[/green] Switched to branch '{result['branch']}'")
-        if result.get("restore_info"):
-            ri = result["restore_info"]
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            svc = _get_branch_service(nx)
+            if not svc:
+                console.print("[nexus.error]Context branching not available[/nexus.error]")
+                return
+            result = svc.checkout(workspace, target)
             console.print(
-                f"  Restored {ri.get('files_restored', 0)} files, "
-                f"deleted {ri.get('files_deleted', 0)} files"
+                f"[nexus.success]✓[/nexus.success] Switched to branch '{result['branch']}'"
             )
-        nx.close()
+            if result.get("restore_info"):
+                ri = result["restore_info"]
+                console.print(
+                    f"  Restored {ri.get('files_restored', 0)} files, "
+                    f"deleted {ri.get('files_deleted', 0)} files"
+                )
+
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -157,7 +171,8 @@ def merge_cmd(
     source: str,
     target: str | None,
     strategy: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Merge a branch into another.
 
@@ -165,23 +180,26 @@ def merge_cmd(
         nexus context merge /workspace --source feature-x
         nexus context merge /workspace --source feature-x --target main --strategy source-wins
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            svc = _get_branch_service(nx)
+            if not svc:
+                console.print("[nexus.error]Context branching not available[/nexus.error]")
+                return
+            result = svc.merge(workspace, source, target_branch=target, strategy=strategy)
+            if result.fast_forward:
+                console.print(
+                    f"[nexus.success]✓[/nexus.success] Fast-forward merge: '{source}' → '{target or 'current'}'"
+                )
+            else:
+                console.print(
+                    f"[nexus.success]✓[/nexus.success] Merged '{source}' → '{target or 'current'}' "
+                    f"(+{result.files_added} -{result.files_removed} ~{result.files_modified})"
+                )
+
     try:
-        nx = get_filesystem(backend_config)
-        svc = _get_branch_service(nx)
-        if not svc:
-            console.print("[red]Context branching not available[/red]")
-            return
-        result = svc.merge(workspace, source, target_branch=target, strategy=strategy)
-        if result.fast_forward:
-            console.print(
-                f"[green]✓[/green] Fast-forward merge: '{source}' → '{target or 'current'}'"
-            )
-        else:
-            console.print(
-                f"[green]✓[/green] Merged '{source}' → '{target or 'current'}' "
-                f"(+{result.files_added} -{result.files_removed} ~{result.files_modified})"
-            )
-        nx.close()
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -193,7 +211,8 @@ def merge_cmd(
 def log_cmd(
     workspace: str,
     limit: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show snapshot history for a workspace.
 
@@ -201,33 +220,35 @@ def log_cmd(
         nexus context log /workspace
         nexus context log /workspace --limit 5
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            svc = _get_branch_service(nx)
+            if not svc:
+                console.print("[nexus.error]Context branching not available[/nexus.error]")
+                return
+            snapshots = svc.log(workspace, limit=limit)
+
+            if not snapshots:
+                console.print("[nexus.muted]No snapshots found[/nexus.muted]")
+                return
+
+            table = Table(title=f"Context Log: {workspace}")
+            table.add_column("#", style="bold")
+            table.add_column("Description")
+            table.add_column("Created", style="nexus.muted")
+
+            for s in snapshots:
+                table.add_row(
+                    str(s.get("snapshot_number", "")),
+                    s.get("description", "") or "[nexus.muted]no message[/nexus.muted]",
+                    str(s.get("created_at", ""))[:19],
+                )
+
+            console.print(table)
+
     try:
-        nx = get_filesystem(backend_config)
-        svc = _get_branch_service(nx)
-        if not svc:
-            console.print("[red]Context branching not available[/red]")
-            return
-        snapshots = svc.log(workspace, limit=limit)
-
-        if not snapshots:
-            console.print("[dim]No snapshots found[/dim]")
-            nx.close()
-            return
-
-        table = Table(title=f"Context Log: {workspace}")
-        table.add_column("#", style="bold")
-        table.add_column("Description")
-        table.add_column("Created", style="dim")
-
-        for s in snapshots:
-            table.add_row(
-                str(s.get("snapshot_number", "")),
-                s.get("description", "") or "[dim]no message[/dim]",
-                str(s.get("created_at", ""))[:19],
-            )
-
-        console.print(table)
-        nx.close()
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -239,7 +260,8 @@ def log_cmd(
 def branches_cmd(
     workspace: str,
     show_all: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all branches for a workspace.
 
@@ -247,40 +269,44 @@ def branches_cmd(
         nexus context branches /workspace
         nexus context branches /workspace --all
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            svc = _get_branch_service(nx)
+            if not svc:
+                console.print("[nexus.error]Context branching not available[/nexus.error]")
+                return
+            branches = svc.list_branches(workspace, include_inactive=show_all)
+
+            if not branches:
+                console.print("[nexus.muted]No branches found[/nexus.muted]")
+                return
+
+            table = Table(title=f"Branches: {workspace}")
+            table.add_column("Branch", style="bold")
+            table.add_column("Status")
+            table.add_column("Current")
+            table.add_column("HEAD")
+            table.add_column("Parent")
+
+            for b in branches:
+                status_color = {
+                    "active": "nexus.success",
+                    "merged": "nexus.reference",
+                    "discarded": "nexus.error",
+                }.get(b.status, "")
+                table.add_row(
+                    b.branch_name,
+                    f"[{status_color}]{b.status}[/{status_color}]",
+                    "[nexus.success]*[/nexus.success]" if b.is_current else "",
+                    (b.head_snapshot_id or "")[:12],
+                    b.parent_branch or "",
+                )
+
+            console.print(table)
+
     try:
-        nx = get_filesystem(backend_config)
-        svc = _get_branch_service(nx)
-        if not svc:
-            console.print("[red]Context branching not available[/red]")
-            return
-        branches = svc.list_branches(workspace, include_inactive=show_all)
-
-        if not branches:
-            console.print("[dim]No branches found[/dim]")
-            nx.close()
-            return
-
-        table = Table(title=f"Branches: {workspace}")
-        table.add_column("Branch", style="bold")
-        table.add_column("Status")
-        table.add_column("Current")
-        table.add_column("HEAD")
-        table.add_column("Parent")
-
-        for b in branches:
-            status_color = {"active": "green", "merged": "blue", "discarded": "red"}.get(
-                b.status, "white"
-            )
-            table.add_row(
-                b.branch_name,
-                f"[{status_color}]{b.status}[/{status_color}]",
-                "[green]*[/green]" if b.is_current else "",
-                (b.head_snapshot_id or "")[:12],
-                b.parent_branch or "",
-            )
-
-        console.print(table)
-        nx.close()
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -294,33 +320,37 @@ def diff_cmd(
     workspace: str,
     from_ref: str,
     to_ref: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Compare two snapshots.
 
     Examples:
         nexus context diff /workspace --from snap-id-1 --to snap-id-2
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            svc = _get_branch_service(nx)
+            if not svc:
+                console.print("[nexus.error]Context branching not available[/nexus.error]")
+                return
+            result = svc.diff(workspace, from_ref, to_ref)
+            added = result.get("added", [])
+            removed = result.get("removed", [])
+            modified = result.get("modified", [])
+            console.print(
+                f"[nexus.success]+{len(added)}[/nexus.success] added, [nexus.error]-{len(removed)}[/nexus.error] removed, [nexus.warning]~{len(modified)}[/nexus.warning] modified"
+            )
+            for f in added:
+                console.print(f"  [nexus.success]+[/nexus.success] {f['path']}")
+            for f in removed:
+                console.print(f"  [nexus.error]-[/nexus.error] {f['path']}")
+            for f in modified:
+                console.print(f"  [nexus.warning]~[/nexus.warning] {f['path']}")
+
     try:
-        nx = get_filesystem(backend_config)
-        svc = _get_branch_service(nx)
-        if not svc:
-            console.print("[red]Context branching not available[/red]")
-            return
-        result = svc.diff(workspace, from_ref, to_ref)
-        added = result.get("added", [])
-        removed = result.get("removed", [])
-        modified = result.get("modified", [])
-        console.print(
-            f"[green]+{len(added)}[/green] added, [red]-{len(removed)}[/red] removed, [yellow]~{len(modified)}[/yellow] modified"
-        )
-        for f in added:
-            console.print(f"  [green]+[/green] {f['path']}")
-        for f in removed:
-            console.print(f"  [red]-[/red] {f['path']}")
-        for f in modified:
-            console.print(f"  [yellow]~[/yellow] {f['path']}")
-        nx.close()
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -332,26 +362,34 @@ def diff_cmd(
 def explore_cmd(
     workspace: str,
     description: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Start an exploration: auto-commit + create branch + checkout.
 
     Examples:
         nexus context explore /workspace -d "Try event sourcing"
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            svc = _get_branch_service(nx)
+            if not svc:
+                console.print("[nexus.error]Context branching not available[/nexus.error]")
+                return
+            result = svc.explore(workspace, description)
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Exploring on branch '{result.branch_name}'"
+            )
+            if result.skipped_commit:
+                console.print(
+                    "  [nexus.muted]Skipped auto-commit (workspace unchanged)[/nexus.muted]"
+                )
+            if result.fork_point_snapshot_id:
+                console.print(f"  Fork point: {result.fork_point_snapshot_id[:12]}...")
+
     try:
-        nx = get_filesystem(backend_config)
-        svc = _get_branch_service(nx)
-        if not svc:
-            console.print("[red]Context branching not available[/red]")
-            return
-        result = svc.explore(workspace, description)
-        console.print(f"[green]✓[/green] Exploring on branch '{result.branch_name}'")
-        if result.skipped_commit:
-            console.print("  [dim]Skipped auto-commit (workspace unchanged)[/dim]")
-        if result.fork_point_snapshot_id:
-            console.print(f"  Fork point: {result.fork_point_snapshot_id[:12]}...")
-        nx.close()
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -377,7 +415,8 @@ def finish_cmd(
     branch: str,
     outcome: str,
     strategy: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Finish an exploration: merge or discard the branch.
 
@@ -385,20 +424,25 @@ def finish_cmd(
         nexus context finish /workspace -b try-event-sourcing --outcome merge
         nexus context finish /workspace -b bad-idea --outcome discard
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            svc = _get_branch_service(nx)
+            if not svc:
+                console.print("[nexus.error]Context branching not available[/nexus.error]")
+                return
+            result = svc.finish_explore(workspace, branch, outcome=outcome, strategy=strategy)
+            if result["outcome"] == "merged":
+                console.print(
+                    f"[nexus.success]✓[/nexus.success] Merged '{branch}' into '{result['merged_into']}'"
+                )
+            else:
+                console.print(
+                    f"[nexus.warning]✓[/nexus.warning] Discarded branch '{branch}', returned to '{result['returned_to']}'"
+                )
+
     try:
-        nx = get_filesystem(backend_config)
-        svc = _get_branch_service(nx)
-        if not svc:
-            console.print("[red]Context branching not available[/red]")
-            return
-        result = svc.finish_explore(workspace, branch, outcome=outcome, strategy=strategy)
-        if result["outcome"] == "merged":
-            console.print(f"[green]✓[/green] Merged '{branch}' into '{result['merged_into']}'")
-        else:
-            console.print(
-                f"[yellow]✓[/yellow] Discarded branch '{branch}', returned to '{result['returned_to']}'"
-            )
-        nx.close()
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 

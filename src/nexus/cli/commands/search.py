@@ -1,16 +1,21 @@
-"""Search and discovery commands - glob, grep, find-duplicates."""
+"""Search and discovery commands - glob, grep, semantic search."""
 
+import asyncio
 import sys
+from collections import defaultdict
+from pathlib import Path
 from typing import Any, cast
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
     handle_error,
+    open_filesystem,
 )
 
 
@@ -18,8 +23,44 @@ def register_commands(cli: click.Group) -> None:
     """Register all search and discovery commands."""
     cli.add_command(glob)
     cli.add_command(grep)
-    cli.add_command(find_duplicates)
     cli.add_command(semantic_search_group)
+
+
+def _resolve_files_arg(
+    files: tuple[str, ...],
+    files_from: str | None,
+) -> list[str] | None:
+    """Merge ``--files`` and ``--files-from`` into a single list (#3701).
+
+    Semantics:
+    * Neither flag set → returns ``None`` so the server-side default
+      (walk the tree) applies.
+    * ``--files a --files b`` → returns ``["a", "b"]``.
+    * ``--files-from path.txt`` → reads newline-separated paths.
+    * ``--files-from -`` → reads from stdin (pipe pattern).
+    * Both flags set → explicit values come first, then file contents,
+      in order. De-duplication happens server-side in
+      ``_validate_and_normalize_files``.
+
+    Blank lines and lines beginning with ``#`` in the files-from source
+    are skipped so agents can pipe JSON-dumped lists through
+    ``jq -r '.files[]'`` or through a human-readable listing without
+    needing an intermediate clean-up step.
+    """
+    if not files and files_from is None:
+        return None
+
+    merged: list[str] = list(files)
+
+    if files_from is not None:
+        source = sys.stdin.read() if files_from == "-" else Path(files_from).read_text()
+        for line in source.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            merged.append(stripped)
+
+    return merged
 
 
 @click.command()
@@ -29,13 +70,46 @@ def register_commands(cli: click.Group) -> None:
 @click.option(
     "-t", "--type", type=click.Choice(["f", "d"]), help="Filter by type: f=files, d=directories"
 )
+@click.option(
+    "--plain",
+    is_flag=True,
+    help=(
+        "Pipe-friendly output: one path per line, no decoration or markup. "
+        "Use to pipe into ``nexus grep --files-from=-`` without jq."
+    ),
+)
+@click.option(
+    "--files",
+    "files",
+    multiple=True,
+    help=(
+        "Stateless narrowing (#3701): restrict the glob to this working set "
+        "of paths instead of walking the tree. Repeatable."
+    ),
+)
+@click.option(
+    "--files-from",
+    type=str,
+    default=None,
+    help=(
+        "Read the narrowing working set from a file (one path per line). "
+        "Use ``-`` for stdin so you can pipe: "
+        "``nexus grep -l X | nexus glob '**/*.py' --files-from=-``."
+    ),
+)
+@add_output_options
 @add_backend_options
 def glob(
     pattern: str,
     path: str,
     long: bool,
     type: str | None,
-    backend_config: BackendConfig,
+    plain: bool,
+    files: tuple[str, ...],
+    files_from: str | None,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Find files matching a glob pattern.
 
@@ -46,72 +120,136 @@ def glob(
     - [...] (character classes)
 
     Examples:
-        # Basic patterns
         nexus glob "**/*.py"
         nexus glob "*.txt" /workspace
-
-        # With details (like ls -l)
         nexus glob -l "**/*.py"
-
-        # Filter by type
-        nexus glob -t f "**/*"          # Only files
-        nexus glob -t d "/workspace/*"  # Only directories
+        nexus glob "**/*.py" --json
+        nexus glob -t f "**/*"
+        nexus glob "*.py" --files /src/a.py --files /src/b.py
+        nexus grep "TODO" -l | nexus glob "**/*.py" --files-from=-
     """
-    try:
-        nx = get_filesystem(backend_config)
-        matches = nx.glob(pattern, path)
 
-        if not matches:
-            console.print(f"[yellow]No files match pattern:[/yellow] {pattern}")
-            nx.close()
-            return
+    async def _impl() -> None:
+        timing = CommandTiming()
+        files_list = _resolve_files_arg(files, files_from)
 
-        # Filter by type if specified
-        if type:
-            filtered_matches = []
-            for match in matches:
-                is_dir = (
-                    nx.sys_is_directory(match)
-                    if hasattr(nx, "is_directory")
-                    else match.endswith("/")
-                )
-                if (type == "d" and is_dir) or (type == "f" and not is_dir):
-                    filtered_matches.append(match)
-            matches = filtered_matches
+        try:
+            async with open_filesystem(remote_url, remote_api_key) as nx:
+                with timing.phase("connect"):
+                    pass  # connection already established by async with
 
-        # Get metadata if needed for long format
-        match_data = []
-        if long:
-            for match in matches:
-                try:
-                    metadata = nx.sys_read(match, return_metadata=True)
-                    if isinstance(metadata, dict):
+                with timing.phase("server"):
+                    glob_kwargs: dict[str, Any] = {}
+                    if files_list is not None:
+                        glob_kwargs["files"] = files_list
+                    result = nx.service("search").glob(pattern, path, **glob_kwargs)
+                    matches = (
+                        result["matches"]
+                        if isinstance(result, dict) and "matches" in result
+                        else result
+                    )
+
+                if not matches:
+                    if plain and not output_opts.json_output_explicit:
+                        # --plain with no matches: emit empty output for
+                        # safe piping into ``--files-from=-``.
+                        return
+                    render_output(
+                        data=[],
+                        output_opts=output_opts,
+                        timing=timing,
+                        message=f"No files match pattern: {pattern}",
+                    )
+                    return
+
+                # Filter by type if specified
+                if type:
+                    filtered = []
+                    for match in matches:
+                        is_dir = (
+                            nx.is_directory(match)
+                            if hasattr(nx, "is_directory")
+                            else match.endswith("/")
+                        )
+                        if (type == "d" and is_dir) or (type == "f" and not is_dir):
+                            filtered.append(match)
+                    matches = filtered
+
+                # For --long, use batch metadata instead of N+1 reads
+                match_data: list[dict[str, Any]]
+                if long and matches:
+                    # Try batch metadata via sys_readdir on parent paths
+                    metadata_map: dict[str, dict[str, Any]] = {}
+                    try:
+                        parent_path = path if path != "/" else "/"
+                        all_details = nx.sys_readdir(parent_path, recursive=True, details=True)
+                        details_list = cast(list[dict[str, Any]], all_details)
+                        metadata_map = {d["path"]: d for d in details_list}
+                    except Exception:
+                        pass
+
+                    match_data = []
+                    for m in matches:
+                        meta = metadata_map.get(m, {})
                         match_data.append(
                             {
-                                "path": match,
-                                "size": metadata.get("size", 0),
-                                "mtime": metadata.get("modified_at", ""),
+                                "path": m,
+                                "size": meta.get("size", 0),
+                                "modified_at": meta.get("modified_at", ""),
                             }
                         )
-                    else:
-                        match_data.append({"path": match, "size": 0, "mtime": ""})
-                except Exception:
-                    match_data.append({"path": match, "size": 0, "mtime": ""})
+                else:
+                    match_data = [{"path": m} for m in matches]
 
-        nx.close()
+            # #3701: --plain mode is a pipe-first output format. Bypass
+            # render_output (and its auto-JSON-when-piped fallback) so
+            # the stdout is unadorned one-path-per-line, ready for
+            # ``nexus grep --files-from=-`` consumption.
+            if plain and not output_opts.json_output_explicit:
+                for entry in match_data:
+                    print(entry["path"])  # noqa: T201
+                return
 
-        console.print(f"[green]Found {len(matches)} files matching[/green] [cyan]{pattern}[/cyan]:")
+            def _print_human(entries: list[dict[str, Any]]) -> None:
+                if plain:
+                    # Pipe-friendly: one path per line, no decoration,
+                    # via plain print() so stdout is unadorned (#3701).
+                    for entry in entries:
+                        print(entry["path"])  # noqa: T201
+                    return
 
-        if long:
-            # Show detailed listing
-            for data in match_data:
-                console.print(f"  {data['size']:>10}  {data['mtime']}  {data['path']}")
-        else:
-            # Simple listing
-            for match in matches:
-                console.print(f"  {match}")
-    except Exception as e:
-        handle_error(e)
+                console.print(
+                    f"[nexus.success]Found {len(entries)} files matching[/nexus.success] [nexus.value]{pattern}[/nexus.value]:"
+                )
+                if long:
+                    for entry in entries:
+                        console.print(
+                            f"  {entry.get('size', 0):>10}  {entry.get('modified_at', '')}  {entry['path']}"
+                        )
+                else:
+                    for entry in entries:
+                        console.print(f"  {entry['path']}")
+
+            render_output(
+                data=match_data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=_print_human,
+            )
+        except Exception as e:
+            if output_opts.json_output:
+                from nexus.cli.exit_codes import ExitCode
+
+                render_error(
+                    error=e,
+                    output_opts=output_opts,
+                    exit_code=ExitCode.GENERAL_ERROR,
+                    timing=timing,
+                )
+            else:
+                handle_error(e)
+
+    asyncio.run(_impl())
 
 
 @click.command()
@@ -122,10 +260,28 @@ def glob(
 @click.option("-n", "--line-number", is_flag=True, help="Show line numbers (like grep -n)")
 @click.option("-l", "--files-with-matches", is_flag=True, help="Show only filenames with matches")
 @click.option("-c", "--count", is_flag=True, help="Show count of matches per file")
-@click.option("-v", "--invert-match", is_flag=True, help="Invert match (show non-matching lines)")
-@click.option("-A", "--after-context", type=int, default=0, help="Show N lines after match")
-@click.option("-B", "--before-context", type=int, default=0, help="Show N lines before match")
-@click.option("-C", "--context", type=int, default=0, help="Show N lines before and after match")
+@click.option("--invert-match", is_flag=True, help="Invert match (return non-matching lines)")
+@click.option(
+    "-A",
+    "--after-context",
+    type=int,
+    default=0,
+    help="Show N lines after each match",
+)
+@click.option(
+    "-B",
+    "--before-context",
+    type=int,
+    default=0,
+    help="Show N lines before each match",
+)
+@click.option(
+    "-C",
+    "--context",
+    type=int,
+    default=0,
+    help="Show N lines before and after each match (sets both -A and -B)",
+)
 @click.option("-m", "--max-results", default=100, help="Maximum results to show")
 @click.option(
     "--search-mode",
@@ -134,6 +290,37 @@ def glob(
     help="Search mode: auto (try parsed, fallback to raw), parsed (only parsed), raw (only raw)",
     show_default=True,
 )
+@click.option(
+    "--files",
+    "files",
+    multiple=True,
+    help=(
+        "Stateless narrowing (#3701): restrict grep to this working set "
+        "of paths instead of walking the tree. Repeatable."
+    ),
+)
+@click.option(
+    "--files-from",
+    type=str,
+    default=None,
+    help=(
+        "Read the narrowing working set from a file (one path per line). "
+        "Use ``-`` for stdin so you can pipe: "
+        "``nexus grep 'auth' -l | nexus grep 'JWT' --files-from=-``."
+    ),
+)
+@click.option(
+    "--block-type",
+    type=click.Choice(
+        ["code", "table", "frontmatter", "paragraph", "blockquote", "list", "heading"]
+    ),
+    default=None,
+    help=(
+        "Restrict matches to a markdown block type (#3720). "
+        "Non-markdown files pass through unfiltered."
+    ),
+)
+@add_output_options
 @add_backend_options
 def grep(
     pattern: str,
@@ -143,218 +330,189 @@ def grep(
     line_number: bool,
     files_with_matches: bool,
     count: bool,
-    invert_match: bool,  # noqa: ARG001 - not yet wired to core grep
-    after_context: int,  # noqa: ARG001 - not yet wired to core grep
-    before_context: int,  # noqa: ARG001 - not yet wired to core grep
-    context: int,  # noqa: ARG001 - not yet wired to core grep
+    invert_match: bool,
+    after_context: int,
+    before_context: int,
+    context: int,
     max_results: int,
     search_mode: str,
-    backend_config: BackendConfig,
+    files: tuple[str, ...],
+    files_from: str | None,
+    block_type: str | None,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Search file contents using regex patterns.
 
-    Search Modes:
-    - auto: Try parsed text first, fallback to raw (default)
-    - parsed: Only search parsed text (great for PDFs/docs)
-    - raw: Only search raw file content (skip parsing)
-
     Examples:
-        # Basic search
         nexus grep "TODO"
+        nexus grep -n "error" /workspace
+        nexus grep "TODO" --json
+        nexus grep -l "TODO" .
+        nexus grep -i "error" --json --fields file,line
+        nexus grep "pool" -B 2 -A 2   # with 2 lines of surrounding context
+        nexus grep "TODO" --invert-match   # show non-matching lines
+        nexus grep "JWT" --files /src/auth.py --files /src/user.py
+        nexus grep "auth" -l | nexus grep "JWT" --files-from=-
 
-        # Linux-style with common flags
-        nexus grep -n "error" /workspace          # Show line numbers
-        nexus grep -l "TODO" .                    # Only filenames
-        nexus grep -c "import" **/*.py            # Count matches
-        nexus grep -A 3 -B 3 "def main"           # Context lines
-        nexus grep -C 5 "class"                   # 5 lines context
-        nexus grep -v "test" file.txt             # Invert match
-        nexus grep -i "error"                     # Case insensitive
-
-        # Nexus-specific
+    \b
         nexus grep "revenue" -f "**/*.pdf" --search-mode=parsed
     """
-    try:
-        nx = get_filesystem(backend_config)
 
-        # Context lines (after_context, before_context, context) are accepted
-        # by the CLI but not yet wired to core grep() — see arg suppression above
+    async def _impl() -> None:
+        timing = CommandTiming()
 
-        matches = nx.grep(
-            pattern,
-            path=path,
-            file_pattern=file_pattern,
-            ignore_case=ignore_case,
-            max_results=max_results,
-            search_mode=search_mode,
-        )
-        nx.close()
+        # Resolve --files / --files-from into the working set (or None).
+        files_list = _resolve_files_arg(files, files_from)
 
-        if not matches:
-            console.print(f"[yellow]No matches found for:[/yellow] {pattern}")
-            return
+        # -C / --context is shorthand for setting both -A and -B to the
+        # same value, matching POSIX grep semantics.
+        effective_before = before_context or context
+        effective_after = after_context or context
 
-        # Group matches by file for counting and context
-        from collections import defaultdict
+        try:
+            async with open_filesystem(remote_url, remote_api_key) as nx:
+                with timing.phase("connect"):
+                    pass  # connection already established by async with
 
-        matches_by_file = defaultdict(list)
-        for match in matches:
-            matches_by_file[match["file"]].append(match)
+                with timing.phase("server"):
+                    grep_kwargs: dict[str, Any] = {
+                        "path": path,
+                        "file_pattern": file_pattern,
+                        "ignore_case": ignore_case,
+                        "max_results": max_results,
+                        "search_mode": search_mode,
+                    }
+                    # Only forward the new flags when non-default so the
+                    # RPC payload stays lean and older servers without
+                    # the #3701 fields still accept the request.
+                    if effective_before:
+                        grep_kwargs["before_context"] = effective_before
+                    if effective_after:
+                        grep_kwargs["after_context"] = effective_after
+                    if invert_match:
+                        grep_kwargs["invert_match"] = True
+                    if files_list is not None:
+                        grep_kwargs["files"] = files_list
+                    if block_type is not None:
+                        grep_kwargs["block_type"] = block_type
 
-        # Handle -l (files with matches only)
-        if files_with_matches:
-            for filename in sorted(matches_by_file.keys()):
-                console.print(filename)
-            return
+                    result = nx.service("search").grep(pattern, **grep_kwargs)
 
-        # Handle -c (count only)
-        if count:
-            for filename in sorted(matches_by_file.keys()):
-                count_val = len(matches_by_file[filename])
-                console.print(f"{filename}:{count_val}")
-            return
-
-        # Regular output with optional enhancements
-        console.print(f"[green]Found {len(matches)} matches[/green] for [cyan]{pattern}[/cyan]")
-        if search_mode != "auto":
-            console.print(f"[dim]Search mode: {search_mode}[/dim]")
-        console.print()
-
-        for filename in sorted(matches_by_file.keys()):
-            file_matches = matches_by_file[filename]
-            console.print(f"[bold cyan]{filename}[/bold cyan]")
-
-            for match in file_matches:
-                # Format line number if requested
-                line_num_str = f"{match['line']}:" if line_number else ""
-
-                console.print(f"  [yellow]{line_num_str}[/yellow] {match['content']}")
-
-            console.print()
-
-    except Exception as e:
-        handle_error(e)
-
-
-@click.command(name="find-duplicates")
-@click.option("-p", "--path", default="/", help="Base path to search from")
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@add_backend_options
-def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig) -> None:
-    """Find duplicate files using content hashes.
-
-    Uses batch_get_content_ids() for efficient deduplication detection.
-    Groups files by their content hash to find duplicates.
-
-    Examples:
-        nexus find-duplicates
-        nexus find-duplicates --path /workspace
-        nexus find-duplicates --json
-    """
-    try:
-        from nexus.core.nexus_fs import NexusFS
-
-        nx = get_filesystem(backend_config)
-
-        # Only standalone mode supports batch_get_content_ids
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] find-duplicates is only available in standalone mode")
-            nx.close()
-            sys.exit(1)
-
-        # Get all files under path
-        with console.status(f"[yellow]Scanning files in {path}...[/yellow]", spinner="dots"):
-            all_files_raw = nx.sys_readdir(path, recursive=True)
-
-            # Handle PaginatedResult if limit was used (not expected here, but be safe)
-            if hasattr(all_files_raw, "items"):
-                all_files_raw = all_files_raw.items
-
-            # Check if we got detailed results (list of dicts) or simple paths (list of strings)
-            if all_files_raw and isinstance(all_files_raw[0], dict):
-                # details=True was used
-                all_files_detailed = cast(list[dict[str, Any]], all_files_raw)
-                file_paths = [f["path"] for f in all_files_detailed]
+            # Normalize result format
+            if isinstance(result, dict) and "results" in result:
+                matches = result["results"]
+            elif isinstance(result, dict) and "matches" in result:
+                matches = result["matches"]
             else:
-                # Simple list of paths
-                file_paths = cast(list[str], all_files_raw)
+                matches = result
 
-        if not file_paths:
-            console.print(f"[yellow]No files found in {path}[/yellow]")
-            nx.close()
-            return
-
-        # Get content hashes in batch (single query)
-        with console.status(
-            f"[yellow]Analyzing {len(file_paths)} files for duplicates...[/yellow]",
-            spinner="dots",
-        ):
-            content_ids = nx.batch_get_content_ids(file_paths)
-
-            # Group by hash
-            from collections import defaultdict
-
-            by_hash = defaultdict(list)
-            for file_path, content_hash in content_ids.items():
-                if content_hash:
-                    by_hash[content_hash].append(file_path)
-
-            # Find duplicate groups (hash with >1 file)
-            duplicates = {h: paths for h, paths in by_hash.items() if len(paths) > 1}
-
-        nx.close()
-
-        # Calculate statistics
-        total_files = len(file_paths)
-        unique_hashes = len(by_hash)
-        duplicate_groups = len(duplicates)
-        duplicate_files = sum(len(paths) for paths in duplicates.values())
-
-        if json_output:
-            import json
-
-            result = {
-                "total_files": total_files,
-                "unique_hashes": unique_hashes,
-                "duplicate_groups": duplicate_groups,
-                "duplicate_files": duplicate_files,
-                "duplicates": [
-                    {"content_hash": h, "paths": paths} for h, paths in duplicates.items()
-                ],
-            }
-            console.print(json.dumps(result, indent=2))
-        else:
-            # Display summary
-            console.print("\n[bold cyan]Duplicate File Analysis[/bold cyan]")
-            console.print(f"Total files scanned: [green]{total_files}[/green]")
-            console.print(f"Unique content hashes: [green]{unique_hashes}[/green]")
-            console.print(f"Duplicate groups: [yellow]{duplicate_groups}[/yellow]")
-            console.print(f"Duplicate files: [yellow]{duplicate_files}[/yellow]")
-
-            if not duplicates:
-                console.print("\n[green]✓ No duplicate files found![/green]")
+            if not matches:
+                if files_with_matches and not output_opts.json_output_explicit:
+                    # -l with no matches: produce an empty pipe output so
+                    # downstream ``--files-from=-`` sees an empty list, not
+                    # a JSON envelope that fails to parse.
+                    return
+                render_output(
+                    data=[],
+                    output_opts=output_opts,
+                    timing=timing,
+                    message=f"No matches found for: {pattern}",
+                )
                 return
 
-            # Display duplicate groups
-            console.print("\n[bold yellow]Duplicate Groups:[/bold yellow]\n")
+            # Group by file
+            matches_by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for match in matches:
+                matches_by_file[match["file"]].append(match)
 
-            for i, (content_hash, paths) in enumerate(duplicates.items(), 1):
-                console.print(f"[bold]Group {i}[/bold] (hash: [dim]{content_hash[:16]}...[/dim])")
-                console.print(f"  [yellow]{len(paths)} files with identical content:[/yellow]")
-                for pth in sorted(paths):
-                    console.print(f"    • {pth}")
+            # #3701: ``-l`` mode is a pipe-first output format. Bypass
+            # render_output entirely — including the auto-JSON-when-piped
+            # fallback in add_output_options — and write plain filenames
+            # to stdout so downstream ``--files-from=-`` can consume them.
+            # Users who want JSON for -l mode can still pass --json
+            # explicitly; we only bypass the auto-detection.
+            if files_with_matches and not output_opts.json_output_explicit:
+                for filename in sorted(matches_by_file.keys()):
+                    print(filename)  # noqa: T201
+                return
+
+            # Structure data for JSON output
+            data = {
+                "pattern": pattern,
+                "total_matches": len(matches),
+                "files_matched": len(matches_by_file),
+                "matches": matches,
+            }
+
+            def _print_human(d: dict[str, Any]) -> None:
+                m_list = d["matches"]
+                by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
+                for m in m_list:
+                    by_file[m["file"]].append(m)
+
+                if files_with_matches:
+                    # -l mode: print one filename per line, unadorned, via
+                    # plain print() so the output is pipeable to
+                    # ``--files-from=-`` without ANSI escape codes or
+                    # Rich markup interpretation (#3701).
+                    for filename in sorted(by_file.keys()):
+                        print(filename)  # noqa: T201
+                    return
+
+                if count:
+                    for filename in sorted(by_file.keys()):
+                        console.print(f"{filename}:{len(by_file[filename])}")
+                    return
+
+                console.print(
+                    f"[nexus.success]Found {len(m_list)} matches[/nexus.success] for [nexus.value]{pattern}[/nexus.value]"
+                )
+                if search_mode != "auto":
+                    console.print(f"[nexus.muted]Search mode: {search_mode}[/nexus.muted]")
                 console.print()
 
-            # Calculate potential space savings
-            # Each duplicate group can save (n-1) copies
-            console.print("[bold cyan]Storage Impact:[/bold cyan]")
-            console.print(
-                f"  Files that could be deduplicated: [yellow]{duplicate_files - duplicate_groups}[/yellow]"
-            )
-            console.print("  (CAS automatically deduplicates - no action needed!)")
+                has_context = bool(effective_before or effective_after)
 
-    except Exception as e:
-        handle_error(e)
+                for filename in sorted(by_file.keys()):
+                    console.print(f"[bold nexus.value]{filename}[/bold nexus.value]")
+                    for m in by_file[filename]:
+                        ln = f"{m['line']}:" if line_number else ""
+                        # Render before-context lines (#3701): dim, with a
+                        # ``-`` line-separator marking so the output matches
+                        # classic ``grep -B N`` formatting.
+                        if has_context:
+                            for b in m.get("before_context") or []:
+                                b_ln = f"{b['line']}-" if line_number else ""
+                                console.print(f"  [nexus.muted]{b_ln} {b['content']}[/nexus.muted]")
+                        console.print(f"  [nexus.warning]{ln}[/nexus.warning] {m['content']}")
+                        if has_context:
+                            for a in m.get("after_context") or []:
+                                a_ln = f"{a['line']}-" if line_number else ""
+                                console.print(f"  [nexus.muted]{a_ln} {a['content']}[/nexus.muted]")
+                            # Separator between context blocks, like grep.
+                            if by_file[filename][-1] is not m:
+                                console.print("  --")
+                    console.print()
+
+            render_output(
+                data=data, output_opts=output_opts, timing=timing, human_formatter=_print_human
+            )
+        except Exception as e:
+            if output_opts.json_output:
+                from nexus.cli.exit_codes import ExitCode
+
+                render_error(
+                    error=e,
+                    output_opts=output_opts,
+                    exit_code=ExitCode.GENERAL_ERROR,
+                    timing=timing,
+                )
+            else:
+                handle_error(e)
+
+    asyncio.run(_impl())
 
 
 # Semantic Search Commands (v0.4.0)
@@ -389,7 +547,8 @@ def search_init(
     api_key: str | None,
     chunk_size: int,
     chunk_strategy: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Initialize semantic search engine.
 
@@ -414,18 +573,17 @@ def search_init(
         # Custom settings
         nexus search init --provider openai --chunk-size 2048
     """
-    import asyncio
 
-    try:
-        from nexus.core.nexus_fs import NexusFS
+    async def _impl() -> None:
+        try:
+            nx = await get_filesystem(remote_url, remote_api_key)
 
-        nx = get_filesystem(backend_config)
-
-        with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
-
-            async def init_search() -> None:
-                nxfs = cast("NexusFS", nx)
-                await nxfs.ainitialize_semantic_search(
+            with console.status(
+                "[nexus.warning]Initializing search engine...[/nexus.warning]", spinner="dots"
+            ):
+                nx.service("search").ainitialize_semantic_search(
+                    nx=nx,
+                    record_store_engine=None,
                     embedding_provider=provider,
                     embedding_model=model,
                     api_key=api_key,
@@ -433,27 +591,29 @@ def search_init(
                     chunk_strategy=chunk_strategy,
                 )
 
-            asyncio.run(init_search())
-
-        console.print("[green]✓ Search engine initialized successfully![/green]")
-        if isinstance(nx, NexusFS):
-            db_name = nx._record_store.engine.dialect.name if nx._record_store else "N/A"
-            console.print(f"  Database: [cyan]{db_name}[/cyan]")
-        else:
-            console.print("  Mode: [cyan]Remote (server-side)[/cyan]")
-        console.print(f"  Provider: [cyan]{provider or 'None (keyword-only)'}[/cyan]")
-        console.print(f"  Chunk size: [cyan]{chunk_size}[/cyan] tokens")
-        console.print(f"  Chunk strategy: [cyan]{chunk_strategy}[/cyan]")
-
-        if not provider:
-            console.print("\n[yellow]Note:[/yellow] Keyword-only mode enabled (FTS).")
             console.print(
-                "For semantic/hybrid search, reinitialize with --provider openai (recommended) or voyage"
+                "[nexus.success]✓ Search engine initialized successfully![/nexus.success]"
             )
+            console.print("  Mode: [nexus.value]Remote (server-side)[/nexus.value]")
+            console.print(
+                f"  Provider: [nexus.value]{provider or 'None (keyword-only)'}[/nexus.value]"
+            )
+            console.print(f"  Chunk size: [nexus.value]{chunk_size}[/nexus.value] tokens")
+            console.print(f"  Chunk strategy: [nexus.value]{chunk_strategy}[/nexus.value]")
 
-        nx.close()
-    except Exception as e:
-        handle_error(e)
+            if not provider:
+                console.print(
+                    "\n[nexus.warning]Note:[/nexus.warning] Keyword-only mode enabled (FTS)."
+                )
+                console.print(
+                    "For semantic/hybrid search, reinitialize with --provider openai (recommended) or voyage"
+                )
+
+            nx.close()
+        except Exception as e:
+            handle_error(e)
+
+    asyncio.run(_impl())
 
 
 @semantic_search_group.command(name="index")
@@ -463,7 +623,8 @@ def search_init(
 def search_index(
     path: str,
     recursive: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Index documents for semantic search.
 
@@ -479,52 +640,50 @@ def search_index(
         # Index single file
         nexus search index /docs/README.md
     """
-    import asyncio
 
-    try:
-        from nexus.core.nexus_fs import NexusFS
+    async def _impl() -> None:
+        try:
+            nx = await get_filesystem(remote_url, remote_api_key)
 
-        nx = get_filesystem(backend_config)
+            with console.status(
+                f"[nexus.warning]Indexing {path}...[/nexus.warning]", spinner="dots"
+            ):
+                search_svc = nx.service("search")
+                raw_results = search_svc.semantic_search_index(path, recursive=recursive)
 
-        with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
+            # RPC handler wraps results as {"indexed": {path: count, ...}, ...}
+            if isinstance(raw_results, dict) and "indexed" in raw_results:
+                results = raw_results["indexed"]
+                total_chunks = raw_results.get("total_chunks", 0)
+            else:
+                results = raw_results
+                total_chunks = sum(v for v in results.values() if isinstance(v, int) and v > 0)
 
-            async def do_index() -> dict[str, int]:
-                # Auto-initialize semantic search if not already initialized (standalone mode)
-                if isinstance(nx, NexusFS):
-                    await nx.ainitialize_semantic_search()
-                nxfs = cast("NexusFS", nx)
-                result: dict[str, int] = await nxfs.asemantic_search_index(
-                    path, recursive=recursive
-                )
-                return result
+            # Display results
+            successful = sum(1 for v in results.values() if isinstance(v, int) and v > 0)
+            failed = sum(1 for v in results.values() if isinstance(v, int) and v < 0)
 
-            results = asyncio.run(do_index())
+            console.print("\n[nexus.success]✓ Indexing complete![/nexus.success]")
+            console.print(f"  Files indexed: [nexus.value]{successful}[/nexus.value]")
+            console.print(f"  Total chunks: [nexus.value]{total_chunks}[/nexus.value]")
+            if failed > 0:
+                console.print(f"  Failed: [nexus.warning]{failed}[/nexus.warning]")
 
-        # Display results
-        total_chunks = sum(v for v in results.values() if v > 0)
-        successful = sum(1 for v in results.values() if v > 0)
-        failed = sum(1 for v in results.values() if v < 0)
+            # Show stats
+            stats: dict[str, Any] = search_svc.semantic_search_stats()
+            console.print("\n[bold nexus.value]Index Statistics:[/bold nexus.value]")
+            console.print(
+                f"  Total indexed files: [nexus.success]{stats.get('total_files', stats.get('indexed_files', 0))}[/nexus.success]"
+            )
+            console.print(
+                f"  Total chunks: [nexus.success]{stats.get('total_chunks', 0)}[/nexus.success]"
+            )
 
-        console.print("\n[green]✓ Indexing complete![/green]")
-        console.print(f"  Files indexed: [cyan]{successful}[/cyan]")
-        console.print(f"  Total chunks: [cyan]{total_chunks}[/cyan]")
-        if failed > 0:
-            console.print(f"  Failed: [yellow]{failed}[/yellow]")
+            nx.close()
+        except Exception as e:
+            handle_error(e)
 
-        # Show stats
-        async def get_stats() -> dict[str, Any]:
-            nxfs = cast("NexusFS", nx)
-            result: dict[str, Any] = await nxfs.asemantic_search_stats()
-            return result
-
-        stats = asyncio.run(get_stats())
-        console.print("\n[bold cyan]Index Statistics:[/bold cyan]")
-        console.print(f"  Total indexed files: [green]{stats['indexed_files']}[/green]")
-        console.print(f"  Total chunks: [green]{stats['total_chunks']}[/green]")
-
-        nx.close()
-    except Exception as e:
-        handle_error(e)
+    asyncio.run(_impl())
 
 
 @semantic_search_group.command(name="query")
@@ -538,13 +697,6 @@ def search_index(
     default="semantic",
     help="Search mode (default: semantic)",
 )
-@click.option(
-    "--provider",
-    type=click.Choice(["openai", "voyage"]),
-    default=None,
-    help="Embedding provider (for semantic/hybrid mode)",
-)
-@click.option("--api-key", default=None, help="API key for embedding provider")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
 @add_backend_options
 def search_query(
@@ -552,10 +704,9 @@ def search_query(
     path: str,
     limit: int,
     mode: str,
-    provider: str | None,
-    api_key: str | None,
     json_output: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Search documents using natural language queries.
 
@@ -572,95 +723,103 @@ def search_query(
         # JSON output
         nexus search query "API endpoints" --json
     """
-    import asyncio
 
-    try:
-        from nexus.core.nexus_fs import NexusFS
+    async def _impl() -> None:
+        try:
+            nx = await get_filesystem(remote_url, remote_api_key)
 
-        nx = get_filesystem(backend_config)
-
-        with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
-
-            async def do_search() -> list[dict[str, Any]]:
-                # Auto-initialize semantic search if not already initialized (standalone mode)
-                if isinstance(nx, NexusFS):
-                    await nx.ainitialize_semantic_search(
-                        embedding_provider=provider, api_key=api_key
-                    )
-                nxfs = cast("NexusFS", nx)
-                result: list[dict[str, Any]] = await nxfs.asemantic_search(
-                    query, path=path, limit=limit, search_mode=mode
+            with console.status(
+                f"[nexus.warning]Searching for: {query}[/nexus.warning]", spinner="dots"
+            ):
+                search_svc = nx.service("search")
+                # ``RemoteServiceProxy.__getattr__`` cannot infer parameter names
+                # for ``semantic_search`` (no NexusFS method, no METHOD_PARAMS entry),
+                # so it would silently drop the positional ``query`` argument and
+                # the server-side handler would error with
+                # ``'SimpleNamespace' object has no attribute 'query'``.
+                raw = search_svc.semantic_search(
+                    query=query, path=path, limit=limit, search_mode=mode
                 )
-                return result
+                # RPC handler wraps as {"results": [...]}, unwrap if needed
+                results: list[dict[str, Any]] = (
+                    raw["results"] if isinstance(raw, dict) and "results" in raw else raw
+                )
 
-            results = asyncio.run(do_search())
+            if json_output:
+                import json
 
-        if json_output:
-            import json
+                console.print(json.dumps(results, indent=2))
+            else:
+                if not results:
+                    console.print(f"[nexus.warning]No results found for:[/nexus.warning] {query}")
+                    nx.close()
+                    return
 
-            console.print(json.dumps(results, indent=2))
-        else:
-            if not results:
-                console.print(f"[yellow]No results found for:[/yellow] {query}")
-                nx.close()
-                return
+                console.print(
+                    f"\n[nexus.success]Found {len(results)} results for:[/nexus.success] [nexus.value]{query}[/nexus.value]\n"
+                )
 
-            console.print(
-                f"\n[green]Found {len(results)} results for:[/green] [cyan]{query}[/cyan]\n"
-            )
+                for i, result in enumerate(results, 1):
+                    score = result["score"]
+                    file_path = result["path"]
+                    chunk_text = result["chunk_text"]
 
-            for i, result in enumerate(results, 1):
-                score = result["score"]
-                file_path = result["path"]
-                chunk_text = result["chunk_text"]
+                    # Truncate long text
+                    if len(chunk_text) > 200:
+                        chunk_text = chunk_text[:200] + "..."
 
-                # Truncate long text
-                if len(chunk_text) > 200:
-                    chunk_text = chunk_text[:200] + "..."
+                    console.print(f"[bold]{i}. {file_path}[/bold]")
+                    console.print(f"   Score: [nexus.success]{score:.3f}[/nexus.success]")
+                    console.print(f"   [nexus.muted]{chunk_text}[/nexus.muted]")
+                    console.print()
 
-                console.print(f"[bold]{i}. {file_path}[/bold]")
-                console.print(f"   Score: [green]{score:.3f}[/green]")
-                console.print(f"   [dim]{chunk_text}[/dim]")
-                console.print()
+            nx.close()
+        except Exception as e:
+            handle_error(e)
 
-        nx.close()
-    except Exception as e:
-        handle_error(e)
+    asyncio.run(_impl())
 
 
 @semantic_search_group.command(name="stats")
 @add_backend_options
-def search_stats(backend_config: BackendConfig) -> None:
+def search_stats(remote_url: str | None, remote_api_key: str | None) -> None:
     """Show semantic search statistics.
 
     Examples:
         nexus search stats
     """
-    import asyncio
 
-    try:
-        from nexus.core.nexus_fs import NexusFS
+    async def _impl() -> None:
+        try:
+            nx = await get_filesystem(remote_url, remote_api_key)
 
-        nx = get_filesystem(backend_config)
+            stats: dict[str, Any] = nx.service("search").semantic_search_stats()
 
-        async def get_stats() -> dict[str, Any]:
-            # Auto-initialize semantic search if not already initialized (standalone mode)
-            if isinstance(nx, NexusFS):
-                await nx.ainitialize_semantic_search()
-            nxfs = cast("NexusFS", nx)
-            result: dict[str, Any] = await nxfs.asemantic_search_stats()
-            return result
+            console.print("\n[bold nexus.value]Semantic Search Statistics[/bold nexus.value]")
+            console.print(
+                f"  Engine: [nexus.success]{stats.get('engine', stats.get('database_type', 'unknown'))}[/nexus.success]"
+            )
+            console.print(
+                f"  Indexed files: [nexus.success]{stats.get('total_files', stats.get('indexed_files', 0))}[/nexus.success]"
+            )
+            console.print(
+                f"  Total chunks: [nexus.success]{stats.get('total_chunks', 0)}[/nexus.success]"
+            )
+            if stats.get("embedding_model"):
+                console.print(
+                    f"  Embedding model: [nexus.value]{stats['embedding_model']}[/nexus.value]"
+                )
+            if stats.get("chunk_size"):
+                console.print(
+                    f"  Chunk size: [nexus.value]{stats['chunk_size']}[/nexus.value] tokens"
+                )
+            if stats.get("chunk_strategy"):
+                console.print(
+                    f"  Chunk strategy: [nexus.value]{stats['chunk_strategy']}[/nexus.value]"
+                )
 
-        stats = asyncio.run(get_stats())
+            nx.close()
+        except Exception as e:
+            handle_error(e)
 
-        console.print("\n[bold cyan]Semantic Search Statistics[/bold cyan]")
-        console.print(f"  Database type: [green]{stats['database_type']}[/green]")
-        console.print(f"  Indexed files: [green]{stats['indexed_files']}[/green]")
-        console.print(f"  Total chunks: [green]{stats['total_chunks']}[/green]")
-        console.print(f"  Embedding model: [cyan]{stats.get('embedding_model', 'None')}[/cyan]")
-        console.print(f"  Chunk size: [cyan]{stats['chunk_size']}[/cyan] tokens")
-        console.print(f"  Chunk strategy: [cyan]{stats['chunk_strategy']}[/cyan]")
-
-        nx.close()
-    except Exception as e:
-        handle_error(e)
+    asyncio.run(_impl())

@@ -68,7 +68,7 @@ def list_local_files(local_path: str, recursive: bool = True) -> list[str]:
     return files
 
 
-def copy_file(
+async def copy_file(
     nx: "NexusFilesystem",
     source: str,
     dest: str,
@@ -93,7 +93,7 @@ def copy_file(
             content = f.read()
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and nx.sys_access(dest):
+        if checksum and nx.access(dest):
             try:
                 raw_existing = nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes
@@ -108,9 +108,9 @@ def copy_file(
         # Create parent directories in Nexus
         parent = str(PurePosixPath(dest).parent)
         if parent and parent != "/" and parent != ".":
-            nx.sys_mkdir(parent, parents=True, exist_ok=True)
+            nx.mkdir(parent, parents=True, exist_ok=True)
 
-        nx.sys_write(dest, content)
+        nx.write(dest, content)
         return len(content)
 
     elif not is_source_local and is_dest_local:
@@ -141,7 +141,7 @@ def copy_file(
         content = raw_content
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and nx.sys_access(dest):
+        if checksum and nx.access(dest):
             try:
                 raw_existing = nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes
@@ -156,13 +156,13 @@ def copy_file(
         # Create parent directories in Nexus
         parent = str(PurePosixPath(dest).parent)
         if parent and parent != "/" and parent != ".":
-            nx.sys_mkdir(parent, parents=True, exist_ok=True)
+            nx.mkdir(parent, parents=True, exist_ok=True)
 
-        nx.sys_write(dest, content)
+        nx.write(dest, content)
         return len(content)
 
 
-def sync_directories(
+async def sync_directories(
     nx: "NexusFilesystem",
     source: str,
     dest: str,
@@ -204,9 +204,9 @@ def sync_directories(
             and source_files_abs
             and isinstance(source_files_abs[0], dict)
         ):
-            source_files_str: list[str] = [f["path"] for f in source_files_abs]  # type: ignore[index]
+            source_files_str: list[str] = [f["path"] for f in source_files_abs]
         else:
-            source_files_str = source_files_abs  # type: ignore[assignment]
+            source_files_str = source_files_abs
         # Convert to relative paths
         source_files_rel = [str(PurePosixPath(f).relative_to(source)) for f in source_files_str]
 
@@ -226,9 +226,9 @@ def sync_directories(
                 and dest_files_abs
                 and isinstance(dest_files_abs[0], dict)
             ):
-                dest_files_str: list[str] = [f["path"] for f in dest_files_abs]  # type: ignore[index]
+                dest_files_str: list[str] = [f["path"] for f in dest_files_abs]
             else:
-                dest_files_str = dest_files_abs  # type: ignore[assignment]
+                dest_files_str = dest_files_abs
             dest_files_rel = [str(PurePosixPath(f).relative_to(dest)) for f in dest_files_str]
 
     # Copy files from source to dest with optional progress bar
@@ -259,7 +259,7 @@ def sync_directories(
 
         try:
             if not dry_run:
-                bytes_copied = copy_file(
+                bytes_copied = await copy_file(
                     nx, src_full, dest_full, is_source_local, is_dest_local, checksum
                 )
                 if bytes_copied > 0:
@@ -304,7 +304,7 @@ def sync_directories(
     return stats
 
 
-def copy_recursive(
+async def copy_recursive(
     nx: "NexusFilesystem",
     source: str,
     dest: str,
@@ -315,13 +315,16 @@ def copy_recursive(
 
     This is similar to sync but without the delete option.
     """
-    return sync_directories(nx, source, dest, delete=False, checksum=checksum, progress=progress)
+    return await sync_directories(
+        nx, source, dest, delete=False, checksum=checksum, progress=progress
+    )
 
 
-def move_file(
+async def move_file(
     nx: "NexusFilesystem",
     source: str,
     dest: str,
+    force: bool = False,
 ) -> bool:
     """Move a file or directory.
 
@@ -339,14 +342,22 @@ def move_file(
             return True
 
         elif not is_source_local and not is_dest_local:
-            # Nexus to Nexus - use efficient rename API
-            # This is metadata-only, instant operation that preserves ReBAC permissions
-            nx.sys_rename(source, dest)
-            return True
+            # Nexus to Nexus - prefer efficient rename (metadata-only).
+            # Falls back to copy+delete if rename fails (e.g. gRPC transport
+            # not available on REMOTE profile).  Issue #341.
+            try:
+                nx.sys_rename(source, dest, force=force)
+                return True
+            except Exception:
+                # Fallback: copy content then delete source
+                content = nx.sys_read(source)
+                nx.write(dest, content)
+                nx.sys_unlink(source)
+                return True
 
         else:
             # Cross-boundary move - copy then delete
-            copy_file(nx, source, dest, is_source_local, is_dest_local)
+            await copy_file(nx, source, dest, is_source_local, is_dest_local)
 
             # Delete source
             if is_source_local:
@@ -357,4 +368,7 @@ def move_file(
 
     except (OSError, ValueError, TypeError):
         # File operation or path validation failed
+        return False
+    except Exception:
+        # Catch NexusError subclasses (Issue #341)
         return False

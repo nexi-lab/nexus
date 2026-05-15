@@ -1,14 +1,44 @@
 """Shared fixtures for benchmark tests."""
 
+import asyncio
 import uuid
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import CacheConfig, ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+
+def _build_kernel_metastore(db_path) -> tuple[object, object]:
+    """Create a kernel handle pair for benchmarks.
+
+    Mirrors ``nexus.connect()`` — production wires the metastore via
+    ``kernel.set_metastore_path(redb_path)`` so kernel.sys_write /
+    sys_readdir / sys_stat persist through the same store Python reads
+    from. Returns ``(kernel, kernel)`` for API symmetry with the old
+    ``(kernel, proxy)`` shape.
+    """
+    from nexus_runtime import PyKernel as _Kernel
+
+    redb_path = str(db_path).replace(".db", "") + ".redb"
+    kernel = _Kernel()
+    kernel.set_metastore_path(redb_path)
+    return kernel, kernel
+
+
+@pytest.fixture
+def benchmark_loop():
+    """Create a dedicated event loop for benchmark async calls.
+
+    pytest-benchmark does not support async tests, so we use a dedicated
+    event loop with loop.run_until_complete() to drive async coroutines
+    from sync benchmark functions.
+    """
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 
 @pytest.fixture
@@ -32,11 +62,11 @@ def benchmark_backend(tmp_path):
     """Create a local backend for benchmarks."""
     storage_path = tmp_path / "storage"
     storage_path.mkdir(parents=True, exist_ok=True)
-    return LocalBackend(str(storage_path))
+    return CASLocalBackend(str(storage_path))
 
 
 @pytest.fixture
-def benchmark_nexus(benchmark_backend, benchmark_db):
+def benchmark_nexus(benchmark_backend, benchmark_db, benchmark_loop):
     """Create a NexusFS instance for benchmarks.
 
     Configured with:
@@ -45,7 +75,7 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
     - Permissions disabled (for raw operation benchmarks)
     - Auto-parse disabled (for raw write benchmarks)
     """
-    metadata_store = RaftMetadataStore.embedded(str(benchmark_db).replace(".db", ""))
+    _, metadata_store = _build_kernel_metastore(benchmark_db)
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
     nx = create_nexus_fs(
         backend=benchmark_backend,
@@ -54,16 +84,16 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
         is_admin=True,
         permissions=PermissionConfig(enforce=False),
         parsing=ParseConfig(auto_parse=False),
-        cache=CacheConfig(enable_content_cache=True),
+        cache=CacheConfig(),
     )
     yield nx
     nx.close()
 
 
 @pytest.fixture
-def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
+def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db, benchmark_loop):
     """Create a NexusFS instance with permissions enabled for ReBAC benchmarks."""
-    metadata_store = RaftMetadataStore.embedded(str(benchmark_db).replace(".db", "") + "_perms")
+    _, metadata_store = _build_kernel_metastore(str(benchmark_db).replace(".db", "") + "_perms.db")
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
     nx = create_nexus_fs(
         backend=benchmark_backend,
@@ -74,7 +104,7 @@ def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
         agent_id="benchmark_agent",
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
-        cache=CacheConfig(enable_content_cache=True),
+        cache=CacheConfig(),
     )
     yield nx
     nx.close()
@@ -93,45 +123,48 @@ def sample_files():
 
 
 @pytest.fixture
-def populated_nexus(benchmark_nexus, sample_files):
+def populated_nexus(benchmark_nexus, sample_files, benchmark_loop):
     """Create a NexusFS with pre-populated files for read benchmarks."""
     nx = benchmark_nexus
 
-    # Create directory structure
-    for i in range(10):
-        nx.sys_mkdir(f"/dir_{i}", parents=True)
-        for j in range(10):
-            nx.sys_mkdir(f"/dir_{i}/subdir_{j}", parents=True)
+    def _populate():
+        # Create directory structure
+        for i in range(10):
+            nx.mkdir(f"/dir_{i}", parents=True)
+            for j in range(10):
+                nx.mkdir(f"/dir_{i}/subdir_{j}", parents=True)
 
-    # Create files of various sizes
-    for size_name, content in sample_files.items():
-        if size_name != "xlarge":  # Skip xlarge for setup speed
-            nx.sys_write(f"/test_{size_name}.bin", content)
-            # Create copies in subdirectories
-            for i in range(5):
-                nx.sys_write(f"/dir_{i}/test_{size_name}.bin", content)
+        # Create files of various sizes
+        for size_name, content in sample_files.items():
+            if size_name != "xlarge":  # Skip xlarge for setup speed
+                nx.write(f"/test_{size_name}.bin", content)
+                # Create copies in subdirectories
+                for i in range(5):
+                    nx.write(f"/dir_{i}/test_{size_name}.bin", content)
 
-    # Create many small files for glob/list benchmarks
-    for i in range(100):
-        nx.sys_write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
-        nx.sys_write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
-        nx.sys_write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
+        # Create many small files for glob/list benchmarks
+        for i in range(100):
+            nx.write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
+            nx.write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
+            nx.write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
 
+    _populate()
     yield nx
 
 
 @pytest.fixture
-def deep_directory_nexus(benchmark_nexus):
+def deep_directory_nexus(benchmark_nexus, benchmark_loop):
     """Create a NexusFS with deep directory structure for path resolution benchmarks."""
     nx = benchmark_nexus
 
-    # Create deep nested directories
-    current_path = ""
-    for i in range(20):
-        current_path += f"/level_{i}"
-        nx.sys_mkdir(current_path, parents=True)
-        nx.sys_write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
+    def _populate():
+        current_path = ""
+        for i in range(20):
+            current_path += f"/level_{i}"
+            nx.mkdir(current_path, parents=True)
+            nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
 
+    _populate()
     yield nx
 
 

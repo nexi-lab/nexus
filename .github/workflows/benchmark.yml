@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, develop]
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 permissions:
   contents: write
   pull-requests: write
@@ -18,14 +21,15 @@ jobs:
   benchmark-critical:
     name: Benchmark (Critical Subset)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -34,26 +38,18 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build Rust extensions (release for benchmarks)
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: release
+          rust-cache-shared-key: "rust-bench"
+          output-dir: dist
+          github-token: ${{ github.token }}
 
-      - name: Build Rust extension (nexus_fast)
-        run: |
-          cd rust/nexus_pyo3
-          pip install maturin
-          maturin develop --release
-
-      - name: Build Rust extension (nexus_raft)
-        run: |
-          cd rust/nexus_raft
-          maturin develop --release --features python
-
-      - name: Build Rust extension (nexus_tasks)
-        run: |
-          cd rust/nexus_tasks
-          maturin develop --release
+      - name: Install Rust extensions
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -66,12 +62,14 @@ jobs:
           python -c "import json; json.load(open('/tmp/smoke.json'))"
 
       - name: Run critical benchmarks
+        timeout-minutes: 20
         run: |
           uv run pytest tests/benchmarks/ -m benchmark_ci \
             --benchmark-json=benchmark-results.json \
-            --benchmark-min-rounds=10 \
+            --benchmark-min-rounds=5 \
+            --benchmark-max-time=2.0 \
             --benchmark-warmup=on \
-            --benchmark-warmup-iterations=3 \
+            --benchmark-warmup-iterations=1 \
             -o "addopts=" -v
 
       - name: Ensure gh-pages branch exists
@@ -98,7 +96,7 @@ jobs:
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench
           alert-threshold: "130%"
-          comment-on-alert: true
+          comment-on-alert: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
           fail-on-alert: false
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -107,15 +105,16 @@ jobs:
   benchmark-full:
     name: Benchmark (Full Suite)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -124,37 +123,31 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build Rust extensions (release for benchmarks)
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: release
+          rust-cache-shared-key: "rust-bench"
+          output-dir: dist
+          github-token: ${{ github.token }}
 
-      - name: Build Rust extension (nexus_fast)
-        run: |
-          cd rust/nexus_pyo3
-          pip install maturin
-          maturin develop --release
-
-      - name: Build Rust extension (nexus_raft)
-        run: |
-          cd rust/nexus_raft
-          maturin develop --release --features python
-
-      - name: Build Rust extension (nexus_tasks)
-        run: |
-          cd rust/nexus_tasks
-          maturin develop --release
+      - name: Install Rust extensions
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
       - name: Run full benchmark suite
+        timeout-minutes: 45
         run: |
           uv run pytest tests/benchmarks/ \
             --benchmark-json=benchmark-results-full.json \
-            --benchmark-min-rounds=10 \
+            --benchmark-min-rounds=5 \
+            --benchmark-max-time=2.0 \
             --benchmark-warmup=on \
-            --benchmark-warmup-iterations=3 \
+            --benchmark-warmup-iterations=1 \
             -o "addopts=" -v
 
       - name: Ensure gh-pages branch exists

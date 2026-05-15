@@ -12,75 +12,81 @@ class DirEntryType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DT_DIR: _ClassVar[DirEntryType]
     DT_MOUNT: _ClassVar[DirEntryType]
     DT_PIPE: _ClassVar[DirEntryType]
+    DT_STREAM: _ClassVar[DirEntryType]
+    DT_EXTERNAL_STORAGE: _ClassVar[DirEntryType]
+    DT_LINK: _ClassVar[DirEntryType]
 
 DT_REG: DirEntryType
 DT_DIR: DirEntryType
 DT_MOUNT: DirEntryType
 DT_PIPE: DirEntryType
+DT_STREAM: DirEntryType
+DT_EXTERNAL_STORAGE: DirEntryType
+DT_LINK: DirEntryType
 
 class FileMetadata(_message.Message):
     __slots__ = (
         "path",
-        "backend_name",
-        "physical_path",
         "size",
-        "etag",
+        "content_id",
         "mime_type",
         "created_at",
         "modified_at",
         "version",
         "zone_id",
-        "created_by",
         "owner_id",
         "entry_type",
         "target_zone_id",
-        "i_links_count",
+        "ttl_seconds",
+        "last_writer_address",
+        "link_target",
+        "gen",
     )
     PATH_FIELD_NUMBER: _ClassVar[int]
-    BACKEND_NAME_FIELD_NUMBER: _ClassVar[int]
-    PHYSICAL_PATH_FIELD_NUMBER: _ClassVar[int]
     SIZE_FIELD_NUMBER: _ClassVar[int]
-    ETAG_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_ID_FIELD_NUMBER: _ClassVar[int]
     MIME_TYPE_FIELD_NUMBER: _ClassVar[int]
     CREATED_AT_FIELD_NUMBER: _ClassVar[int]
     MODIFIED_AT_FIELD_NUMBER: _ClassVar[int]
     VERSION_FIELD_NUMBER: _ClassVar[int]
     ZONE_ID_FIELD_NUMBER: _ClassVar[int]
-    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
     OWNER_ID_FIELD_NUMBER: _ClassVar[int]
     ENTRY_TYPE_FIELD_NUMBER: _ClassVar[int]
     TARGET_ZONE_ID_FIELD_NUMBER: _ClassVar[int]
-    I_LINKS_COUNT_FIELD_NUMBER: _ClassVar[int]
+    TTL_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    LAST_WRITER_ADDRESS_FIELD_NUMBER: _ClassVar[int]
+    LINK_TARGET_FIELD_NUMBER: _ClassVar[int]
+    GEN_FIELD_NUMBER: _ClassVar[int]
     path: str
-    backend_name: str
-    physical_path: str
     size: int
-    etag: str
+    content_id: str
     mime_type: str
     created_at: str
     modified_at: str
     version: int
     zone_id: str
-    created_by: str
     owner_id: str
     entry_type: DirEntryType
     target_zone_id: str
-    i_links_count: int
+    ttl_seconds: float
+    last_writer_address: str
+    link_target: str
+    gen: int
     def __init__(
         self,
         path: str | None = ...,
-        backend_name: str | None = ...,
-        physical_path: str | None = ...,
         size: int | None = ...,
-        etag: str | None = ...,
+        content_id: str | None = ...,
         mime_type: str | None = ...,
         created_at: str | None = ...,
         modified_at: str | None = ...,
         version: int | None = ...,
         zone_id: str | None = ...,
-        created_by: str | None = ...,
         owner_id: str | None = ...,
         entry_type: DirEntryType | str | None = ...,
         target_zone_id: str | None = ...,
-        i_links_count: int | None = ...,
+        ttl_seconds: float | None = ...,
+        last_writer_address: str | None = ...,
+        link_target: str | None = ...,
+        gen: int | None = ...,
     ) -> None: ...

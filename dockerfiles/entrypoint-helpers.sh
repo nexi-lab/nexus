@@ -46,10 +46,6 @@ cleanup() {
         kill -TERM "$SERVER_PID" 2>/dev/null
         wait "$SERVER_PID" 2>/dev/null
     fi
-    if [ -n "${ZOEKT_PID:-}" ] && kill -0 "$ZOEKT_PID" 2>/dev/null; then
-        kill -TERM "$ZOEKT_PID" 2>/dev/null
-        wait "$ZOEKT_PID" 2>/dev/null
-    fi
     exit 0
 }
 

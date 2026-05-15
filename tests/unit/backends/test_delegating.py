@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.backend import HandlerStatusResponse
-from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.base.backend import HandlerStatusResponse
+from nexus.backends.storage.delegating import DelegatingBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
@@ -101,12 +101,12 @@ class TestDefaultHooks:
 
     def test_passthrough_write_delegates_to_inner(self) -> None:
         leaf = make_leaf()
-        expected = WriteResult(content_hash="hash123")
+        expected = WriteResult(content_id="hash123")
         leaf.write_content.return_value = expected
         wrapper = DelegatingBackend(leaf)
 
         result = wrapper.write_content(b"hello")
-        leaf.write_content.assert_called_once_with(b"hello", context=None)
+        leaf.write_content.assert_called_once_with(b"hello", "", offset=0, context=None)
         assert result is expected
 
     def test_passthrough_read_delegates_to_inner(self) -> None:
@@ -162,7 +162,7 @@ class TestTransformOnRead:
         assert isinstance(write_resp, WriteResult)
 
         # Read through wrapper (strips "TX:" prefix)
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == b"hello"
 
     def test_error_response_propagated_from_inner(self) -> None:
@@ -194,8 +194,8 @@ class TestBatchReadWithTransform:
         mock, storage = make_storage_mock()
         wrapper = FakeTransformBackend(mock)
 
-        h1 = wrapper.write_content(b"alpha").content_hash
-        h2 = wrapper.write_content(b"beta").content_hash
+        h1 = wrapper.write_content(b"alpha").content_id
+        h2 = wrapper.write_content(b"beta").content_id
 
         results = wrapper.batch_read_content([h1, h2])
         assert results[h1] == b"alpha"
@@ -205,7 +205,7 @@ class TestBatchReadWithTransform:
         mock, storage = make_storage_mock()
         wrapper = FakeTransformBackend(mock)
 
-        h1 = wrapper.write_content(b"exists").content_hash
+        h1 = wrapper.write_content(b"exists").content_id
         results = wrapper.batch_read_content([h1, "missing"])
         assert results[h1] == b"exists"
         assert results["missing"] is None

@@ -1,50 +1,105 @@
 """Unified filesystem implementation for Nexus."""
+# Kernel interface unification — see KERNEL-ARCHITECTURE.md §4.5
 
-import asyncio
 import builtins
 import contextlib
+import inspect
 import logging
-import threading
-import time
-from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
-from typing import Any, ClassVar, cast
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
-from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
-from nexus.contracts.exceptions import (
-    BackendError,
-    ConflictError,
-    InvalidPathError,
-    NexusFileNotFoundError,
-)
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
-from nexus.contracts.metadata import FileMetadata
-from nexus.contracts.types import OperationContext, Permission
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.types import OperationContext
 from nexus.core.config import (
-    BrickServices,
     CacheConfig,
     DistributedConfig,
-    KernelServices,
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
-    SystemServices,
-    WiredServices,
 )
-from nexus.core.file_events import FileEvent, FileEventType
-from nexus.core.hash_fast import hash_content
-from nexus.core.metastore import MetastoreABC
-from nexus.core.router import PathRouter
-from nexus.lib.path_utils import validate_path
-from nexus.lib.rpc_decorator import rpc_expose
+from nexus.core.nexus_fs_content import ContentMixin
+from nexus.core.nexus_fs_dispatch import DispatchMixin
+from nexus.core.nexus_fs_internal import InternalMixin
+from nexus.core.nexus_fs_metadata import MetadataMixin
+from nexus.core.nexus_fs_watch import WatchMixin
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
 
+def _declares_hook_spec(instance: Any) -> bool:
+    """Return True only when ``hook_spec`` is a real attribute on the object."""
+    try:
+        attr = inspect.getattr_static(instance, "hook_spec")
+    except AttributeError:
+        return False
+    return callable(attr)
+
+
+def _register_hooks_for_spec(dispatch: Any, spec: Any) -> None:
+    """Register all hooks from a HookSpec onto the dispatch (NexusFS)."""
+    if spec is None or spec.is_empty:
+        return
+    for h in spec.resolvers:
+        dispatch.register_resolver(h)
+    for h in spec.read_hooks:
+        dispatch.register_intercept_read(h)
+    for h in spec.write_hooks:
+        dispatch.register_intercept_write(h)
+    for h in spec.write_batch_hooks:
+        dispatch.register_intercept_write_batch(h)
+    for h in spec.delete_hooks:
+        dispatch.register_intercept_delete(h)
+    for h in spec.rename_hooks:
+        dispatch.register_intercept_rename(h)
+    for h in spec.copy_hooks:
+        dispatch.register_intercept_copy(h)
+    for h in spec.mkdir_hooks:
+        dispatch.register_intercept_mkdir(h)
+    for h in spec.rmdir_hooks:
+        dispatch.register_intercept_rmdir(h)
+    for h in spec.stat_hooks:
+        dispatch.register_intercept_stat(h)
+    for h in spec.access_hooks:
+        dispatch.register_intercept_access(h)
+
+
+def _unregister_hooks_for_spec(dispatch: Any, spec: Any) -> None:
+    """Unregister all hooks from a HookSpec."""
+    if spec is None or spec.is_empty:
+        return
+    for h in spec.resolvers:
+        dispatch.unregister_resolver(h)
+    for h in spec.read_hooks:
+        dispatch.unregister_intercept_read(h)
+    for h in spec.write_hooks:
+        dispatch.unregister_intercept_write(h)
+    for h in spec.write_batch_hooks:
+        dispatch.unregister_intercept_write_batch(h)
+    for h in spec.delete_hooks:
+        dispatch.unregister_intercept_delete(h)
+    for h in spec.rename_hooks:
+        dispatch.unregister_intercept_rename(h)
+    for h in spec.copy_hooks:
+        dispatch.unregister_intercept_copy(h)
+    for h in spec.mkdir_hooks:
+        dispatch.unregister_intercept_mkdir(h)
+    for h in spec.rmdir_hooks:
+        dispatch.unregister_intercept_rmdir(h)
+    for h in spec.stat_hooks:
+        dispatch.unregister_intercept_stat(h)
+    for h in spec.access_hooks:
+        dispatch.unregister_intercept_access(h)
+
+
 class NexusFS(  # type: ignore[misc]
-    NexusFilesystemABC,
+    ContentMixin,
+    MetadataMixin,
+    InternalMixin,
+    DispatchMixin,
+    WatchMixin,
 ):
     """
     Unified filesystem for Nexus.
@@ -62,59 +117,101 @@ class NexusFS(  # type: ignore[misc]
 
     def __init__(
         self,
-        metadata_store: MetastoreABC,
+        metadata_store: "Any | str | Path | None",
         record_store: RecordStoreABC | None = None,
         cache_store: CacheStoreABC | None = None,
         *,
-        is_admin: bool = False,
         cache: CacheConfig | None = None,
         permissions: PermissionConfig | None = None,
         distributed: DistributedConfig | None = None,
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
-        kernel_services: KernelServices | None = None,
-        system_services: SystemServices | None = None,
-        brick_services: BrickServices | None = None,
+        init_cred: OperationContext | None = None,
     ):
         """Initialize NexusFS kernel.
 
-        Kernel boots with MetastoreABC (inode layer) and an optional router
-        (via KernelServices). Backends are mounted externally via
-        ``router.add_mount()`` — like Linux VFS, no global backend.
+        Backends are mounted via ``DriverLifecycleCoordinator.mount()``
+        (which writes to the Rust kernel's MountTable) — like Linux VFS,
+        no global backend.
+
+        Args:
+            metadata_store: Metastore wiring. Four accepted shapes:
+
+                - ``PyKernel``: a pre-built kernel (typically from
+                  ``nexus.connect()``). Reused as-is; ``set_metastore_path``
+                  is assumed to have been called on it already.
+                - ``str | Path``: redb file path. NexusFS constructs a fresh
+                  ``PyKernel`` and calls ``set_metastore_path(str(path))``.
+                  This is the default for tests and quickstarts — the Rust
+                  kernel is the SSOT, no parallel Python store opens the file.
+                - ``None``: tempfile fallback — a fresh kernel + a tempfile
+                  redb path.
+                - Anything else exposing a ``_rust_kernel`` attribute (the
+                  legacy ``RustMetastoreProxy`` shim, kept until the proxy
+                  class is fully deleted): unwrapped to its kernel.
+
+            init_cred: Kernel process credential — like Linux ``init_task.cred``.
+                Used as fallback identity for internal operations (audit pipe
+                writes, service bootstrap mkdir). Immutable after construction.
+                Pass ``None`` only for bare-kernel tests that never call syscalls.
         """
+        # Normalize the four input shapes into a single shape that the
+        # kernel-boot branch below understands:
+        #   * (kernel, path) — kernel ready to wire, path opened by us.
+        #   * (kernel, None) — kernel already wired (or in-memory).
+        #   * (None, path) — build a fresh kernel and wire it.
+        #   * (None, None) — build a fresh kernel + tempfile redb.
+        _metastore_path: str | None = None
+        _provided_kernel: Any = None
+        if isinstance(metadata_store, Path):
+            _metastore_path = str(metadata_store)
+        elif isinstance(metadata_store, str):
+            _metastore_path = metadata_store
+        elif metadata_store is None:
+            pass
+        elif hasattr(metadata_store, "_rust_kernel"):
+            # Legacy ``RustMetastoreProxy`` shim — unwrap.
+            _provided_kernel = metadata_store._rust_kernel
+        else:
+            # Bare ``PyKernel`` (post-W3b shape).
+            _provided_kernel = metadata_store
+        # ``metadata_store`` is no longer read past this point.
+        metadata_store = None
         # Config defaults
         cache = cache or CacheConfig()
         permissions = permissions or PermissionConfig()
         distributed = distributed or DistributedConfig()
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
-        ksvc = kernel_services or KernelServices()
-        sys_svc = system_services or SystemServices()
-        brk_svc = brick_services or BrickServices()
+
+        # Kernel zone identity — analogous to Linux sb->s_dev.
+        # Standalone: always ROOT_ZONE_ID. Federation: set at link time.
+        self._zone_id: str = ROOT_ZONE_ID
 
         self._cache_config = cache
         self._perm_config = permissions
         self._distributed_config = distributed
         self._memory_config_obj = memory
         self._parse_config = parsing
-        self._kernel_services = ksvc
-        self._system_services = sys_svc
-        self._brick_services = brk_svc
         self._config: Any | None = None
 
         # Map config fields to flat attributes
         self._enable_memory_paging = memory.enable_paging
         self._memory_main_capacity = memory.main_capacity
         self._memory_recall_max_age_hours = memory.recall_max_age_hours
-        self._enforce_permissions = permissions.enforce
+        # _enforce_permissions removed — permission enforcement is fully delegated
+        # to KernelDispatch INTERCEPT hooks. RebacPermissionCheckHook holds the flag
+        # internally. No hook = no check = zero overhead (~20ns set lookup).
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
         self.allow_admin_bypass = permissions.allow_admin_bypass
-        self.auto_parse = parsing.auto_parse
-        self.is_admin = is_admin
 
-        # Three pillars: metadata (required), record store, cache store
-        # No self.backend — all I/O goes through router.route().backend
-        self.metadata: MetastoreABC = metadata_store
+        # Three pillars: metadata (kernel-owned), record store, cache store.
+        # No self.backend — all I/O goes through router.route().backend.
+        # ``self.metadata`` is gone post-W3b: callers reach the metastore
+        # via ``self._kernel.metastore_*`` (kernel-internal infrastructure)
+        # or through ``nexus.kernel_helpers`` (the five non-trivial
+        # wrappers around ``kernel.metastore_*``). The kernel handle is
+        # the only Python-side metastore reference.
         self._record_store = record_store
         self._sql_engine: Any = None
         self._db_session_factory: Any = None
@@ -129,217 +226,265 @@ class NexusFS(  # type: ignore[misc]
             cache_store if cache_store is not None else NullCacheStore()
         )
 
-        # Path router (metastore-backed mount table)
-        if ksvc.router is not None:
-            self.router = ksvc.router
-        else:
-            self.router = PathRouter(metadata_store)
+        # Issue #1801: kernel process credential — like Linux init_task.cred.
+        # Immutable after construction. Used as fallback identity for internal
+        # operations. External callers should pass explicit context= to syscalls.
+        self._init_cred: OperationContext | None = init_cred
 
-        # Parser registries (Issue #2134: from BrickServices, fallback for tests)
-        if brk_svc.parser_registry is not None:
-            self.parser_registry = brk_svc.parser_registry
-        else:
-            from nexus.bricks.parsers.markitdown_parser import MarkItDownParser as _MkD
-            from nexus.bricks.parsers.registry import ParserRegistry as _PR
+        # ── Kernel-owned primitives (always present, created here) ──────
+        # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
 
-            self.parser_registry = _PR()
-            self.parser_registry.register(_MkD())
-        if brk_svc.provider_registry is not None:
-            self.provider_registry = brk_svc.provider_registry
-        else:
-            from nexus.bricks.parsers.providers.registry import ProviderRegistry as _PvR
+        # Advisory locks handled by Rust kernel LockManager (sys_lock / sys_unlock).
 
-            self.provider_registry = _PvR()
-            self.provider_registry.auto_discover()
+        self._init_dispatch()
 
-        self._virtual_view_parse_fn = brk_svc.parse_fn
-        self._parser_threads: list[threading.Thread] = []
-        self._parser_threads_lock = threading.Lock()
+        from nexus.core.dispatch import get_global_registry
 
-        # Default context for embedded mode
-        self._default_context = OperationContext(
-            user_id="anonymous",
-            groups=[],
-            zone_id=ROOT_ZONE_ID,
-            agent_id=None,
-            is_admin=is_admin,
-            is_system=False,
-            admin_capabilities=set(),
+        self._ops_registry = get_global_registry()
+        self._mounted_backend_instances: dict[str, Any] = {}
+
+        import os as _os_ipc
+
+        _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")
+
+        self._transport_pool = None
+        if _ipc_self_addr:
+            from nexus.remote.rpc_transport import RPCTransportPool as _RPCTransportPool
+
+            self._transport_pool = _RPCTransportPool()
+
+        # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
+        # Constructed BEFORE DriverLifecycleCoordinator so DLC sees the
+        # kernel from birth (VFSRouter is the Rust SSOT for routing).
+        from nexus._rust_compat import RUST_AVAILABLE
+
+        self._kernel = None
+        if RUST_AVAILABLE:
+            try:
+                if _provided_kernel is not None:
+                    # Caller already owns a kernel (typically from
+                    # ``nexus.connect()`` or a previous NexusFS) — reuse
+                    # it rather than constructing a parallel one. We
+                    # assume ``set_metastore_path`` is already in place
+                    # if ``_metastore_path`` is None.
+                    self._kernel = _provided_kernel
+                    if _metastore_path is not None:
+                        self._kernel.set_metastore_path(str(_metastore_path))
+                else:
+                    from nexus_runtime import PyKernel as _Kernel
+
+                    self._kernel = _Kernel()
+                    # Start write-buffer background flusher (production only).
+                    # Test kernels skip this — see make_test_nexus.
+                    self._kernel.start_write_buffer_flusher(250)
+                    # Phase 4 (full): drain federation's blob-fetcher
+                    # slot + install real `PeerBlobClient` (idempotent).
+                    # Log on failure so a stale wheel surfaces in the
+                    # logs rather than silently disabling federation.
+                    # Skip federation wiring during pytest — parallel xdist
+                    # workers compete for the same gRPC port causing 8+ min
+                    # hangs. Federation is an integration-level concern; unit
+                    # tests pass a pre-built kernel via _provided_kernel instead.
+                    if "pytest" not in __import__("sys").modules:
+                        try:
+                            import nexus_runtime as _nk
+
+                            _nk.install_federation_wiring(self._kernel)
+                            _nk.install_transport_wiring(self._kernel)
+                        except Exception as _wiring_exc:
+                            logger.warning(
+                                "install_transport_wiring/install_federation_wiring "
+                                "failed (federation peer-blob fetch will fall back "
+                                "to Noop): %s",
+                                _wiring_exc,
+                            )
+                    # Wire redb metastore — ALL reads and writes go through
+                    # Rust redb. When the caller handed us a path, open
+                    # against it. When ``None`` was passed, fall back to a
+                    # tempfile redb (suitable for fixtures that don't care
+                    # about on-disk persistence).
+                    if _metastore_path is None:
+                        import os
+                        import tempfile
+
+                        fd, tmp_path = tempfile.mkstemp(suffix=".redb")
+                        os.close(fd)
+                        _metastore_path = tmp_path
+
+                    self._kernel.set_metastore_path(str(_metastore_path))
+                    # All kernel wiring that depends on other NexusFS attributes
+                    # (_mount_table, _vfs_lock_manager) is deferred to after
+                    # __init__ completes — see "Deferred kernel wiring" block below.
+            except Exception as exc:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "Kernel init failed — falling back to Python path: %s", exc
+                )
+                self._kernel = None
+
+        from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
+
+        self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
+            self,
+            kernel=self._kernel,
         )
 
-        # =====================================================================
-        # Tier 1: SYSTEM services — critical + degradable (Issue #2193)
-        # Moved from KernelServices to SystemServices per Liedtke's test.
-        # =====================================================================
-        self._rebac_manager = sys_svc.rebac_manager
-        self._dir_visibility_cache = sys_svc.dir_visibility_cache
-        self._audit_store = sys_svc.audit_store
-        self._entity_registry = sys_svc.entity_registry
-        self._permission_enforcer = sys_svc.permission_enforcer
-        self._hierarchy_manager = sys_svc.hierarchy_manager
-        self._deferred_permission_buffer = sys_svc.deferred_permission_buffer
-        self._workspace_registry = sys_svc.workspace_registry
-        self.mount_manager = sys_svc.mount_manager
-        self._workspace_manager = sys_svc.workspace_manager
-        # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
-        self._overlay_resolver = None
+        # Deferred kernel wiring: bind mount table + VFS lock after all attributes exist.
+        if self._kernel is not None:
+            _mt = getattr(self._driver_coordinator, "_mount_table", None)
+            if _mt is not None:
+                _mt.bind_kernel(self._kernel)
+            _vfs_rust = getattr(getattr(self, "_vfs_lock_manager", None), "_rust", None)
+            if _vfs_rust is not None:
+                self._kernel.set_vfs_lock(_vfs_rust)
 
-        # =====================================================================
-        # Tier 1: SYSTEM services (Issue #2034: from SystemServices)
-        # =====================================================================
-        self._agent_registry = sys_svc.agent_registry
-        self._namespace_manager = sys_svc.namespace_manager
-        self._async_agent_registry = sys_svc.async_agent_registry
-        self._async_namespace_manager = sys_svc.async_namespace_manager
-        self._context_branch_service = sys_svc.context_branch_service
-        # Zone lifecycle — write gating during deprovisioning (Issue #2061)
-        self._zone_lifecycle = getattr(sys_svc, "zone_lifecycle", None)
+        logger.info(
+            "IPC primitives initialized: DriverCoordinator (self_address=%s)",
+            _ipc_self_addr or "none/single-node",
+        )
 
-        # =====================================================================
-        # Tier 2: BRICK services (Issue #2034: from BrickServices)
-        # =====================================================================
-        self._event_bus = brk_svc.event_bus
-        self._lock_manager = brk_svc.lock_manager
-        self._wallet_provisioner = brk_svc.wallet_provisioner
-        self._snapshot_service = brk_svc.snapshot_service
-        self._api_key_creator = brk_svc.api_key_creator
-        # Version Brick (Issue #2034: moved from kernel)
-        self.version_service = brk_svc.version_service
+        # ── Kernel-knows (sentinel None, injected by factory) ───────────
+        # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
+        # None = graceful degrade (like Linux LSM: no module loaded = no check).
 
-        # Lazy-init sentinels
-        self._token_manager = None
-        self._semantic_search = None
-        self._sandbox_manager: Any = None
-        self._coordination_client: Any = None
-        self._event_client: Any = None
+        self._event_bus: Any = None
+        # Hook specs for enlisted services (duck-typed hook_spec() capture)
+        self._hook_specs: dict[str, Any] = {}
+        # Lifecycle state — set by link() / initialize() / bootstrap()
+        self._linked: bool = False
+        self._initialized: bool = False
+        self._bootstrapped: bool = False
+        self._close_callbacks: list[
+            Callable[[], None]
+        ] = []  # Issue #1793: factory-registered service close
+        self._runtime_closeables: list[Any] = []
 
-        # VFS lock manager (Issue #2134: from BrickServices)
-        if brk_svc.vfs_lock_manager is not None:
-            self._vfs_lock_manager = brk_svc.vfs_lock_manager
-        else:
-            from nexus.core.lock_fast import create_vfs_lock_manager
+    # =====================================================================
+    # Lifecycle methods: link() → initialize() → bootstrap()
+    #
+    # Linearized in PR #3371 Phase 2: create_nexus_fs() calls
+    # _wire_services() / _initialize_services() directly and sets the
+    # flags. These methods are now flag-only no-ops for backward compat.
+    # =====================================================================
 
-            self._vfs_lock_manager = create_vfs_lock_manager()
-        logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
+    def link(
+        self,
+        *,
+        enabled_bricks: "frozenset[str] | None" = None,
+        parsing: Any = None,
+        workflow_engine: Any = None,
+    ) -> None:
+        """Phase 1: Wire service topology — flag-only no-op.
 
-        # Service attributes — set to None by default.
-        # Wired by factory via _bind_wired_services() after construction.
-        # Issue #643/#2133: kernel never imports or creates services.
-        self.rebac_service: Any = None
-        self.mount_service: Any = None
-        self._gateway: Any = None
-        self._mount_core_service: Any = None
-        self._sync_service: Any = None
-        self._sync_job_service: Any = None
-        self._mount_persist_service: Any = None
-        self.mcp_service: Any = None
-        self.llm_service: Any = None
-        self._llm_subsystem: Any = None
-        self.oauth_service: Any = None
-        self.skill_service: Any = None
-        self.skill_package_service: Any = None
-        self.search_service: Any = None
-        self.share_link_service: Any = None
-        self.events_service: Any = None
-        self.task_queue_service: Any = None
-
-        # Kernel notification dispatch (INTERCEPT + OBSERVE).
-        # Kernel owns dispatch infrastructure — creates empty callback lists.
-        # Factory registers hooks at boot (KERNEL-ARCHITECTURE §3).
-        from nexus.core.kernel_dispatch import KernelDispatch
-
-        self._dispatch: KernelDispatch = KernelDispatch()
-
-    def _bind_wired_services(self, wired: WiredServices | dict[str, Any]) -> None:
-        """Bind wired services from factory two-phase init.
-
-        Args:
-            wired: WiredServices dataclass (from _boot_wired_services).
-                   Also accepts dict for backward compatibility with tests.
-
-        Issue #2133: Accepts WiredServices frozen dataclass.
+        Actual wiring is done by factory._lifecycle._wire_services(),
+        called directly from create_nexus_fs(). This method exists for
+        backward compatibility (tests, manual construction).
         """
-        if isinstance(wired, dict):
-            # Backward compat for tests that pass a dict
-            self.rebac_service = wired.get("rebac_service")
-            self.mount_service = wired.get("mount_service")
-            self._gateway = wired.get("gateway")
-            self._mount_core_service = wired.get("mount_core_service")
-            self._sync_service = wired.get("sync_service")
-            self._sync_job_service = wired.get("sync_job_service")
-            self._mount_persist_service = wired.get("mount_persist_service")
-            self.mcp_service = wired.get("mcp_service")
-            self.llm_service = wired.get("llm_service")
-            self._llm_subsystem = wired.get("llm_subsystem")
-            self.oauth_service = wired.get("oauth_service")
-            self.skill_service = wired.get("skill_service")
-            self.skill_package_service = wired.get("skill_package_service")
-            self.search_service = wired.get("search_service")
-            self.share_link_service = wired.get("share_link_service")
-            self.events_service = wired.get("events_service")
-            self.task_queue_service = wired.get("task_queue_service")
-            self._workspace_rpc_service = wired.get("workspace_rpc_service")
-            self._agent_rpc_service = wired.get("agent_rpc_service")
-            self._user_provisioning_service = wired.get("user_provisioning_service")
-            self._sandbox_rpc_service = wired.get("sandbox_rpc_service")
-            self._metadata_export_service = wired.get("metadata_export_service")
-            self._ace_rpc_service = wired.get("ace_rpc_service")
-            self._descendant_checker = wired.get("descendant_checker")
-            self._memory_provider = wired.get("memory_provider")
+        if self._linked:
             return
-        self.rebac_service = wired.rebac_service
-        self.mount_service = wired.mount_service
-        self._gateway = wired.gateway
-        self._mount_core_service = wired.mount_core_service
-        self._sync_service = wired.sync_service
-        self._sync_job_service = wired.sync_job_service
-        self._mount_persist_service = wired.mount_persist_service
-        self.mcp_service = wired.mcp_service
-        self.llm_service = wired.llm_service
-        self._llm_subsystem = wired.llm_subsystem
-        self.oauth_service = wired.oauth_service
-        self.skill_service = wired.skill_service
-        self.skill_package_service = wired.skill_package_service
-        self.search_service = wired.search_service
-        self.share_link_service = wired.share_link_service
-        self.events_service = wired.events_service
-        self.task_queue_service = wired.task_queue_service
-        self._workspace_rpc_service = wired.workspace_rpc_service
-        self._agent_rpc_service = wired.agent_rpc_service
-        self._user_provisioning_service = wired.user_provisioning_service
-        self._sandbox_rpc_service = wired.sandbox_rpc_service
-        self._metadata_export_service = wired.metadata_export_service
-        self._ace_rpc_service = wired.ace_rpc_service
-        self._descendant_checker = wired.descendant_checker
-        self._memory_provider = wired.memory_provider
+        self._linked = True
+
+    def initialize(self) -> None:
+        """Phase 2: One-time side effects — flag-only no-op.
+
+        Actual initialization is done by factory._lifecycle._initialize_services(),
+        called directly from create_nexus_fs(). This method exists for
+        backward compatibility (tests, manual construction).
+        """
+        if self._initialized:
+            return
+        if not self._linked:
+            self.link()
+        self._initialized = True
+
+    def bootstrap(self) -> None:
+        """Phase 3: Start background services.  Server/Worker only.
+
+        Auto-starts all BackgroundService instances via Rust kernel
+        service_start_all().
+
+        Idempotent — guarded by ``_bootstrapped`` flag.
+        """
+        if self._bootstrapped:
+            return
+        if not self._initialized:
+            self.initialize()
+        # Auto-lifecycle: start BackgroundService instances (Issue #1580)
+        if self._kernel is not None:
+            self._kernel.service_start_all(30000)
+            self._kernel.service_mark_bootstrapped()
+        self._bootstrapped = True
+
+    def _register_runtime_closeable(self, resource: Any) -> None:
+        """Register a process-local resource to close with the filesystem.
+
+        Used for runtime-owned handles that are not persisted in metadata
+        and are not discoverable through the normal service graph, such as
+        the REMOTE client's shared RPC transport.
+        """
+        self._runtime_closeables.append(resource)
+
+    # -- Service registry accessors (Issue #1452) ---------------------------
+
+    def service(self, name: str) -> Any | None:
+        """Look up a registered service by canonical name.
+
+        Returns the service instance, or ``None`` if not registered.
+        Delegates to Rust kernel ServiceRegistry.
+        """
+        if self._kernel is None:
+            return None
+        return self._kernel.service_lookup(name)
 
     @property
-    def _service_extras(self) -> dict[str, Any]:
-        """Server layer reads typed service fields as a dict interface."""
-        result: dict[str, Any] = {}
-        # System tier fields
-        for k in ("observability_subsystem", "resiliency_manager", "delivery_worker"):
-            v = getattr(self._system_services, k, None)
-            if v is not None:
-                result[k] = v
-        # Brick tier fields
-        for k in (
-            "chunked_upload_service",
-            "manifest_resolver",
-            "rebac_circuit_breaker",
-            "tool_namespace_middleware",
-        ):
-            v = getattr(self._brick_services, k, None)
-            if v is not None:
-                result[k] = v
-        return result
+    def service_registry(self) -> Any:
+        """Read-only access for factory / diagnostics. Returns self (NexusFS)."""
+        return self
+
+    # Services accessed via self.service("name") → Rust kernel (Issue #1452).
+    # Registered by factory via enlist_services() at link().
+
+    @property
+    def service_coordinator(self) -> Any:
+        """Lifecycle coordinator. Returns self — NexusFS delegates to Rust kernel."""
+        return self
+
+    def swap_service(self, name: str, new_instance: Any, **kwargs: Any) -> None:
+        """Hot-swap a service — drain + replace + rehook (#1452)."""
+        exports = kwargs.get("exports", ())
+        hook_spec = kwargs.get("hook_spec")
+        timeout = kwargs.get("drain_timeout", 10.0)
+        timeout_ms = int(timeout * 1000)
+
+        # Unregister old hooks
+        old_spec = self._hook_specs.get(name)
+        if old_spec is None:
+            old_instance = self._kernel.service_lookup(name)
+            if old_instance is not None and _declares_hook_spec(old_instance):
+                old_spec = old_instance.hook_spec()
+        if old_spec is not None:
+            _unregister_hooks_for_spec(self, old_spec)
+
+        # Rust side: drain + replace
+        self._kernel.service_swap(name, new_instance, list(exports), timeout_ms)
+
+        # Register new hooks
+        new_spec = hook_spec
+        if new_spec is None and _declares_hook_spec(new_instance):
+            new_spec = new_instance.hook_spec()
+        if new_spec is not None and not new_spec.is_empty:
+            self._hook_specs[name] = new_spec
+        elif name in self._hook_specs:
+            del self._hook_specs[name]
+        _register_hooks_for_spec(self, self._hook_specs.get(name))
 
     @property
     def namespace_manager(self) -> Any | None:
-        """Public accessor for the NamespaceManager (via PermissionEnforcer)."""
-        enforcer = self._permission_enforcer
-        if enforcer is not None:
-            return getattr(enforcer, "namespace_manager", None)
+        """Public accessor for the NamespaceManager (via ServiceRegistry)."""
+        _pe = self.service("permission_enforcer")
+        if _pe is not None:
+            return getattr(_pe, "namespace_manager", None)
         return None
 
     @property
@@ -347,4453 +492,122 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the runtime configuration object."""
         return self._config
 
-    @property
-    def rebac_manager(self) -> Any | None:
-        """Public accessor for the ReBACManager instance."""
-        return getattr(self, "_rebac_manager", None)
+    # _resolve_cred, _build_rust_ctx, _get_context_identity, _validate_path,
+    # _parse_context, _ensure_context_ttl,
+    # _dispatch_write_events — all moved to InternalMixin (nexus_fs_internal.py)
 
-    @property
-    def semantic_search_engine(self) -> Any | None:
-        """Public accessor for the semantic search engine instance."""
-        return self._semantic_search
-
-    @property
-    def memory(self) -> Any:
-        """Get Memory API instance (lazy init on first access)."""
-        return self._memory_provider.get_or_create()
-
-    def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
-        """
-        Dynamically load and register custom parsers from configuration.
-
-        Args:
-            parser_configs: List of parser configurations, each containing:
-                - module: Python module path (e.g., "my_parsers.csv_parser")
-                - class: Parser class name (e.g., "CSVParser")
-                - priority: Optional priority (default: 50)
-                - enabled: Optional enabled flag (default: True)
-        """
-        import importlib
-
-        for config in parser_configs:
-            # Skip disabled parsers
-            if not config.get("enabled", True):
-                continue
-
-            try:
-                module_path = config.get("module")
-                class_name = config.get("class")
-
-                if not module_path or not class_name:
-                    continue
-
-                # Dynamically import the module
-                module = importlib.import_module(module_path)
-
-                # Get the parser class
-                parser_class = getattr(module, class_name)
-
-                # Get priority (default: 50)
-                priority = config.get("priority", 50)
-
-                # Instantiate the parser with priority
-                parser_instance = parser_class(priority=priority)
-
-                # Register with registry
-                self.parser_registry.register(parser_instance)
-
-            except (ImportError, AttributeError, TypeError, ValueError) as e:
-                # Skip parsers that fail to load due to config or import errors
-                # This prevents config errors from breaking the entire system
-                import logging
-
-                parser_id = (
-                    f"{module_path}.{class_name}" if module_path and class_name else "unknown"
-                )
-                logging.warning(f"Failed to load parser {parser_id}: {e}")
-
-    def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
-        """Get the created_by value for version history tracking."""
-        from nexus.lib.context_utils import get_created_by
-
-        return get_created_by(context, self._default_context)
-
-    def _get_routing_params(
-        self, context: OperationContext | dict | None = None
-    ) -> tuple[str | None, str | None, bool]:
-        """Extract (zone_id, agent_id, is_admin) from context for router.route()."""
-        if context is None:
-            return (
-                self._default_context.zone_id,
-                self._default_context.agent_id,
-                self._default_context.is_admin,
-            )
-        if isinstance(context, dict):
-            return (
-                context.get("zone_id", self._default_context.zone_id),
-                context.get("agent_id", self._default_context.agent_id),
-                context.get("is_admin", self.is_admin),
-            )
-        return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
-
-    def _check_zone_writable(self, context: OperationContext | dict | None = None) -> None:
-        """Raise ZoneTerminatingError if the zone is being deprovisioned.
-
-        Issue #2061: Write-gating during zone finalization (Decision #4A).
-        """
-        if self._zone_lifecycle is None:
-            return
-        zone_id, _, _ = self._get_routing_params(context)
-        if zone_id and self._zone_lifecycle.is_zone_terminating(zone_id):
-            from nexus.contracts.exceptions import ZoneTerminatingError
-
-            raise ZoneTerminatingError(zone_id)
-
-    @property
-    def zone_id(self) -> str | None:
-        """Default zone_id from the instance context."""
-        return self._default_context.zone_id
-
-    @property
-    def agent_id(self) -> str | None:
-        """Default agent_id from the instance context."""
-        return self._default_context.agent_id
-
-    @property
-    def user_id(self) -> str | None:
-        """Default user_id from the instance context."""
-        return getattr(self._default_context, "user_id", None)
-
-    def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
-        """Parse context dict or OperationContext into OperationContext."""
-        from nexus.lib.context_utils import parse_context
-
-        return parse_context(context)
-
-    def _validate_path(self, path: str, allow_root: bool = False) -> str:
-        """Validate and normalize virtual path. Delegates to lib/path_utils."""
-        return validate_path(path, allow_root=allow_root)
-
-    def _get_parent_path(self, path: str) -> str | None:
-        """Get parent directory path, or None if root."""
-        if path == "/":
-            return None
-
-        # Remove trailing slash if present
-        path = path.rstrip("/")
-
-        # Find last slash
-        last_slash = path.rfind("/")
-        if last_slash == 0:
-            # Parent is root
-            return "/"
-        elif last_slash > 0:
-            return path[:last_slash]
-        else:
-            # No parent (shouldn't happen for valid paths)
-            return None
-
-    def _ensure_parent_directories(self, path: str, ctx: OperationContext) -> None:
-        """Create metadata entries for all parent directories that don't exist.
-
-        Walks from the immediate parent of *path* upward toward ``/``, collecting
-        every path that has no metastore entry, then creates directory metadata
-        entries from top to bottom (shallowest first) so that ``sys_readdir``
-        lists them correctly.
-
-        This is factored out of ``sys_mkdir`` so it can be called both on the
-        normal code-path *and* on the early-return path when the target path
-        already exists (e.g. a DT_MOUNT entry written by ``PathRouter.add_mount``).
-        """
-        parent_path = self._get_parent_path(path)
-        parents_to_create: list[str] = []
-
-        while parent_path and parent_path != "/":
-            if not self.metadata.exists(parent_path):
-                parents_to_create.append(parent_path)
-            else:
-                break
-            parent_path = self._get_parent_path(parent_path)
-
-        for parent_dir in reversed(parents_to_create):
-            self._create_directory_metadata(parent_dir, context=ctx)
-            if hasattr(self, "_hierarchy_manager"):
-                try:
-                    logger.debug(
-                        f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
-                    )
-                    self._hierarchy_manager.ensure_parent_tuples(
-                        parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID
-                    )
-                except Exception as e:
-                    logger.warning(f"mkdir: Failed to create parent tuples for {parent_dir}: {e}")
-
-    def _create_directory_metadata(
-        self, path: str, context: OperationContext | None = None
-    ) -> None:
-        """
-        Create metadata entry for a directory.
-
-        Args:
-            path: Virtual path to directory
-            context: Operation context (for zone_id and created_by)
-        """
-        now = datetime.now(UTC)
-
-        # Use provided context or default
-        ctx = context if context is not None else self._default_context
-
-        # Note: UNIX permissions (owner/group/mode) are deprecated.
-        # All permissions are now managed through ReBAC relationships.
-        # We no longer inherit or store UNIX permissions in metadata.
-
-        # Create a marker for the directory in metadata
-        # We use an empty content hash as a placeholder
-        empty_hash = hash_content(b"")
-
-        # Route to find which backend owns this path
-        route = self.router.route(path, is_admin=ctx.is_admin)
-
-        metadata = FileMetadata(
-            path=path,
-            backend_name=route.backend.name,
-            physical_path=empty_hash,  # Placeholder for directory
-            size=0,  # Directories have size 0
-            etag=empty_hash,
-            mime_type="inode/directory",  # MIME type for directories
-            created_at=now,
-            modified_at=now,
-            version=1,
-            created_by=self._get_created_by(context),  # Track who created this directory
-            zone_id=ctx.zone_id or ROOT_ZONE_ID,  # P0 SECURITY: Set zone_id
-        )
-
-        self.metadata.put(metadata)
-
-    # === Directory Operations ===
-
-    @rpc_expose(description="Create directory")
-    def sys_mkdir(
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher
+    # in `nexus.server._kernel_syscall_dispatch`.
+    def sys_lock(
         self,
         path: str,
-        parents: bool = False,
-        exist_ok: bool = False,
-        context: OperationContext | None = None,
-    ) -> None:
-        """Create a directory (parents=True for mkdir -p)."""
-        path = self._validate_path(path)
-
-        # Use provided context or default
-        ctx = context if context is not None else self._default_context
-
-        # Block writes during zone deprovisioning (Issue #2061)
-        self._check_zone_writable(ctx)
-
-        # PRE-INTERCEPT: pre-mkdir hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import MkdirHookContext
-
-        self._dispatch.intercept_pre_mkdir(MkdirHookContext(path=path, context=ctx))
-
-        # Route to backend with write access check (mkdir requires write permission)
-        route = self.router.route(
-            path,
-            is_admin=ctx.is_admin,
-            check_write=True,
-        )
-
-        # Check if path is read-only
-        if route.readonly:
-            raise PermissionError(f"Cannot create directory in read-only path: {path}")
-
-        # Check if directory already exists (either as file or implicit directory)
-        existing = self.metadata.get(path)
-        is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
-
-        if existing is not None or is_implicit_dir:
-            # When parents=True, behave like mkdir -p (don't raise error if exists)
-            if not exist_ok and not parents:
-                raise FileExistsError(f"Directory already exists: {path}")
-            # If exist_ok=True (or parents=True) and directory exists, we still
-            # need to create parent directory metadata entries.  DT_MOUNT entries
-            # are created by PathRouter.add_mount() *before* sys_mkdir is called,
-            # so the target path already exists in metastore but the parent
-            # directories (e.g. /mnt for /mnt/test) have no metadata yet.
-            if existing is not None:
-                if parents:
-                    self._ensure_parent_directories(path, ctx)
-                return
-
-        # Create directory in backend
-        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
-
-        # Create metadata entries for parent directories if parents=True
-        if parents:
-            self._ensure_parent_directories(path, ctx)
-
-        # Create explicit metadata entry for the directory
-        self._create_directory_metadata(path, context=ctx)
-
-        # P0-3: Create parent relationship tuples for directory inheritance
-        # This enables granting access to /workspace to automatically grant access to subdirectories
-
-        logger.debug(
-            f"mkdir: Checking for hierarchy_manager: hasattr={hasattr(self, '_hierarchy_manager')}"
-        )
-
-        ctx = context or self._default_context
-
-        if hasattr(self, "_hierarchy_manager"):
-            try:
-                logger.debug(
-                    f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
-                )
-                created_count = self._hierarchy_manager.ensure_parent_tuples(
-                    path, zone_id=ctx.zone_id or ROOT_ZONE_ID
-                )
-                logger.debug(f"mkdir: Created {created_count} parent tuples for {path}")
-                if created_count > 0:
-                    logger.debug(f"Created {created_count} parent tuples for {path}")
-            except Exception as e:
-                # Log the error but don't fail the mkdir operation
-                # This helps diagnose issues with parent tuple creation
-                logger.warning(
-                    f"Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
-                )
-                import traceback
-
-                logger.debug(traceback.format_exc())
-
-        # Grant direct_owner permission to the user who created the directory
-        # Note: Use 'direct_owner' (not 'owner') as the base relation.
-        # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
-        if self._rebac_manager and ctx.user_id and not ctx.is_system:
-            try:
-                logger.debug(f"mkdir: Granting direct_owner permission to {ctx.user_id} for {path}")
-                self._rebac_manager.rebac_write(
-                    subject=("user", ctx.user_id),
-                    relation="direct_owner",
-                    object=("file", path),
-                    zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                )
-                logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user_id} for {path}")
-            except Exception as e:
-                logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
-
-        # Issue #900: Unified two-phase dispatch for mkdir
-        new_revision = self._increment_vfs_revision()
-
-        from nexus.contracts.vfs_hooks import MkdirHookContext
-
-        self._dispatch.intercept_post_mkdir(
-            MkdirHookContext(
-                path=path,
-                context=ctx,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
-            )
-        )
-        self._dispatch.notify(
-            FileEvent(
-                type=FileEventType.DIR_CREATE,
-                path=path,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
-                agent_id=ctx.agent_id,
-                user_id=ctx.user_id,
-            )
-        )
-
-    @rpc_expose(description="Remove directory")
-    def sys_rmdir(
-        self,
-        path: str,
-        recursive: bool = False,
-        context: OperationContext | None = None,
+        mode: str = "exclusive",
+        ttl: float = 30.0,
+        max_holders: int = 1,
+        lock_id: str | None = None,
         *,
-        subject: tuple[str, str] | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        is_admin: bool | None = None,
-    ) -> None:
-        """Remove a directory (recursive=True for rm -rf)."""
-        import errno
-
-        path = self._validate_path(path)
-
-        # Block writes during zone deprovisioning (Issue #2061)
-        self._check_zone_writable(context)
-
-        # P0 Fixes: Create OperationContext
-        if context is not None:
-            ctx = (
-                context
-                if isinstance(context, OperationContext)
-                else OperationContext(
-                    user_id=context.user_id,
-                    groups=context.groups,
-                    zone_id=context.zone_id or zone_id,
-                    agent_id=context.agent_id or agent_id,
-                    is_admin=context.is_admin if is_admin is None else is_admin,
-                    is_system=context.is_system,
-                    admin_capabilities=set(),
-                )
-            )
-        elif subject is not None:
-            ctx = OperationContext(
-                user_id=subject[1],
-                groups=[],
-                zone_id=zone_id,
-                agent_id=agent_id,
-                is_admin=is_admin or False,
-                is_system=False,
-                admin_capabilities=set(),
-            )
-        else:
-            ctx = (
-                self._default_context
-                if isinstance(self._default_context, OperationContext)
-                else OperationContext(
-                    user_id=self._default_context.user_id,
-                    groups=self._default_context.groups,
-                    zone_id=zone_id or self._default_context.zone_id,
-                    agent_id=agent_id or self._default_context.agent_id,
-                    is_admin=(is_admin if is_admin is not None else self._default_context.is_admin),
-                    is_system=self._default_context.is_system,
-                    admin_capabilities=set(),
-                )
-            )
-
-        # Check write permission on directory
-
-        logger.debug(
-            f"rmdir: path={path}, recursive={recursive}, user={ctx.user_id}, is_admin={ctx.is_admin}"
-        )
-        from nexus.contracts.vfs_hooks import RmdirHookContext
-
-        self._dispatch.intercept_pre_rmdir(RmdirHookContext(path=path, context=ctx))
-        logger.debug(f"  -> PRE-INTERCEPT passed for rmdir on {path}")
-
-        # Route to backend with write access check (rmdir requires write permission)
-        route = self.router.route(
-            path,
-            is_admin=ctx.is_admin,
-            check_write=True,
-        )
-
-        # Check readonly
-        if route.readonly:
-            raise PermissionError(f"Cannot remove directory from read-only path: {path}")
-
-        # Check if directory contains any files in metadata store
-        # Normalize path to ensure it ends with /
-        dir_path = path if path.endswith("/") else path + "/"
-        files_in_dir = self.metadata.list(dir_path)
-
-        if files_in_dir:
-            # Directory is not empty
-            if not recursive:
-                # Raise OSError with ENOTEMPTY errno (same as os.rmdir behavior)
-                raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
-
-            # Recursive mode - delete all files in directory
-            # Use batch delete for better performance (single transaction instead of N queries)
-            file_paths = [file_meta.path for file_meta in files_in_dir]
-
-            # Delete content from backend for each file
-            _errors: list[str] = []
-            for file_meta in files_in_dir:
-                if file_meta.etag:
-                    try:
-                        route.backend.delete_content(file_meta.etag)
-                    except Exception as e:
-                        if len(_errors) < 100:
-                            _errors.append(f"{file_meta.path}: {e}")
-            if _errors:
-                logger.debug(
-                    "Bulk content delete: %d error(s) (showing up to 100): %s",
-                    len(_errors),
-                    "; ".join(_errors),
-                )
-
-            # Batch delete from metadata store
-            self.metadata.delete_batch(file_paths)
-
-        # Remove directory in backend (if it still exists)
-        # In CAS systems, the directory may no longer exist after deleting its contents
-        with contextlib.suppress(NexusFileNotFoundError):
-            route.backend.rmdir(route.backend_path, recursive=recursive)
-
-        # Also delete the directory's own metadata entry if it exists
-        # Directories can have metadata entries (created by mkdir)
-        try:
-            self.metadata.delete(path)
-        except Exception as e:
-            logger.debug("Failed to delete directory metadata for %s: %s", path, e)
-
-        # Clean up sparse directory index entries (Issue: rmdir not cleaning directory index)
-        # This removes entries from DirectoryEntryModel used by non-recursive list()
-        if hasattr(self.metadata, "delete_directory_entries_recursive"):
-            try:
-                self.metadata.delete_directory_entries_recursive(path)
-            except Exception as e:
-                logger.debug("Failed to clean up directory index for %s: %s", path, e)
-
-        # Issue #900: Unified two-phase dispatch for rmdir
-        new_revision = self._increment_vfs_revision()
-
-        from nexus.contracts.vfs_hooks import RmdirHookContext
-
-        self._dispatch.intercept_post_rmdir(
-            RmdirHookContext(
-                path=path,
-                context=ctx,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
-                recursive=recursive,
-            )
-        )
-        self._dispatch.notify(
-            FileEvent(
-                type=FileEventType.DIR_DELETE,
-                path=path,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
-                agent_id=ctx.agent_id,
-                user_id=ctx.user_id,
-            )
-        )
-
-    @rpc_expose(description="Check if path is a directory")
-    def sys_is_directory(
-        self,
-        path: str,
-        context: OperationContext | None = None,
-    ) -> bool:
-        """Check if path is a directory (explicit or implicit).
-
-        A path is considered a directory if any of the following hold:
-        - It is an implicit directory (has children in metastore)
-        - Its metastore entry has ``entry_type`` DT_DIR or DT_MOUNT
-        - The backend reports it as a directory
-        """
-        try:
-            path = self._validate_path(path)
-
-            # Use provided context or default
-            ctx = context if context is not None else self._default_context
-
-            # Check if it's an implicit directory first (for optimization)
-            is_implicit_dir = self.metadata.is_implicit_directory(path)
-
-            # Check permission (with TRAVERSE optimization for implicit directories)
-            if self._enforce_permissions:
-                if is_implicit_dir:
-                    # OPTIMIZATION: Try TRAVERSE permission first (O(1))
-                    # Fall back to descendant access check if TRAVERSE denied
-                    if not self._permission_enforcer.check(
-                        path, Permission.TRAVERSE, ctx
-                    ) and not self._descendant_checker.has_access(path, Permission.READ, ctx):
-                        return False
-                else:
-                    # For explicit directories/files, use hierarchical access check
-                    if not self._descendant_checker.has_access(path, Permission.READ, ctx):
-                        return False
-
-            # Check metastore entry_type: DT_DIR and DT_MOUNT are directories.
-            # This is a fast ~5 us redb read that avoids calling into the backend.
-            meta = self.metadata.get(path)
-            if meta is not None and (meta.is_dir or meta.is_mount):
-                return True
-
-            # Route with access control (read permission needed to check)
-            route = self.router.route(
-                path,
-                is_admin=ctx.is_admin,
-                check_write=False,
-            )
-            # Check if it's an explicit directory in the backend
-            if route.backend.is_directory(route.backend_path):
-                return True
-            # Return cached implicit directory status
-            return is_implicit_dir
-        except (InvalidPathError, Exception):
-            return False
-
-    @rpc_expose(description="Get available namespaces")
-    def get_top_level_mounts(self) -> builtins.list[str]:
-        """Return top-level mount names visible to the current user.
-
-        Reads DT_MOUNT entries from metastore (kernel's single source of
-        truth for mount points). Admin-only filtering uses the runtime
-        mount table which carries mount options.
-        """
-        # Build admin_only set from runtime mount table (mount options)
-        admin_only = {m.mount_point for m in self.router.list_mounts() if m.admin_only}
-
-        names: set[str] = set()
-        for meta in self.metadata.list("/"):
-            if not meta.is_mount:
-                continue
-            top = meta.path.lstrip("/").split("/")[0]
-            if not top:
-                continue
-            if meta.path in admin_only and not self.is_admin:
-                continue
-            names.add(top)
-        return sorted(names)
-
-    @rpc_expose(description="Get file metadata for FUSE operations")
-    def sys_stat(
-        self,
-        path: str,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any] | None:
-        """Get file metadata without reading content (FUSE getattr)."""
-        ctx = context or self._default_context
-        normalized = self._validate_path(path, allow_root=True)
-
-        # Check if it's a directory first
-        is_dir = self.sys_is_directory(normalized, context=ctx)
-
-        if is_dir:
-            # Return directory metadata
-            return {
-                "path": normalized,
-                "size": 4096,  # Standard directory size
-                "mime_type": "inode/directory",
-                "created_at": None,
-                "modified_at": None,
-                "is_directory": True,
-                "owner": ctx.user_id,
-                "group": ctx.user_id,
-                "mode": 0o755,  # drwxr-xr-x
-            }
-
-        # Try to get file metadata from store
-        file_meta = self.metadata.get(normalized)
-        if file_meta is None:
-            return None
-
-        return {
-            "path": file_meta.path,
-            "size": file_meta.size or 0,
-            "mime_type": file_meta.mime_type or "application/octet-stream",
-            "created_at": file_meta.created_at.isoformat() if file_meta.created_at else None,
-            "modified_at": file_meta.modified_at.isoformat() if file_meta.modified_at else None,
-            "is_directory": False,
-            "owner": ctx.user_id,
-            "group": ctx.user_id,
-            "mode": 0o644,  # -rw-r--r--
-        }
-
-    @rpc_expose(description="Update file metadata attributes")
-    def sys_setattr(
-        self,
-        path: str,
-        context: OperationContext | None = None,
-        **attrs: Any,
-    ) -> dict[str, Any]:
-        """Update file metadata attributes (chmod/chown/utimensat analog).
-
-        Args:
-            path: Virtual file path.
-            context: Operation context.
-            **attrs: Metadata attributes to update (e.g., mime_type, owner_id).
-
-        Returns:
-            Dict with path and list of updated attribute names.
-
-        Raises:
-            NexusFileNotFoundError: If file does not exist.
-        """
-        path = self._validate_path(path)
-        ctx = context or self._default_context
-
-        # Block writes during zone deprovisioning
-        self._check_zone_writable(ctx)
-
-        meta = self.metadata.get(path)
-        if meta is None:
-            raise NexusFileNotFoundError(path)
-
-        from dataclasses import fields, replace
-
-        valid_fields = {f.name for f in fields(meta)}
-        valid_attrs = {k: v for k, v in attrs.items() if k in valid_fields}
-        if not valid_attrs:
-            return {"path": path, "updated": []}
-
-        new_meta = replace(meta, **valid_attrs)
-        self.metadata.put(new_meta)
-        return {"path": path, "updated": list(valid_attrs.keys())}
-
-    @rpc_expose(description="Get ETag (content hash) for HTTP caching")
-    def get_etag(
-        self,
-        path: str,
         context: OperationContext | None = None,
     ) -> str | None:
-        """Get content hash for HTTP If-None-Match checks."""
-        _ = context  # Reserved for future use
-        normalized = self._validate_path(path, allow_root=False)
+        """Acquire or extend advisory lock (POSIX fcntl(F_SETLK)).
 
-        # Get file metadata (lightweight - doesn't read content)
-        file_meta = self.metadata.get(normalized)
-        if file_meta is None:
-            return None
+        When lock_id is None: try-acquire a new lock.
+        When lock_id is provided: extend TTL of an existing lock (heartbeat).
 
-        # Return the etag (content_hash) from metadata
-        return file_meta.etag
-
-    def _get_backend_directory_entries(
-        self, path: str, context: OperationContext | None = None
-    ) -> set[str]:
-        """Get directory entries from backend for empty directory detection."""
-        directories = set()
-
-        try:
-            # For root path, try routing "/" to find the root mount's backend
-            if path == "/":
-                try:
-                    zone_id, _agent_id, is_admin = self._get_routing_params(context)
-                    root_route = self.router.route("/", is_admin=is_admin, check_write=False)
-                    entries = root_route.backend.list_dir(root_route.backend_path)
-                    for entry in entries:
-                        if entry.endswith("/"):  # Directory marker
-                            dir_name = entry.rstrip("/")
-                            dir_path = "/" + dir_name
-                            directories.add(dir_path)
-                except (NotImplementedError, Exception):
-                    # No root mount, backend doesn't support list_dir, or other error
-                    pass
-            else:
-                # Non-root path - use router with context
-                zone_id, _agent_id, is_admin = self._get_routing_params(context)
-                route = self.router.route(
-                    path.rstrip("/"),
-                    is_admin=is_admin,
-                    check_write=False,
-                )
-                backend_path = route.backend_path
-
-                try:
-                    entries = route.backend.list_dir(backend_path)
-                    for entry in entries:
-                        if entry.endswith("/"):  # Directory marker
-                            dir_name = entry.rstrip("/")
-                            dir_path = path + dir_name if path != "/" else "/" + dir_name
-                            directories.add(dir_path)
-                except NotImplementedError:
-                    # Backend doesn't support list_dir - skip
-                    pass
-                except (OSError, PermissionError, TypeError):
-                    # I/O, permission, or type errors - skip silently (best-effort directory listing)
-                    pass
-
-        except (ValueError, AttributeError, KeyError):
-            # Ignore routing errors - directory detection is best-effort
-            pass
-
-        return directories
-
-    # =================================================================
-    # Core VFS File Operations (Issue #899)
-    # =================================================================
-
-    _revision_notifier: ClassVar[Any] = None
-    _vfs_revision: int = 0
-    _vfs_revision_lock: Any = None
-    _read_tracking_enabled: bool = False
-
-    def _get_overlay_config(self, path: str) -> Any:
-        """Get overlay config for a path, if overlay is active.
-
-        Issue #1264: Looks up the workspace containing this path and returns
-        its OverlayConfig if overlay is enabled.
-
-        Args:
-            path: File path to check
-
-        Returns:
-            OverlayConfig if overlay active for this path, None otherwise
+        Returns lock_id on success, None on failure.
         """
-        registry = getattr(self, "_workspace_registry", None)
-        if registry is None:
-            return None
-
-        ws_config = registry.find_workspace_for_path(path)
-        if ws_config is None:
-            return None
-
-        # Check if workspace has overlay metadata
-        overlay_data = ws_config.metadata.get("overlay_config")
-        if overlay_data is None:
-            return None
-
-        from nexus.contracts.overlay_config import OverlayConfig
-
-        return OverlayConfig(
-            enabled=overlay_data.get("enabled", False),
-            base_manifest_hash=overlay_data.get("base_manifest_hash"),
-            workspace_path=ws_config.path,
-            agent_id=overlay_data.get("agent_id"),
+        path = self._validate_path(path)
+        self._enforce_lock_write_permission(path, context)
+        return self._kernel.sys_lock(
+            path,
+            lock_id=lock_id or "",
+            mode=mode,
+            max_holders=max_holders,
+            ttl_secs=int(ttl),
         )
 
-    # =========================================================================
-    # Zookie Consistency Token Support - Issue #1187
-    # =========================================================================
-
-    def _get_revision_notifier(self) -> Any:
-        """Get or create the RevisionNotifier instance (Issue #1180 Phase B).
-
-        Lazily initialized to avoid import overhead for callers that don't
-        use the consistency subsystem.  Falls back to NullRevisionNotifier on
-        construction errors so callers never receive None.
-        """
-        if self._revision_notifier is None:
-            try:
-                from nexus.lib.revision_notifier import RevisionNotifier
-
-                NexusFS._revision_notifier = RevisionNotifier()
-            except Exception:
-                from nexus.lib.revision_notifier import NullRevisionNotifier
-
-                logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
-                NexusFS._revision_notifier = NullRevisionNotifier()
-        return self._revision_notifier
-
-    def _get_revision_lock(self, zone_id: str) -> threading.Lock:
-        """Get or create a per-zone lock for revision increments (Issue #1180).
-
-        Always acquires the guard lock for correctness. The overhead is
-        negligible (~50ns uncontended) since this runs once per zone.
-
-        Args:
-            zone_id: The zone to get the lock for
-
-        Returns:
-            Lock instance for this zone
-        """
-        with self._revision_locks_guard:
-            if zone_id not in self._revision_locks:
-                self._revision_locks[zone_id] = threading.Lock()
-            return self._revision_locks[zone_id]
-
-    def _get_current_revision(self, zone_id: str) -> int:
-        """Get the current revision for a zone.
-
-        Issue #1330 Phase 4.2: Uses native redb get_revision() when available.
-        Falls back to FileMetadata-based lookup.
-
-        Args:
-            zone_id: The zone to get revision for
-
-        Returns:
-            The current revision number (0 if not found)
-        """
-        # Fast path: native redb counter
-        if hasattr(self.metadata, "get_revision"):
-            try:
-                return self.metadata.get_revision(zone_id)
-            except Exception as e:
-                logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
-                return 0
-
-        # Legacy fallback: FileMetadata-based lookup
-        rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
-        try:
-            meta = self.metadata.get(rev_path)
-            return meta.version if meta else 0
-        except Exception as e:
-            logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
-            return 0
-
-    def _wait_for_revision(
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher
+    # in `nexus.server._kernel_syscall_dispatch`.
+    def sys_unlock(
         self,
-        zone_id: str,
-        min_revision: int,
-        timeout_ms: float = 5000,
+        path: str,
+        lock_id: str | None = None,
+        force: bool = False,
+        *,
+        context: OperationContext | None = None,
     ) -> bool:
-        """Wait until zone revision >= min_revision.
+        """Release advisory lock.
 
-        Issue #1180 Phase B: Uses Condition-based notification for instant wakeup.
-        Falls back to a single DB check if the notifier doesn't have the revision
-        cached (e.g., after restart when writes happened before this instance existed).
+        When force=False (default): release lock by lock_id (requires lock_id).
+        When force=True: force-release ALL holders (admin operation, ignores lock_id).
 
-        Args:
-            zone_id: The zone to check revision for
-            min_revision: The minimum acceptable revision
-            timeout_ms: Maximum time to wait in milliseconds (default: 5000)
-
-        Returns:
-            True if revision reached, False if timeout
+        Returns True if released.
         """
-        notifier = self._get_revision_notifier()
+        path = self._validate_path(path)
+        if not force and not lock_id:
+            raise ValueError("lock_id is required for non-force release")
+        self._enforce_lock_write_permission(path, context)
+        return self._kernel.sys_unlock(path, lock_id=lock_id or "", force=force)
 
-        # Fast path: notifier already knows the revision is met
-        if notifier.get_latest_revision(zone_id) >= min_revision:
-            return True
-
-        # Check DB directly (handles case where notifier cache is behind)
-        current = self._get_current_revision(zone_id)
-        if current >= min_revision:
-            # Update notifier cache so future waits are faster
-            notifier.notify_revision(zone_id, current)
-            return True
-
-        # Block on Condition-based notification
-        return notifier.wait_for_revision(zone_id, min_revision, timeout_ms)
-
-    # =========================================================================
-    # VFS Revision Counter - Issue #1169
-    # =========================================================================
-
-    def _init_vfs_revision(self) -> None:
-        """Initialize per-instance VFS revision state.
-
-        Must be called during NexusFS.__init__ to ensure each instance
-        has its own lock and counter (not shared via class-level defaults).
-        """
-        self._vfs_revision = 0
-        self._vfs_revision_lock = threading.Lock()
-
-    def _increment_vfs_revision(self) -> int:
-        """Atomically increment and return the new VFS revision.
-
-        Called after every write/delete to advance the monotonic counter.
-        Thread-safe via per-instance lock.
-
-        Returns:
-            The new revision number (always > previous).
-        """
-        lock = self._vfs_revision_lock
-        if lock is None:
-            # Fallback: not yet initialized (shouldn't happen in production)
-            self._vfs_revision += 1
-            return self._vfs_revision
-        with lock:
-            self._vfs_revision += 1
-            return self._vfs_revision
-
-    def _get_vfs_revision(self) -> int:
-        """Return the current VFS revision (read-only, thread-safe).
-
-        Returns:
-            Current monotonic revision counter value.
-        """
-        lock = self._vfs_revision_lock
-        if lock is None:
-            return self._vfs_revision
-        with lock:
-            return self._vfs_revision
-
-    # =========================================================================
-    # Read Set Tracking - Issue #1166 / #1169
-    # =========================================================================
-
-    def _record_read_if_tracking(
+    def _enforce_lock_write_permission(
         self,
+        path: str,
         context: OperationContext | None,
-        resource_type: str,
-        resource_id: str,
-        access_type: str = "content",
     ) -> None:
-        """Record a read operation for dependency tracking (Issue #1166).
+        """Require WRITE on ``path`` before touching the Rust lock manager.
 
-        This is called automatically by read(), stat(), and list() operations
-        when the context has read tracking enabled.
-
-        Issue #1169: Uses per-VFS monotonic counter instead of hardcoded 0.
-                     Gated by instance-level _read_tracking_enabled flag.
-
-        Args:
-            context: Operation context (may have track_reads=True)
-            resource_type: Type of resource (file, directory, metadata)
-            resource_id: Path or identifier of the resource
-            access_type: Type of access (content, metadata, list, exists)
+        Issue #3786 / Codex Round 6 finding #2: NexusFS.sys_lock previously
+        ignored its ``context`` kwarg and the RPC-edge handler enforced WRITE.
+        With the legacy handler chain deleted, the enforcement gate now lives
+        on the NexusFS method directly so any caller (RPC or in-process)
+        gets the policy.  System contexts (server-internal callers) skip.
         """
-        if not self._read_tracking_enabled:
+        if context is None:
+            return
+        if getattr(context, "is_system", False):
+            return
+        enforcer = self.service("permission_enforcer") if hasattr(self, "service") else None
+        if enforcer is None:
             return
 
-        if context is None or not getattr(context, "track_reads", False):
-            return
+        from nexus.contracts.exceptions import PermissionDeniedError
+        from nexus.contracts.types import Permission
 
-        if context.read_set is None:
-            return
-
-        # Issue #1169: Use per-VFS monotonic counter for meaningful revisions
-        revision = self._get_vfs_revision()
-
-        # Record the read
-        context.record_read(
-            resource_type=resource_type,
-            resource_id=resource_id,
-            revision=revision,
-            access_type=access_type,
-        )
-        logger.debug(
-            f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
-        )
-
-    # =========================================================================
-    # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
-    # =========================================================================
+        allowed = enforcer.check(path, Permission.WRITE, context)
+        if not allowed:
+            raise PermissionDeniedError(
+                f"lock denied: WRITE not granted for {path!r}",
+                path=path,
+            )
 
     def _acquire_lock_sync(
         self,
         path: str,
         timeout: float,
-        context: OperationContext | None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> str | None:
-        """Acquire distributed lock synchronously (for use in sync write()).
-
-        This method bridges sync write() with async lock operations.
-        For async contexts, use `async with locked()` instead.
-
-        Args:
-            path: Path to lock
-            timeout: Lock acquisition timeout
-            context: Operation context
-
-        Returns:
-            lock_id if acquired, None if lock manager not available
-
-        Raises:
-            LockTimeout: If lock cannot be acquired within timeout
-        """
-        # Check if lock manager is available
-        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
-            raise RuntimeError(
-                "write(lock=True) called but distributed lock manager not configured. "
-                "Ensure NexusFS is initialized with enable_distributed_locks=True."
-            )
-
+        """Acquire advisory lock synchronously via kernel sys_lock."""
         from nexus.contracts.exceptions import LockTimeout
 
-        # Run async lock in sync context
-        # Check if we're in an async context - if so, user should use locked() instead
-        try:
-            asyncio.get_running_loop()
-            # There's a running event loop - write(lock=True) won't work properly
-            raise RuntimeError(
-                "write(lock=True) cannot be used from async context (event loop detected). "
-                "Use `async with nx.events_service.locked(path):` and `write(lock=False)` instead."
-            )
-        except RuntimeError as e:
-            if "event loop detected" in str(e):
-                raise  # Re-raise our custom error
-            # No running loop - safe to proceed
-
-        zone_id = self._get_zone_id(context)  # type: ignore[attr-defined]  # allowed  # allowed
-
-        # Use the existing Raft-based lock manager
-        async def acquire_lock() -> str | None:
-            return await self._lock_manager.acquire(
-                zone_id=zone_id,
-                path=path,
-                timeout=timeout,
-            )
-
-        from nexus.lib.sync_bridge import run_sync
-
-        lock_id = run_sync(acquire_lock())
-
+        lock_id = self.sys_lock(path, ttl=timeout)
         if lock_id is None:
             raise LockTimeout(path=path, timeout=timeout)
-
         return lock_id
 
     def _release_lock_sync(
         self,
         lock_id: str,
         path: str,
-        context: OperationContext | None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> None:
-        """Release distributed lock synchronously.
-
-        Args:
-            lock_id: Lock ID from _acquire_lock_sync()
-            path: Path that was locked
-            context: Operation context
-        """
+        """Release advisory lock synchronously via kernel sys_unlock."""
         if not lock_id:
             return
-
-        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
-            return
-
-        zone_id = self._get_zone_id(context)  # type: ignore[attr-defined]  # allowed  # allowed
-
-        async def release_lock() -> None:
-            await self._lock_manager.release(lock_id, zone_id, path)
-
-        from nexus.lib.sync_bridge import run_sync
-
         try:
-            run_sync(release_lock())
+            self.sys_unlock(path, lock_id=lock_id)
         except Exception as e:
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
-    def _apply_dynamic_viewer_filter_if_needed(
-        self, path: str, content: bytes, context: OperationContext | None
-    ) -> bytes:
-        """Apply dynamic_viewer column-level filtering for CSV files if needed.
-
-        Args:
-            path: File path
-            content: Original file content
-            context: Operation context
-
-        Returns:
-            Filtered content if dynamic_viewer permission exists, otherwise original content
-        """
-        # Only process CSV files
-        if not path.lower().endswith(".csv"):
-            logger.debug(f"_apply_dynamic_viewer_filter: Skipping non-CSV file: {path}")
-            return content
-
-        # Extract subject from context (uses NexusFSReBACMixin method)
-        if not hasattr(self, "_get_subject_from_context"):
-            logger.debug("_apply_dynamic_viewer_filter: No _get_subject_from_context method")
-            return content
-
-        subject = self._get_subject_from_context(context)
-        if not subject:
-            logger.debug(f"_apply_dynamic_viewer_filter: No subject found in context for {path}")
-            return content
-
-        logger.debug(
-            f"_apply_dynamic_viewer_filter: Checking dynamic_viewer for {subject} on {path}"
-        )
-
-        # Check if ReBAC is available
-        if not hasattr(self, "_rebac_manager") or not hasattr(self, "get_dynamic_viewer_config"):
-            logger.debug(
-                "_apply_dynamic_viewer_filter: ReBAC or get_dynamic_viewer_config not available"
-            )
-            return content
-
-        try:
-            # Get dynamic_viewer configuration for this subject + file
-            column_config = self.get_dynamic_viewer_config(subject=subject, file_path=path)  # type: ignore[attr-defined]  # allowed  # allowed
-
-            if not column_config:
-                # No dynamic_viewer permission, return original content
-                logger.debug(
-                    f"_apply_dynamic_viewer_filter: No dynamic_viewer config for {subject} on {path}"
-                )
-                return content
-
-            logger.info(
-                f"_apply_dynamic_viewer_filter: Applying filter for {subject} on {path}: {column_config}"
-            )
-
-            # Apply filtering
-            content_str = content.decode("utf-8") if isinstance(content, bytes) else content
-            result = self.apply_dynamic_viewer_filter(  # type: ignore[attr-defined]  # allowed  # allowed
-                data=content_str, column_config=column_config, file_format="csv"
-            )
-
-            # Return filtered content as bytes
-            filtered_content = result["filtered_data"]
-            logger.info(f"_apply_dynamic_viewer_filter: Successfully filtered {path}")
-            if isinstance(filtered_content, str):
-                return filtered_content.encode("utf-8")
-            elif isinstance(filtered_content, bytes):
-                return filtered_content
-            else:
-                # Fallback: convert to string then bytes
-                return str(filtered_content).encode("utf-8")
-
-        except Exception as e:
-            # Log error but don't fail the read operation
-            logger.warning(f"Failed to apply dynamic_viewer filter for {path}: {e}")
-            import traceback
-
-            logger.warning(traceback.format_exc())
-            return content
-
-    async def _get_parsed_content_async(
-        self, path: str, content: bytes
-    ) -> tuple[bytes, dict[str, Any]]:
-        """Get parsed content for a file (async version).
-
-        First checks for cached parsed_text in metadata, then parses on-demand if needed.
-        Falls back to raw content if parsing fails.
-
-        Args:
-            path: Virtual path to the file
-            content: Raw file content as bytes
-
-        Returns:
-            Tuple of (parsed_content_bytes, parse_info_dict)
-            parse_info contains: parsed (bool), provider (str or None), cached (bool)
-        """
-        parse_info: dict[str, Any] = {"parsed": False, "provider": None, "cached": False}
-
-        try:
-            # First, check for cached parsed_text in metadata
-            cached_text = self.metadata.get_file_metadata(path, "parsed_text")
-            if cached_text:
-                parse_info["parsed"] = True
-                parse_info["cached"] = True
-                parse_info["provider"] = self.metadata.get_file_metadata(path, "parser_name")
-                logger.debug(f"Using cached parsed_text for {path}")
-                return cached_text.encode("utf-8") if isinstance(
-                    cached_text, str
-                ) else cached_text, parse_info
-
-            # No cache - parse on demand using provider registry
-            if not hasattr(self, "provider_registry") or self.provider_registry is None:
-                logger.debug(f"No provider registry available for parsing {path}")
-                return content, parse_info
-
-            provider = self.provider_registry.get_provider(path)
-            if not provider:
-                logger.debug(f"No parse provider available for {path}")
-                return content, parse_info
-
-            # Parse the content (async)
-            try:
-                result = await provider.parse(content, path)
-
-                if result and result.text:
-                    parse_info["parsed"] = True
-                    parse_info["provider"] = provider.name
-                    parsed_content = result.text.encode("utf-8")
-
-                    # Cache the result for future reads
-                    try:
-                        from datetime import UTC, datetime
-
-                        self.metadata.set_file_metadata(path, "parsed_text", result.text)
-                        self.metadata.set_file_metadata(
-                            path, "parsed_at", datetime.now(UTC).isoformat()
-                        )
-                        self.metadata.set_file_metadata(path, "parser_name", provider.name)
-                    except Exception as cache_err:
-                        logger.warning(f"Failed to cache parsed content for {path}: {cache_err}")
-
-                    return parsed_content, parse_info
-
-            except Exception as parse_err:
-                logger.warning(f"Failed to parse {path} with {provider.name}: {parse_err}")
-                return content, parse_info
-
-        except Exception as e:
-            logger.warning(f"Error getting parsed content for {path}: {e}")
-
-        return content, parse_info
-
-    def _get_parsed_content(self, path: str, content: bytes) -> tuple[bytes, dict[str, Any]]:
-        """Get parsed content for a file (sync version).
-
-        First checks for cached parsed_text in metadata, then parses on-demand if needed.
-        Falls back to raw content if parsing fails.
-
-        This is a sync wrapper for _get_parsed_content_async. For async contexts,
-        use _get_parsed_content_async directly.
-
-        Args:
-            path: Virtual path to the file
-            content: Raw file content as bytes
-
-        Returns:
-            Tuple of (parsed_content_bytes, parse_info_dict)
-            parse_info contains: parsed (bool), provider (str or None), cached (bool)
-        """
-        import asyncio
-
-        # Check if we're already in an async context
-        try:
-            asyncio.get_running_loop()
-            # We're in an async context - can't use asyncio.run
-            # Use nest_asyncio or run in thread
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, self._get_parsed_content_async(path, content))
-                return future.result()
-        except RuntimeError:
-            # No running loop - use sync bridge
-            from nexus.lib.sync_bridge import run_sync
-
-            return run_sync(self._get_parsed_content_async(path, content))
-
-    @rpc_expose(description="Read file content")
-    def sys_read(
-        self,
-        path: str,
-        context: OperationContext | None = None,
-        return_metadata: bool = False,
-        parsed: bool = False,
-    ) -> bytes | dict[str, Any]:
-        """
-        Read file content as bytes, optionally parsed to text.
-
-        Args:
-            path: Virtual path to read (supports memory virtual paths)
-            context: Optional operation context for permission checks (uses default if not provided)
-            return_metadata: If True, return dict with content and metadata (etag, version, modified_at).
-                           If False, return only content bytes (default: False)
-            parsed: If True, return parsed text content instead of raw bytes (default: False).
-                   Uses the best available parse provider (Unstructured, LlamaParse, MarkItDown).
-                   First checks for cached parsed_text in metadata, then parses on-demand if needed.
-                   If parsing fails, returns raw content.
-
-        Returns:
-            If return_metadata=False and parsed=False: File content as bytes
-            If return_metadata=False and parsed=True: Parsed text content as bytes (UTF-8 markdown)
-            If return_metadata=True: Dict with keys:
-                - content: File content as bytes (or parsed text if parsed=True)
-                - etag: Content hash (SHA-256) for optimistic concurrency
-                - version: Current version number
-                - modified_at: Last modification timestamp
-                - size: File size in bytes
-                - parsed: True if content was parsed (only when parsed=True)
-                - provider: Name of parse provider used (only when parsed=True)
-
-        Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            BackendError: If read operation fails
-            AccessDeniedError: If access is denied based on zone isolation
-            PermissionError: If user doesn't have read permission
-
-        Examples:
-            >>> # Read raw content
-            >>> content = nx.sys_read("/workspace/report.pdf")
-            >>> print(type(content))
-            <class 'bytes'>
-
-            >>> # Read parsed content (markdown)
-            >>> content = nx.sys_read("/workspace/report.pdf", parsed=True)
-            >>> print(content.decode())
-            # Report Title
-            ...
-
-            >>> # Read with metadata for optimistic concurrency
-            >>> result = nx.sys_read("/workspace/data.json", return_metadata=True)
-            >>> content = result['content']
-            >>> etag = result['etag']
-            >>> # Later, write with version check
-            >>> nx.sys_write("/workspace/data.json", new_content, if_match=etag)
-
-            >>> # Read memory via virtual path
-            >>> content = nx.sys_read("/workspace/alice/agent1/memory/facts")
-            >>> content = nx.sys_read("/memory/by-user/alice/facts")  # Same memory!
-        """
-        path = self._validate_path(path)
-
-        # PRE-DISPATCH: virtual path resolvers (Issue #889)
-        # Memory paths → MemoryIOHandler, virtual views → VirtualViewResolver
-        _handled, _result = self._dispatch.resolve_read(
-            path, return_metadata=return_metadata, context=context
-        )
-        if _handled:
-            return _result
-
-        # PRE-INTERCEPT: pre-read hooks (Issue #899)
-        perm_check_start = time.time()
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
-        perm_check_elapsed = time.time() - perm_check_start
-
-        # Log slow pre-intercept
-        if perm_check_elapsed > 0.010:  # >10ms
-            logger.warning(
-                f"[READ-PERF] SLOW pre-intercept for {path}: {perm_check_elapsed * 1000:.1f}ms"
-            )
-
-        # Normal file path - proceed with regular read
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=False,
-        )
-
-        # Add backend_path to context for path-based connectors
-        from dataclasses import replace
-
-        if context:
-            read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
-        else:
-            # Create minimal context with just backend_path for connectors
-            from nexus.contracts.types import OperationContext
-
-            read_context = OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
-            )
-
-        # Check if backend is a dynamic API-backed connector or external content source.
-        # TODO(#899): Move this bypass logic out of kernel into service/composition layer.
-        _caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
-        is_dynamic_connector = (
-            route.backend.user_scoped is True and route.backend.has_token_manager is True
-        ) or "external_content" in _caps
-
-        if is_dynamic_connector:
-            # Dynamic connector - read directly from backend without metadata check
-            # The backend handles authentication and API calls
-            content = route.backend.read_content("", context=read_context)
-
-            # Issue #1166: Record read for dependency tracking
-            self._record_read_if_tracking(context, "file", path, "content")
-
-            if return_metadata:
-                # Generate synthetic metadata for dynamic content
-                from datetime import datetime
-
-                content_hash = hash_content(content)
-                return {
-                    "content": content,
-                    "etag": content_hash,
-                    "version": 1,
-                    "modified_at": datetime.now().isoformat(),
-                    "size": len(content),
-                }
-            return content
-
-        # Check if file exists in metadata (for regular backends)
-        meta = self.metadata.get(path)
-
-        # Issue #1264: Overlay resolution — check base layer if upper layer has no entry
-        if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
-            overlay_config = self._get_overlay_config(path)
-            if overlay_config:
-                meta = self._overlay_resolver.resolve_read(path, overlay_config)
-
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
-
-        # Issue #1264: Reject whiteout markers (file was deleted in overlay)
-        if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(meta):
-            raise NexusFileNotFoundError(path)
-
-        content = route.backend.read_content(meta.etag, context=read_context)
-
-        # Apply dynamic_viewer filtering for CSV files
-        content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
-
-        # Issue #900: Unified INTERCEPT for read (dynamic viewer, tracking, etc.)
-        if self._dispatch.read_hook_count > 0:
-            from nexus.contracts.vfs_hooks import ReadHookContext
-
-            _read_ctx = ReadHookContext(
-                path=path,
-                context=context,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                metadata=meta,
-                content=content,
-                content_hash=meta.etag,
-            )
-            self._dispatch.intercept_post_read(_read_ctx)
-            content = _read_ctx.content or content  # hooks may have filtered content
-
-        # Handle parsed=True flag - return parsed content instead of raw bytes
-        if parsed:
-            content, parse_info = self._get_parsed_content(path, content)
-
-        # Issue #1166: Record read for dependency tracking
-        self._record_read_if_tracking(context, "file", path, "content")
-
-        # Return content with metadata if requested
-        if return_metadata:
-            result = {
-                "content": content,
-                "etag": meta.etag,
-                "version": meta.version,
-                "modified_at": meta.modified_at,
-                "size": len(content),  # Update size after filtering
-            }
-            if parsed:
-                result["parsed"] = parse_info.get("parsed", False)
-                result["provider"] = parse_info.get("provider")
-            return result
-
-        return content
-
-    @rpc_expose(description="Read multiple files in a single RPC call")
-    def read_bulk(
-        self,
-        paths: list[str],
-        context: OperationContext | None = None,
-        return_metadata: bool = False,
-        skip_errors: bool = True,
-    ) -> dict[str, bytes | dict[str, Any] | None]:
-        """
-        Read multiple files in a single RPC call for improved performance.
-
-        This method is optimized for bulk operations like grep, where many files
-        need to be read. It batches permission checks and reduces RPC overhead.
-
-        Args:
-            paths: List of virtual paths to read
-            context: Optional operation context for permission checks
-            return_metadata: If True, return dicts with content and metadata
-            skip_errors: If True, skip files that can't be read and return None.
-                        If False, raise exception on first error.
-
-        Returns:
-            Dict mapping path -> content (or None if skip_errors=True and read failed)
-            If return_metadata=False: {path: bytes}
-            If return_metadata=True: {path: {content, etag, version, ...}}
-
-        Performance:
-            - Single RPC call instead of N calls
-            - Batch permission checks (one DB query instead of N)
-            - Reduced network round trips
-            - Expected speedup: 2-5x for 50+ files
-
-        Examples:
-            >>> # Read multiple files at once
-            >>> results = nx.read_bulk(["/file1.txt", "/file2.txt", "/file3.txt"])
-            >>> print(results["/file1.txt"])  # b'content'
-            >>> print(results["/file2.txt"])  # b'content' or None if failed
-
-            >>> # With metadata
-            >>> results = nx.read_bulk(["/file1.txt"], return_metadata=True)
-            >>> print(results["/file1.txt"]["content"])
-            >>> print(results["/file1.txt"]["etag"])
-        """
-        import time
-
-        bulk_start = time.time()
-        results: dict[str, bytes | dict[str, Any] | None] = {}
-
-        # Validate all paths
-        validated_paths = []
-        for path in paths:
-            try:
-                validated_path = self._validate_path(path)
-                validated_paths.append(validated_path)
-            except Exception as exc:
-                logger.debug("Path validation failed in read_bulk for %s: %s", path, exc)
-                if skip_errors:
-                    results[path] = None
-                    continue
-                raise
-
-        if not validated_paths:
-            return results
-
-        # Batch permission check using filter_list
-        perm_start = time.time()
-        allowed_set: set[str]
-        if not self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-            # Skip permission check if permissions are disabled
-            allowed_set = set(validated_paths)
-        else:
-            try:
-                # Use the existing bulk permission check from list()
-                # Note: filter_list assumes READ permission, which is what we want
-                from nexus.contracts.types import OperationContext
-
-                ctx = context if context is not None else self._default_context
-                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-                allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
-                allowed_set = set(allowed_paths)
-            except Exception as e:
-                logger.error(f"[READ-BULK] Permission check failed: {e}")
-                if not skip_errors:
-                    raise
-                # If skip_errors, assume no files are allowed
-                allowed_set = set()
-
-        perm_elapsed = time.time() - perm_start
-        logger.info(
-            f"[READ-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
-        )
-
-        # Mark denied files
-        for path in validated_paths:
-            if path not in allowed_set:
-                results[path] = None
-
-        # Read allowed files
-        read_start = time.time()
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-
-        # Group paths by backend for potential bulk optimization
-        # Use get_batch for metadata lookup (single query instead of N queries)
-        path_info: dict[str, tuple[FileMetadata, Any]] = {}  # path -> (meta, route)
-        backend_paths: dict[Any, list[str]] = {}  # backend -> [paths]
-
-        # Batch metadata lookup
-        meta_start = time.time()
-        batch_meta = self.metadata.get_batch(list(allowed_set))
-        meta_elapsed = (time.time() - meta_start) * 1000
-        logger.info(
-            f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
-        )
-
-        # Process metadata and group by backend
-        route_start = time.time()
-        for path in allowed_set:
-            try:
-                meta = batch_meta.get(path)
-                if meta is None or meta.etag is None:
-                    if skip_errors:
-                        results[path] = None
-                        continue
-                    raise NexusFileNotFoundError(path)
-
-                route = self.router.route(
-                    path,
-                    is_admin=is_admin,
-                    check_write=False,
-                )
-                path_info[path] = (meta, route)
-
-                # Group by backend
-                backend = route.backend
-                if backend not in backend_paths:
-                    backend_paths[backend] = []
-                backend_paths[backend].append(path)
-            except Exception as e:
-                logger.warning(f"[READ-BULK] Failed to route {path}: {type(e).__name__}: {e}")
-                if skip_errors:
-                    results[path] = None
-                else:
-                    raise
-
-        route_elapsed = (time.time() - route_start) * 1000
-        logger.info(f"[READ-BULK] Routing: {len(path_info)} paths in {route_elapsed:.1f}ms")
-
-        # Try bulk read for backends that support it (CacheConnectorMixin)
-        for backend, paths_for_backend in backend_paths.items():
-            if hasattr(backend, "read_bulk_from_cache") and len(paths_for_backend) > 1:
-                # Use bulk cache lookup
-                logger.info(
-                    f"[READ-BULK] Using bulk cache for {len(paths_for_backend)} files on {type(backend).__name__}"
-                )
-                try:
-                    cache_entries = backend.read_bulk_from_cache(paths_for_backend, original=True)
-
-                    # Process cache hits
-                    paths_needing_backend: list[str] = []
-                    for path in paths_for_backend:
-                        entry = cache_entries.get(path)
-                        if entry and not entry.stale and entry.content_binary:
-                            content = entry.content_binary
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        else:
-                            paths_needing_backend.append(path)
-
-                    # Fall back to individual reads for cache misses
-                    for path in paths_needing_backend:
-                        try:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            read_context = context
-                            if context:
-                                from dataclasses import replace
-
-                                read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        except Exception as e:
-                            logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
-                            )
-                            if skip_errors:
-                                results[path] = None
-                            else:
-                                raise
-                except Exception as e:
-                    logger.warning(
-                        f"[READ-BULK] Bulk cache failed, falling back to individual reads: {e}"
-                    )
-                    # Fall back to individual reads
-                    for path in paths_for_backend:
-                        try:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            read_context = context
-                            if context:
-                                from dataclasses import replace
-
-                                read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        except Exception as e:
-                            logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
-                            )
-                            if skip_errors:
-                                results[path] = None
-                            else:
-                                raise
-            else:
-                # Try parallel I/O for LocalBackend using nexus_fast
-                if backend.supports_parallel_mmap_read is True and len(paths_for_backend) > 1:
-                    # Use Rust parallel mmap reads for LocalBackend
-                    try:
-                        from nexus_fast import read_files_bulk
-
-                        # Build mapping: disk_path -> (virtual_path, meta)
-                        disk_to_virtual: dict[str, tuple[str, Any]] = {}
-                        disk_paths: list[str] = []
-                        for path in paths_for_backend:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None
-                            disk_path = str(backend._hash_to_path(meta.etag))
-                            disk_to_virtual[disk_path] = (path, meta)
-                            disk_paths.append(disk_path)
-
-                        # Parallel mmap read
-                        logger.info(
-                            f"[READ-BULK] Using parallel mmap for {len(disk_paths)} LocalBackend files"
-                        )
-                        disk_contents = read_files_bulk(disk_paths)
-
-                        # Map results back to virtual paths
-                        for disk_path, content in disk_contents.items():
-                            vpath, meta = disk_to_virtual[disk_path]
-                            assert meta is not None  # Guaranteed by check above
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                vpath, content, context
-                            )
-                            if return_metadata:
-                                results[vpath] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[vpath] = content
-
-                        # Mark missing files as None if skip_errors
-                        for path in paths_for_backend:
-                            if path not in results:
-                                if skip_errors:
-                                    results[path] = None
-                                else:
-                                    raise NexusFileNotFoundError(path)
-                    except ImportError:
-                        logger.warning(
-                            "[READ-BULK] nexus_fast not available, falling back to sequential"
-                        )
-                        # Fall through to sequential reads below
-                        for path in paths_for_backend:
-                            if path in results:
-                                continue
-                            try:
-                                meta, route = path_info[path]
-                                assert meta.etag is not None
-                                content = route.backend.read_content(meta.etag, context=None)
-                                content = self._apply_dynamic_viewer_filter_if_needed(
-                                    path, content, context
-                                )
-                                results[path] = (
-                                    content
-                                    if not return_metadata
-                                    else {
-                                        "content": content,
-                                        "etag": meta.etag,
-                                        "version": meta.version,
-                                        "modified_at": meta.modified_at,
-                                        "size": len(content),
-                                    }
-                                )
-                            except Exception as exc:
-                                logger.debug(
-                                    "Failed to read content for %s during batch read: %s", path, exc
-                                )
-                                if skip_errors:
-                                    results[path] = None
-                                else:
-                                    raise
-                else:
-                    # Sequential reads for other backends or single files
-                    for path in paths_for_backend:
-                        try:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            read_context = context
-                            if context:
-                                from dataclasses import replace
-
-                                read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
-                            content = self._apply_dynamic_viewer_filter_if_needed(
-                                path, content, context
-                            )
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        except Exception as e:
-                            logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
-                            )
-                            if skip_errors:
-                                results[path] = None
-                            else:
-                                raise
-
-        read_elapsed = time.time() - read_start
-        bulk_elapsed = time.time() - bulk_start
-
-        logger.info(
-            f"[READ-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
-            f"(perm={perm_elapsed * 1000:.0f}ms, read={read_elapsed * 1000:.0f}ms)"
-        )
-
-        return results
-
-    @rpc_expose(description="Read a byte range from a file")
-    def read_range(
-        self,
-        path: str,
-        start: int,
-        end: int,
-        context: OperationContext | None = None,
-    ) -> bytes:
-        """
-        Read a specific byte range from a file.
-
-        This method enables memory-efficient streaming by allowing clients to
-        fetch file content in chunks without loading the entire file into memory.
-
-        Args:
-            path: Virtual path to read
-            start: Start byte offset (inclusive, 0-indexed)
-            end: End byte offset (exclusive)
-            context: Optional operation context for permission checks
-
-        Returns:
-            bytes: Content from start to end (exclusive)
-
-        Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            BackendError: If read operation fails
-            AccessDeniedError: If access is denied
-            PermissionError: If user doesn't have read permission
-            ValueError: If start/end are invalid (negative, start > end, etc.)
-
-        Example:
-            >>> # Read first 1MB of a large file
-            >>> chunk = nx.read_range("/workspace/large.bin", 0, 1024 * 1024)
-
-            >>> # Stream a file in chunks
-            >>> offset = 0
-            >>> chunk_size = 65536
-            >>> while True:
-            ...     chunk = nx.read_range("/workspace/large.bin", offset, offset + chunk_size)
-            ...     if not chunk:
-            ...         break
-            ...     process(chunk)
-            ...     offset += len(chunk)
-        """
-        # Validate range parameters
-        if start < 0:
-            raise ValueError(f"start must be non-negative, got {start}")
-        if end < start:
-            raise ValueError(f"end ({end}) must be >= start ({start})")
-
-        path = self._validate_path(path)
-
-        # PRE-INTERCEPT: pre-read hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
-
-        # Route to backend with access control
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=False,
-        )
-
-        # Check if file exists in metadata
-        meta = self.metadata.get(path)
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
-
-        # Add backend_path to context for path-based connectors
-        read_context = context
-        if context:
-            from dataclasses import replace
-
-            read_context = replace(context, backend_path=route.backend_path)
-
-        # Read the full content and slice (backends can override for efficiency)
-        # Note: For true efficiency, backends could implement read_range() natively
-        content = route.backend.read_content(meta.etag, context=read_context)
-
-        # Apply range
-        return content[start:end]
-
-    @rpc_expose(description="Stream file content in chunks")
-    def stream(
-        self, path: str, chunk_size: int = 65536, context: OperationContext | None = None
-    ) -> Any:
-        """
-        Stream file content in chunks without loading entire file into memory.
-
-        This is a memory-efficient alternative to read() for large files.
-        Yields chunks as an iterator, allowing processing of files larger than RAM.
-
-        Args:
-            path: Virtual path to stream
-            chunk_size: Size of each chunk in bytes (default: 8KB)
-            context: Optional operation context for permission checks
-
-        Yields:
-            bytes: Chunks of file content
-
-        Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            BackendError: If stream operation fails
-            AccessDeniedError: If access is denied
-            PermissionError: If user doesn't have read permission
-
-        Example:
-            >>> # Stream large file efficiently
-            >>> for chunk in nx.stream("/workspace/large_file.bin"):
-            ...     process(chunk)  # Memory usage = chunk_size, not file_size
-
-            >>> # Stream to output
-            >>> import sys
-            >>> for chunk in nx.stream("/workspace/video.mp4", chunk_size=1024*1024):  # 1MB chunks
-            ...     sys.stdout.buffer.write(chunk)
-        """
-        path = self._validate_path(path)
-
-        # PRE-INTERCEPT: pre-read hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
-
-        # Route to backend with access control
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=False,
-        )
-
-        # Check if file exists in metadata
-        meta = self.metadata.get(path)
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
-
-        # Stream from routed backend using content hash
-        yield from route.backend.stream_content(meta.etag, chunk_size=chunk_size, context=context)
-
-    @rpc_expose(description="Stream a byte range of file content")
-    def stream_range(
-        self,
-        path: str,
-        start: int,
-        end: int,
-        chunk_size: int = 65536,
-        context: OperationContext | None = None,
-    ) -> Any:
-        """Stream a byte range [start, end] of file content.
-
-        This is the kernel-level range streaming method.  HTTP routers use
-        this (via ``build_range_response``) to implement RFC 9110 Range
-        requests without bypassing the ObjectStore abstraction.
-
-        Args:
-            path: Virtual path to stream
-            start: Start byte offset (inclusive)
-            end: End byte offset (inclusive)
-            chunk_size: Size of each chunk in bytes (default: 8KB)
-            context: Optional operation context for permission checks
-
-        Yields:
-            bytes: Chunks of file content within the requested range
-        """
-        path = self._validate_path(path)
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
-
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=False,
-        )
-
-        meta = self.metadata.get(path)
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
-
-        yield from route.backend.stream_range(
-            meta.etag, start, end, chunk_size=chunk_size, context=context
-        )
-
-    @rpc_expose(description="Write file content from stream")
-    def write_stream(
-        self,
-        path: str,
-        chunks: Iterator[bytes],
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """
-        Write file content from an iterator of chunks.
-
-        This is a memory-efficient alternative to write() for large files.
-        Accepts chunks as an iterator, computing hash incrementally.
-
-        Args:
-            path: Virtual path to write
-            chunks: Iterator yielding byte chunks
-            context: Optional operation context for permission checks
-
-        Returns:
-            Dict with metadata about the written file:
-                - etag: Content hash of the written content
-                - version: New version number
-                - modified_at: Modification timestamp
-                - size: File size in bytes
-
-        Raises:
-            InvalidPathError: If path is invalid
-            BackendError: If write operation fails
-            AccessDeniedError: If access is denied
-            PermissionError: If path is read-only or user doesn't have write permission
-
-        Example:
-            >>> # Stream large file without loading into memory
-            >>> def file_chunks(path, chunk_size=8192):
-            ...     with open(path, 'rb') as f:
-            ...         while chunk := f.read(chunk_size):
-            ...             yield chunk
-            >>> result = nx.write_stream("/workspace/large.bin", file_chunks("/tmp/large.bin"))
-        """
-        path = self._validate_path(path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
-
-        # Route to backend with write access check
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=True,
-        )
-
-        # Check if path is read-only
-        if route.readonly:
-            raise PermissionError(f"Path is read-only: {path}")
-
-        # PRE-INTERCEPT: pre-write hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
-
-        self._dispatch.intercept_pre_write(_WHC(path=path, content=b"", context=context))
-
-        # Get existing metadata for version tracking
-        now = datetime.now(UTC)
-        meta = self.metadata.get(path)
-
-        # Write content via streaming
-        write_result = route.backend.write_stream(chunks, context=context)
-        content_hash = write_result.content_hash
-
-        # WriteResult carries the byte count to avoid a redundant
-        # get_content_size() round-trip after streaming writes.
-        size = write_result.size
-        if size <= 0:
-            try:
-                size = route.backend.get_content_size(content_hash, context=context)
-            except Exception as e:
-                logger.debug("Failed to get content size for %s: %s", content_hash, e)
-
-        # Update metadata
-        new_version = (meta.version + 1) if meta else 1
-        new_meta = FileMetadata(
-            path=path,
-            backend_name=route.backend.name,
-            physical_path=content_hash,  # CAS: hash is the "physical" location
-            etag=content_hash,
-            size=size,
-            version=new_version,
-            created_at=meta.created_at if meta else now,
-            modified_at=now,
-            created_by=self._get_created_by(context),
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
-        )
-
-        self.metadata.put(new_meta)
-
-        # Issue #900: Unified INTERCEPT for write_stream
-        from nexus.contracts.vfs_hooks import WriteHookContext
-
-        _ws_ctx = WriteHookContext(
-            path=path,
-            content=b"",  # stream — content not available in single buffer
-            context=None,
-            zone_id=zone_id,
-            is_new_file=(meta is None),
-            metadata=new_meta,
-        )
-        self._dispatch.intercept_post_write(_ws_ctx)
-
-        return {
-            "etag": content_hash,
-            "version": new_version,
-            "modified_at": now.isoformat(),
-            "size": size,
-        }
-
-    @rpc_expose(description="Write file content")
-    def sys_write(
-        self,
-        path: str,
-        content: bytes | str,
-        context: OperationContext | None = None,
-        if_match: str | None = None,
-        if_none_match: bool = False,
-        force: bool = False,
-        lock: bool = False,
-        lock_timeout: float = 30.0,
-    ) -> dict[str, Any]:
-        """
-        Write content to a file with optional optimistic concurrency control.
-
-        Creates parent directories if needed. Overwrites existing files.
-        Updates metadata store.
-
-        Automatically deduplicates content using CAS.
-
-        Args:
-            path: Virtual path to write
-            content: File content as bytes or str (str will be UTF-8 encoded)
-            context: Optional operation context for permission checks (uses default if not provided)
-            if_match: Optional etag for optimistic concurrency control (v0.3.9).
-                     If provided, write only succeeds if current file etag matches this value.
-                     Prevents concurrent modification conflicts.
-            if_none_match: If True, write only if file doesn't exist (create-only mode)
-            force: If True, skip version check and overwrite unconditionally (dangerous!)
-            lock: If True, acquire distributed lock before writing (default: False for backward compatibility).
-                  Use this for single-write operations that need mutual exclusion.
-                  For read-modify-write patterns, use locked() context manager or atomic_update() instead.
-            lock_timeout: Maximum time to wait for lock in seconds (only used if lock=True)
-
-        Returns:
-            Dict with metadata about the written file:
-                - etag: Content hash (SHA-256) of the written content
-                - version: New version number
-                - modified_at: Modification timestamp
-                - size: File size in bytes
-
-        Raises:
-            InvalidPathError: If path is invalid
-            BackendError: If write operation fails
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
-            PermissionError: If path is read-only or user doesn't have write permission
-            ConflictError: If if_match is provided and doesn't match current etag
-            FileExistsError: If if_none_match=True and file already exists
-            LockTimeout: If lock=True and lock cannot be acquired within lock_timeout
-
-        Examples:
-            >>> # Simple write (no version checking)
-            >>> result = nx.sys_write("/workspace/data.json", b'{"key": "value"}')
-            >>> print(result['etag'], result['version'])
-
-            >>> # Optimistic concurrency control
-            >>> result = nx.sys_read("/workspace/data.json", return_metadata=True)
-            >>> new_content = modify(result['content'])
-            >>> try:
-            ...     nx.sys_write("/workspace/data.json", new_content, if_match=result['etag'])
-            ... except ConflictError:
-            ...     print("File was modified by another agent!")
-
-            >>> # Create-only mode
-            >>> nx.sys_write("/workspace/new.txt", b'content', if_none_match=True)
-
-            >>> # Write with distributed lock (mutual exclusion)
-            >>> nx.sys_write("/shared/config.json", b'{"v": 1}', lock=True)
-
-            >>> # Write memory via virtual path
-            >>> nx.sys_write("/workspace/alice/agent1/memory/facts", b'Python is great')
-            >>> nx.sys_write("/memory/by-user/alice/facts", b'Update')  # Same memory!
-        """
-        # Auto-convert str to bytes for convenience
-        if isinstance(content, str):
-            content = content.encode("utf-8")
-
-        path = self._validate_path(path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
-
-        # PRE-DISPATCH: virtual path resolvers (Issue #889)
-        _handled, _result = self._dispatch.resolve_write(path, content)
-        if _handled:
-            return _result
-
-        # Issue #1106 Block 3: Acquire distributed lock if requested
-        lock_id = None
-        if lock:
-            lock_id = self._acquire_lock_sync(path, lock_timeout, context)
-
-        try:
-            return self._write_internal(
-                path=path,
-                content=content,
-                context=context,
-                if_match=if_match,
-                if_none_match=if_none_match,
-                force=force,
-            )
-        finally:
-            if lock_id:
-                self._release_lock_sync(lock_id, path, context)
-
-    def _write_internal(
-        self,
-        path: str,
-        content: bytes,
-        context: OperationContext | None,
-        if_match: str | None,
-        if_none_match: bool,
-        force: bool,
-    ) -> dict[str, Any]:
-        """Internal write implementation (extracted for lock support).
-
-        This method contains the actual write logic, extracted to support
-        both locked and non-locked write paths without code duplication.
-        """
-        # Route to backend with write access check FIRST (to check zone/agent isolation)
-        # This must happen before permission check so AccessDeniedError is raised before PermissionError
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=True,
-        )
-
-        # Check if path is read-only
-        if route.readonly:
-            raise PermissionError(f"Path is read-only: {path}")
-
-        # Get existing metadata for permission check and update detection (single query)
-        now = datetime.now(UTC)
-        meta = self.metadata.get(path)
-
-        # Capture snapshot before operation for undo capability
-        snapshot_hash = meta.etag if meta else None
-        metadata_snapshot = None
-        if meta:
-            metadata_snapshot = {
-                "size": meta.size,
-                "version": meta.version,
-                "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-            }
-
-        # PRE-INTERCEPT: pre-write hooks (Issue #899)
-        # Hook handles existing-file (owner fast-path) vs new-file (parent check)
-        from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
-
-        self._dispatch.intercept_pre_write(
-            _WHC(
-                path=path,
-                content=content,
-                context=context,
-                old_metadata=meta,
-            )
-        )
-
-        # Optimistic concurrency control
-        if not force:
-            # Check if_none_match (create-only mode)
-            if if_none_match and meta is not None:
-                raise FileExistsError(f"File already exists: {path}")
-
-            # Check if_match (version check)
-            if if_match is not None:
-                if meta is None:
-                    # File doesn't exist, can't match etag
-                    raise ConflictError(
-                        path=path,
-                        expected_etag=if_match,
-                        current_etag="(file does not exist)",
-                    )
-                elif meta.etag != if_match:
-                    # Version mismatch - conflict detected!
-                    raise ConflictError(
-                        path=path,
-                        expected_etag=if_match,
-                        current_etag=meta.etag or "(no etag)",
-                    )
-
-        # Write to routed backend - returns content hash
-        # Add backend_path to context for path-based connectors
-        from dataclasses import replace
-
-        if context:
-            # Create new context with backend_path and virtual_path populated
-            context = replace(context, backend_path=route.backend_path, virtual_path=path)
-        else:
-            # Create minimal context with just backend_path for connectors
-            from nexus.contracts.types import OperationContext
-
-            context = OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
-            )
-        content_hash = route.backend.write_content(content, context=context).content_hash
-
-        # NOTE: sys_write does NOT release old content on overwrite.
-        # This follows the HDFS/GFS pattern: metadata changes are synchronous,
-        # content cleanup is asynchronous via background GC.
-        # Old blobs are cleaned up by ContentGarbageCollector, which reconciles
-        # ObjectStore inventory against Metastore references (like HDFS BlockManager).
-        # See: docs/architecture/federation-memo.md §7f Caveat 4.
-
-        # UNIX permissions removed - all access control via ReBAC
-
-        # Calculate new version number (increment if updating)
-        new_version = (meta.version + 1) if meta else 1
-
-        # Store metadata with content hash as both etag and physical_path
-        # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
-        # Issue #920: Set owner_id for O(1) permission checks (only on new files)
-        ctx = context if context is not None else self._default_context
-        owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
-
-        metadata = FileMetadata(
-            path=path,
-            backend_name=route.backend.name,  # FIX: Use routed backend name, not default backend
-            physical_path=content_hash,  # CAS: hash is the "physical" location
-            size=len(content),
-            etag=content_hash,  # SHA-256 hash for integrity
-            created_at=meta.created_at if meta else now,
-            modified_at=now,
-            version=new_version,
-            created_by=self._get_created_by(context),  # Track who created/modified this version
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
-            owner_id=owner_id,  # Issue #920: O(1) owner permission checks
-        )
-
-        self.metadata.put(metadata)
-
-        # Issue #1169: Advance VFS revision counter after mutation
-        new_revision = self._increment_vfs_revision()
-
-        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        self._dispatch.notify(
-            FileEvent(
-                type=FileEventType.FILE_WRITE,
-                path=path,
-                zone_id=zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
-                agent_id=agent_id,
-                etag=content_hash,
-                size=len(content),
-                version=new_version,
-                is_new=(meta is None),
-            )
-        )
-
-        # Invalidate cached parsed_text when file is updated
-        # This ensures read(parsed=True) re-parses the new content
-        if meta is not None:  # File existed before (update, not create)
-            try:
-                self.metadata.set_file_metadata(path, "parsed_text", None)
-                self.metadata.set_file_metadata(path, "parsed_at", None)
-                self.metadata.set_file_metadata(path, "parser_name", None)
-            except Exception as e:
-                logger.debug("Failed to invalidate parsed_text cache for %s: %s", path, e)
-
-        # P0-3: Create parent relationship tuples for file inheritance
-        # This enables permission inheritance from parent directories
-        # Issue #1071: Use deferred buffer for async permission operations if available
-        # This reduces single-file write latency from ~36ms to ~10ms by batching
-        # permission operations in the background. Owner access is guaranteed by
-        # owner_id in metadata (fast-path check).
-        ctx = context if context is not None else self._default_context
-        deferred_buffer = getattr(self, "_deferred_permission_buffer", None)
-
-        if deferred_buffer is not None:
-            # DEFERRED PATH: Queue permission operations for background batch processing
-            # Owner can still access file immediately via owner_id fast-path
-            try:
-                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "root")
-                if meta is None and ctx.user_id and not ctx.is_system:
-                    deferred_buffer.queue_owner_grant(ctx.user_id, path, ctx.zone_id or "root")
-            except Exception as e:
-                logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
-        else:
-            # SYNC PATH: Execute permission operations immediately (original behavior)
-            if hasattr(self, "_hierarchy_manager"):
-                try:
-                    logger.info(
-                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
-                    )
-                    created_count = self._hierarchy_manager.ensure_parent_tuples(
-                        path, zone_id=ctx.zone_id or "root"
-                    )
-                    logger.info(f"write: Created {created_count} parent tuples for {path}")
-                except Exception as e:
-                    logger.warning(
-                        f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
-                    )
-
-            # Issue #548: Grant direct_owner permission to the user who created the file
-            if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
-                try:
-                    if ctx.user_id and not ctx.is_system:
-                        logger.debug(
-                            f"write: Granting direct_owner permission to {ctx.user_id} for {path}"
-                        )
-                        self._rebac_manager.rebac_write(
-                            subject=("user", ctx.user_id),
-                            relation="direct_owner",
-                            object=("file", path),
-                            zone_id=ctx.zone_id or "root",
-                        )
-                        logger.debug(
-                            f"write: Granted direct_owner permission to {ctx.user_id} for {path}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"write: Failed to grant direct_owner permission for {path}: {e}"
-                    )
-
-        # Auto-parse file if enabled and format is supported
-        if self.auto_parse:
-            self._auto_parse_file(path)
-
-        # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
-        # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
-        if self._snapshot_service is not None:
-            _txn_id = self._snapshot_service.is_tracked(path)
-            if _txn_id is not None:
-                self._snapshot_service.track_write(
-                    _txn_id, path, snapshot_hash, metadata_snapshot, content_hash
-                )
-
-        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
-        from nexus.contracts.vfs_hooks import WriteHookContext
-
-        _write_ctx = WriteHookContext(
-            path=path,
-            content=content,
-            context=context,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            is_new_file=(meta is None),
-            content_hash=content_hash,
-            metadata=metadata,
-            old_metadata=meta,
-            new_version=new_version,
-        )
-        self._dispatch.intercept_post_write(_write_ctx)
-
-        # Return metadata for optimistic concurrency control
-        return {
-            "etag": content_hash,
-            "version": new_version,
-            "modified_at": now,
-            "size": len(content),
-        }
-
-    async def atomic_update(
-        self,
-        path: str,
-        update_fn: Callable[[bytes], bytes],
-        context: OperationContext | None = None,
-        timeout: float = 30.0,
-        ttl: float = 30.0,
-    ) -> dict[str, Any]:
-        """Atomically read-modify-write a file with distributed locking.
-
-        This is the recommended API for concurrent file updates where you need
-        to read existing content, modify it, and write back atomically.
-
-        The operation:
-        1. Acquires distributed lock on the path
-        2. Reads current file content
-        3. Applies your update function
-        4. Writes modified content
-        5. Releases lock (even on failure)
-
-        For simple writes without reading, use `write(lock=True)` instead.
-        For multiple operations within one lock, use `async with locked()` instead.
-
-        Args:
-            path: Virtual path to update
-            update_fn: Function that transforms content (bytes -> bytes).
-                      Receives current file content, returns new content.
-            context: Operation context (optional)
-            timeout: Maximum time to wait for lock in seconds (default: 30.0)
-            ttl: Lock TTL in seconds (default: 30.0)
-
-        Returns:
-            Dict with metadata about the written file:
-                - etag: Content hash of the new content
-                - version: New version number
-                - modified_at: Modification timestamp
-                - size: File size in bytes
-
-        Raises:
-            LockTimeout: If lock cannot be acquired within timeout
-            NexusFileNotFoundError: If file doesn't exist
-            BackendError: If read or write operation fails
-
-        Example:
-            >>> # Increment a counter atomically
-            >>> import json
-            >>> await nx.atomic_update(
-            ...     "/counters/visits.json",
-            ...     lambda c: json.dumps({"count": json.loads(c)["count"] + 1}).encode()
-            ... )
-
-            >>> # Append to a log file atomically
-            >>> await nx.atomic_update(
-            ...     "/logs/access.log",
-            ...     lambda c: c + b"New log entry\\n"
-            ... )
-
-            >>> # Update config safely across multiple agents
-            >>> await nx.atomic_update(
-            ...     "/shared/config.json",
-            ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
-            ... )
-        """
-        # Check if lock manager is available
-        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
-            raise RuntimeError(
-                "atomic_update() requires distributed lock manager. "
-                "Set NEXUS_REDIS_URL environment variable "
-                "or pass coordination_url to NexusFS constructor."
-            )
-
-        async with self.events_service.locked(path, timeout=timeout, ttl=ttl, _context=context):
-            # Read current content (return_metadata=False ensures bytes return)
-            content = self.sys_read(path, context=context, return_metadata=False)
-            assert isinstance(content, bytes), "Expected bytes from read()"
-
-            # Apply update function
-            new_content = update_fn(content)
-
-            # Write back (no lock needed since we hold the lock)
-            return self.sys_write(path, new_content, context=context, lock=False)
-
-    @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
-    def append(
-        self,
-        path: str,
-        content: bytes | str,
-        context: OperationContext | None = None,
-        if_match: str | None = None,
-        force: bool = False,
-    ) -> dict[str, Any]:
-        """
-        Append content to an existing file or create a new file if it doesn't exist.
-
-        This is an efficient way to add content to files without reading the entire
-        file separately, particularly useful for:
-        - Writing JSONL (JSON Lines) logs incrementally
-        - Appending to log files
-        - Building append-only data structures
-        - Streaming data collection
-
-        Args:
-            path: Virtual path to append to
-            content: Content to append as bytes or str (str will be UTF-8 encoded)
-            context: Optional operation context for permission checks (uses default if not provided)
-            if_match: Optional etag for optimistic concurrency control.
-                     If provided, append only succeeds if current file etag matches this value.
-                     Prevents concurrent modification conflicts.
-            force: If True, skip version check and append unconditionally (dangerous!)
-
-        Returns:
-            Dict with metadata about the written file:
-                - etag: Content hash (SHA-256) of the final content (after append)
-                - version: New version number
-                - modified_at: Modification timestamp
-                - size: Final file size in bytes
-
-        Raises:
-            InvalidPathError: If path is invalid
-            BackendError: If append operation fails
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
-            PermissionError: If path is read-only or user doesn't have write permission
-            ConflictError: If if_match is provided and doesn't match current etag
-            NexusFileNotFoundError: If file doesn't exist during read (should not happen in normal flow)
-
-        Examples:
-            >>> # Append to a log file
-            >>> nx.append("/workspace/app.log", "New log entry\\n")
-
-            >>> # Build JSONL file incrementally
-            >>> import json
-            >>> for record in records:
-            ...     line = json.dumps(record) + "\\n"
-            ...     nx.append("/workspace/data.jsonl", line)
-
-            >>> # Append with optimistic concurrency control
-            >>> result = nx.sys_read("/workspace/log.txt", return_metadata=True)
-            >>> try:
-            ...     nx.append("/workspace/log.txt", "New entry\\n", if_match=result['etag'])
-            ... except ConflictError:
-            ...     print("File was modified by another process!")
-
-            >>> # Create new file if doesn't exist
-            >>> nx.append("/workspace/new.txt", "First line\\n")
-        """
-        # Auto-convert str to bytes for convenience
-        if isinstance(content, str):
-            content = content.encode("utf-8")
-
-        path = self._validate_path(path)
-
-        # Try to read existing content if file exists
-        # For non-existent files, we'll create them (existing_content stays empty)
-        existing_content = b""
-        try:
-            result = self.sys_read(path, context=context, return_metadata=True)
-            # Type narrowing: when return_metadata=True, result is always dict
-            assert isinstance(result, dict), "Expected dict when return_metadata=True"
-
-            existing_content = result["content"]
-
-            # If if_match is provided, verify it matches current etag
-            # (the write call will also check, but we check here to fail fast)
-            if if_match is not None and not force:
-                current_etag = result.get("etag")
-                if current_etag != if_match:
-                    from nexus.contracts.exceptions import ConflictError
-
-                    raise ConflictError(
-                        path=path,
-                        expected_etag=if_match,
-                        current_etag=current_etag or "(no etag)",
-                    )
-        except Exception as e:
-            # If file doesn't exist, treat as empty (will create new file)
-            # Permission errors on non-existent files are OK - write() will check parent permissions
-            from nexus.contracts.exceptions import NexusFileNotFoundError
-
-            if not isinstance(e, NexusFileNotFoundError | PermissionError):
-                # Re-raise unexpected errors
-                raise
-            # For FileNotFoundError or PermissionError, continue with empty content
-            # write() will check if user has permission to create the file
-
-        # Combine existing content with new content
-        final_content = existing_content + content
-
-        # Use the existing write method to handle all the complexity:
-        # - Permission checking
-        # - Version management
-        # - Audit logging
-        # - Workflow triggers
-        # - Parent tuple creation
-        # Note: We pass if_match to write() for additional safety
-        return self.sys_write(
-            path,
-            final_content,
-            context=context,
-            if_match=if_match,
-            if_none_match=False,  # Allow both create and update
-            force=force,
-        )
-
-    @rpc_expose(description="Apply surgical search/replace edits to a file")
-    def edit(
-        self,
-        path: str,
-        edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
-        context: OperationContext | None = None,
-        if_match: str | None = None,
-        fuzzy_threshold: float = 0.85,
-        preview: bool = False,
-    ) -> dict[str, Any]:
-        """
-        Apply surgical search/replace edits to a file.
-
-        This enables precise file modifications without rewriting entire files,
-        reducing token cost and errors when used with LLMs.
-
-        Issue #800: Add edit engine with search/replace for surgical file edits.
-
-        Uses a layered matching strategy:
-        1. Exact match (fast path)
-        2. Whitespace-normalized match
-        3. Fuzzy match (Levenshtein similarity)
-
-        Args:
-            path: Virtual path to edit
-            edits: List of edit operations. Each edit can be:
-                - Tuple: (old_str, new_str) - simple search/replace
-                - Dict: {"old_str": str, "new_str": str, "hint_line": int | None,
-                         "allow_multiple": bool} - full control
-                - EditOperation: Direct EditOperation instance
-            context: Optional operation context for permission checks
-            if_match: Optional etag for optimistic concurrency control.
-                If provided, edit fails if file changed since read.
-            fuzzy_threshold: Similarity threshold (0.0-1.0) for fuzzy matching.
-                Default 0.85. Use 1.0 for exact matching only.
-            preview: If True, return preview without writing. Default False.
-
-        Returns:
-            Dict containing:
-                - success: bool - True if all edits applied
-                - diff: str - Unified diff of changes
-                - matches: list[dict] - Info about each match (type, line, similarity)
-                - applied_count: int - Number of edits applied
-                - etag: str - New etag (if not preview)
-                - version: int - New version (if not preview)
-                - errors: list[str] - Error messages if any edits failed
-
-        Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            AccessDeniedError: If access is denied
-            PermissionError: If path is read-only
-            ConflictError: If if_match doesn't match current etag
-
-        Examples:
-            >>> # Simple search/replace
-            >>> result = nx.edit("/code/main.py", [
-            ...     ("def foo():", "def bar():"),
-            ...     ("return x", "return x + 1"),
-            ... ])
-            >>> print(result['diff'])
-
-            >>> # With optimistic concurrency
-            >>> content = nx.sys_read("/code/main.py", return_metadata=True)
-            >>> result = nx.edit(
-            ...     "/code/main.py",
-            ...     [("old_text", "new_text")],
-            ...     if_match=content['etag']
-            ... )
-
-            >>> # Preview without writing
-            >>> result = nx.edit("/code/main.py", edits, preview=True)
-            >>> if result['success']:
-            ...     print(result['diff'])
-
-            >>> # With fuzzy matching
-            >>> result = nx.edit("/code/main.py", [
-            ...     {"old_str": "def foo():", "new_str": "def bar():", "hint_line": 42}
-            ... ], fuzzy_threshold=0.8)
-        """
-        from nexus.utils.edit_engine import EditEngine
-        from nexus.utils.edit_engine import EditOperation as EditOp
-
-        path = self._validate_path(path)
-
-        # Read current content with metadata
-        result = self.sys_read(path, context=context, return_metadata=True)
-        assert isinstance(result, dict), "Expected dict when return_metadata=True"
-
-        content_bytes: bytes = result["content"]
-        current_etag = result.get("etag")
-
-        # Check etag if provided (optimistic concurrency control)
-        if if_match is not None and current_etag != if_match:
-            raise ConflictError(
-                path=path,
-                expected_etag=if_match,
-                current_etag=current_etag or "(no etag)",
-            )
-
-        # Decode content to string for editing
-        try:
-            content = content_bytes.decode("utf-8")
-        except UnicodeDecodeError as e:
-            return {
-                "success": False,
-                "diff": "",
-                "matches": [],
-                "applied_count": 0,
-                "errors": [f"File is not valid UTF-8 text: {e}"],
-            }
-
-        # Convert edits to EditOperation instances
-        edit_operations: list[EditOp] = []
-        for edit in edits:
-            if isinstance(edit, EditOp):
-                edit_operations.append(edit)
-            elif isinstance(edit, tuple | list) and len(edit) >= 2:
-                # Handle both tuple and list (JSON deserializes tuples as lists)
-                edit_operations.append(EditOp(old_str=edit[0], new_str=edit[1]))
-            elif isinstance(edit, dict):
-                edit_operations.append(
-                    EditOp(
-                        old_str=edit["old_str"],
-                        new_str=edit["new_str"],
-                        hint_line=edit.get("hint_line"),
-                        allow_multiple=edit.get("allow_multiple", False),
-                    )
-                )
-            else:
-                return {
-                    "success": False,
-                    "diff": "",
-                    "matches": [],
-                    "applied_count": 0,
-                    "errors": [
-                        f"Invalid edit format: expected tuple (old, new), dict, or EditOperation, got {type(edit)}"
-                    ],
-                }
-
-        # Apply edits
-        engine = EditEngine(
-            fuzzy_threshold=fuzzy_threshold,
-            enable_fuzzy=fuzzy_threshold < 1.0,
-        )
-        edit_result = engine.apply_edits(content, edit_operations)
-
-        # Convert matches to serializable dicts
-        matches_list = [
-            {
-                "edit_index": m.edit_index,
-                "match_type": m.match_type,
-                "similarity": m.similarity,
-                "line_start": m.line_start,
-                "line_end": m.line_end,
-                "original_text": m.original_text[:200] if m.original_text else "",
-                "search_strategy": m.search_strategy,
-                "match_count": m.match_count,
-            }
-            for m in edit_result.matches
-        ]
-
-        # If edits failed, return error without writing
-        if not edit_result.success:
-            return {
-                "success": False,
-                "diff": edit_result.diff,
-                "matches": matches_list,
-                "applied_count": edit_result.applied_count,
-                "errors": edit_result.errors,
-            }
-
-        # If preview mode, return without writing
-        if preview:
-            return {
-                "success": True,
-                "diff": edit_result.diff,
-                "matches": matches_list,
-                "applied_count": edit_result.applied_count,
-                "preview": True,
-                "new_content": edit_result.content,
-            }
-
-        # Write the edited content
-        new_content_bytes = edit_result.content.encode("utf-8")
-        write_result = self.sys_write(
-            path,
-            new_content_bytes,
-            context=context,
-            if_match=current_etag,  # Use current etag for safety
-        )
-
-        return {
-            "success": True,
-            "diff": edit_result.diff,
-            "matches": matches_list,
-            "applied_count": edit_result.applied_count,
-            "etag": write_result.get("etag"),
-            "version": write_result.get("version"),
-            "size": write_result.get("size"),
-            "modified_at": write_result.get("modified_at"),
-        }
-
-    @rpc_expose(description="Write multiple files in a single transaction")
-    def write_batch(
-        self, files: list[tuple[str, bytes]], context: OperationContext | None = None
-    ) -> list[dict[str, Any]]:
-        """
-        Write multiple files in a single transaction for improved performance.
-
-        This is 13x faster than calling write() multiple times for small files
-        because it uses a single database transaction instead of N transactions.
-
-        All files are written atomically - either all succeed or all fail.
-
-        Args:
-            files: List of (path, content) tuples to write
-            context: Optional operation context for permission checks (uses default if not provided)
-
-        Returns:
-            List of metadata dicts for each file (in same order as input):
-                - etag: Content hash (SHA-256) of the written content
-                - version: New version number
-                - modified_at: Modification timestamp
-                - size: File size in bytes
-
-        Raises:
-            InvalidPathError: If any path is invalid
-            BackendError: If write operation fails
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
-            PermissionError: If any path is read-only or user doesn't have write permission
-
-        Examples:
-            >>> # Write 100 small files in a single batch (13x faster!)
-            >>> files = [(f"/logs/file_{i}.txt", b"log data") for i in range(100)]
-            >>> results = nx.write_batch(files)
-            >>> print(f"Wrote {len(results)} files")
-
-            >>> # Atomic batch write - all or nothing
-            >>> files = [
-            ...     ("/config/setting1.json", b'{"enabled": true}'),
-            ...     ("/config/setting2.json", b'{"timeout": 30}'),
-            ... ]
-            >>> nx.write_batch(files)
-        """
-        if not files:
-            return []
-
-        self._check_zone_writable(context)  # Issue #2061: write-gating
-
-        # Validate all paths first
-        validated_files: list[tuple[str, bytes]] = []
-        for path, content in files:
-            validated_path = self._validate_path(path)
-            validated_files.append((validated_path, content))
-
-        # Route all paths and check write access
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        routes = []
-        for path, _ in validated_files:
-            route = self.router.route(
-                path,
-                is_admin=is_admin,
-                check_write=True,
-            )
-            # Check if path is read-only
-            if route.readonly:
-                raise PermissionError(f"Path is read-only: {path}")
-            routes.append(route)
-
-        # Get existing metadata for all paths (single query)
-        paths = [path for path, _ in validated_files]
-        existing_metadata = self.metadata.get_batch(paths)
-
-        # PRE-INTERCEPT: pre-write hooks per file in batch
-        from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
-
-        for path in paths:
-            meta = existing_metadata.get(path)
-            self._dispatch.intercept_pre_write(
-                _WHC(
-                    path=path,
-                    content=b"",
-                    context=context,
-                    old_metadata=meta,
-                )
-            )
-
-        now = datetime.now(UTC)
-        metadata_list: list[FileMetadata] = []
-        results: list[dict[str, Any]] = []
-
-        # Write all content to backend CAS (deduplicated automatically)
-        for (path, content), route in zip(validated_files, routes, strict=False):
-            # Write to backend - returns content hash
-            content_hash = route.backend.write_content(content, context=context).content_hash
-
-            # Get existing metadata for this file
-            meta = existing_metadata.get(path)
-
-            # UNIX permissions removed - all access control via ReBAC
-
-            # Calculate new version number (increment if updating)
-            new_version = (meta.version + 1) if meta else 1
-
-            # Build metadata for batch insert
-            # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
-            metadata = FileMetadata(
-                path=path,
-                backend_name=route.backend.name,  # FIX: Use routed backend name, not default backend
-                physical_path=content_hash,  # CAS: hash is the "physical" location
-                size=len(content),
-                etag=content_hash,  # SHA-256 hash for integrity
-                created_at=meta.created_at if meta else now,
-                modified_at=now,
-                version=new_version,
-                created_by=getattr(self, "agent_id", None)
-                or getattr(self, "user_id", None),  # Track who created/modified this version
-                zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
-            )
-            metadata_list.append(metadata)
-
-            # Build result dict
-            results.append(
-                {
-                    "etag": content_hash,
-                    "version": new_version,
-                    "modified_at": now,
-                    "size": len(content),
-                }
-            )
-
-        # Store all metadata in a single transaction (with version history)
-        self.metadata.put_batch(metadata_list)
-
-        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
-        items = [
-            (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
-        ]
-        self._dispatch.intercept_post_write_batch(
-            items,
-            zone_id=zone_id,
-            agent_id=agent_id,
-        )
-
-        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        new_revision = self._increment_vfs_revision()
-        for metadata in metadata_list:
-            is_new = existing_metadata.get(metadata.path) is None
-            self._dispatch.notify(
-                FileEvent(
-                    type=FileEventType.FILE_WRITE,
-                    path=metadata.path,
-                    zone_id=zone_id or ROOT_ZONE_ID,
-                    revision=new_revision,
-                    agent_id=agent_id,
-                    etag=metadata.etag,
-                    size=metadata.size,
-                    version=metadata.version,
-                    is_new=is_new,
-                )
-            )
-
-        # Issue #548: Create parent tuples and grant direct_owner for new files
-        # This ensures agents can read files they create (via user inheritance)
-        # PERF OPTIMIZATION: Use batch operations instead of individual calls (20x faster)
-        ctx = context if context is not None else self._default_context
-        zone_id_for_perms = ctx.zone_id or "root"
-
-        # PERF: Batch hierarchy tuple creation (single transaction instead of N)
-        _hierarchy_start = time.perf_counter()
-        all_paths = [path for path, _ in validated_files]
-        if hasattr(self, "_hierarchy_manager") and hasattr(
-            self._hierarchy_manager, "ensure_parent_tuples_batch"
-        ):
-            try:
-                created_count = self._hierarchy_manager.ensure_parent_tuples_batch(
-                    all_paths, zone_id=zone_id_for_perms
-                )
-                logger.info(
-                    f"write_batch: Batch created {created_count} parent tuples for {len(all_paths)} files"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"write_batch: Batch parent tuples failed, falling back to individual: {e}"
-                )
-                # Fallback to individual calls if batch fails
-                for path in all_paths:
-                    try:
-                        self._hierarchy_manager.ensure_parent_tuples(
-                            path, zone_id=zone_id_for_perms
-                        )
-                    except Exception as e2:
-                        logger.warning(
-                            f"write_batch: Failed to create parent tuples for {path}: {e2}"
-                        )
-        elif hasattr(self, "_hierarchy_manager"):
-            # No batch method available, use individual calls
-            for path in all_paths:
-                try:
-                    self._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
-                except Exception as e:
-                    logger.warning(f"write_batch: Failed to create parent tuples for {path}: {e}")
-        _hierarchy_elapsed = (time.perf_counter() - _hierarchy_start) * 1000
-
-        # PERF: Batch direct_owner grants (single transaction instead of N)
-        _rebac_start = time.perf_counter()
-        if (
-            hasattr(self, "_rebac_manager")
-            and self._rebac_manager
-            and ctx.user_id
-            and not ctx.is_system
-        ):
-            # Collect all owner grants needed for new files
-            owner_grants = []
-            for (path, _), _meta in zip(validated_files, metadata_list, strict=False):
-                is_new_file = existing_metadata.get(path) is None
-                if is_new_file:
-                    owner_grants.append(
-                        {
-                            "subject": ("user", ctx.user_id),
-                            "relation": "direct_owner",
-                            "object": ("file", path),
-                            "zone_id": zone_id_for_perms,
-                        }
-                    )
-
-            if owner_grants and hasattr(self._rebac_manager, "rebac_write_batch"):
-                try:
-                    grant_count = self._rebac_manager.rebac_write_batch(owner_grants)
-                    logger.info(f"write_batch: Batch granted direct_owner to {grant_count} files")
-                except Exception as e:
-                    logger.warning(
-                        f"write_batch: Batch rebac_write failed, falling back to individual: {e}"
-                    )
-                    # Fallback to individual calls
-                    for grant in owner_grants:
-                        try:
-                            self._rebac_manager.rebac_write(
-                                subject=grant["subject"],
-                                relation=grant["relation"],
-                                object=grant["object"],
-                                zone_id=grant["zone_id"],
-                            )
-                        except Exception as e2:
-                            logger.warning(f"write_batch: Failed to grant direct_owner: {e2}")
-            elif owner_grants:
-                # No batch method available, use individual calls
-                for grant in owner_grants:
-                    try:
-                        self._rebac_manager.rebac_write(
-                            subject=grant["subject"],
-                            relation=grant["relation"],
-                            object=grant["object"],
-                            zone_id=grant["zone_id"],
-                        )
-                    except Exception as e:
-                        logger.warning(f"write_batch: Failed to grant direct_owner: {e}")
-        _rebac_elapsed = (time.perf_counter() - _rebac_start) * 1000
-
-        # Log detailed timing breakdown for performance analysis
-        logger.warning(
-            f"[WRITE-BATCH-PERF] files={len(validated_files)}, "
-            f"hierarchy={_hierarchy_elapsed:.1f}ms, rebac={_rebac_elapsed:.1f}ms, "
-            f"per_file_avg={(_hierarchy_elapsed + _rebac_elapsed) / len(validated_files):.1f}ms"
-        )
-
-        # Auto-parse files if enabled
-        if self.auto_parse:
-            for path, _ in validated_files:
-                self._auto_parse_file(path)
-
-        return results
-
-    def _auto_parse_file(self, path: str) -> None:
-        """Auto-parse a file in the background (fire-and-forget).
-
-        Args:
-            path: Virtual path to the file
-        """
-        try:
-            # Check if parser is available for this file type
-            self.parser_registry.get_parser(path)
-
-            # Run parsing in a background thread
-            # CRITICAL: Use daemon=False to prevent abrupt termination during DB writes
-            # Threads are tracked for graceful shutdown in close()
-            thread = threading.Thread(
-                target=self._parse_in_thread,
-                args=(path,),
-                daemon=False,  # Changed from True to prevent DB corruption on shutdown
-                name=f"parser-{path}",  # Named for debugging
-            )
-            # Track thread for graceful shutdown
-            with self._parser_threads_lock:
-                # Clean up finished threads before adding new one
-                self._parser_threads = [t for t in self._parser_threads if t.is_alive()]
-                self._parser_threads.append(thread)
-            thread.start()
-        except Exception as e:
-            # Log if no parser available (expected) but don't fail the write operation
-            logger.debug(f"Auto-parse skipped for {path}: {type(e).__name__}: {e}")
-
-    def _parse_in_thread(self, path: str) -> None:
-        """Parse file in a background thread.
-
-        Args:
-            path: Virtual path to the file
-        """
-        try:
-            # Run async parse via sync bridge (thread-safe)
-            from nexus.lib.sync_bridge import run_sync
-
-            run_sync(self.parse(path, store_result=True))
-        except Exception as e:
-            # Log parsing errors for visibility but don't crash
-            # IMPORTANT: Log with enough detail to debug issues
-            import traceback
-
-            error_type = type(e).__name__
-            error_msg = str(e)
-
-            # Categorize errors for better logging
-            if "disk" in error_msg.lower() or "space" in error_msg.lower():
-                logger.error(
-                    f"Auto-parse FAILED for {path}: Disk error - {error_type}: {error_msg}"
-                )
-            elif "database" in error_msg.lower() or "connection" in error_msg.lower():
-                logger.error(
-                    f"Auto-parse FAILED for {path}: Database error - {error_type}: {error_msg}"
-                )
-            elif "memory" in error_msg.lower() or isinstance(e, MemoryError):
-                logger.error(
-                    f"Auto-parse FAILED for {path}: Memory error - {error_type}: {error_msg}"
-                )
-            elif "permission" in error_msg.lower() or isinstance(e, PermissionError | OSError):
-                logger.warning(
-                    f"Auto-parse FAILED for {path}: Permission/OS error - {error_type}: {error_msg}"
-                )
-            elif (
-                "unsupported" in error_msg.lower()
-                or "not supported" in error_msg.lower()
-                or error_type == "UnsupportedFormatException"
-            ):
-                # Expected for files that don't need parsing - log at debug level
-                logger.debug(f"Auto-parse skipped for {path}: Unsupported format - {error_msg}")
-            else:
-                # Unknown error - log with stack trace for debugging
-                logger.warning(
-                    f"Auto-parse FAILED for {path}: {error_type}: {error_msg}\n"
-                    f"Stack trace:\n{traceback.format_exc()}"
-                )
-
-    @rpc_expose(description="Delete file")
-    def sys_unlink(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
-        """
-        Delete a file or memory.
-
-        Removes file from backend and metadata store.
-        Decrements reference count in CAS (only deletes when ref_count=0).
-
-        Supports memory virtual paths.
-
-        Args:
-            path: Virtual path to delete (supports memory paths)
-            context: Optional operation context for permission checks (uses default if not provided)
-
-        Returns:
-            Empty dict on success.
-
-        Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            BackendError: If delete operation fails
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
-            PermissionError: If path is read-only or user doesn't have write permission
-        """
-        path = self._validate_path(path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
-
-        # PRE-DISPATCH: virtual path resolvers (Issue #889)
-        _handled, _result = self._dispatch.resolve_delete(path, context=context)
-        if _handled:
-            return _result
-
-        # Route to backend with write access check FIRST (to check zone/agent isolation)
-        # This must happen before permission check so AccessDeniedError is raised before PermissionError
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=True,
-        )
-
-        # Check if path is read-only
-        if route.readonly:
-            raise PermissionError(f"Cannot delete from read-only path: {path}")
-
-        # Check if file exists in metadata
-        meta = self.metadata.get(path)
-
-        # Issue #1264: If file exists only in base layer, create whiteout instead of deleting
-        if meta is None and getattr(self, "_overlay_resolver", None):
-            overlay_config = self._get_overlay_config(path)
-            if overlay_config:
-                base_meta = self._overlay_resolver.resolve_read(path, overlay_config)
-                if base_meta is not None and not self._overlay_resolver.is_whiteout(base_meta):
-                    self._overlay_resolver.create_whiteout(path, overlay_config)
-                    return {"deleted": path, "overlay_whiteout": True}
-
-        if meta is None:
-            raise NexusFileNotFoundError(path)
-
-        # Capture snapshot before operation for undo capability
-        snapshot_hash = meta.etag
-        metadata_snapshot = {
-            "size": meta.size,
-            "version": meta.version,
-            "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-            "backend_name": meta.backend_name,
-            "physical_path": meta.physical_path,
-        }
-
-        # PRE-INTERCEPT: pre-delete hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import DeleteHookContext as _DHC
-
-        self._dispatch.intercept_pre_delete(_DHC(path=path, context=context))
-
-        # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
-        # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
-        if self._snapshot_service is not None:
-            _txn_id = self._snapshot_service.is_tracked(path)
-            if _txn_id is not None:
-                self._snapshot_service.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
-
-        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
-        # Placed BEFORE physical content delete to preserve audit integrity.
-        from nexus.contracts.vfs_hooks import DeleteHookContext
-
-        _delete_ctx = DeleteHookContext(
-            path=path,
-            context=context,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            metadata=meta,
-        )
-        self._dispatch.intercept_post_delete(_delete_ctx)
-
-        # Delete from routed backend CAS (decrements ref count)
-        # Content is only physically deleted when ref_count reaches 0
-        # If other files reference the same content, it remains in CAS
-        # Skip content deletion for directories - they have no actual CAS content
-        # (directories are stored with empty hash but no actual CAS entry)
-        if meta.etag and meta.mime_type != "inode/directory":
-            route.backend.delete_content(meta.etag, context=context)
-
-        # Remove from metadata
-        self.metadata.delete(path)
-
-        # Issue #1169: Advance VFS revision counter after delete
-        new_revision = self._increment_vfs_revision()
-
-        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        self._dispatch.notify(
-            FileEvent(
-                type=FileEventType.FILE_DELETE,
-                path=path,
-                zone_id=zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
-                agent_id=agent_id,
-                etag=meta.etag,
-                size=meta.size,
-            )
-        )
-
-        return {}
-
-    @rpc_expose(description="Rename/move file")
-    def sys_rename(
-        self, old_path: str, new_path: str, context: OperationContext | None = None
-    ) -> dict[str, Any]:
-        """
-        Rename/move a file by updating its path in metadata.
-
-        This is a metadata-only operation that does NOT copy file content.
-        The file's content remains in the same location in CAS storage,
-        only the virtual path is updated in the metadata database.
-
-        This makes rename/move operations instant, regardless of file size.
-
-        Args:
-            old_path: Current virtual path
-            new_path: New virtual path
-            context: Optional operation context for permission checks (uses default if not provided)
-
-        Returns:
-            Empty dict on success.
-
-        Raises:
-            NexusFileNotFoundError: If source file doesn't exist
-            FileExistsError: If destination path already exists
-            InvalidPathError: If either path is invalid
-            PermissionError: If either path is read-only
-            AccessDeniedError: If access is denied (zone isolation)
-
-        Example:
-            >>> nx.sys_rename('/workspace/old.txt', '/workspace/new.txt')
-            >>> nx.sys_rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
-        """
-        old_path = self._validate_path(old_path)
-        new_path = self._validate_path(new_path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
-
-        # Route both paths
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        old_route = self.router.route(
-            old_path,
-            is_admin=is_admin,
-            check_write=True,  # Need write access to source
-        )
-        new_route = self.router.route(
-            new_path,
-            is_admin=is_admin,
-            check_write=True,  # Need write access to destination
-        )
-
-        # Check if paths are read-only
-        if old_route.readonly:
-            raise PermissionError(f"Cannot rename from read-only path: {old_path}")
-        if new_route.readonly:
-            raise PermissionError(f"Cannot rename to read-only path: {new_path}")
-
-        # Check if source exists (explicit metadata or implicit directory)
-        is_implicit_dir = not self.metadata.exists(
-            old_path
-        ) and self.metadata.is_implicit_directory(old_path)
-        if not self.metadata.exists(old_path) and not is_implicit_dir:
-            raise NexusFileNotFoundError(old_path)
-
-        meta = self.metadata.get(old_path)
-
-        # Check if destination already exists
-        # For connector backends, also verify the file exists in backend storage
-        # (metadata might be stale if previous operations failed)
-        if self.metadata.exists(new_path):
-            if new_route.backend.supports_rename is True:
-                # Connector backend - verify file actually exists in storage
-                # If metadata says it exists but storage doesn't, clean up stale metadata
-                try:
-                    # Check if this is a GCS connector backend (has bucket attribute)
-                    # NOTE: bucket/blob access is GCS-specific, kept as hasattr for now
-                    if (
-                        hasattr(new_route.backend, "bucket")
-                        and hasattr(new_route.backend, "_get_blob_path")
-                        and new_route.backend.name == "gcs_connector"
-                    ):
-                        # GCS-specific attributes (dynamically checked with hasattr above)
-                        dest_blob = new_route.backend.bucket.blob(
-                            new_route.backend._get_blob_path(new_route.backend_path)
-                        )
-                        if not dest_blob.exists():
-                            # Stale metadata - clean it up
-                            import logging
-
-                            log = logging.getLogger(__name__)
-                            log.warning(
-                                f"Cleaning up stale metadata for {new_path} (file not in backend storage)"
-                            )
-                            self.metadata.delete(new_path)
-                        else:
-                            # File really exists
-                            raise FileExistsError(f"Destination path already exists: {new_path}")
-                    else:
-                        # Not a GCS connector backend, just check metadata
-                        raise FileExistsError(f"Destination path already exists: {new_path}")
-                except AttributeError:
-                    # Not a GCS connector backend, just check metadata
-                    raise FileExistsError(f"Destination path already exists: {new_path}") from None
-            else:
-                # CAS backend - metadata is source of truth
-                raise FileExistsError(f"Destination path already exists: {new_path}")
-
-        # Check if this is a directory BEFORE renaming (important!)
-        # After rename, the old path won't have children anymore
-        # is_implicit_dir was already computed above - also check for explicit directory
-        is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
-
-        # For path-based connector backends, we need to move the actual file
-        # in the backend storage (not just metadata)
-        if old_route.backend.supports_rename is True:
-            # Connector backend - move the file in backend storage
-            try:
-                old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)
-            except FileExistsError:
-                # Backend says destination exists, but metadata check passed
-                # This means metadata is stale - re-raise the error
-                raise
-            except Exception as e:
-                # Failed to rename in backend - don't update metadata
-                raise BackendError(
-                    f"Failed to rename file in backend: {e}",
-                    backend=old_route.backend.name,
-                ) from e
-
-        # Perform metadata rename
-        # For CAS backends: metadata-only (content stays at same hash location)
-        # For connector backends: metadata follows the file we just moved
-        self.metadata.rename_path(old_path, new_path)
-
-        new_revision = self._increment_vfs_revision()
-
-        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        self._dispatch.notify(
-            FileEvent(
-                type=FileEventType.FILE_RENAME,
-                path=old_path,
-                zone_id=zone_id or ROOT_ZONE_ID,
-                revision=new_revision,
-                agent_id=agent_id,
-                new_path=new_path,
-            )
-        )
-
-        # Update ReBAC permissions to follow the renamed file/directory
-        # This ensures permissions are preserved when files are moved
-        logger.warning(f"[RENAME-REBAC] Starting ReBAC update: {old_path} -> {new_path}")
-        logger.warning(
-            f"[RENAME-REBAC] has _rebac_manager: {hasattr(self, '_rebac_manager')}, is truthy: {bool(getattr(self, '_rebac_manager', None))}"
-        )
-
-        if hasattr(self, "_rebac_manager") and self._rebac_manager:
-            try:
-                logger.warning(
-                    f"[RENAME-REBAC] Calling update_object_path: old={old_path}, new={new_path}, is_dir={is_directory}"
-                )
-
-                # Update all ReBAC tuples that reference this path
-                updated_count = self._rebac_manager.update_object_path(
-                    old_path=old_path,
-                    new_path=new_path,
-                    object_type="file",
-                    is_directory=is_directory,
-                )
-
-                # Log if any permissions were updated
-                logger.warning(
-                    f"[RENAME-REBAC] update_object_path returned: {updated_count} tuples updated"
-                )
-            except Exception as e:
-                # Don't fail the rename operation if ReBAC update fails
-                # The file is already renamed in metadata, we just couldn't update permissions
-                logger.error(
-                    f"[RENAME-REBAC] FAILED to update ReBAC permissions: {e}", exc_info=True
-                )
-        else:
-            logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
-
-        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
-        from nexus.contracts.vfs_hooks import RenameHookContext
-
-        _rename_ctx = RenameHookContext(
-            old_path=old_path,
-            new_path=new_path,
-            context=context,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            is_directory=bool(is_directory),
-            metadata=meta,
-        )
-        self._dispatch.intercept_post_rename(_rename_ctx)
-
-        return {}
-
-    @rpc_expose(description="Get file metadata without reading content")
-    def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
-        """
-        Get file metadata without reading the file content.
-
-        This is useful for getting file size before streaming, or checking
-        file properties without the overhead of reading large files.
-
-        Args:
-            path: Virtual path to stat
-            context: Optional operation context for permission checks
-
-        Returns:
-            Dict with file metadata:
-                - size: File size in bytes
-                - etag: Content hash
-                - version: Version number
-                - modified_at: Last modification timestamp
-                - is_directory: Whether path is a directory
-
-        Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            AccessDeniedError: If access is denied
-            PermissionError: If user doesn't have read permission
-
-        Example:
-            >>> info = nx.stat("/workspace/large_file.bin")
-            >>> print(f"File size: {info['size']} bytes")
-        """
-        path = self._validate_path(path)
-
-        # Check if it's an implicit directory first (for permission check optimization)
-        is_implicit_dir = self.metadata.is_implicit_directory(path)
-
-        # Check permission: TRAVERSE for implicit directories, READ for files
-        # This enables `stat /skills` to work for authenticated users (TRAVERSE is auto-allowed)
-        ctx = context if context is not None else self._default_context
-        if is_implicit_dir:
-            # Only check permissions if enforcement is enabled
-            if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                # Try TRAVERSE permission first (O(1))
-                # Fall back to descendant access check if TRAVERSE denied (Unix-like behavior)
-                has_permission = self._permission_enforcer.check(path, Permission.TRAVERSE, ctx)
-                if not has_permission:
-                    has_permission = self._descendant_checker.has_access(path, Permission.READ, ctx)  # type: ignore[attr-defined]  # allowed
-                if not has_permission:
-                    raise PermissionError(
-                        f"Access denied: User '{ctx.user_id}' does not have TRAVERSE "
-                        f"permission for '{path}'"
-                    )
-        else:
-            from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-            self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
-
-        # Return directory info for implicit directories
-        if is_implicit_dir:
-            # Issue #1166: Record metadata read for dependency tracking
-            self._record_read_if_tracking(context, "directory", path, "metadata")
-            return {
-                "size": 0,
-                "etag": None,
-                "version": None,
-                "modified_at": None,
-                "is_directory": True,
-            }
-
-        # Get file metadata
-        meta = self.metadata.get(path)
-        if meta is None:
-            raise NexusFileNotFoundError(path)
-
-        # Get size from backend if not in metadata
-        size = meta.size
-        if size is None and meta.etag:
-            # Try to get size from backend
-            zone_id, agent_id, is_admin = self._get_routing_params(context)
-            route = self.router.route(
-                path,
-                is_admin=is_admin,
-                check_write=False,
-            )
-            try:
-                # Add backend_path to context for path-based connectors
-                size_context = context
-                if context:
-                    from dataclasses import replace
-
-                    size_context = replace(context, backend_path=route.backend_path)
-                size = route.backend.get_content_size(meta.etag, context=size_context)
-            except Exception as exc:
-                logger.debug("Failed to get content size for %s: %s", path, exc)
-                size = None
-
-        # Convert datetime to ISO string for wire compatibility with Rust FUSE client
-        # The client expects a plain string, not the wrapped {"__type__": "datetime", ...} format
-        modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
-
-        # Issue #1166: Record metadata read for dependency tracking
-        self._record_read_if_tracking(context, "file", path, "metadata")
-
-        return {
-            "size": size,
-            "etag": meta.etag,
-            "version": meta.version,
-            "modified_at": modified_at_str,
-            "is_directory": False,
-        }
-
-    @rpc_expose(description="Get metadata for multiple files in bulk")
-    def stat_bulk(
-        self,
-        paths: list[str],
-        context: OperationContext | None = None,
-        skip_errors: bool = True,
-    ) -> dict[str, dict[str, Any] | None]:
-        """
-        Get metadata for multiple files in a single RPC call.
-
-        This is optimized for bulk operations where many file stats are needed.
-        It batches permission checks and metadata lookups for better performance.
-
-        Args:
-            paths: List of virtual paths to stat
-            context: Optional operation context for permission checks
-            skip_errors: If True, skip files that can't be stat'd and return None.
-                        If False, raise exception on first error.
-
-        Returns:
-            Dict mapping path -> stat dict (or None if skip_errors=True and stat failed)
-            Each stat dict contains: size, etag, version, modified_at, is_directory
-
-        Performance:
-            - Single RPC call instead of N calls
-            - Batch permission checks (one DB query instead of N)
-            - Batch metadata lookups
-            - Expected speedup: 10-50x for 100+ files
-        """
-        import time
-
-        bulk_start = time.time()
-        results: dict[str, dict[str, Any] | None] = {}
-
-        # Validate all paths
-        validated_paths = []
-        for path in paths:
-            try:
-                validated_path = self._validate_path(path)
-                validated_paths.append(validated_path)
-            except Exception as exc:
-                logger.debug("Path validation failed in metadata_bulk for %s: %s", path, exc)
-                if skip_errors:
-                    results[path] = None
-                    continue
-                raise
-
-        if not validated_paths:
-            return results
-
-        # Batch permission check using filter_list
-        perm_start = time.time()
-        allowed_set: set[str]
-        if not self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-            allowed_set = set(validated_paths)
-        else:
-            try:
-                from nexus.contracts.types import OperationContext
-
-                ctx = context if context is not None else self._default_context
-                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-                allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
-                allowed_set = set(allowed_paths)
-            except Exception as e:
-                logger.error(f"[STAT-BULK] Permission check failed: {e}")
-                if not skip_errors:
-                    raise
-                allowed_set = set()
-
-        perm_elapsed = time.time() - perm_start
-        logger.info(
-            f"[STAT-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
-        )
-
-        # Mark denied files
-        for path in validated_paths:
-            if path not in allowed_set:
-                results[path] = None
-
-        # Batch metadata lookup - single SQL query for all paths
-        meta_start = time.time()
-
-        # Batch fetch metadata for all files in single query
-        # Note: We assume paths are files (not implicit directories) since stat_bulk
-        # is typically called on paths returned by list(). If a path isn't found,
-        # we check if it's an implicit directory as a fallback.
-        try:
-            batch_meta = self.metadata.get_batch(list(allowed_set))
-            for path, meta in batch_meta.items():
-                if meta is None:
-                    # Path not found in metadata - check if it's an implicit directory
-                    if self.metadata.is_implicit_directory(path):
-                        results[path] = {
-                            "size": 0,
-                            "etag": None,
-                            "version": None,
-                            "modified_at": None,
-                            "is_directory": True,
-                        }
-                    elif skip_errors:
-                        results[path] = None
-                    else:
-                        raise NexusFileNotFoundError(path)
-                else:
-                    modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
-                    results[path] = {
-                        "size": meta.size,
-                        "etag": meta.etag,
-                        "version": meta.version,
-                        "modified_at": modified_at_str,
-                        "is_directory": False,
-                    }
-        except NexusFileNotFoundError:
-            raise
-        except Exception as e:
-            logger.warning(f"[STAT-BULK] Batch metadata failed: {type(e).__name__}: {e}")
-            if not skip_errors:
-                raise
-
-        meta_elapsed = time.time() - meta_start
-        bulk_elapsed = time.time() - bulk_start
-
-        logger.info(
-            f"[STAT-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
-            f"(perm={perm_elapsed * 1000:.0f}ms, meta={meta_elapsed * 1000:.0f}ms)"
-        )
-
-        return results
-
-    @rpc_expose(description="Check if file exists")
-    def sys_access(self, path: str, context: OperationContext | None = None) -> bool:
-        """
-        Check if a file or directory exists.
-
-        Args:
-            path: Virtual path to check
-            context: Operation context for permission checks (uses default if None)
-
-        Returns:
-            True if file or implicit directory exists AND user has read permission on it
-            OR any descendant (enables hierarchical navigation), False otherwise
-
-        Note:
-            With permissions enabled, directories are visible if user has access to ANY
-            descendant, even if they don't have direct access to the directory itself.
-            This enables hierarchical navigation (e.g., /workspace visible if user has
-            access to /workspace/joe/file.txt).
-
-        Performance:
-            For implicit directories (directories without explicit files, like /zones),
-            uses TRAVERSE permission check (O(1)) instead of descendant access check (O(n)).
-            This is a major optimization for FUSE path resolution operations.
-        """
-        try:
-            path = self._validate_path(path)
-
-            # Check if it's an implicit directory first (before permission check for optimization)
-            is_implicit_dir = self.metadata.is_implicit_directory(path)
-
-            # Check permission if enforcement enabled
-            if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                ctx = context if context is not None else self._default_context
-
-                # OPTIMIZATION: For implicit directories, use TRAVERSE permission (O(1))
-                # instead of expensive descendant access check (O(n))
-                # TRAVERSE is granted on root-level implicit directories like /zones, /sessions, /skills
-                if is_implicit_dir:
-                    # Try TRAVERSE permission first (O(1) check)
-                    if self._permission_enforcer.check(path, Permission.TRAVERSE, ctx):
-                        return True
-                    # Fall back to descendant access check for non-root implicit dirs
-                    # (e.g., /zones/zone_1 where user may have access to children)
-                    if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]  # allowed
-                        return False
-                else:
-                    # Issue #1147: OPTIMIZATION for real files - use direct permission check (O(1))
-                    # instead of _has_descendant_access (O(n) fallback).
-                    # Real files have no descendants, so descendant check is unnecessary.
-                    # This reduces exists() latency from 300-500ms to 10-20ms.
-                    if not self._permission_enforcer.check(path, Permission.READ, ctx):
-                        # No direct READ permission = treat as non-existent for security
-                        return False
-
-            # Check if file exists explicitly
-            if self.metadata.exists(path):
-                return True
-            # Return implicit directory status (already computed above)
-            return is_implicit_dir
-        except Exception:  # InvalidPathError
-            return False
-
-    @rpc_expose(description="Check existence of multiple paths in single call")
-    def exists_batch(
-        self, paths: list[str], context: OperationContext | None = None
-    ) -> dict[str, bool]:
-        """
-        Check existence of multiple paths in a single call (Issue #859).
-
-        This reduces network round trips when checking many paths at once.
-        Processing 10 paths requires 1 round trip instead of 10.
-
-        Args:
-            paths: List of virtual paths to check
-            context: Operation context for permission checks (uses default if None)
-
-        Returns:
-            Dictionary mapping each path to its existence status (True/False)
-
-        Performance:
-            - Single RPC call instead of N calls
-            - 10x fewer round trips for multi-path operations
-            - Each path is checked independently (errors don't affect others)
-
-        Examples:
-            >>> results = nx.exists_batch(["/file1.txt", "/file2.txt", "/missing.txt"])
-            >>> print(results)
-            {"/file1.txt": True, "/file2.txt": True, "/missing.txt": False}
-        """
-        results: dict[str, bool] = {}
-        for path in paths:
-            try:
-                results[path] = self.sys_access(path, context=context)
-            except Exception as exc:
-                # Any error means file doesn't exist or isn't accessible
-                logger.debug("Exists check failed for %s: %s", path, exc)
-                results[path] = False
-        return results
-
-    @rpc_expose(description="Get metadata for multiple paths in single call")
-    def metadata_batch(
-        self, paths: list[str], context: OperationContext | None = None
-    ) -> dict[str, dict[str, Any] | None]:
-        """
-        Get metadata for multiple paths in a single call (Issue #859).
-
-        This reduces network round trips when fetching metadata for many files.
-        Processing 10 paths requires 1 round trip instead of 10.
-
-        Args:
-            paths: List of virtual paths to get metadata for
-            context: Operation context for permission checks (uses default if None)
-
-        Returns:
-            Dictionary mapping each path to its metadata dict or None if not found.
-            Metadata includes: path, size, etag, mime_type, created_at, modified_at,
-            version, zone_id, is_directory.
-
-        Performance:
-            - Single RPC call instead of N calls
-            - 10x fewer round trips for multi-path operations
-            - Leverages batch metadata fetch from database
-
-        Examples:
-            >>> results = nx.metadata_batch(["/file1.txt", "/missing.txt"])
-            >>> print(results["/file1.txt"]["size"])
-            1024
-            >>> print(results["/missing.txt"])
-            None
-        """
-        results: dict[str, dict[str, Any] | None] = {}
-
-        # Validate paths and collect valid ones
-        valid_paths: list[str] = []
-        for path in paths:
-            try:
-                validated = self._validate_path(path)
-                valid_paths.append(validated)
-            except Exception as exc:
-                logger.debug("Path validation failed in metadata_batch for %s: %s", path, exc)
-                results[path] = None
-
-        # Batch fetch metadata from database
-        if valid_paths and hasattr(self.metadata, "get_batch"):
-            batch_metadata = self.metadata.get_batch(valid_paths)
-        else:
-            # Fallback to individual fetches if get_batch not available
-            batch_metadata = {p: self.metadata.get(p) for p in valid_paths}
-
-        # Process results with permission checks
-        for path in valid_paths:
-            try:
-                meta = batch_metadata.get(path)
-
-                if meta is None:
-                    results[path] = None
-                    continue
-
-                # Check permission if enforcement enabled
-                if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                    ctx = context if context is not None else self._default_context
-                    if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]  # allowed
-                        results[path] = None
-                        continue
-
-                # Check if it's a directory
-                is_dir = self.sys_is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
-
-                results[path] = {
-                    "path": meta.path,
-                    "backend_name": meta.backend_name,
-                    "physical_path": meta.physical_path,
-                    "size": meta.size,
-                    "etag": meta.etag,
-                    "mime_type": meta.mime_type,
-                    "created_at": meta.created_at,
-                    "modified_at": meta.modified_at,
-                    "version": meta.version,
-                    "zone_id": meta.zone_id,
-                    "is_directory": is_dir,
-                }
-            except Exception as exc:
-                logger.debug("Failed to build metadata result for %s: %s", path, exc)
-                results[path] = None
-
-        return results
-
-    @rpc_expose(description="Shutdown background parser threads")
-    def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:
-        """Gracefully shutdown background parser threads.
-
-        CRITICAL: Must be called before closing NexusFS to prevent database corruption!
-        Non-daemon parser threads can have in-progress database writes that must complete.
-
-        This method waits for all parser threads to finish or times out after the specified
-        duration. This prevents abrupt termination that could corrupt the database.
-
-        Args:
-            timeout: Maximum seconds to wait for each thread to finish (default: 10s)
-
-        Returns:
-            Dict with shutdown statistics:
-                - total_threads: Number of parser threads that were running
-                - completed: Number of threads that finished gracefully
-                - timed_out: Number of threads that exceeded timeout
-                - timeout_threads: List of thread names that timed out
-
-        Example:
-            >>> nx = NexusFS(...)
-            >>> # ... use filesystem ...
-            >>> stats = nx.shutdown_parser_threads(timeout=5.0)
-            >>> if stats['timed_out'] > 0:
-            ...     logger.warning(f"{stats['timed_out']} parser threads timed out")
-            >>> nx.close()
-        """
-        with self._parser_threads_lock:
-            threads_to_wait = [t for t in self._parser_threads if t.is_alive()]
-            total = len(threads_to_wait)
-
-        if total == 0:
-            return {"total_threads": 0, "completed": 0, "timed_out": 0, "timeout_threads": []}
-
-        logger.info(f"Waiting for {total} parser threads to complete (timeout: {timeout}s)...")
-
-        completed = 0
-        timed_out = 0
-        timeout_threads = []
-
-        for thread in threads_to_wait:
-            logger.debug(f"Waiting for parser thread: {thread.name}")
-            thread.join(timeout=timeout)
-
-            if thread.is_alive():
-                # Thread exceeded timeout
-                timed_out += 1
-                timeout_threads.append(thread.name)
-                logger.warning(
-                    f"Parser thread '{thread.name}' did not complete within {timeout}s. "
-                    f"Thread may still be writing to database - potential data loss risk!"
-                )
-            else:
-                # Thread completed successfully
-                completed += 1
-                logger.debug(f"Parser thread '{thread.name}' completed")
-
-        # Clear the thread list
-        with self._parser_threads_lock:
-            self._parser_threads.clear()
-
-        logger.info(
-            f"Parser thread shutdown complete: {completed} completed, {timed_out} timed out"
-        )
-
-        return {
-            "total_threads": total,
-            "completed": completed,
-            "timed_out": timed_out,
-            "timeout_threads": timeout_threads,
-        }
-
-    @rpc_expose(description="Delete multiple files/directories")
-    def delete_bulk(
-        self,
-        paths: list[str],
-        recursive: bool = False,
-        context: OperationContext | None = None,
-    ) -> dict[str, dict]:
-        """
-        Delete multiple files or directories in a single operation.
-
-        Each path is processed independently - failures on one path don't affect others.
-        Directories require recursive=True to delete non-empty directories.
-
-        Args:
-            paths: List of virtual paths to delete
-            recursive: If True, delete non-empty directories (like rm -rf)
-            context: Optional operation context for permission checks
-
-        Returns:
-            Dictionary mapping each path to its result:
-                {"success": True} or {"success": False, "error": "error message"}
-
-        Example:
-            >>> results = nx.delete_bulk(['/a.txt', '/b.txt', '/folder'])
-            >>> for path, result in results.items():
-            ...     if result['success']:
-            ...         print(f"Deleted {path}")
-            ...     else:
-            ...         print(f"Failed {path}: {result['error']}")
-        """
-        self._check_zone_writable(context)  # Issue #2061: write-gating
-        results = {}
-        for path in paths:
-            try:
-                path = self._validate_path(path)
-                meta = self.metadata.get(path)
-
-                # Check for implicit directory (exists because it has files beneath it)
-                is_implicit_dir = meta is None and self.metadata.is_implicit_directory(path)
-
-                if meta is None and not is_implicit_dir:
-                    results[path] = {"success": False, "error": "File not found"}
-                    continue
-
-                # Check if this is a directory (explicit or implicit)
-                is_dir = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
-
-                if is_dir:
-                    # Use rmdir for directories
-                    self._rmdir_internal(
-                        path, recursive=recursive, context=context, is_implicit=is_implicit_dir
-                    )
-                else:
-                    # Use delete for files
-                    self.sys_unlink(path, context=context)
-
-                results[path] = {"success": True}
-            except Exception as e:
-                results[path] = {"success": False, "error": str(e)}
-
-        return results
-
-    def _rmdir_internal(
-        self,
-        path: str,
-        recursive: bool = False,
-        context: OperationContext | None = None,
-        is_implicit: bool | None = None,
-    ) -> None:
-        """Internal rmdir implementation without RPC decoration.
-
-        Args:
-            path: Directory path to remove
-            recursive: If True, delete non-empty directories
-            context: Operation context for permission checks
-            is_implicit: If True, directory is implicit (no metadata, exists due to child files).
-                        If None, will be auto-detected.
-        """
-        import errno
-
-        path = self._validate_path(path)
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=True,
-        )
-
-        if route.readonly:
-            raise PermissionError(f"Cannot remove read-only directory: {path}")
-
-        # PRE-INTERCEPT: pre-write hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
-
-        self._dispatch.intercept_pre_write(_WHC(path=path, content=b"", context=context))
-
-        # Check if path exists (explicit or implicit)
-        meta = self.metadata.get(path)
-        if is_implicit is None:
-            is_implicit = meta is None and self.metadata.is_implicit_directory(path)
-
-        if meta is None and not is_implicit:
-            raise NexusFileNotFoundError(path)
-
-        # Check if it's a directory (skip for implicit dirs - they're always directories)
-        if meta is not None and meta.mime_type != "inode/directory":
-            raise OSError(errno.ENOTDIR, "Not a directory", path)
-
-        # Get files in directory
-        dir_path = path if path.endswith("/") else path + "/"
-        files_in_dir = self.metadata.list(dir_path)
-
-        if files_in_dir and not recursive:
-            raise OSError(errno.ENOTEMPTY, "Directory not empty", path)
-
-        if recursive and files_in_dir:
-            # Delete content from backend for each file
-            _errors: list[str] = []
-            for file_meta in files_in_dir:
-                if file_meta.etag and file_meta.mime_type != "inode/directory":
-                    try:
-                        route.backend.delete_content(file_meta.etag)
-                    except Exception as e:
-                        if len(_errors) < 100:
-                            _errors.append(f"{file_meta.path}: {e}")
-            if _errors:
-                logger.debug(
-                    "Bulk content delete: %d error(s) (showing up to 100): %s",
-                    len(_errors),
-                    "; ".join(_errors),
-                )
-
-            # Batch delete from metadata store
-            file_paths = [file_meta.path for file_meta in files_in_dir]
-            self.metadata.delete_batch(file_paths)
-
-        # Remove directory in backend
-        with contextlib.suppress(NexusFileNotFoundError):
-            route.backend.rmdir(route.backend_path, recursive=recursive)
-
-        # Delete the directory metadata (only if explicit directory)
-        if not is_implicit:
-            self.metadata.delete(path)
-
-    @rpc_expose(description="Rename/move multiple files")
-    def rename_bulk(
-        self,
-        renames: list[tuple[str, str]],
-        context: OperationContext | None = None,
-    ) -> dict[str, dict]:
-        """
-        Rename/move multiple files in a single operation.
-
-        Each rename is processed independently - failures on one don't affect others.
-        This is a metadata-only operation (instant, regardless of file size).
-
-        Args:
-            renames: List of (old_path, new_path) tuples
-            context: Optional operation context for permission checks
-
-        Returns:
-            Dictionary mapping each old_path to its result:
-                {"success": True, "new_path": "..."} or {"success": False, "error": "..."}
-
-        Example:
-            >>> results = nx.rename_bulk([
-            ...     ('/old1.txt', '/new1.txt'),
-            ...     ('/old2.txt', '/new2.txt'),
-            ... ])
-            >>> for old_path, result in results.items():
-            ...     if result['success']:
-            ...         print(f"Renamed {old_path} -> {result['new_path']}")
-        """
-        results = {}
-        for old_path, new_path in renames:
-            try:
-                self.sys_rename(old_path, new_path, context=context)
-                results[old_path] = {"success": True, "new_path": new_path}
-            except Exception as e:
-                results[old_path] = {"success": False, "error": str(e)}
-
-        return results
-
-    # ------------------------------------------------------------------
-    # Internal helpers restored for backward compatibility (Issue #2033)
-    # ------------------------------------------------------------------
-
-    @property
-    def _require_rebac(self) -> Any:
-        """Return the ReBAC manager or raise if unavailable."""
-        mgr = self._rebac_manager
-        if mgr is None:
-            raise RuntimeError("ReBAC manager not available")
-        return mgr
-
-    def register_observe(self, observer: Any) -> None:
-        """Register a mutation observer (OBSERVE phase, Issue #900)."""
-        self._dispatch.register_observe(observer)
-
-    # ------------------------------------------------------------------
-    # ReBAC delegation stubs (Issue #2033)
-    # Previously on NexusFSReBACMixin, now forwarded to rebac_service.
-    # Generated dynamically below via _rebac_delegate().
-    # ------------------------------------------------------------------
-
-    # Service forwarding: __getattr__ routes method calls to services (Issue #2033)
-
-    _SERVICE_METHODS: dict[str, str] = {
-        # WorkspaceRPCService
-        "workspace_snapshot": "_workspace_rpc_service",
-        "workspace_restore": "_workspace_rpc_service",
-        "workspace_log": "_workspace_rpc_service",
-        "workspace_diff": "_workspace_rpc_service",
-        "snapshot_begin": "_workspace_rpc_service",
-        "snapshot_commit": "_workspace_rpc_service",
-        "snapshot_rollback": "_workspace_rpc_service",
-        "load_workspace_memory_config": "_workspace_rpc_service",
-        "register_workspace": "_workspace_rpc_service",
-        "unregister_workspace": "_workspace_rpc_service",
-        "update_workspace": "_workspace_rpc_service",
-        "list_workspaces": "_workspace_rpc_service",
-        "get_workspace_info": "_workspace_rpc_service",
-        "register_memory": "_workspace_rpc_service",
-        "unregister_memory": "_workspace_rpc_service",
-        "list_registered_memories": "_workspace_rpc_service",
-        "get_memory_info": "_workspace_rpc_service",
-        # AgentRPCService
-        "register_agent": "_agent_rpc_service",
-        "update_agent": "_agent_rpc_service",
-        "list_agents": "_agent_rpc_service",
-        "get_agent": "_agent_rpc_service",
-        "delete_agent": "_agent_rpc_service",
-        # UserProvisioningService
-        "provision_user": "_user_provisioning_service",
-        "deprovision_user": "_user_provisioning_service",
-        # SandboxRPCService
-        "sandbox_create": "_sandbox_rpc_service",
-        "sandbox_run": "_sandbox_rpc_service",
-        "sandbox_validate": "_sandbox_rpc_service",
-        "sandbox_pause": "_sandbox_rpc_service",
-        "sandbox_resume": "_sandbox_rpc_service",
-        "sandbox_stop": "_sandbox_rpc_service",
-        "sandbox_list": "_sandbox_rpc_service",
-        "sandbox_status": "_sandbox_rpc_service",
-        "sandbox_get_or_create": "_sandbox_rpc_service",
-        "sandbox_connect": "_sandbox_rpc_service",
-        "sandbox_disconnect": "_sandbox_rpc_service",
-        # MetadataExportService
-        "export_metadata": "_metadata_export_service",
-        "import_metadata": "_metadata_export_service",
-        # MountCoreService
-        "add_mount": "_mount_core_service",
-        "remove_mount": "_mount_core_service",
-        "list_connectors": "_mount_core_service",
-        "list_mounts": "_mount_core_service",
-        "get_mount": "_mount_core_service",
-        "has_mount": "_mount_core_service",
-        # MountPersistService
-        "save_mount": "_mount_persist_service",
-        "list_saved_mounts": "_mount_persist_service",
-        "load_mount": "_mount_persist_service",
-        "delete_saved_mount": "_mount_persist_service",
-        # SearchService (list/glob/grep are thin forwarders, not __getattr__)
-        # asemantic_search* are in _SERVICE_ALIASES (name transformation: a-prefix removed)
-        "glob_batch": "search_service",
-        # TaskQueueService
-        "get_task": "task_queue_service",
-        "cancel_task": "task_queue_service",
-        # MCPService
-        "mcp_list_mounts": "mcp_service",
-        # OAuthService
-        "oauth_list_providers": "oauth_service",
-        # LLMService
-        "create_llm_reader": "llm_service",
-        # ReBACService direct methods (no _sync suffix)
-        "set_rebac_option": "rebac_service",
-        "get_rebac_option": "rebac_service",
-        "register_namespace": "rebac_service",
-        # EventsService (Issue #1166)
-        "wait_for_changes": "events_service",
-        "lock": "events_service",
-        "extend_lock": "events_service",
-        "unlock": "events_service",
-    }
-
-    # Special aliases where service method name differs
-    _SERVICE_ALIASES: dict[str, tuple[str, str]] = {
-        "list_memories": ("_workspace_rpc_service", "list_registered_memories"),
-        "sandbox_available": ("_sandbox_rpc_service", "sandbox_available"),
-        "get_sync_job": ("_sync_job_service", "get_job"),
-        "list_sync_jobs": ("_sync_job_service", "list_jobs"),
-        "load_all_saved_mounts": ("_mount_persist_service", "load_all_mounts"),
-        # Dir visibility cache: NexusFS method names → cache method names
-        "get_dir_visibility_cache_metrics": ("_dir_visibility_cache", "get_metrics"),
-        "clear_dir_visibility_cache": ("_dir_visibility_cache", "clear"),
-        # SearchService async methods: a-prefix removed when calling service
-        "asemantic_search": ("search_service", "semantic_search"),
-        "asemantic_search_index": ("search_service", "semantic_search_index"),
-        "asemantic_search_stats": ("search_service", "semantic_search_stats"),
-        # SyncService / SyncJobService (Issue #2033)
-        "sync_mount": ("_sync_service", "sync_mount_flat"),
-        "sync_mount_async": ("_sync_job_service", "sync_mount_async"),
-        "cancel_sync_job": ("_sync_job_service", "cancel_sync_job"),
-        # VersionService async methods (Issue #2033)
-        "aget_version": ("version_service", "get_version"),
-        "alist_versions": ("version_service", "list_versions"),
-        "arollback": ("version_service", "rollback"),
-        "adiff_versions": ("version_service", "diff_versions"),
-        # ReBACService async methods (Issue #2033)
-        "arebac_create": ("rebac_service", "rebac_create"),
-        "arebac_delete": ("rebac_service", "rebac_delete"),
-        "arebac_check": ("rebac_service", "rebac_check"),
-        "arebac_check_batch": ("rebac_service", "rebac_check_batch"),
-        "arebac_expand": ("rebac_service", "rebac_expand"),
-        "arebac_explain": ("rebac_service", "rebac_explain"),
-        "arebac_list_tuples": ("rebac_service", "rebac_list_tuples"),
-        "aget_namespace": ("rebac_service", "get_namespace"),
-        # ReBACService sync methods with _sync suffix (Issue #2033)
-        "rebac_expand": ("rebac_service", "rebac_expand_sync"),
-        "rebac_explain": ("rebac_service", "rebac_explain_sync"),
-        "share_with_user": ("rebac_service", "share_with_user_sync"),
-        "share_with_group": ("rebac_service", "share_with_group_sync"),
-        "grant_consent": ("rebac_service", "grant_consent_sync"),
-        "revoke_consent": ("rebac_service", "revoke_consent_sync"),
-        "make_public": ("rebac_service", "make_public_sync"),
-        "make_private": ("rebac_service", "make_private_sync"),
-        "apply_dynamic_viewer_filter": ("rebac_service", "apply_dynamic_viewer_filter_sync"),
-        "list_outgoing_shares": ("rebac_service", "list_outgoing_shares_sync"),
-        "list_incoming_shares": ("rebac_service", "list_incoming_shares_sync"),
-        "get_dynamic_viewer_config": ("rebac_service", "get_dynamic_viewer_config_sync"),
-        "namespace_create": ("rebac_service", "namespace_create_sync"),
-        "namespace_delete": ("rebac_service", "namespace_delete_sync"),
-        "namespace_list": ("rebac_service", "namespace_list_sync"),
-        "get_namespace": ("rebac_service", "get_namespace_sync"),
-        # ReBACService direct methods (no _sync suffix)
-        "rebac_expand_with_privacy": ("rebac_service", "rebac_expand_with_privacy_sync"),
-        # SkillService (Issue #2035): NexusFS facade → skill_service RPC methods
-        "skills_share": ("skill_service", "rpc_share"),
-        "skills_discover": ("skill_service", "rpc_discover"),
-        "skills_get_prompt_context": ("skill_service", "rpc_get_prompt_context"),
-        # SkillPackageService (Issue #2035): NexusFS facade → skill_package_service
-        "skills_import": ("skill_package_service", "import_skill"),
-        "skills_validate_zip": ("skill_package_service", "validate_zip"),
-    }
-
-    def __getattr__(self, name: str) -> Any:
-        """Forward extracted facade methods to their service objects.
-
-        This enables callers to continue using nx.method_name() after
-        facade methods were removed from NexusFS (Issue #2033).
-        """
-        # Check aliases first (method name differs on service)
-        alias = NexusFS._SERVICE_ALIASES.get(name)
-        if alias is not None:
-            svc_attr, svc_method = alias
-            svc = self.__dict__.get(svc_attr)
-            if svc is not None:
-                return getattr(svc, svc_method)
-
-        # Standard forwarding (same method name on service)
-        svc_attr_std = NexusFS._SERVICE_METHODS.get(name)
-        if svc_attr_std is not None:
-            svc = self.__dict__.get(svc_attr_std)
-            if svc is not None:
-                return getattr(svc, name)
-
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-
-    # ------------------------------------------------------------------
-    # Abstract method forwarders (ABCMeta requires real definitions)
-    # These satisfy the NexusFilesystemABC while delegating to services.
-    # ------------------------------------------------------------------
-
-    # --- Workspace Versioning (→ _workspace_rpc_service) ---
+    # sys_watch is in nexus_fs_watch.py (WatchMixin)
 
     def workspace_snapshot(
         self,
@@ -4871,39 +685,6 @@ class NexusFS(  # type: ignore[misc]
 
     def get_workspace_info(self, path: str) -> dict | None:
         return self._workspace_rpc_service.get_workspace_info(path=path)
-
-    # --- Memory Registry (→ _workspace_rpc_service) ---
-
-    def register_memory(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: builtins.list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: Any | None = None,
-    ) -> dict[str, Any]:
-        return self._workspace_rpc_service.register_memory(
-            path=path,
-            name=name,
-            description=description,
-            created_by=created_by,
-            tags=tags,
-            metadata=metadata,
-            session_id=session_id,
-            ttl=ttl,
-        )
-
-    def unregister_memory(self, path: str) -> bool:
-        return self._workspace_rpc_service.unregister_memory(path=path)
-
-    def list_memories(self) -> builtins.list[dict]:
-        return self._workspace_rpc_service.list_registered_memories()
-
-    def get_memory_info(self, path: str) -> dict | None:
-        return self._workspace_rpc_service.get_memory_info(path=path)
 
     # --- Sandbox Operations (→ _sandbox_rpc_service) ---
 
@@ -5029,120 +810,351 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # --- Mount Operations (→ _mount_core_service) ---
+    # --- Mount Operations (→ mount_service sync accessors) ---
 
     def add_mount(
         self,
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        readonly: bool = False,
-        io_profile: str = "balanced",
         context: Any = None,
     ) -> str:
-        return self._mount_core_service.add_mount(
+        return self.mount_service.add_mount_sync(
             mount_point=mount_point,
             backend_type=backend_type,
             backend_config=backend_config,
-            readonly=readonly,
-            io_profile=io_profile,
             context=context,
         )
 
     def remove_mount(self, mount_point: str, context: Any = None) -> dict[str, Any]:
-        return self._mount_core_service.remove_mount(mount_point=mount_point, context=context)
+        return self.mount_service.remove_mount_sync(mount_point=mount_point, context=context)
 
     def list_mounts(self, context: Any = None) -> builtins.list[dict[str, Any]]:
-        return self._mount_core_service.list_mounts(context=context)
+        return self.mount_service.list_mounts_sync(context=context)
 
     def get_mount(self, mount_point: str, context: Any = None) -> dict[str, Any] | None:
-        return self._mount_core_service.get_mount(mount_point=mount_point, context=context)
+        return self.mount_service.get_mount_sync(mount_point=mount_point, context=context)
 
-    def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
-        """Grant direct_owner permission to the user who created the mount."""
-        import logging as _logging
+    def aclose(self) -> None:
+        """Shutdown: stop BackgroundService + unregister hooks, then close.
 
-        _log = _logging.getLogger(__name__)
-        _log.info(f"Setting up mount point: {mount_point}")
+        Calls kernel lifecycle methods first, then
+        delegates to close() for sync resource cleanup.
 
-        # Create directory entry for the mount point
+        Sync rather than async because ``kernel.service_stop_all`` invokes
+        ``asyncio.run()`` for Python BackgroundService coroutines, which
+        cannot run on an already-active loop. The FastAPI lifespan dispatches
+        this via ``run_in_executor`` for that reason. To dispose async DB
+        engines on the lifespan loop (Issue #3775), call
+        :meth:`adispose_async_engines` *before* dispatching ``aclose`` to a
+        worker thread.
+        """
+        # Issue #3391: drain deferred OBSERVE background tasks before tearing down.
+        self.shutdown()
+
+        if self._kernel is not None:
+            self._kernel.service_stop_all(10000)
+            # Unregister all hooks
+            for name in list(self._hook_specs):
+                spec = self._hook_specs.get(name)
+                if spec is not None:
+                    _unregister_hooks_for_spec(self, spec)
+            self._hook_specs.clear()
+        self.close()
+
+    async def adispose_async_engines(self) -> None:
+        """Dispose record store's async DB engines on the current loop (Issue #3775).
+
+        Async engines hold asyncpg connections whose pending futures are
+        bound to the loop that created the pool. Disposing via
+        ``sync_engine.dispose()`` from a worker thread (where ``close()`` runs)
+        await-only's into a different loop, producing
+        ``RuntimeError: Future attached to a different loop`` and leaks
+        connections (asyncpg ``InternalClientError``).
+
+        Disposes **only** the async engines. The record store stays attached
+        and its sync engine usable so that ``NexusFS.close()`` callbacks
+        (e.g. write observer ``flush_sync``) can still write through the sync
+        ``session_factory``. Sync engine teardown happens later in
+        ``record_store.close()`` *after* those callbacks have run.
+
+        FastAPI lifespan must await this on its own loop before dispatching
+        ``aclose`` to a worker thread. Failure preserves the store and is
+        logged at warning level; the subsequent sync ``close()`` will still
+        run callbacks and attempt best-effort sync dispose of the (still
+        live) async engine — better than silently orphaning the store.
+        """
+        if self._record_store is None:
+            return
+        aclose_fn = getattr(self._record_store, "aclose", None)
+        if aclose_fn is None:
+            return  # legacy store without aclose — close() will handle sync dispose
         try:
-            self.sys_mkdir(mount_point, parents=True, exist_ok=True)
-        except Exception as e:
-            _log.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
-
-        # Grant direct_owner permission to the creating user
-        if context:
-            from nexus.lib.context_utils import get_user_identity, get_zone_id
-
-            subject_type, subject_id = get_user_identity(context)
-            zone_id = get_zone_id(context)
-
-            if subject_id and hasattr(self, "rebac_service"):
-                try:
-                    self.rebac_service.rebac_create_sync(
-                        subject=(subject_type, subject_id),
-                        relation="direct_owner",
-                        object=("file", mount_point),
-                        zone_id=zone_id,
-                    )
-                except Exception as e:
-                    _log.warning(
-                        f"Failed to grant direct_owner for {mount_point}: {type(e).__name__}: {e}"
-                    )
-
-    def _matches_patterns(
-        self,
-        file_path: str,
-        include_patterns: builtins.list[str] | None = None,
-        exclude_patterns: builtins.list[str] | None = None,
-    ) -> bool:
-        """Check if file path matches include/exclude patterns."""
-        import fnmatch as _fnmatch
-
-        # Check include patterns
-        if include_patterns and not any(_fnmatch.fnmatch(file_path, p) for p in include_patterns):
-            return False
-
-        # Check exclude patterns
-        return not (
-            exclude_patterns and any(_fnmatch.fnmatch(file_path, p) for p in exclude_patterns)
-        )
-
-    # --- Search (sys_readdir/glob/grep) ---
-
-    @rpc_expose(description="List directory entries")
-    def sys_readdir(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-        details: bool = False,
-        show_parsed: bool = True,
-        context: Any = None,
-        limit: int | None = None,
-        cursor: str | None = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
-        if self.search_service is not None:
-            return self.search_service.list(
-                path=path,
-                recursive=recursive,
-                details=details,
-                show_parsed=show_parsed,
-                context=context,
-                limit=limit,
-                cursor=cursor,
+            await aclose_fn()
+        except Exception:
+            logger.warning(
+                "record_store.aclose failed; sync close() will attempt fallback",
+                exc_info=True,
             )
-        # Kernel-only fallback: delegate directly to metadata store
-        prefix = path if path != "/" else ""
-        if prefix and not prefix.endswith("/"):
-            prefix = prefix + "/"
-        entries = self.metadata.list(prefix=prefix, recursive=recursive)
-        if details:
-            return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
-        return [e.path for e in entries]
+
+    # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
+
+    def _pipe_destroy(self, path: str) -> dict[str, Any]:
+        """Destroy DT_PIPE — close Rust buffer."""
+
+        with contextlib.suppress(Exception):
+            self._kernel.destroy_pipe(path)
+        return {}
+
+    # ------------------------------------------------------------------
+    # Tier 2 public sync pipe methods (kernel passthroughs)
+    # ------------------------------------------------------------------
+    # These are sync because the underlying Rust kernel calls are sync.
+    # They exist so callers don't need to reach into ``self._kernel`` —
+    # convenience wrappers, not first-class syscalls (no Tier 1 ``sys_*``
+    # name). Used by coalescing consumers (audit drain, dedup work queue)
+    # and sync teardown contexts (AcpService) where async wrapping would
+    # add event-loop ping-pong without buying anything.
+
+    def pipe_create(self, path: str, capacity: int = 65_536) -> None:
+        """Create a DT_PIPE in the kernel registry.
+
+        Sync passthrough to ``Kernel.create_pipe``.
+        """
+        self._kernel.create_pipe(path, capacity)
+
+    def pipe_close(self, path: str) -> None:
+        """Mark a DT_PIPE as closed (signals EOF to readers, keeps registry entry)."""
+        self._kernel.close_pipe(path)
+
+    def has_pipe(self, path: str) -> bool:
+        """Check if a DT_PIPE exists in the kernel registry."""
+        if self._kernel is None:
+            return False
+        return self._kernel.has_pipe(path)
+
+    # ------------------------------------------------------------------
+    # Tier 2 public sync stream methods (kernel passthroughs)
+    # ------------------------------------------------------------------
+    # Stream counterparts to the pipe convenience methods above. Used by
+    # LLM streaming backends (Rust OpenAIBackend / AnthropicBackend via
+    # nx.llm_start_streaming) where a tight token-pump loop calls
+    # ``stream_write_nowait`` per token and ``stream_read_at`` for
+    # offset-based replay — async wrapping would just add ping-pong.
+
+    def stream_create(self, path: str, capacity: int = 65_536) -> None:
+        """Create a DT_STREAM in the kernel registry."""
+        self._kernel.create_stream(path, capacity)
+
+    def has_stream(self, path: str) -> bool:
+        """Check if a DT_STREAM exists in the kernel registry."""
+        if self._kernel is None:
+            return False
+        return self._kernel.has_stream(path)
+
+    def stream_read_at_blocking(self, path: str, offset: int, timeout_ms: int) -> tuple[bytes, int]:
+        """Blocking offset-based stream read. Returns (chunk, next_offset).
+
+        Releases the GIL inside Rust during the wait. Callers that need
+        async semantics should wrap in ``asyncio.to_thread``.
+        """
+        _data, _next = self._kernel.stream_read_at_blocking(path, offset, timeout_ms)
+        return (bytes(_data), _next)
+
+    def stream_write_nowait(self, path: str, data: bytes) -> int:
+        """Non-blocking stream append. Returns byte offset."""
+        return self._kernel.stream_write_nowait(path, data)
+
+    def stream_read_at(self, path: str, offset: int) -> tuple[bytes, int] | None:
+        """Non-blocking offset-based stream read. Returns (chunk, next_offset) or None."""
+        _result = self._kernel.stream_read_at(path, offset)
+        if _result is None:
+            return None
+        return (bytes(_result[0]), _result[1])
+
+    def stream_collect_all(self, path: str) -> bytes:
+        """Collect all message payloads from a DT_STREAM, concatenated.
+
+        Single Rust call — no per-frame PyO3 round-trip. Replaces
+        manual ``read_at`` loops in LLM backends.
+        """
+        return bytes(self._kernel.stream_collect_all(path))
+
+    def stream_close(self, path: str) -> None:
+        """Mark a DT_STREAM as closed (signals EOF to readers)."""
+        self._kernel.close_stream(path)
+
+    def stream_destroy(self, path: str) -> None:
+        """Destroy a DT_STREAM — close kernel buffer + custom backend cleanup.
+
+        Sync alternative to ``await sys_unlink(path)``.
+        """
+        self._stream_destroy(path)
+
+    def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
+        """Read from DT_STREAM — nowait hot path + Rust blocking slow path (GIL-free)."""
+        # Hot path: try nowait first (zero GIL)
+        _result = self._kernel.stream_read_at(path, offset)
+        if _result is not None:
+            return bytes(_result[0])
+
+        # Slow path: block in Rust, release GIL
+        _data, _next = self._kernel.stream_read_at_blocking(path, offset, 30000)
+        return bytes(_data)
+
+    def _stream_write(self, path: str, data: bytes) -> int:
+        """Write to DT_STREAM — non-blocking via Rust kernel (condvar wakes readers), returns byte offset."""
+        return self._kernel.stream_write_nowait(path, data)
+
+    def _stream_destroy(self, path: str) -> dict[str, Any]:
+        """Destroy DT_STREAM — close Rust buffer."""
+
+        with contextlib.suppress(Exception):
+            self._kernel.destroy_stream(path)
+        return {}
+
+    def close(self) -> None:
+        """Close the filesystem and release resources."""
+        flush_error: Exception | None = None
+
+        def _after_flush_cleanup(label: str, close_fn: Callable[[], None]) -> None:
+            if flush_error is None:
+                close_fn()
+                return
+            try:
+                close_fn()
+            except Exception as exc:
+                logger.debug("close: %s failed after write buffer flush failure: %s", label, exc)
+
+        # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
+        # Runs BEFORE pipe/IPC close so callbacks can drain pipe buffers
+        # (Issue #3399: piped write observer needs to flush before buffers clear).
+        for _close_cb in self._close_callbacks:
+            try:
+                _close_cb()
+            except Exception as exc:
+                logger.debug("close: callback failed (best-effort): %s", exc)
+
+        # Auto-close all enlisted services that have a close() method
+        # (rebac_manager, audit_store, etc.). Reverse registration order.
+        if self._kernel is not None:
+            self._kernel.service_close_all()
+
+        # Final durability barrier: callbacks/services may write during close.
+        if self._kernel is not None:
+            try:
+                self._kernel.flush_write_buffer(None, None)
+            except Exception as exc:
+                flush_error = exc
+                logger.error("close: write buffer flush failed: %s", exc, exc_info=True)
+
+        # Close IPC primitives — Rust kernel (§4.2)
+        # _kernel is None in remote connection mode (no local kernel)
+        if self._kernel is not None:
+            _after_flush_cleanup("close_all_pipes", self._kernel.close_all_pipes)
+            _after_flush_cleanup("close_all_streams", self._kernel.close_all_streams)
+        # Close transport pool (persistent gRPC connections)
+        if hasattr(self, "_transport_pool") and self._transport_pool is not None:
+            _after_flush_cleanup("transport_pool.close_all", self._transport_pool.close_all)
+
+        # Metadata store close is a no-op — kernel manages the redb
+        # lifecycle via ``release_metastores`` below.
+
+        # Release Rust-owned redb/SQLite file handles. Without this call the
+        # Rust kernel keeps the metastore Box alive until Python GC runs —
+        # process-lifetime tests that open the same redb path in a second
+        # NexusFS hit ``Database already open. Cannot acquire lock.`` (Issue
+        # #3765 Cat-5/6). ``release_metastores`` is idempotent.
+        if self._kernel is not None and flush_error is None:
+            try:
+                _release = getattr(self._kernel, "release_metastores", None)
+                if _release is not None:
+                    _release()
+            except Exception as exc:  # pragma: no cover - best-effort teardown
+                logger.debug("kernel.release_metastores failed: %s", exc)
+            # Drop this kernel from the shared create_kernel cache so the
+            # next ``create_kernel(path)`` in this process gets a fresh
+            # kernel with its own metastore wired up (Issue #3765 Cat-5/6).
+            try:
+                from nexus.fs._kernel_factory import _evict_kernel_cache
+
+                _evict_kernel_cache(self._kernel)
+            except Exception as exc:  # pragma: no cover - best-effort
+                logger.debug("_evict_kernel_cache failed: %s", exc)
+
+        # Close record store (Services layer SQL connections)
+        if self._record_store is not None:
+            _after_flush_cleanup("record_store.close", self._record_store.close)
+
+        # Close process-local runtime resources owned by this NexusFS.
+        while self._runtime_closeables:
+            resource = self._runtime_closeables.pop()
+            close_fn = getattr(resource, "close", None)
+            if not callable(close_fn):
+                continue
+            try:
+                close_fn()
+            except Exception as e:
+                logger.debug("Failed to close runtime resource %s: %s", type(resource).__name__, e)
+
+        if flush_error is not None:
+            raise flush_error
+
+    def __enter__(self) -> "NexusFS":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit."""
+        self.close()
+
+    # ── Tier 2: Lock Convenience (moved from ABC) ────────────────
+
+    def lock(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        timeout: float = 30.0,
+        ttl: float = 60.0,
+        max_holders: int = 1,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> str | None:
+        """Acquire lock with blocking wait (Tier 2 over sys_lock).
+
+        Retries sys_lock() until acquired or timeout.
+        Like fcntl(F_SETLKW) — blocking variant of sys_lock (F_SETLK).
+        """
+        import time as _time
+
+        deadline = _time.monotonic() + timeout
+        while True:
+            lock_id = self.sys_lock(
+                path,
+                mode=mode,
+                ttl=ttl,
+                max_holders=max_holders,
+                context=context,
+            )
+            if lock_id is not None:
+                return lock_id
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                return None
+            _time.sleep(min(0.05, remaining))
+
+    def unlock(self, lock_id: str, path: str, *, context: "OperationContext | None" = None) -> bool:
+        """Release lock (Tier 2 alias for sys_unlock)."""
+        return self.sys_unlock(path, lock_id, context=context)
+
+    # ── Tier 2: glob/grep (moved from ABC) ────────────────────────
 
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        return self.search_service.glob(pattern=pattern, path=path, context=context)
+        """Find files matching a glob pattern (like glob(3)).
+
+        Requires SearchService.
+        """
+        raise NotImplementedError("glob requires SearchService")
 
     def grep(
         self,
@@ -5150,257 +1162,15 @@ class NexusFS(  # type: ignore[misc]
         path: str = "/",
         file_pattern: str | None = None,
         ignore_case: bool = False,
-        max_results: int = 100,
+        max_results: int = 1000,
         search_mode: str = "auto",
         context: Any = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
     ) -> builtins.list[dict[str, Any]]:
-        return self.search_service.grep(
-            pattern=pattern,
-            path=path,
-            file_pattern=file_pattern,
-            ignore_case=ignore_case,
-            max_results=max_results,
-            search_mode=search_mode,
-            context=context,
-        )
+        """Search file contents using regex patterns (like grep(1)).
 
-    @staticmethod
-    def _run_async(coro: Any) -> Any:
-        """Run async coroutine safely, handling both running and non-running event loops.
-
-        Uses the unified sync_bridge to avoid the ThreadPoolExecutor + asyncio.run()
-        anti-pattern (Issue #1300).
-
-        Args:
-            coro: Coroutine to run
-
-        Returns:
-            Result of the coroutine
+        Requires SearchService.
         """
-        from nexus.lib.sync_bridge import run_sync
-
-        return run_sync(coro)
-
-    @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)
-    def backfill_directory_index(
-        self,
-        prefix: str = "/",
-        zone_id: str | None = None,
-        _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
-    ) -> dict[str, Any]:
-        """Backfill sparse directory index from existing files.
-
-        Use this to populate the index for directories that existed before
-        the sparse index feature was added. This improves list() performance
-        from O(n) LIKE queries to O(1) index lookups.
-
-        Args:
-            prefix: Path prefix to backfill (default: "/" for all)
-            zone_id: Zone ID to backfill (None for all zones)
-            _context: Operation context (admin required, enforced by @rpc_expose)
-
-        Returns:
-            Dict with entries_created count
-        """
-        created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
-        return {"entries_created": created, "prefix": prefix}
-
-    @rpc_expose(description="Get specific file version")
-    def get_version(
-        self, path: str, version: int, context: OperationContext | None = None
-    ) -> bytes:
-        """Get a specific version of a file."""
-        return cast(
-            bytes, NexusFS._run_async(self.version_service.get_version(path, version, context))
-        )
-
-    @rpc_expose(description="List file versions")
-    def list_versions(
-        self, path: str, context: OperationContext | None = None
-    ) -> builtins.list[dict[str, Any]]:
-        """List all versions of a file."""
-        return cast(
-            builtins.list[dict[str, Any]],
-            NexusFS._run_async(self.version_service.list_versions(path, context)),
-        )
-
-    @rpc_expose(description="Rollback file to previous version")
-    def rollback(self, path: str, version: int, context: OperationContext | None = None) -> None:
-        """Rollback file to a previous version."""
-        cast(None, NexusFS._run_async(self.version_service.rollback(path, version, context)))
-
-    @rpc_expose(description="Compare file versions")
-    def diff_versions(
-        self,
-        path: str,
-        v1: int,
-        v2: int,
-        mode: str = "metadata",
-        context: OperationContext | None = None,
-    ) -> dict[str, Any] | str:
-        """Compare two versions of a file."""
-        return cast(
-            dict[str, Any] | str,
-            NexusFS._run_async(self.version_service.diff_versions(path, v1, v2, mode, context)),
-        )
-
-    def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
-        """Extract subject from operation context."""
-        from nexus.lib.context_utils import get_subject_from_context
-
-        return get_subject_from_context(context)
-
-    # sync_mount, sync_mount_async, cancel_sync_job → _SERVICE_ALIASES (Issue #2033)
-    async def ainitialize_semantic_search(
-        self,
-        embedding_provider: str | None = None,
-        embedding_model: str | None = None,
-        api_key: str | None = None,
-        chunk_size: int = 1024,
-        chunk_strategy: str = "semantic",
-        async_mode: bool = True,
-        cache_url: str | None = None,
-        embedding_cache_ttl: int = 86400 * 3,
-    ) -> None:
-        """Initialize semantic search engine.
-
-        Delegates to SearchService.ainitialize_semantic_search() (Issue #1287).
-        """
-        if self._record_store is None:
-            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
-
-        await self.search_service.ainitialize_semantic_search(
-            nx=self,
-            record_store_engine=self._record_store.engine,
-            embedding_provider=embedding_provider,
-            embedding_model=embedding_model,
-            api_key=api_key,
-            chunk_size=chunk_size,
-            chunk_strategy=chunk_strategy,
-            async_mode=async_mode,
-            cache_url=cache_url,
-            embedding_cache_ttl=embedding_cache_ttl,
-        )
-        # Keep backward-compat reference on NexusFS
-        self._semantic_search = self.search_service._semantic_search  # type: ignore[assignment]  # allowed
-        # Wire search engine into LLMService (Issue #684: DI instead of kernel access)
-        if hasattr(self, "llm_service") and self._semantic_search is not None:
-            self.llm_service._semantic_search_engine = self._semantic_search
-
-    def close(self) -> None:
-        """Close the filesystem and release resources."""
-        # Stop DeferredPermissionBuffer first to flush pending permissions
-        if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
-            self._deferred_permission_buffer.stop()
-
-        # Wait for all parser threads to complete before closing metadata store
-        # This prevents database corruption from threads writing during shutdown
-        with self._parser_threads_lock:
-            threads_to_join = list(self._parser_threads)
-
-        for thread in threads_to_join:
-            # Wait up to 5 seconds for each thread
-            # Parser threads should complete quickly, but we don't want to hang forever
-            thread.join(timeout=5.0)
-
-        # Close metadata store after all parsers have finished
-        self.metadata.close()
-
-        # Close record store (Services layer SQL connections)
-        if self._record_store is not None:
-            self._record_store.close()
-
-        # Close ReBACManager to release database connection
-        if hasattr(self, "_rebac_manager") and self._rebac_manager is not None:
-            self._rebac_manager.close()
-
-        # Close AuditStore to release database connection
-        if hasattr(self, "_audit_store") and self._audit_store is not None:
-            self._audit_store.close()
-
-        # Close TokenManager to release database connection
-        if hasattr(self, "_token_manager") and self._token_manager is not None:
-            self._token_manager.close()
-
-        # Close mounted backends that hold resources (e.g., OAuth connectors with SQLite)
-        if hasattr(self, "router"):
-            from nexus.core.protocols.connector import OAuthCapableProtocol
-
-            for mp in self.router.get_mount_points():
-                try:
-                    route = self.router.route(mp, is_admin=True)
-                    if isinstance(route.backend, OAuthCapableProtocol):
-                        route.backend.token_manager.close()
-                except Exception as e:
-                    logger.debug("Failed to close backend token manager: %s", e)
-
-    # ------------------------------------------------------------------
-    # ReBAC delegation stubs (Issue #2033)
-    # These delegate to rebac_service which now owns the business logic.
-    # Kept on NexusFS for backward-compatibility with tests and CLI.
-    # ------------------------------------------------------------------
-
-    def rebac_create(
-        self,
-        subject: tuple[str, str],
-        relation: str,
-        object: tuple[str, str],
-        expires_at: Any = None,
-        zone_id: str | None = None,
-        context: Any = None,
-        column_config: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Create a relationship tuple — delegates to rebac_service."""
-        return self.rebac_service.rebac_create_sync(
-            subject=subject,
-            relation=relation,
-            object=object,
-            expires_at=expires_at,
-            zone_id=zone_id,
-            context=context,
-            column_config=column_config,
-        )
-
-    def rebac_check(
-        self,
-        subject: tuple[str, str],
-        permission: str,
-        object: tuple[str, str],
-        zone_id: str | None = None,
-        context: Any = None,
-    ) -> bool:
-        """Check a permission — delegates to rebac_service."""
-        return self.rebac_service.rebac_check_sync(
-            subject=subject,
-            permission=permission,
-            object=object,
-            zone_id=zone_id,
-            context=context,
-        )
-
-    def rebac_check_batch(
-        self,
-        checks: builtins.list[tuple[tuple[str, str], str, tuple[str, str]]],
-    ) -> builtins.list[bool]:
-        """Batch check permissions — delegates to rebac_service."""
-        return self.rebac_service.rebac_check_batch_sync(checks=checks)
-
-    def rebac_delete(self, tuple_id: str) -> bool:
-        """Delete a relationship tuple — delegates to rebac_service."""
-        return self.rebac_service.rebac_delete_sync(tuple_id)
-
-    def rebac_list_tuples(
-        self,
-        subject: tuple[str, str] | None = None,
-        relation: str | None = None,
-        object: tuple[str, str] | None = None,
-        relation_in: builtins.list[str] | None = None,
-        **_kw: Any,
-    ) -> builtins.list[dict[str, Any]]:
-        """List relationship tuples — delegates to rebac_service."""
-        return self.rebac_service.rebac_list_tuples_sync(
-            subject=subject,
-            relation=relation,
-            object=object,
-            relation_in=relation_in,
-        )
+        raise NotImplementedError("grep requires SearchService")

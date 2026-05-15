@@ -22,14 +22,14 @@ import httpx
 
 from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 
-# ── Helper: IsolatedBackend wrapping a real LocalBackend ──────────────
+# ── Helper: IsolatedBackend wrapping a real CASLocalBackend ──────────────
 
 
 def _make_isolated_local_backend(storage_dir: str) -> IsolatedBackend:
-    """Create IsolatedBackend wrapping a real LocalBackend."""
+    """Create IsolatedBackend wrapping a real CASLocalBackend."""
     cfg = IsolationConfig(
-        backend_module="nexus.backends.local",
-        backend_class="LocalBackend",
+        backend_module="nexus.backends.storage.local",
+        backend_class="CASLocalBackend",
         backend_kwargs={"root_path": storage_dir},
         pool_size=2,
         call_timeout=30.0,
@@ -55,12 +55,11 @@ def _make_isolated_mock_backend() -> IsolatedBackend:
 # ── Helper: Real FastAPI app with IsolatedBackend ─────────────────────
 
 
-def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permissions: bool = True):
+async def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permissions: bool = True):
     """Create a FastAPI app using IsolatedBackend as the storage backend."""
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     os.environ.setdefault("NEXUS_JWT_SECRET", "test-secret-isolation-e2e")
@@ -68,10 +67,10 @@ def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permissions: 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use IsolatedBackend wrapping LocalBackend — the real deal
+    # Use IsolatedBackend wrapping CASLocalBackend — the real deal
     backend = _make_isolated_local_backend(str(storage_dir))
 
-    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
+    metadata_store = str(tmp_path / "raft-metadata")
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
@@ -104,7 +103,7 @@ class TestIsolatedBackendWithFastAPI:
 
     async def test_health_endpoint(self, tmp_path) -> None:
         """Server with IsolatedBackend boots and /health returns OK."""
-        app, api_key, backend = _create_test_app_with_isolated_backend(
+        app, api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(
@@ -116,11 +115,11 @@ class TestIsolatedBackendWithFastAPI:
             assert resp.status_code == 200
             data = resp.json()
             assert data.get("status") in ("ok", "healthy")
-        backend.disconnect()
+        backend.close()
 
     async def test_write_read_via_api(self, tmp_path) -> None:
         """Write → read through real FastAPI with IsolatedBackend."""
-        app, api_key, backend = _create_test_app_with_isolated_backend(
+        app, api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(
@@ -157,11 +156,11 @@ class TestIsolatedBackendWithFastAPI:
             result = resp.json().get("result", {})
             # Verify content came back (may be base64 encoded)
             assert result is not None
-        backend.disconnect()
+        backend.close()
 
     async def test_mkdir_via_api(self, tmp_path) -> None:
         """mkdir through real FastAPI with IsolatedBackend."""
-        app, api_key, backend = _create_test_app_with_isolated_backend(
+        app, api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(
@@ -174,12 +173,12 @@ class TestIsolatedBackendWithFastAPI:
                 json={
                     "jsonrpc": "2.0",
                     "id": "1",
-                    "method": "sys_mkdir",
+                    "method": "mkdir",
                     "params": {"path": "/isolated-dir"},
                 },
             )
             assert resp.status_code == 200
-        backend.disconnect()
+        backend.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -192,7 +191,7 @@ class TestIsolatedBackendPermissions:
 
     async def test_no_api_key_returns_401(self, tmp_path) -> None:
         """Request without API key → 401 (not 500, not swallowed)."""
-        app, _api_key, backend = _create_test_app_with_isolated_backend(
+        app, _api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(
@@ -210,11 +209,11 @@ class TestIsolatedBackendPermissions:
                 },
             )
             assert resp.status_code == 401
-        backend.disconnect()
+        backend.close()
 
     async def test_wrong_api_key_returns_401(self, tmp_path) -> None:
         """Request with wrong API key → 401."""
-        app, _api_key, backend = _create_test_app_with_isolated_backend(
+        app, _api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(
@@ -232,7 +231,7 @@ class TestIsolatedBackendPermissions:
                 },
             )
             assert resp.status_code == 401
-        backend.disconnect()
+        backend.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -264,14 +263,14 @@ class TestIsolatedBackendDirect:
             ex = backend.content_exists(wr.data)
             assert ex.data is False
         finally:
-            backend.disconnect()
+            backend.close()
 
-    def test_connect_disconnect(self) -> None:
+    def test_check_connection_and_close(self) -> None:
         backend = _make_isolated_mock_backend()
-        status = backend.connect()
+        status = backend.check_connection()
         assert status.success is True
         assert backend.is_connected is True
-        backend.disconnect()
+        backend.close()
         assert backend.is_connected is False
 
     def test_error_propagation(self) -> None:
@@ -280,7 +279,7 @@ class TestIsolatedBackendDirect:
             rd = backend.read_content("nonexistent")
             assert rd.success is False
         finally:
-            backend.disconnect()
+            backend.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -300,18 +299,18 @@ class TestIsolatedBackendPerformance:
 
             data = b"X" * 1024
             wr = backend.write_content(data)
-            content_hash = wr.data
+            content_id = wr.data
 
             start = time.perf_counter()
             n = 100
             for _ in range(n):
-                backend.content_exists(content_hash)
+                backend.content_exists(content_id)
             elapsed = time.perf_counter() - start
 
             avg_ms = (elapsed / n) * 1000
             assert avg_ms < 10.0, f"Per-call overhead too high: {avg_ms:.3f}ms"
         finally:
-            backend.disconnect()
+            backend.close()
 
     def test_1kb_roundtrip_under_20ms(self) -> None:
         """1KB write+read roundtrip must be < 20ms average."""
@@ -330,7 +329,7 @@ class TestIsolatedBackendPerformance:
             avg_ms = (elapsed / n) * 1000
             assert avg_ms < 20.0, f"Roundtrip too slow: {avg_ms:.3f}ms"
         finally:
-            backend.disconnect()
+            backend.close()
 
     def test_concurrent_reads_no_deadlock(self) -> None:
         """10 parallel reads via threads do not deadlock or error."""
@@ -338,14 +337,14 @@ class TestIsolatedBackendPerformance:
         try:
             data = b"concurrent-perf"
             wr = backend.write_content(data)
-            content_hash = wr.data
+            content_id = wr.data
 
             def read_one(_: int) -> bool:
-                rd = backend.read_content(content_hash)
+                rd = backend.read_content(content_id)
                 return rd.success and rd.data == data
 
             with ThreadPoolExecutor(max_workers=5) as tp:
                 results = list(tp.map(read_one, range(10)))
             assert all(results)
         finally:
-            backend.disconnect()
+            backend.close()

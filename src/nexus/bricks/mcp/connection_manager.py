@@ -17,6 +17,7 @@ Example:
     >>> connections = await manager.list_connections()
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -25,13 +26,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from nexus.bricks.approvals.policy_gate import PolicyGate
+    from nexus.config import SSRFConfig
+    from nexus.core.nexus_fs import NexusFS
+
 from nexus.bricks.mcp.klavis_client import KlavisClient, KlavisError
 from nexus.bricks.mcp.models import MCPMount
 from nexus.bricks.mcp.mount import MCPMountManager
 from nexus.bricks.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
-
-if TYPE_CHECKING:
-    from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +111,13 @@ class MCPConnectionManager:
 
     def __init__(
         self,
-        filesystem: "NexusFilesystem | None" = None,
+        filesystem: "NexusFS | None" = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
+        *,
+        ssrf_config: "SSRFConfig | None" = None,
+        policy_gate: "PolicyGate | None" = None,
+        zone_id: str | None = None,
     ):
         """Initialize connection manager.
 
@@ -118,6 +125,20 @@ class MCPConnectionManager:
             filesystem: Nexus filesystem instance
             registry: Provider registry (loads default if not provided)
             klavis_api_key: Klavis API key (from env KLAVIS_API_KEY if not provided)
+            ssrf_config: Optional SSRFConfig override plumbed through to the
+                underlying MCPMountManager. When None, a conservative default
+                is used for SSE/HTTP URL validation (Issue #3792).
+            policy_gate: Optional PolicyGate forwarded to the underlying
+                MCPMountManager so SSRF-blocked egress can route through the
+                approval queue (Issue #3790, Task 18). Often unavailable at
+                construction time (the gate is built later in the FastAPI
+                lifespan), so callers may attach it post-hoc via
+                :meth:`set_policy_gate`. ``None`` preserves fail-closed.
+            zone_id: Optional daemon zone forwarded to the underlying
+                MCPMountManager so approval requests are scoped to the
+                daemon's primary zone instead of ROOT_ZONE_ID (Issue
+                #3790, F4). May be set later via :meth:`set_zone`. When
+                ``None`` the gate fails closed at egress time.
         """
         self.filesystem = filesystem
         self.registry = registry or MCPProviderRegistry.load_default()
@@ -127,19 +148,60 @@ class MCPConnectionManager:
         self.klavis = KlavisClient(klavis_key) if klavis_key else None
 
         # Create mount manager for tool discovery/storage
-        self.mount_manager = MCPMountManager(filesystem)
+        self._policy_gate = policy_gate
+        self._zone_id = zone_id
+        self.mount_manager = MCPMountManager(
+            filesystem,
+            ssrf_config=ssrf_config,
+            policy_gate=policy_gate,
+            zone_id=zone_id,
+        )
 
         # Cache of active connections
         self._connections: dict[str, MCPConnection] = {}
 
-        # Load existing connections
-        self._load_connections()
+        # Deferred loading flag -- _load_connections is async and cannot be
+        # called from __init__.  The first async method that needs the cache
+        # will call _ensure_connections_loaded().
+        self._connections_loaded = False
 
-    def _load_connections(self) -> None:
+    def set_policy_gate(self, gate: "PolicyGate | None") -> None:
+        """Attach (or detach) the PolicyGate after construction.
+
+        The gate is typically wired by the FastAPI approvals lifespan after
+        this manager is already constructed, so callers need a way to inject
+        it post-hoc. Updates both this manager and its embedded
+        ``MCPMountManager`` so subsequent egress attempts route through the
+        approval queue (Issue #3790).
+        """
+        self._policy_gate = gate
+        # MCPMountManager exposes ``_policy_gate`` as the same private slot
+        # consulted by ``_ssrf_blocked_via_gate``; updating it in place keeps
+        # the existing instance valid (no reconstruction needed).
+        self.mount_manager._policy_gate = gate
+
+    def set_zone(self, zone_id: str | None) -> None:
+        """Attach (or detach) the daemon zone after construction.
+
+        F4 (Issue #3790): forwarded to the embedded ``MCPMountManager``
+        so SSRF-blocked egress requests are scoped to the daemon's
+        primary zone instead of ROOT_ZONE_ID. ``None`` triggers
+        fail-closed routing at the gate hook.
+        """
+        self._zone_id = zone_id
+        self.mount_manager.set_zone(zone_id)
+
+    async def _ensure_connections_loaded(self) -> None:
+        """Lazily load connections on first async access."""
+        if not self._connections_loaded:
+            await self._load_connections()
+            self._connections_loaded = True
+
+    async def _load_connections(self) -> None:
         """Load existing connections from storage."""
         try:
-            if self.filesystem and self.filesystem.sys_access(self.CONNECTIONS_PATH):
-                items = self.filesystem.sys_readdir(self.CONNECTIONS_PATH)
+            if self.filesystem and self.filesystem.access(self.CONNECTIONS_PATH):
+                items = await asyncio.to_thread(self.filesystem.sys_readdir, self.CONNECTIONS_PATH)
                 for item in items:
                     # Item might be full path, just filename, or dict
                     if isinstance(item, dict):
@@ -150,7 +212,7 @@ class MCPConnectionManager:
                     if item_name.endswith(".json"):
                         path = f"{self.CONNECTIONS_PATH}{item_name}"
                         try:
-                            raw = self.filesystem.sys_read(path)
+                            raw = await asyncio.to_thread(self.filesystem.sys_read, path)
                             data = json.loads(
                                 raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
                             )
@@ -162,13 +224,13 @@ class MCPConnectionManager:
         except Exception as e:
             logger.warning(f"Failed to load connections: {e}")
 
-    def _save_connection(self, conn: "MCPConnection") -> None:
+    async def _save_connection(self, conn: "MCPConnection") -> None:
         """Save a connection to storage."""
         try:
             if self.filesystem:
                 # Ensure directory exists
                 try:
-                    self.filesystem.sys_mkdir(self.CONNECTIONS_PATH, parents=True)
+                    self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
@@ -178,19 +240,19 @@ class MCPConnectionManager:
                 filename = f"{conn.provider}_{conn.user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
                 content = json.dumps(conn.to_dict(), indent=2)
-                self.filesystem.sys_write(path, content.encode("utf-8"))
+                self.filesystem.write(path, content.encode("utf-8"))
 
         except Exception as e:
             logger.error(f"Failed to save connection: {e}")
 
-    def _delete_connection(self, provider: str, user_id: str) -> None:
+    async def _delete_connection(self, provider: str, user_id: str) -> None:
         """Delete a connection from storage."""
         try:
             if self.filesystem:
                 filename = f"{provider}_{user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
-                if self.filesystem.sys_access(path):
-                    self.filesystem.sys_unlink(path)
+                if self.filesystem.access(path):
+                    await asyncio.to_thread(self.filesystem.sys_unlink, path)
         except Exception as e:
             logger.warning(f"Failed to delete connection file: {e}")
 
@@ -220,6 +282,8 @@ class MCPConnectionManager:
         Raises:
             MCPConnectionError: If connection fails
         """
+        await self._ensure_connections_loaded()
+
         config = self.registry.get(provider)
         if not config:
             available = [name for name, _ in self.registry.list_providers()]
@@ -297,7 +361,7 @@ class MCPConnectionManager:
 
             key = f"{config.name}:{user_id}"
             self._connections[key] = connection
-            self._save_connection(connection)
+            await self._save_connection(connection)
 
             logger.info(f"Connected to {config.name} via Klavis")
             return connection
@@ -338,7 +402,7 @@ class MCPConnectionManager:
 
         key = f"{config.name}:{user_id}"
         self._connections[key] = connection
-        self._save_connection(connection)
+        await self._save_connection(connection)
 
         return connection
 
@@ -419,6 +483,8 @@ class MCPConnectionManager:
         Returns:
             True if disconnected
         """
+        await self._ensure_connections_loaded()
+
         key = f"{provider}:{user_id}"
         connection = self._connections.get(key)
 
@@ -442,12 +508,12 @@ class MCPConnectionManager:
 
         # Remove from storage
         del self._connections[key]
-        self._delete_connection(provider, user_id)
+        await self._delete_connection(provider, user_id)
 
         logger.info(f"Disconnected from {provider}")
         return True
 
-    def list_connections(self, user_id: str | None = None) -> "list[MCPConnection]":
+    async def list_connections(self, user_id: str | None = None) -> "list[MCPConnection]":
         """List all connections.
 
         Args:
@@ -456,6 +522,8 @@ class MCPConnectionManager:
         Returns:
             List of connections
         """
+        await self._ensure_connections_loaded()
+
         connections = list(self._connections.values())
 
         if user_id:
@@ -463,7 +531,7 @@ class MCPConnectionManager:
 
         return connections
 
-    def get_connection(self, provider: str, user_id: str) -> "MCPConnection | None":
+    async def get_connection(self, provider: str, user_id: str) -> "MCPConnection | None":
         """Get a specific connection.
 
         Args:
@@ -473,6 +541,8 @@ class MCPConnectionManager:
         Returns:
             MCPConnection or None
         """
+        await self._ensure_connections_loaded()
+
         key = f"{provider}:{user_id}"
         return self._connections.get(key)
 

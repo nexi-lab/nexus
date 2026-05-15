@@ -21,7 +21,6 @@ from __future__ import annotations
 import base64
 import datetime
 import ipaddress
-import os
 from pathlib import Path
 
 from cryptography import x509
@@ -82,6 +81,7 @@ def generate_node_cert(
     ca_key: ec.EllipticCurvePrivateKey,
     hostnames: list[str] | None = None,
     validity_days: int = 365,
+    hostname: str | None = None,
 ) -> tuple[x509.Certificate, ec.EllipticCurvePrivateKey]:
     """Generate a node certificate signed by the zone CA.
 
@@ -91,11 +91,12 @@ def generate_node_cert(
     Returns:
         (node_cert, node_private_key)
     """
+    cn_node = hostname if hostname else str(node_id)
     key = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name(
         [
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Nexus"),
-            x509.NameAttribute(NameOID.COMMON_NAME, f"nexus-zone-{zone_id}-node-{node_id}"),
+            x509.NameAttribute(NameOID.COMMON_NAME, f"nexus-zone-{zone_id}-node-{cn_node}"),
         ]
     )
 
@@ -154,9 +155,12 @@ def save_pem(
         assert isinstance(obj, x509.Certificate)
         pem = obj.public_bytes(serialization.Encoding.PEM)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(pem)
     if is_private:
-        os.chmod(path, 0o600)
+        from nexus.security.secret_file import write_secret_file
+
+        write_secret_file(path, pem)
+    else:
+        path.write_bytes(pem)
 
 
 def load_pem_cert(path: Path) -> x509.Certificate:

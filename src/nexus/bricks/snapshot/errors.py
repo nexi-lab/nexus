@@ -9,7 +9,7 @@ Hierarchy:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.services.protocols.snapshot import ConflictInfo
+    from nexus.contracts.protocols.snapshot import ConflictInfo
 
 
 class TransactionConflictError(Exception):

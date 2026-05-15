@@ -4,6 +4,9 @@ Tests score computation, edge cases, ranking, and property-based tests.
 """
 
 import pytest
+
+pytest.importorskip("hypothesis")
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 

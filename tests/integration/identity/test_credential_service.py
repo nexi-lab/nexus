@@ -22,7 +22,7 @@ from nexus.contracts.credential_types import (
     Ability,
     Capability,
 )
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from tests.testkit.records import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures

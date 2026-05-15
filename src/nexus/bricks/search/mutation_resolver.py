@@ -1,0 +1,399 @@
+"""Shared mutation resolution for search consumers.
+
+Normalizes search mutation events into resolved document payloads and provides
+small in-process caching so multiple consumers can reuse the same file read
+and path lookup within a worker cycle.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import time
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy import text as sa_text
+from sqlalchemy.exc import ProgrammingError
+
+from nexus.bricks.search.mutation_events import SearchMutationEvent, SearchMutationOp
+from nexus.contracts.constants import ROOT_ZONE_ID
+
+logger = logging.getLogger(__name__)
+
+
+def _strip_null_bytes(value: str) -> str:
+    """Scrub NUL (0x00) bytes — Postgres TEXT and most embedding HTTP libs reject them.
+
+    Central chokepoint (Issue #3989). Every downstream consumer (bm25, fts,
+    embedding pipeline, txtai, naive-chunk fallback) reads ``mutation.content``,
+    so scrubbing here covers all paths in one place — even if a future reader
+    or a content_cache writer leaks a NUL upstream.
+    """
+    return value.replace("\x00", "") if "\x00" in value else value
+
+
+@dataclass(frozen=True)
+class ResolvedMutation:
+    """Resolved mutation payload shared across search consumers.
+
+    Codex review R10 #1 (high): consumers MUST be able to distinguish
+    "the file is genuinely empty/truncated" from "we couldn't read the
+    file (file_reader raised, content_cache miss)". Both used to map
+    to ``content=None``, conflating a destructive-but-correct delete
+    with a transient failure that demanded a retry. The
+    ``content_resolved`` flag below carries that distinction:
+
+      * ``content_resolved=True``  + ``content=""`` → confirmed empty;
+        consumers should treat as a delete-shaped operation.
+      * ``content_resolved=True``  + ``content=text`` → indexable.
+      * ``content_resolved=False``                → unresolved; consumers
+        MUST refuse to checkpoint (raise) so the next batch retries.
+
+    DELETE events are always resolved (they don't need content).
+    """
+
+    event: SearchMutationEvent
+    zone_id: str
+    virtual_path: str
+    path_id: str
+    doc_id: str
+    content: str | None = None
+    path_id_resolved: bool = True
+    content_resolved: bool = True
+
+
+class MutationResolver:
+    """Resolve search mutation events into indexable payloads."""
+
+    def __init__(
+        self,
+        *,
+        file_reader: Any | None,
+        async_session_factory: Any | None,
+        cache_ttl_seconds: float = 30.0,
+        lookup_batch_size: int = 250,
+    ) -> None:
+        self._file_reader = file_reader
+        self._async_session_factory = async_session_factory
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._lookup_batch_size = max(1, int(lookup_batch_size))
+        self._cache: dict[str, tuple[float, ResolvedMutation]] = {}
+
+    @staticmethod
+    def _path_key(zone_id: str, virtual_path: str) -> tuple[str, str]:
+        return (zone_id, virtual_path)
+
+    def set_file_reader(self, file_reader: Any | None) -> None:
+        self._file_reader = file_reader
+
+    def invalidate_path(self, path: str) -> None:
+        keys_to_delete = [
+            key
+            for key, (_, resolved) in self._cache.items()
+            if resolved.event.path == path or resolved.virtual_path == path
+        ]
+        for key in keys_to_delete:
+            self._cache.pop(key, None)
+
+    async def resolve_batch(self, events: list[SearchMutationEvent]) -> list[ResolvedMutation]:
+        """Resolve a batch of events with shared DB lookups and cache reuse."""
+        if not events:
+            return []
+
+        now = time.monotonic()
+        resolved: list[ResolvedMutation | None] = [None] * len(events)
+        unresolved_indices: list[int] = []
+        lookup_candidates: list[tuple[str, str, str, int]] = []
+
+        # Issue #3951 follow-up: DELETE events race with the soft-delete write
+        # in file_paths — by the time we resolve, deleted_at is set, so the
+        # default `WHERE deleted_at IS NULL` filter drops the row and
+        # path_id_resolved=False, which gates _chunk_store.delete_document_chunks.
+        # Allow soft-deleted rows when any event is a DELETE so we still find
+        # the path_id needed to drop chunks.
+        include_deleted = any(event.op == SearchMutationOp.DELETE for event in events)
+
+        for idx, event in enumerate(events):
+            cached = self._cache.get(event.event_id)
+            if cached is not None and (now - cached[0]) < self._cache_ttl_seconds:
+                resolved[idx] = cached[1]
+                continue
+            unresolved_indices.append(idx)
+            lookup_candidates.extend(self._lookup_candidates(event))
+
+        logger.debug(
+            "resolve_batch: events=%d unresolved=%d include_deleted=%s",
+            len(events),
+            len(unresolved_indices),
+            include_deleted,
+        )
+
+        path_id_map = await self._lookup_path_ids(
+            lookup_candidates, include_deleted=include_deleted
+        )
+        content_map = await self._lookup_content(events, unresolved_indices)
+
+        for idx in unresolved_indices:
+            event = events[idx]
+            virtual_path = event.virtual_path
+            resolved_path_id = path_id_map.get(self._path_key(event.zone_id, virtual_path))
+            path_id_resolved = resolved_path_id is not None
+            path_id = resolved_path_id if resolved_path_id is not None else virtual_path
+            zone_id = event.zone_id
+            doc_id = f"{zone_id}:{virtual_path}" if zone_id != ROOT_ZONE_ID else virtual_path
+            # Codex review R10 #1 (high): content_resolved=True only
+            # when the resolver actually obtained content for this
+            # event (an UPSERT whose read failed has no entry in
+            # content_map). DELETEs don't need content and are always
+            # resolved. The flag lets consumers distinguish "truly
+            # empty file" from "couldn't read" so transient failures
+            # don't get checkpointed as deletes.
+            if event.op == SearchMutationOp.DELETE:
+                content_resolved = True
+                content_value: str | None = None
+            else:
+                content_resolved = event.event_id in content_map
+                content_value = content_map.get(event.event_id)
+            mutation = ResolvedMutation(
+                event=event,
+                zone_id=zone_id,
+                virtual_path=virtual_path,
+                path_id=path_id,
+                doc_id=doc_id,
+                content=content_value,
+                path_id_resolved=path_id_resolved,
+                content_resolved=content_resolved,
+            )
+            self._cache[event.event_id] = (now, mutation)
+            resolved[idx] = mutation
+
+        return [item for item in resolved if item is not None]
+
+    async def _lookup_path_ids(
+        self,
+        lookup_candidates: list[tuple[str, str, str, int]],
+        *,
+        include_deleted: bool = False,
+    ) -> dict[tuple[str, str], str]:
+        if not lookup_candidates or self._async_session_factory is None:
+            return {}
+
+        # Issue #3951 follow-up: DELETE events arrive after the soft-delete
+        # write, so include_deleted=True drops the `deleted_at IS NULL` filter
+        # and prefers non-deleted rows first via ORDER BY so coexisting paths
+        # (e.g. delete-then-recreate) still resolve to the live row.
+        if include_deleted:
+            deleted_filter = ""
+            order_by = "ORDER BY (CASE WHEN fp.deleted_at IS NULL THEN 0 ELSE 1 END), l.lookup_rank"
+        else:
+            deleted_filter = "WHERE fp.deleted_at IS NULL"
+            order_by = "ORDER BY l.lookup_rank"
+
+        path_id_map: dict[tuple[str, str], str] = {}
+        unique_candidates = list(dict.fromkeys(lookup_candidates))
+        async with self._async_session_factory() as session:
+            for offset in range(0, len(unique_candidates), self._lookup_batch_size):
+                batch = unique_candidates[offset : offset + self._lookup_batch_size]
+                values_sql, params = self._build_lookup_values(batch)
+                result = await session.execute(
+                    sa_text(
+                        f"""
+                        WITH lookup(
+                            zone_id,
+                            virtual_path,
+                            canonical_virtual_path,
+                            lookup_rank
+                        ) AS (
+                            VALUES {values_sql}
+                        )
+                        SELECT l.zone_id, l.canonical_virtual_path, fp.path_id
+                        FROM file_paths fp
+                        JOIN lookup l
+                          ON fp.zone_id = l.zone_id
+                         AND fp.virtual_path = l.virtual_path
+                        {deleted_filter}
+                        {order_by}
+                        """
+                    ),
+                    params,
+                )
+                for row in result.fetchall():
+                    key = self._path_key(str(row[0]), str(row[1]))
+                    path_id_map.setdefault(key, str(row[2]))
+        logger.debug(
+            "lookup_path_ids: candidates=%d resolved=%d include_deleted=%s",
+            len(unique_candidates),
+            len(path_id_map),
+            include_deleted,
+        )
+        return path_id_map
+
+    async def _lookup_content(
+        self,
+        events: list[SearchMutationEvent],
+        unresolved_indices: list[int],
+    ) -> dict[str, str]:
+        """Resolve UPSERT content for each unresolved event.
+
+        Codex review R10 #1 (high): the caller treats absence-from-map
+        as "couldn't resolve" (unresolved → consumer raises). An empty
+        string IS a valid resolution state and MUST be recorded.
+        Previously the ``if content:`` truthy filter dropped empty
+        strings on the floor, conflating them with read failures.
+        """
+        content_map: dict[str, str] = {}
+        update_events = [
+            events[idx] for idx in unresolved_indices if events[idx].op.value == "upsert"
+        ]
+        if not update_events:
+            return content_map
+
+        missing_events: list[SearchMutationEvent] = []
+        for event in update_events:
+            content = await self._read_content(event.path, event.virtual_path)
+            if isinstance(content, str):
+                # Resolved (could be empty string).
+                content_map[event.event_id] = _strip_null_bytes(content)
+            else:
+                missing_events.append(event)
+
+        if missing_events and self._async_session_factory is not None:
+            lookup_candidates: list[tuple[str, str, str, int]] = []
+            for event in missing_events:
+                lookup_candidates.extend(self._lookup_candidates(event))
+            db_content = await self._lookup_content_cache(lookup_candidates)
+            for event in missing_events:
+                content = db_content.get(self._path_key(event.zone_id, event.virtual_path))
+                if isinstance(content, str):
+                    content_map[event.event_id] = _strip_null_bytes(content)
+
+        return content_map
+
+    async def _read_content(self, scoped_path: str, virtual_path: str) -> str | None:
+        """Return resolved content (possibly empty) or ``None`` on read failure.
+
+        Codex review R10 #1 (high): an empty file is a valid read
+        outcome (caller distinguishes via isinstance) — only
+        exceptions / non-string returns map to ``None`` so the caller
+        can detect transient failures and retry instead of treating
+        them as truncations.
+        """
+        if self._file_reader is None:
+            return None
+
+        try:
+            scoped_content = await self._file_reader.read_text(scoped_path)
+            if isinstance(scoped_content, str):
+                return scoped_content
+        except Exception:
+            with contextlib.suppress(OSError, ValueError, Exception):
+                virtual_content = await self._file_reader.read_text(virtual_path)
+                if isinstance(virtual_content, str):
+                    return virtual_content
+        return None
+
+    async def _lookup_content_cache(
+        self,
+        lookup_candidates: list[tuple[str, str, str, int]],
+    ) -> dict[tuple[str, str], str]:
+        if not lookup_candidates or self._async_session_factory is None:
+            return {}
+
+        content_map: dict[tuple[str, str], str] = {}
+        unique_candidates = list(dict.fromkeys(lookup_candidates))
+        async with self._async_session_factory() as session:
+            try:
+                for offset in range(0, len(unique_candidates), self._lookup_batch_size):
+                    batch = unique_candidates[offset : offset + self._lookup_batch_size]
+                    values_sql, params = self._build_lookup_values(batch)
+                    result = await session.execute(
+                        sa_text(
+                            f"""
+                            WITH lookup(
+                                zone_id,
+                                virtual_path,
+                                canonical_virtual_path,
+                                lookup_rank
+                            ) AS (
+                                VALUES {values_sql}
+                            )
+                            SELECT l.zone_id, l.canonical_virtual_path, cc.content_text
+                            FROM lookup l
+                            JOIN file_paths fp
+                              ON fp.zone_id = l.zone_id
+                             AND fp.virtual_path = l.virtual_path
+                            JOIN content_cache cc
+                              ON cc.path_id = fp.path_id
+                            WHERE fp.deleted_at IS NULL
+                              AND cc.content_text IS NOT NULL
+                            ORDER BY l.lookup_rank
+                            """
+                        ),
+                        params,
+                    )
+                    for row in result.fetchall():
+                        if row[2]:
+                            content_map.setdefault(
+                                self._path_key(str(row[0]), str(row[1])),
+                                str(row[2]),
+                            )
+            except ProgrammingError as exc:
+                if self._is_missing_table_error(exc):
+                    return {}
+                raise
+        return content_map
+
+    @staticmethod
+    def _lookup_candidates(event: SearchMutationEvent) -> list[tuple[str, str, str, int]]:
+        return MutationResolver._build_path_lookup_candidates(
+            event.zone_id,
+            event.path,
+            event.virtual_path,
+        )
+
+    @staticmethod
+    def _build_path_lookup_candidates(
+        zone_id: str,
+        scoped_path: str,
+        virtual_path: str,
+    ) -> list[tuple[str, str, str, int]]:
+        canonical = virtual_path
+        candidates: list[str] = []
+
+        def add(candidate: str) -> None:
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        add(canonical)
+        add(scoped_path)
+        if canonical.startswith("/"):
+            add(f"/zone/{zone_id}{canonical}")
+
+        return [(zone_id, candidate, canonical, rank) for rank, candidate in enumerate(candidates)]
+
+    def _build_lookup_values(
+        self,
+        lookup_candidates: list[tuple[str, str, str, int]],
+    ) -> tuple[str, dict[str, str | int]]:
+        params: dict[str, str | int] = {}
+        values_parts: list[str] = []
+        for idx, (zone_id, virtual_path, canonical_virtual_path, lookup_rank) in enumerate(
+            lookup_candidates
+        ):
+            params[f"zone_id_{idx}"] = zone_id
+            params[f"virtual_path_{idx}"] = virtual_path
+            params[f"canonical_virtual_path_{idx}"] = canonical_virtual_path
+            params[f"lookup_rank_{idx}"] = lookup_rank
+            values_parts.append(
+                f"(:zone_id_{idx}, :virtual_path_{idx}, "
+                f":canonical_virtual_path_{idx}, CAST(:lookup_rank_{idx} AS INTEGER))"
+            )
+        return ", ".join(values_parts), params
+
+    @staticmethod
+    def _is_missing_table_error(exc: ProgrammingError) -> bool:
+        message = str(getattr(exc, "orig", exc)).lower()
+        return "content_cache" in message and (
+            "does not exist" in message or "no such table" in message or "undefinedtable" in message
+        )

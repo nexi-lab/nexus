@@ -3,12 +3,19 @@ name: Code Quality Standards
 on:
   pull_request:
     branches: [main, develop]
+  merge_group:
   push:
     branches: [main, develop, refactor/**]
     paths:
       - 'src/**/*.py'
       - 'tests/**/*.py'
-  merge_group:
+      - 'rust/kernel/src/**/*.rs'
+      - 'rust/nexus-cdylib/src/**/*.rs'
+      - 'scripts/codegen_kernel_abi.py'
+      - 'stubs/**/*.pyi'
+
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 permissions:
   contents: read
@@ -38,9 +45,9 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE=${{ github.event.pull_request.base.sha }}
             HEAD=${{ github.event.pull_request.head.sha }}
-            CHANGED=$(git diff --name-only "$BASE"..."$HEAD" | grep -E '\.(py|yaml)$' | grep -E '^(src/|tests/|\.pre-commit)' || true)
+            CHANGED=$(git diff --name-only "$BASE"..."$HEAD" | grep -E '\.(py|yaml|rs|pyi)$' | grep -E '^(src/|tests/|\.pre-commit|rust/|stubs/|scripts/codegen)' || true)
           else
-            CHANGED=$(git diff --name-only HEAD^...HEAD | grep -E '\.py$' | grep -E '^(src/|tests/)' || true)
+            CHANGED=$(git diff --name-only HEAD^...HEAD | grep -E '\.(py|rs|pyi)$' | grep -E '^(src/|tests/|rust/|stubs/|scripts/codegen)' || true)
           fi
           if [ -n "$CHANGED" ]; then
             echo "python_changed=true" >> $GITHUB_OUTPUT
@@ -64,7 +71,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Check Python file sizes
         run: |
@@ -97,7 +104,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Check for new type ignore comments
         run: |
@@ -138,7 +145,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Install dependencies
         run: |
@@ -177,7 +184,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Check brick imports
         run: |
@@ -188,6 +195,39 @@ jobs:
         run: |
           echo "::error::Brick import boundary violations detected. See NEXUS-LEGO-ARCHITECTURE.md §1.2."
 
+  codegen-sync:
+    name: Codegen Sync Check
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install Rust toolchain (for rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Verify codegen outputs are up-to-date
+        run: python3 scripts/codegen_kernel_abi.py --check
+
+  # Skip-pass job for branch protection when no Python files changed
+  codegen-sync-skip:
+    name: Codegen Sync Check
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No Python files changed — skipping codegen sync check"
+
   import-linter:
     name: Architecture Boundary Check (import-linter)
     runs-on: ubuntu-latest
@@ -197,7 +237,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Install dependencies
         run: |
@@ -249,7 +289,9 @@ jobs:
           fi
 
       - name: Update baseline comment
-        if: github.event_name == 'pull_request'
+        if: >
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@v7
         with:
           script: |

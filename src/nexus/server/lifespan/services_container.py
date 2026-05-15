@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-    from nexus.services.protocols.scheduler import SchedulerProtocol
+    from nexus.contracts.protocols.scheduler import SchedulerProtocol
 
 
 @dataclass(slots=True)
@@ -40,6 +40,7 @@ class LifespanServices:
     database_url: str | None = None
     record_store: Any = None
     zone_id: str | None = None
+    zone_registry: Any = None
 
     # --- Configuration ---------------------------------------------------
     deployment_profile: str = "full"
@@ -48,23 +49,27 @@ class LifespanServices:
     profile_tuning: Any = None
     thread_pool_size: int = 40
 
-    # --- System services (from nexus_fs._system_services) ----------------
-    brick_lifecycle_manager: Any = None
-    brick_reconciler: Any = None
+    # --- Coordinator (post-bootstrap service registration) ---------------
+    service_coordinator: Any = None  # NexusFS (delegates to Rust kernel)
+
+    # --- Process table (kernel process lifecycle) -------------------------
+    agent_registry: Any = None
+
+    # --- System services (from ServiceRegistry) ----------------
     eviction_manager: Any = None
     write_observer: Any = None
     zone_lifecycle: Any = None
-    pipe_manager: Any = None  # DT_PIPE manager (Issue #809)
 
-    # --- Issue #2195, #2360: EventLog + Scheduler (from SystemServices) ----
-    event_log: Any = None
+    # --- Scheduler (from ServiceRegistry) ----
     scheduler_service: "SchedulerProtocol | None" = None
 
-    # --- DT_PIPE consumers (Issue #810) -----------------------------------
-    zoekt_pipe_consumer: Any = None
+    # --- Issue #3193: delivery worker + event signal -------------------------
+    delivery_worker: Any = None
+    event_signal: Any = None
 
-    # --- Brick services container ----------------------------------------
-    brick_services: Any = None  # The whole BrickServices dataclass
+    # --- OBSERVE-phase Zoekt observer (Issue #810) -------------------------
+    zoekt_write_observer: Any = None
+    task_dispatch_consumer: Any = None  # Task Manager DT_PIPE consumer
 
     # --- NexusFS internals (extracted once, never re-probed) --------------
     session_factory: Any = None  # NexusFS.SessionLocal
@@ -74,7 +79,6 @@ class LifespanServices:
     rebac_manager: Any = None
     event_bus: Any = None
     coordination_client: Any = None
-    llm_provider: Any = None
     workflow_engine: Any = None
     snapshot_service: Any = None
     namespace_manager: Any = None
@@ -82,7 +86,6 @@ class LifespanServices:
     observability_subsystem: Any = None
 
     # --- From app.state (set by server init, not factory) ----------------
-    a2a_task_manager: Any = None
     observability_registry: Any = None
 
     @classmethod
@@ -94,9 +97,14 @@ class LifespanServices:
         lifespan modules access services via typed attributes.
         """
         nx = getattr(app.state, "nexus_fs", None)
-        _sys = getattr(nx, "_system_services", None) if nx else None
-        _brk = getattr(nx, "_brick_services", None) if nx else None
-        _extras = getattr(nx, "_service_extras", None) if nx else None
+        _coord = getattr(nx, "service_coordinator", None) if nx else None
+
+        # Helper: nx.service() with None safety (also handles test mocks without service())
+        def _svc(name: str) -> Any:
+            if nx is None:
+                return None
+            svc_fn = getattr(nx, "service", None)
+            return svc_fn(name) if svc_fn is not None else None
 
         return cls(
             # Core / kernel
@@ -104,45 +112,49 @@ class LifespanServices:
             database_url=getattr(app.state, "database_url", None),
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
+            zone_registry=getattr(app.state, "zone_registry", None),
+            agent_registry=(
+                # AgentRegistry is the kernel SSOT — fetch through the
+                # kernel handle when nx is wired; fall back to app.state
+                # for tests that pre-populate it directly.
+                getattr(getattr(nx, "_kernel", None), "agent_registry", None)
+                if nx
+                else getattr(app.state, "agent_registry", None)
+            ),
+            service_coordinator=_coord,
             # Configuration
             deployment_profile=getattr(app.state, "deployment_profile", "full"),
             deployment_mode=getattr(app.state, "deployment_mode", "standalone"),
             enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
             profile_tuning=getattr(app.state, "profile_tuning", None),
             thread_pool_size=getattr(app.state, "thread_pool_size", 40),
-            # System services
-            brick_lifecycle_manager=(
-                getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
-            ),
-            brick_reconciler=(getattr(_sys, "brick_reconciler", None) if _sys else None),
-            eviction_manager=(getattr(_sys, "eviction_manager", None) if _sys else None),
-            write_observer=(getattr(_sys, "write_observer", None) if _sys else None),
-            zone_lifecycle=(getattr(_sys, "zone_lifecycle", None) if _sys else None),
-            pipe_manager=(getattr(_sys, "pipe_manager", None) if _sys else None),
-            # Issue #810: DT_PIPE Zoekt consumer
-            zoekt_pipe_consumer=(getattr(_brk, "zoekt_pipe_consumer", None) if _brk else None),
-            # Issue #2195: EventLog + Scheduler
-            event_log=(getattr(_sys, "event_log", None) if _sys else None),
-            scheduler_service=(getattr(_sys, "scheduler_service", None) if _sys else None),
-            # Brick services
-            brick_services=_brk,
+            # All services from ServiceRegistry
+            delivery_worker=_svc("delivery_worker"),
+            event_signal=None,
+            eviction_manager=_svc("eviction_manager"),
+            write_observer=_svc("write_observer"),
+            zone_lifecycle=_svc("zone_lifecycle"),
+            zoekt_write_observer=_svc("zoekt_write_observer"),
+            task_dispatch_consumer=_svc("task_dispatch_consumer"),
+            scheduler_service=_svc("scheduler_service"),
             # NexusFS internals
             session_factory=getattr(nx, "SessionLocal", None) if nx else None,
             sql_engine=getattr(nx, "_sql_engine", None) if nx else None,
-            entity_registry=(getattr(nx, "_entity_registry", None) if nx else None),
-            permission_enforcer=(getattr(nx, "_permission_enforcer", None) if nx else None),
-            rebac_manager=(getattr(nx, "_rebac_manager", None) if nx else None),
+            entity_registry=_svc("entity_registry"),
+            permission_enforcer=(_svc("permission_enforcer") if nx else None),
+            rebac_manager=_svc("rebac_manager"),
             event_bus=getattr(nx, "_event_bus", None) if nx else None,
-            coordination_client=(getattr(nx, "_coordination_client", None) if nx else None),
-            llm_provider=(getattr(nx, "_llm_provider", None) if nx else None),
-            workflow_engine=(getattr(nx, "workflow_engine", None) if nx else None),
-            snapshot_service=(getattr(nx, "_snapshot_service", None) if nx else None),
-            namespace_manager=(getattr(nx, "_namespace_manager", None) if nx else None),
-            nexus_config=getattr(nx, "config", None) if nx else None,
-            observability_subsystem=(
-                _extras.get("observability_subsystem") if isinstance(_extras, dict) else None
+            coordination_client=None,
+            workflow_engine=(
+                (nx.service("workflow_engine") if hasattr(nx, "service") else None)
+                or getattr(nx, "workflow_engine", None)
+                if nx
+                else None
             ),
+            snapshot_service=_svc("snapshot_service"),
+            namespace_manager=_svc("async_namespace_manager"),
+            nexus_config=getattr(nx, "config", None) if nx else None,
+            observability_subsystem=_svc("observability_subsystem"),
             # From app.state (set by server init)
-            a2a_task_manager=getattr(app.state, "a2a_task_manager", None),
             observability_registry=getattr(app.state, "observability_registry", None),
         )

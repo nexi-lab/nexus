@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.bricks.auth.constants import API_KEY_MIN_LENGTH, API_KEY_PREFIX, HMAC_SALT
+from nexus.bricks.auth.constants import (
+    _HMAC_SALT_DEFAULT,
+    API_KEY_MIN_LENGTH,
+    API_KEY_PREFIX,
+    get_hmac_secret,
+)
 from nexus.bricks.auth.providers.base import AuthProvider, AuthResult
 
 if TYPE_CHECKING:
@@ -38,7 +43,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
     async def authenticate(self, token: str) -> AuthResult:
         """Authenticate using database API key."""
-        from nexus.storage.models import APIKeyModel
+        from nexus.storage.models import APIKeyModel, ZoneModel
 
         if not token:
             return AuthResult(authenticated=False)
@@ -57,6 +62,21 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 APIKeyModel.revoked == 0,
             )
             api_key = session.scalar(stmt)
+
+            # Issue #3062: Dual-read fallback — if a custom HMAC secret is
+            # configured but this key was minted with the legacy salt, retry
+            # with the legacy salt so existing keys keep working during the
+            # migration window.
+            if not api_key and get_hmac_secret() != _HMAC_SALT_DEFAULT:
+                legacy_hash = self._hash_key_with(token, _HMAC_SALT_DEFAULT)
+                if legacy_hash != token_hash:
+                    stmt_legacy = select(APIKeyModel).where(
+                        APIKeyModel.key_hash == legacy_hash,
+                        APIKeyModel.revoked == 0,
+                    )
+                    api_key = session.scalar(stmt_legacy)
+                    if api_key:
+                        token_hash = legacy_hash  # for background update
 
             if not api_key:
                 logger.debug("API key not found or revoked: %s...", token_hash[:16])
@@ -78,6 +98,72 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 )
                 return AuthResult(authenticated=False)
 
+            # #3785: load token's zone allow-list (with per-zone perms, F3c)
+            # from api_key_zones junction. Authoritative source post-#3871.
+            from nexus.storage.models import APIKeyZoneModel
+
+            zone_perm_rows = session.execute(
+                select(APIKeyZoneModel.zone_id, APIKeyZoneModel.permissions)
+                .where(APIKeyZoneModel.key_id == api_key.key_id)
+                .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
+            ).all()
+
+            # #3871 round 2: legacy zone-scoped key without junction row
+            # MUST fail closed. The pre-Task-6 SQLAlchemyAPIKeyStore.create_key
+            # wrote api_key.zone_id without a junction row; under the new
+            # junction-only auth path, an admin row would be silently
+            # reinterpreted as a global/zoneless admin (privilege escalation).
+            # The tripwire migration (04188c0bbb28) blocks the upgrade until
+            # such rows are backfilled, but defense-in-depth here ensures we
+            # never honor an unmigrated legacy row at auth time.
+            if not zone_perm_rows and api_key.zone_id is not None:
+                logger.warning(
+                    "UNAUTHORIZED: API key %s has legacy zone_id=%r but no junction row "
+                    "(pre-#3871 unmigrated key); refusing to authenticate",
+                    api_key.key_id,
+                    api_key.zone_id,
+                )
+                return AuthResult(authenticated=False)
+
+            # #3871 round 4: a non-admin token with no junction zones has no
+            # zone access. Several downstream routes coerce ``zone_id=None``
+            # to ROOT_ZONE_ID (tus_uploads, fastapi_server secrets-audit dep),
+            # which would silently grant root access. Fail closed here so
+            # zoneless tokens are reserved for explicit global admins.
+            if not zone_perm_rows and not api_key.is_admin:
+                logger.warning(
+                    "UNAUTHORIZED: non-admin API key %s has no junction zones; "
+                    "zoneless tokens are reserved for global admins (#3871)",
+                    api_key.key_id,
+                )
+                return AuthResult(authenticated=False)
+
+            # #3784 round 10 + #3871 round 5: zone lifecycle gate at runtime.
+            # A token scoped to a zone that has since been soft-deleted, marked
+            # Terminating, or removed from the registry entirely MUST fail
+            # closed. Check EVERY junction zone (a token multi-zoned to [eng,
+            # ops] must reject if EITHER becomes inactive). Empty junction
+            # (zoneless admin) falls through naturally — no zones to check.
+            #
+            # Round 5: missing ZoneModel also fails closed. Round 5 added
+            # zone-existence validation to all create paths, so a missing
+            # ZoneModel for a junction-listed zone means the registry was
+            # mutated out from under the token (typo, manual delete, or
+            # unmigrated row) — treat it as inactive.
+            for zid in [z for z, _ in zone_perm_rows]:
+                zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid))
+                if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
+                    logger.warning(
+                        "UNAUTHORIZED: API key %s zone %r is not active "
+                        "(zone_row=%r, phase=%s, deleted_at=%s)",
+                        api_key.key_id,
+                        zid,
+                        zone,
+                        getattr(zone, "phase", None),
+                        getattr(zone, "deleted_at", None),
+                    )
+                    return AuthResult(authenticated=False)
+
             # Cache all ORM attributes eagerly before session close
             subject_type = (
                 api_key.subject_type
@@ -89,11 +175,31 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 if hasattr(api_key, "subject_id") and api_key.subject_id
                 else api_key.user_id
             )
-            zone_id = api_key.zone_id
+            # After #3871 Phase 2: junction is the sole source of zone access.
+            # api_key.zone_id (legacy column) is NOT consulted — empty junction
+            # means no zone access. The tripwire migration (04188c0bbb28)
+            # prevents Phase 3 upgrade until pre-Phase-2 keys are backfilled
+            # to the junction.
+            # Issue #3786: multi-zone tokens (len > 1) get zone_id=ROOT_ZONE_ID so
+            # the Rust context reflects cross-zone scope; single-zone tokens keep the
+            # specific zone_id for backward-compat and namespace routing.
+            from nexus.contracts.constants import ROOT_ZONE_ID as _ROOT_ZONE_ID
+
+            zone_id = (
+                zone_perm_rows[0][0]
+                if len(zone_perm_rows) == 1
+                else _ROOT_ZONE_ID
+                if zone_perm_rows
+                else None
+            )
             is_admin = bool(api_key.is_admin)
             key_id = api_key.key_id
             key_name = api_key.name
             expires_at_iso = api_key.expires_at.isoformat() if api_key.expires_at else None
+
+            # Derive zone_perms: junction is sole source of truth (#3871 Phase 2).
+            # zone_set is rebuilt by AuthResult.__post_init__.
+            zone_perms: tuple[tuple[str, str], ...] = tuple((z, p) for z, p in zone_perm_rows)
 
         # Decision #13: Fire-and-forget last_used_at update (outside session)
         self._update_last_used_background(token_hash)
@@ -104,6 +210,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             subject_id=subject_id,
             zone_id=zone_id,
             is_admin=is_admin,
+            zone_perms=zone_perms,
             metadata={
                 "key_id": key_id,
                 "key_name": key_name,
@@ -149,7 +256,13 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
     @staticmethod
     def _hash_key(key: str) -> str:
-        return hmac.new(HMAC_SALT.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
+        secret = get_hmac_secret()
+        return hmac.new(secret.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def _hash_key_with(key: str, secret: str) -> str:
+        """Hash a key with a specific HMAC secret (used for legacy fallback)."""
+        return hmac.new(secret.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
 
     @classmethod
     def create_key(
@@ -186,11 +299,37 @@ class DatabaseAPIKeyAuth(AuthProvider):
         raw_key = f"{API_KEY_PREFIX}{zone_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
         key_hash = cls._hash_key(raw_key)
 
+        # #3871 round 4: non-admin keys must have a zone. Otherwise the token
+        # has no zone access at auth time (and downstream routes would coerce
+        # the missing zone to ROOT_ZONE_ID, silently granting root). Zoneless
+        # is reserved for explicit global admins.
+        if not zone_id and not is_admin:
+            raise ValueError(
+                "DatabaseAPIKeyAuth.create_key: non-admin keys must specify a zone_id "
+                "(zoneless tokens are reserved for global admins, #3871)"
+            )
+
+        # #3871 round 3+6: validate zone exists, is Active, and not deleted
+        # before inserting junction row. Surfaces a controlled ValueError
+        # instead of (a) an opaque IntegrityError from the FK constraint or
+        # (b) a returned raw key that the lifecycle gate immediately rejects
+        # at first authentication (already persisted/displayed once).
+        if zone_id:
+            from nexus.storage.models import ZoneModel
+
+            zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
+            if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
+                raise ValueError(
+                    f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} is not active "
+                    "(missing, Terminating, or soft-deleted); create or restore "
+                    "the zone before issuing keys against it"
+                )
+
         api_key = APIKeyModel(
             key_hash=key_hash,
             user_id=user_id,
             name=name,
-            zone_id=zone_id,
+            zone_id=None,  # #3871 Phase 2: junction is source of truth
             is_admin=int(is_admin),
             expires_at=expires_at,
             subject_type=subject_type,
@@ -199,7 +338,13 @@ class DatabaseAPIKeyAuth(AuthProvider):
         )
 
         session.add(api_key)
-        session.flush()
+        session.flush()  # populate api_key.key_id before junction insert
+
+        if zone_id:  # populate junction so the key is visible to junction-based filters
+            from nexus.storage.models import APIKeyZoneModel
+
+            session.add(APIKeyZoneModel(key_id=api_key.key_id, zone_id=zone_id, permissions="rw"))
+            session.flush()
 
         return (api_key.key_id, raw_key)
 
@@ -210,8 +355,10 @@ class DatabaseAPIKeyAuth(AuthProvider):
         Args:
             session: SQLAlchemy session.
             key_id: Key ID to revoke.
-            zone_id: Zone isolation filter. When provided, only keys
-                belonging to this zone can be revoked.
+            zone_id: Zone access filter. When provided, only keys that
+                grant access to this zone (via the api_key_zones junction)
+                can be revoked. Multi-zone keys match on every granted
+                zone, not only the primary (#3871).
 
         Returns:
             True if key was revoked, False if not found.
@@ -220,14 +367,28 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
         if zone_id is not None:
-            stmt = stmt.where(APIKeyModel.zone_id == zone_id)
+            from nexus.storage.models import APIKeyZoneModel
+
+            stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+                APIKeyZoneModel.zone_id == zone_id
+            )
         api_key = session.scalar(stmt)
 
         if not api_key:
             return False
 
+        # Snapshot subject before mutation — needed to drop the cached zone_perms
+        # so the revoked grants can't authorise further requests.  Mirrors
+        # api_key_ops.revoke_api_key (Issue #3786 / Codex Round 3 finding #3).
+        revoked_subject = api_key.subject_id if hasattr(api_key, "subject_id") else api_key.user_id
+
         api_key.revoked = 1
         api_key.revoked_at = datetime.now(UTC)
         session.flush()
+
+        if revoked_subject:
+            from nexus.storage.api_key_ops import invalidate_zone_perms_for_subject
+
+            invalidate_zone_perms_for_subject(revoked_subject)
 
         return True

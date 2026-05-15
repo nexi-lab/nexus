@@ -4,6 +4,12 @@
 **Status:** Steps 1-3 COMPLETE — All Data-Storage Affinity Decisions Resolved
 **Purpose:** Catalog ALL data types in Nexus and determine optimal storage for each
 
+**Companion docs.** This matrix maps the **data side**: what data types exist
+and which storage capability fits each. The **HAL side** — how the kernel
+abstracts those storage capabilities into pluggable driver contracts — lives
+in `KERNEL-ARCHITECTURE.md` §3.A (Storage HAL: ABC pillars) and §3.B
+(Control-Plane HAL: `DistributedCoordinator`, `ObjectStoreProvider`).
+
 ---
 
 ## Methodology

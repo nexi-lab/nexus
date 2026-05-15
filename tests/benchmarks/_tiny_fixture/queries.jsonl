@@ -1,0 +1,2 @@
+{"query": "fox", "relevant": ["/bench/a.txt"]}
+{"query": "vector search", "relevant": ["/bench/d.txt", "/bench/e.txt"]}

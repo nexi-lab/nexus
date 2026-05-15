@@ -28,7 +28,7 @@ from nexus.services.scheduler.constants import (
 )
 
 if TYPE_CHECKING:
-    from nexus.services.protocols.scheduler import AgentRequest
+    from nexus.contracts.protocols.scheduler import AgentRequest
 
 
 def classify_request(

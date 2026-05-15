@@ -153,6 +153,18 @@ class TestRecordStorePoolConfig:
             call_kwargs = mock_create.call_args[1]
             assert call_kwargs["pool_pre_ping"] is True
 
+    def test_sqlite_memory_uses_static_pool(self):
+        """In-memory SQLite uses one shared connection across TestClient threads."""
+        from sqlalchemy.pool import StaticPool
+
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=False)
+        try:
+            assert isinstance(store.engine.pool, StaticPool)
+        finally:
+            store.close()
+
 
 class TestRecordStoreAsyncURLConversion:
     """Tests for sync→async URL conversion."""
@@ -188,9 +200,17 @@ class TestRecordStoreCreateTables:
         """Default behavior: create_tables=True calls create_all."""
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        with patch("nexus.storage.models.Base") as mock_base:
+        with (
+            patch("nexus.storage.models.Base") as mock_base,
+            # Issue #3897: create_tables=True also seeds zones.root via
+            # ensure_root_zone; mock it out since Base.metadata.create_all
+            # is patched here and the real seed would query a non-existent
+            # zones table.
+            patch("nexus.storage.zone_bootstrap.ensure_root_zone") as mock_seed,
+        ):
             store = SQLAlchemyRecordStore(create_tables=True)
             mock_base.metadata.create_all.assert_called_once()
+            mock_seed.assert_called_once()
             store.close()
 
     def test_create_tables_false_skips_create_all(self):
@@ -284,6 +304,7 @@ class TestRecordStoreCreatorParams:
             patch("sqlalchemy.ext.asyncio.create_async_engine") as mock_async_create,
             patch("sqlalchemy.ext.asyncio.async_sessionmaker") as mock_asm,
             patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch.object(SQLAlchemyRecordStore, "_attach_asyncpg_protocol_error_handler"),
         ):
             mock_async_create.return_value = MagicMock()
             mock_asm.return_value = MagicMock()
@@ -330,19 +351,45 @@ class TestRecordStoreAsyncSessionFactory:
 class TestRecordStoreLifecycle:
     """Tests for store lifecycle management."""
 
-    def test_close_disposes_both_engines(self):
-        """close() disposes sync engine and async engine (if initialized)."""
+    def test_close_disposes_async_engine_when_safe(self):
+        """close() best-effort disposes async engine and nulls ref on success."""
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         store = SQLAlchemyRecordStore(create_tables=False)
-        # Access async factory to initialize async engine
         _ = store.async_session_factory
         assert store._async_engine is not None
 
         store.close()
-        # After close, async engine should be cleaned up
+        # SQLite + aiosqlite with no live loop: sync dispose succeeds, ref nulled.
         assert store._async_engine is None
         assert store._async_session_factory_instance is None
+
+    def test_close_preserves_ref_on_dispose_failure(self):
+        """Issue #3775: a failed sync dispose must NOT null the async engine ref.
+
+        Regression: previously ``close()`` nulled refs unconditionally, losing
+        the only handle to a live async pool. Callers can then never recover
+        via ``aclose()``. With preserved refs, the caller can retry.
+        """
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        _ = store.async_session_factory
+        assert store._async_engine is not None
+
+        # Force sync dispose to fail.
+        original_engine = store._async_engine
+        original_factory = store._async_session_factory_instance
+
+        def _boom():
+            raise RuntimeError("simulated cross-loop dispose failure")
+
+        with patch.object(original_engine.sync_engine, "dispose", side_effect=_boom):
+            store.close()  # Must not raise
+
+        # Ref must remain — caller needs to recover via aclose().
+        assert store._async_engine is original_engine
+        assert store._async_session_factory_instance is original_factory
 
     def test_close_without_async_engine(self):
         """close() works even when async engine was never initialized."""
@@ -351,6 +398,97 @@ class TestRecordStoreLifecycle:
         store = SQLAlchemyRecordStore(create_tables=False)
         assert store._async_engine is None
         store.close()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_aclose_disposes_async_engine_on_origin_loop(self):
+        """aclose() disposes async engine on the current loop (Issue #3775).
+
+        Regression: previously ``close()`` invoked
+        ``_async_engine.sync_engine.dispose()`` which await-only'd onto a
+        possibly-different loop, producing
+        ``RuntimeError: Future attached to a different loop`` on shutdown.
+
+        The engine reference is retained (not nulled) so a subsequent
+        ``close()`` can re-dispose any pool that consumers with a cached
+        ``async_sessionmaker`` reopened between aclose and close.
+        """
+        from sqlalchemy.ext.asyncio import AsyncEngine
+
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        # Force async engine creation on this loop.
+        _ = store.async_session_factory
+        assert store._async_engine is not None
+
+        await store.aclose()
+        # Sentinel is set; engine ref retained for re-dispose in close().
+        assert store._async_closed is True
+        assert isinstance(store._async_engine, AsyncEngine)
+
+    @pytest.mark.asyncio
+    async def test_async_session_factory_raises_after_aclose(self):
+        """Property must raise after aclose even on the cache-hit path (Issue #3775).
+
+        SQLAlchemy ``Engine.dispose()`` does not render an engine unusable —
+        the next checkout silently builds a fresh pool. The cached
+        ``async_sessionmaker`` references the engine; if the property
+        returned it post-aclose, a stale consumer could create connections
+        nothing later disposes. The sentinel must fire on both
+        cold (cache empty) and warm (cache populated) accesses.
+        """
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        _ = store.async_session_factory  # warm — cached factory present
+        assert store._async_session_factory_instance is not None
+        await store.aclose()
+
+        # Warm cache present — sentinel must still fire.
+        with pytest.raises(RuntimeError, match="after aclose"):
+            _ = store.async_session_factory
+
+        # Cold cache (consumer cleared its handle) — must also fire.
+        store._async_session_factory_instance = None
+        with pytest.raises(RuntimeError, match="after aclose"):
+            _ = store.async_session_factory
+
+    @pytest.mark.asyncio
+    async def test_aclose_leaves_sync_engine_usable(self):
+        """Issue #3775 ordering: aclose must not dispose the sync engine.
+
+        ``NexusFS`` close-callbacks (write-observer ``flush_sync``, etc.)
+        run after ``adispose_async_engines()`` and use the sync
+        ``session_factory`` to flush pending DB writes. If ``aclose`` also
+        disposed the sync engine, those callbacks would fail or silently
+        reopen a fresh pool that nothing later disposes.
+        """
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        _ = store.async_session_factory  # force async engine creation
+        assert store._async_engine is not None
+
+        await store.aclose()
+
+        # Sync engine + session factory still usable after aclose.
+        assert store._engine is not None
+        with store.session_factory() as sess:
+            from sqlalchemy import text
+
+            assert sess.execute(text("SELECT 1")).scalar() == 1
+
+        # Final sync close disposes the sync engine.
+        store.close()
+
+    @pytest.mark.asyncio
+    async def test_aclose_without_async_engine(self):
+        """aclose() is safe when async engine was never initialized."""
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        assert store._async_engine is None
+        await store.aclose()  # Should not raise
 
 
 class TestReadReplicaConfiguration:
@@ -705,7 +843,7 @@ class TestRecordStoreSessionContextManager:
 
     def test_read_session_uses_read_factory(self):
         """read_session() uses read_session_factory (which defaults to primary)."""
-        from tests.helpers.in_memory_record_store import InMemoryRecordStore
+        from tests.testkit.records import InMemoryRecordStore
 
         store = InMemoryRecordStore()
         try:
@@ -718,7 +856,7 @@ class TestRecordStoreSessionContextManager:
 
     def test_read_session_falls_back_to_primary(self):
         """read_session() falls back to primary when no replica configured."""
-        from tests.helpers.in_memory_record_store import InMemoryRecordStore
+        from tests.testkit.records import InMemoryRecordStore
 
         store = InMemoryRecordStore()
         try:
@@ -729,3 +867,92 @@ class TestRecordStoreSessionContextManager:
                 assert result.scalar() == 1
         finally:
             store.close()
+
+
+class TestAsyncpgProtocolErrorHandler:
+    """Backport SQLAlchemy #13241: mark asyncpg.InternalClientError as disconnect.
+
+    Under sustained VFS write load with client-side cancellation, asyncpg raises
+    `InternalClientError: got result for unknown protocol state ...` (or
+    `cannot switch to state X; another operation (Y) is in progress`). SQLAlchemy's
+    asyncpg dialect does not classify these as disconnects, so the poisoned
+    connection is returned to the pool and the next checkout hangs or repeats
+    the failure. The fix: set `ctx.is_disconnect = True` so the pool discards it.
+    """
+
+    def test_internal_client_error_marked_as_disconnect(self):
+        """asyncpg.InternalClientError should flip is_disconnect to True."""
+        import asyncpg
+
+        from nexus.storage.record_store import _handle_asyncpg_protocol_error
+
+        ctx = MagicMock()
+        ctx.original_exception = asyncpg.InternalClientError(
+            "got result for unknown protocol state 3"
+        )
+        ctx.is_disconnect = False
+
+        _handle_asyncpg_protocol_error(ctx)
+
+        assert ctx.is_disconnect is True
+
+    def test_protocol_state_switch_error_marked_as_disconnect(self):
+        """'cannot switch to state X' variant also maps to InternalClientError."""
+        import asyncpg
+
+        from nexus.storage.record_store import _handle_asyncpg_protocol_error
+
+        ctx = MagicMock()
+        ctx.original_exception = asyncpg.InternalClientError(
+            "cannot switch to state 12; another operation (2) is in progress"
+        )
+        ctx.is_disconnect = False
+
+        _handle_asyncpg_protocol_error(ctx)
+
+        assert ctx.is_disconnect is True
+
+    def test_unrelated_exception_not_marked_as_disconnect(self):
+        """Generic exceptions should not flip is_disconnect."""
+        from nexus.storage.record_store import _handle_asyncpg_protocol_error
+
+        ctx = MagicMock()
+        ctx.original_exception = ValueError("unrelated error")
+        ctx.is_disconnect = False
+
+        _handle_asyncpg_protocol_error(ctx)
+
+        assert ctx.is_disconnect is False
+
+    def test_preserves_existing_disconnect_flag(self):
+        """Handler must not clear an already-set is_disconnect flag."""
+        from nexus.storage.record_store import _handle_asyncpg_protocol_error
+
+        ctx = MagicMock()
+        ctx.original_exception = ValueError("unrelated error")
+        ctx.is_disconnect = True  # already flagged by SA's own classifier
+
+        _handle_asyncpg_protocol_error(ctx)
+
+        assert ctx.is_disconnect is True
+
+    def test_handler_attached_to_async_engine(self):
+        """_attach_asyncpg_protocol_error_handler registers the handle_error listener."""
+        import asyncio
+
+        from sqlalchemy import event
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from nexus.storage.record_store import (
+            SQLAlchemyRecordStore,
+            _handle_asyncpg_protocol_error,
+        )
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        try:
+            SQLAlchemyRecordStore._attach_asyncpg_protocol_error_handler(engine.sync_engine)
+            assert event.contains(
+                engine.sync_engine, "handle_error", _handle_asyncpg_protocol_error
+            )
+        finally:
+            asyncio.run(engine.dispose())

@@ -19,7 +19,7 @@ NEXUS_API_KEY = os.getenv(
 NUM_FILES = 50  # Number of files to test
 
 
-def test_individual_writes(client, test_dir):
+async def test_individual_writes(client, test_dir):
     """Test writing files individually."""
     print(f"\n[Individual Writes] Writing {NUM_FILES} files one by one...")
 
@@ -67,7 +67,7 @@ def test_batch_writes(client, test_dir):
     return total_time, per_file
 
 
-def main():
+async def main():
     print("=" * 70)
     print("WRITE_BATCH OPTIMIZATION TEST")
     print("=" * 70)
@@ -78,9 +78,9 @@ def main():
 
     # Create unique test directory
     test_dir = f"/batch_test_{uuid.uuid4().hex[:8]}"
-    client.sys_mkdir(test_dir)
-    client.sys_mkdir(f"{test_dir}/individual")
-    client.sys_mkdir(f"{test_dir}/batch")
+    client.mkdir(test_dir)
+    client.mkdir(f"{test_dir}/individual")
+    client.mkdir(f"{test_dir}/batch")
 
     try:
         # Test 1: Individual writes

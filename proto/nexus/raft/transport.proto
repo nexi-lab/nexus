@@ -59,12 +59,46 @@ service ZoneApiService {
   // a snapshot from the leader and becomes an equal Voter with a local sled replica.
   rpc JoinZone(JoinZoneRequest) returns (JoinZoneResponse);
 
-  // InviteZone is the inverse of JoinZone: the zone leader tells a remote node
-  // to join a zone and create a DT_MOUNT at a specified path.
-  // Used by `nexus mount /local-path peer:/remote-path` — the sharing initiator
-  // calls this on the remote peer so it joins the newly created zone.
-  // Handler: (1) join zone as peer, (2) call JoinZone on leader, (3) create DT_MOUNT.
-  rpc InviteZone(InviteZoneRequest) returns (InviteZoneResponse);
+  // DeleteZone removes this node's local replica for a zone.
+  //
+  // Internal maintenance RPC used by federation_remove_zone fan-out. This is
+  // intentionally local-only: the caller coordinates peer fan-out, while the
+  // receiver only shuts down its in-memory raft group and deletes its on-disk
+  // replica. It is idempotent so retries and already-cleaned peers are safe.
+  rpc DeleteZone(DeleteZoneRequest) returns (DeleteZoneResponse);
+
+  // JoinCluster provisions a new node with cluster TLS certificates.
+  // Called by `nexus join` before `nexus serve`. The caller authenticates
+  // with the join token password; the server signs a node cert and returns
+  // it along with the CA cert. CA key never leaves node-1 (security fix).
+  // K3s-style bootstrap: token = shared secret, TLS encrypts the channel.
+  rpc JoinCluster(JoinClusterRequest) returns (JoinClusterResponse);
+
+  // GetSearchCapabilities returns the search modes available on a zone (Issue #3147).
+  // Used by FederatedSearchDispatcher to route queries to zones that can handle them.
+  rpc GetSearchCapabilities(GetSearchCapabilitiesRequest) returns (SearchCapabilities);
+
+  // ReadBlob serves a CAS blob by content hash — driver-to-driver protocol.
+  // R20.18.7: inter-node only, co-located with ZoneApiService on the raft
+  // port so it inherits the cluster's mTLS + join-token authentication.
+  // Used by follower `try_remote_fetch` / scatter-gather chunk fetch when
+  // metadata has been replicated ahead of content.
+  rpc ReadBlob(ReadBlobRequest) returns (ReadBlobResponse);
+}
+
+// === Search Capability Advertisement (Issue #3147) ===
+
+message GetSearchCapabilitiesRequest {
+  string zone_id = 1;
+}
+
+message SearchCapabilities {
+  string zone_id = 1;
+  string device_tier = 2;            // "phone", "laptop", "server"
+  repeated string search_modes = 3;  // "keyword", "semantic", "hybrid"
+  string embedding_model = 4;
+  int32 embedding_dimensions = 5;
+  bool has_graph = 6;
 }
 
 // === Client Messages ===
@@ -75,6 +109,13 @@ message ProposeRequest {
   string request_id = 2;
   // Zone ID for multi-zone routing. Required in multi-zone mode.
   string zone_id = 3;
+  // Internal forwarding: bincode-serialized Command bytes.
+  // When set, the server deserializes directly (skipping proto→internal conversion).
+  // Used by ZoneConsensus::propose() leader forwarding — avoids double serialization.
+  bytes raw_command = 4;
+  // Set by follower when forwarding. Prevents infinite forwarding loops
+  // (if leader_hint is stale and target is also a follower).
+  bool forwarded = 5;
 }
 
 // ProposeResponse is the response to a Propose RPC.
@@ -119,7 +160,8 @@ message GetClusterInfoResponse {
 }
 
 // JoinZoneRequest is sent by a new node to an existing zone member.
-// The leader will propose a ConfChange(AddVoter) for the joining node.
+// The leader will propose a ConfChange(AddVoter) for the joining node,
+// or ConfChange(AddLearnerNode) when as_learner is true.
 message JoinZoneRequest {
   // Zone to join.
   string zone_id = 1;
@@ -127,6 +169,9 @@ message JoinZoneRequest {
   uint64 node_id = 2;
   // The joining node's gRPC address (e.g., "http://10.0.0.3:2126").
   string node_address = 3;
+  // When true, leader proposes AddLearnerNode instead of AddNode.
+  // Learners receive log replication but do not count toward quorum.
+  bool as_learner = 4;
 }
 
 // JoinZoneResponse is returned after the ConfChange is committed.
@@ -139,33 +184,51 @@ message JoinZoneResponse {
   optional ClusterConfig config = 4;
 }
 
-// InviteZoneRequest is sent by a zone leader to a remote node, asking it to
-// join the zone and create a DT_MOUNT at the specified path.
-// This is the inverse of JoinZone: JoinZone = new_node → leader,
-// InviteZone = leader → new_node.
-// The remote handler: (1) creates local zone replica, (2) calls JoinZone on
-// the leader to be added as Voter, (3) creates DT_MOUNT at mount_path.
-// The mount_path must already exist as a directory on the remote node (NFS behavior).
-message InviteZoneRequest {
-  // Zone to join.
+// DeleteZoneRequest asks a peer to remove its local zone replica.
+message DeleteZoneRequest {
   string zone_id = 1;
-  // Where to create DT_MOUNT on the remote node's root zone.
-  // Must already exist as a directory (like NFS mount points).
-  string mount_path = 2;
-  // The inviter (leader) node's Raft ID.
-  uint64 inviter_node_id = 3;
-  // The inviter (leader) node's gRPC address.
-  string inviter_address = 4;
+  // Reserved for future policy checks. The current maintenance RPC is local
+  // and idempotent; high-level mounted-zone safety is enforced by the caller.
+  bool force = 2;
 }
 
-// InviteZoneResponse is returned after the remote node has joined and mounted.
-message InviteZoneResponse {
+// DeleteZoneResponse reports local replica deletion.
+message DeleteZoneResponse {
   bool success = 1;
   optional string error = 2;
-  // The remote node's Raft ID (assigned during join).
-  uint64 node_id = 3;
-  // The remote node's gRPC address.
-  string node_address = 4;
+}
+
+// JoinClusterRequest is sent during TLS bootstrap to provision certificates.
+// The caller authenticates with a join token password (K3s-style).
+// The server signs a node certificate — CA key never leaves the leader.
+message JoinClusterRequest {
+  // Join token password (64-char hex string).
+  string password = 1;
+  // The joining node's Raft ID.
+  uint64 node_id = 2;
+  // The joining node's advertise address (e.g., "http://10.0.0.3:2126").
+  string node_address = 3;
+  // Zone ID for the node certificate CN (e.g., "root").
+  string zone_id = 4;
+  // Reserved: was peers_bootstrap (removed — only token-based auth supported).
+  reserved 5;
+  reserved "peers_bootstrap";
+}
+
+// JoinClusterResponse returns cluster TLS material on success.
+// The server signs the node cert — CA key never leaves node-1.
+message JoinClusterResponse {
+  bool success = 1;
+  optional string error = 2;
+  // Cluster CA certificate (PEM-encoded). Used to verify peer certs.
+  bytes ca_pem = 3;
+  // Reserved: was ca_key_pem — removed for security (CA key stays on node-1).
+  reserved 4;
+  reserved "ca_key_pem";
+  // Server-signed node certificate (PEM-encoded).
+  bytes node_cert_pem = 5;
+  // Node private key (PEM-encoded). Generated server-side for the joiner.
+  bytes node_key_pem = 6;
 }
 
 // === Cluster Configuration ===
@@ -201,6 +264,14 @@ message StepMessageRequest {
   bytes message = 1;
   // Zone ID for multi-zone routing. Required in multi-zone mode.
   string zone_id = 2;
+  // Sender's advertise address (e.g., "http://10.0.0.3:2126").  The
+  // receiver updates its transport peer map with
+  // `(message.from_id -> sender_address)` so the network is the SSOT
+  // for routing — restart, DHCP changes, and post-failover leaders
+  // converge naturally as messages arrive.  Optional: empty string
+  // is treated as "sender did not advertise" and the receiver falls
+  // back to whatever peer-map entry already exists.
+  string sender_address = 3;
 }
 
 // StepMessageResponse acknowledges receipt.
@@ -240,4 +311,41 @@ message ReplicateEntriesResponse {
   optional string error = 2;
   // Highest sequence number successfully applied by the receiver.
   uint64 applied_up_to = 3;
+}
+
+// === ReadBlob (R20.18.7 — driver-to-driver CAS fetch) ===
+
+// ReadBlobRequest asks a peer for the blob bytes.
+//
+// Two addressing modes:
+//   - `content_hash` set, `path` empty → CAS lookup by hash on the peer's
+//     local backends. Used by chunk fetch and CAS-backed federation.
+//   - `path` set → drive the peer's VFSRouter at that global path, so PAS
+//     mounts (PathLocalBackend, S3Backend, …) can serve cross-node reads.
+//     `content_hash` is ignored when `path` is non-empty.
+//
+// Internal RPC; authentication is the transport's mTLS (client cert signed
+// by the cluster CA), so no explicit auth field is carried in the body.
+message ReadBlobRequest {
+  // Reserved: pre-store-and-forward dual-mode shape (content_hash + path).
+  // Removed in favor of a single ``content_id`` so the kernel never has to
+  // pick CAS-vs-PAS dispatch — peer self-routes through its own
+  // ``VFSRouter`` just like a local ``sys_read``.
+  reserved 1, 2;
+  reserved "content_hash", "path";
+
+  // Backend-defined opaque content identifier — the same string the peer
+  // would have stored in its local ``FileMetadata.content_id`` slot at
+  // write time. For federation reads this carries a global VFS path
+  // (``/<zone>/<...>``); the peer's ``BlobFetcher::read`` impl drives its
+  // local kernel through the standard read path so each backend interprets
+  // ``content_id`` in its own way (CAS=hash, PAS=backend_path, etc.).
+  // The caller's kernel never inspects this field.
+  string content_id = 3;
+}
+
+// ReadBlobResponse returns either the blob bytes or a non-empty `error`.
+message ReadBlobResponse {
+  bytes content = 1;
+  string error = 2;
 }

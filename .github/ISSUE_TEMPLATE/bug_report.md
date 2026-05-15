@@ -36,7 +36,7 @@ What actually happened?
 ## Environment
 
 - **Nexus Version:** [e.g., 0.1.0]
-- **Python Version:** [e.g., 3.11.5]
+- **Python Version:** [e.g., 3.14.1]
 - **OS:** [e.g., macOS 14.0, Ubuntu 22.04, Windows 11]
 - **Deployment Mode:** [embedded/monolithic/distributed]
 - **Installation Method:** [pip/uv/source]

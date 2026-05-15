@@ -21,12 +21,21 @@ NOTE: These are SERVICE-LEVEL domain caches, NOT kernel code.
 import hashlib
 import json
 import logging
+import re
 import struct
 from collections.abc import Awaitable, Callable
 
 from nexus.contracts.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
+
+# Characters that have special meaning in Redis SCAN/glob patterns.
+_GLOB_SPECIAL_RE = re.compile(r"([*?\[\]])")
+
+
+def _escape_glob(value: str) -> str:
+    """Escape glob special characters so *value* is matched literally."""
+    return _GLOB_SPECIAL_RE.sub(r"[\1]", value)
 
 
 class PermissionCache:
@@ -97,7 +106,10 @@ class PermissionCache:
         subject_id: str,
         zone_id: str,
     ) -> int:
-        pattern = f"perm:{zone_id}:{subject_type}:{subject_id}:*"
+        pattern = (
+            f"perm:{_escape_glob(zone_id)}:{_escape_glob(subject_type)}"
+            f":{_escape_glob(subject_id)}:*"
+        )
         return await self._store.delete_by_pattern(pattern)
 
     async def invalidate_object(
@@ -106,7 +118,10 @@ class PermissionCache:
         object_id: str,
         zone_id: str,
     ) -> int:
-        pattern = f"perm:{zone_id}:*:*:*:{object_type}:{object_id}"
+        pattern = (
+            f"perm:{_escape_glob(zone_id)}:*:*:*"
+            f":{_escape_glob(object_type)}:{_escape_glob(object_id)}"
+        )
         return await self._store.delete_by_pattern(pattern)
 
     async def invalidate_subject_object(
@@ -117,11 +132,15 @@ class PermissionCache:
         object_id: str,
         zone_id: str,
     ) -> int:
-        pattern = f"perm:{zone_id}:{subject_type}:{subject_id}:*:{object_type}:{object_id}"
+        pattern = (
+            f"perm:{_escape_glob(zone_id)}:{_escape_glob(subject_type)}"
+            f":{_escape_glob(subject_id)}:*"
+            f":{_escape_glob(object_type)}:{_escape_glob(object_id)}"
+        )
         return await self._store.delete_by_pattern(pattern)
 
     async def clear(self, zone_id: str | None = None) -> int:
-        pattern = f"perm:{zone_id}:*" if zone_id else "perm:*"
+        pattern = f"perm:{_escape_glob(zone_id)}:*" if zone_id else "perm:*"
         return await self._store.delete_by_pattern(pattern)
 
     async def health_check(self) -> bool:
@@ -206,11 +225,11 @@ class TigerCache:
         zone_id: str | None = None,
     ) -> int:
         parts = [
-            zone_id or "*",
-            subject_type or "*",
-            subject_id or "*",
-            permission or "*",
-            resource_type or "*",
+            _escape_glob(zone_id) if zone_id else "*",
+            _escape_glob(subject_type) if subject_type else "*",
+            _escape_glob(subject_id) if subject_id else "*",
+            _escape_glob(permission) if permission else "*",
+            _escape_glob(resource_type) if resource_type else "*",
         ]
         pattern = f"tiger:{':'.join(parts)}"
         return await self._store.delete_by_pattern(pattern)
@@ -437,7 +456,11 @@ class EmbeddingCache:
             return False
 
     async def clear(self, model: str | None = None) -> int:
-        pattern = f"emb:{self.CACHE_VERSION}:{model}:*" if model else f"emb:{self.CACHE_VERSION}:*"
+        pattern = (
+            f"emb:{self.CACHE_VERSION}:{_escape_glob(model)}:*"
+            if model
+            else f"emb:{self.CACHE_VERSION}:*"
+        )
         return await self._store.delete_by_pattern(pattern)
 
     async def health_check(self) -> bool:

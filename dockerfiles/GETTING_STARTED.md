@@ -46,7 +46,7 @@ The script demonstrates:
 
 ```bash
 # Start Nexus server
-nexus serve --host 0.0.0.0 --port 2026 &
+nexusd --host 0.0.0.0 --port 2026 &
 
 # Create API key
 export NEXUS_API_KEY=$(nexus admin create-user dev --name "Developer" --subject-type user | grep "API Key:" | awk '{print $3}')
@@ -217,7 +217,7 @@ NEXUS_SANDBOX_PROVIDER=docker  # Default sandbox provider
 lsof -ti:2026 | xargs kill -9
 
 # Or use different port
-nexus serve --port 8081
+nexusd --port 8081
 export NEXUS_URL=http://localhost:8081
 ```
 

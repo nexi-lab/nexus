@@ -1,0 +1,401 @@
+name: Docker Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (default: git SHA short)"
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/nexus
+
+jobs:
+  # Fan out amd64 and arm64 onto native GitHub-hosted runners; emit one
+  # push-by-digest image per platform. QEMU-emulated multi-arch on a
+  # single ubuntu-latest runner is 5-10x slower than native and times
+  # out on heavy images. `ubuntu-24.04-arm` is free for public repos
+  # (GA early 2025) and private repos (GA 2026-01-29).
+  # See docs: https://docs.docker.com/build/ci/github-actions/multi-platform/
+  build-platform:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize platform pair (for artifact name)
+        id: pair
+        run: |
+          pair="${{ matrix.platform }}"
+          echo "value=${pair//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
+          cache-from: type=gha,scope=${{ github.ref_name }}-${{ steps.pair.outputs.value }}
+          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-${{ steps.pair.outputs.value }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-docker-publish-${{ steps.pair.outputs.value }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build-and-push:
+    name: Build & push multi-arch image
+    needs: [build-platform]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-docker-publish-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # For tagged releases: v1.2.3 -> 1.2.3, latest, stable
+            type=semver,pattern={{version}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            # For main, develop, or tagged releases: edge (e2e-edge job always pulls :edge)
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
+            # For manual dispatch: custom tag or SHA
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
+            type=sha,prefix=,enable=${{ github.event.inputs.tag == '' }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          mapfile -t image_tags < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          tag_args=()
+          for tag in "${image_tags[@]}"; do
+            tag_args+=("-t" "$tag")
+          done
+          digest_args=()
+          for digest in *; do
+            digest_args+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:${digest}")
+          done
+          docker buildx imagetools create \
+            "${tag_args[@]}" \
+            "${digest_args[@]}"
+
+      - name: Inspect
+        run: |
+          docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+
+  # ---------------------------------------------------------------------------
+  # E2E smoke tests against the edge image (develop + tagged releases)
+  # Starts a Nexus container, runs init, then exercises the permissions demo
+  # and build-perf e2e scripts.  Failures block the workflow so issues are
+  # caught early.
+  # ---------------------------------------------------------------------------
+  e2e-edge:
+    name: E2E edge smoke tests
+    needs: build-and-push
+    if: github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: nexus
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start Nexus edge container
+        run: |
+          # Container runs as nexus (UID 1000) — match host volume ownership
+          mkdir -p /tmp/nexus-data && sudo chown -R 1000:1000 /tmp/nexus-data
+          docker run -d --name nexus-e2e \
+            --network host \
+            -e NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus \
+            -e NEXUS_HOST=0.0.0.0 \
+            -e NEXUS_PORT=2026 \
+            -e NEXUS_GRPC_PORT=2028 \
+            -e NEXUS_GRPC_TLS=false \
+            -e NEXUS_PROFILE=full \
+            -e NEXUS_ENFORCE_PERMISSIONS=true \
+            -e NEXUS_ALLOW_ADMIN_BYPASS=true \
+            -e NEXUS_DB_ASYNC_USE_POOL=1 \
+            -e NEXUS_DB_POOL_SIZE=5 \
+            -e NEXUS_DB_MAX_OVERFLOW=10 \
+            -e NEXUS_THREAD_POOL_SIZE=24 \
+            -e NEXUS_INDEX_MAX_CONCURRENCY=2 \
+            -e NEXUS_INDEX_MAX_EMBEDDING_CONCURRENCY=1 \
+            -e NEXUS_ML_WORKERS=1 \
+            -e NEXUS_VDB_WORKERS=1 \
+            -e NEXUS_SEARCH_POOL_MIN=2 \
+            -e NEXUS_SEARCH_POOL_MAX=8 \
+            -v /tmp/nexus-data:/app/data \
+            ghcr.io/nexi-lab/nexus:edge
+
+          # Wait for server to be ready
+          echo "Waiting for Nexus to start..."
+          for i in $(seq 1 180); do
+            if ! docker ps --format '{{.Names}}' | grep -qx nexus-e2e; then
+              echo "::error::nexus-e2e exited before becoming healthy"
+              docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
+              echo "Crash signatures from container logs:"
+              docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true
+              echo "Last 200 container log lines:"
+              docker logs nexus-e2e 2>&1 | tail -200 || true
+              exit 1
+            fi
+            if docker exec nexus-e2e curl --max-time 5 -sf http://127.0.0.1:2026/health > /dev/null 2>&1; then
+              echo "Nexus is ready (attempt ${i}/180)"
+              break
+            fi
+            sleep 1
+          done
+          if ! docker exec nexus-e2e curl --max-time 5 -sf http://127.0.0.1:2026/health > /dev/null 2>&1; then
+            echo "::error::nexus-e2e never became healthy from inside the container"
+            docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
+            echo "Container-internal health probe:"
+            docker exec nexus-e2e curl -v --max-time 5 http://127.0.0.1:2026/health || true
+            echo "Host-side health probe:"
+            curl -v --max-time 5 http://127.0.0.1:2026/health || true
+            echo "Container listen sockets:"
+            docker exec nexus-e2e sh -c 'ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || true' || true
+            echo "Crash signatures from container logs:"
+            docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true
+            echo "Last 200 container log lines:"
+            docker logs nexus-e2e 2>&1 | tail -200 || true
+            exit 1
+          fi
+
+      - name: Initialize and extract credentials
+        run: |
+          # Container startup already runs docker-entrypoint.sh, initializes the
+          # database, and writes /app/data/.admin-api-key. Re-running the
+          # entrypoint via docker exec starts a second long-running server path.
+          ADMIN_KEY=$(curl --max-time 5 -sf http://127.0.0.1:2026/api/admin/bootstrap 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || true)
+          if [ -z "$ADMIN_KEY" ]; then
+            echo "Bootstrap not available, reading admin key from container..."
+            ADMIN_KEY=$(timeout 30s docker exec nexus-e2e sh -c "
+              for i in \$(seq 1 30); do
+                if [ -s /app/data/.admin-api-key ]; then
+                  cat /app/data/.admin-api-key
+                  exit 0
+                fi
+                sleep 1
+              done
+              exit 1
+            " 2>/dev/null || true)
+          fi
+          if [ -z "$ADMIN_KEY" ]; then
+            echo "::error::Unable to obtain Nexus admin API key"
+            docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' || true
+            exit 1
+          fi
+          echo "NEXUS_URL=http://127.0.0.1:2026" >> "$GITHUB_ENV"
+          echo "NEXUS_API_KEY=${ADMIN_KEY}" >> "$GITHUB_ENV"
+          echo "Admin key obtained: ${ADMIN_KEY:0:10}..."
+
+      - name: Seed demo workspace
+        run: |
+          # nexus demo init needs a nexus.yaml — create a minimal one
+          docker exec nexus-e2e sh -c "printf 'preset: demo\nserver_url: http://127.0.0.1:2026\ndata_dir: /app/data\nports:\n  http: 2026\n  grpc: 2028\n' > /app/nexus.yaml"
+          docker exec \
+            -w /app \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            -e NEXUS_GRPC_PORT=2028 \
+            -e NEXUS_GRPC_TLS=false \
+            nexus-e2e nexus demo init --skip-semantic
+
+      - name: Copy test scripts into container
+        run: |
+          docker cp permissions_demo_enhanced.sh nexus-e2e:/tmp/
+          docker cp scripts/test_build_perf_e2e.py nexus-e2e:/tmp/
+
+      - name: Run permissions demo
+        run: |
+          docker exec \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            nexus-e2e bash /tmp/permissions_demo_enhanced.sh
+
+      - name: Seed search index
+        run: |
+          # Docker Publish uses `nexus demo init --skip-semantic` above to keep
+          # demo data seeding fast. Seed search here in one place:
+          #   1. nexus reindex --target search  — rebuilds BM25 keyword index from MCL
+          #   2. nexus search index /workspace/demo — generates vector embeddings
+          # Both are required for HERB hybrid retrieval.
+
+          # Step 1: Rebuild BM25 keyword index from MCL
+          echo "Step 1: Rebuilding BM25 keyword index..."
+          docker exec \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            nexus-e2e nexus reindex --target search || true
+
+          # Step 2: Diagnostics — verify files are in file_paths after demo init.
+          # nexus search index queries file_paths WHERE virtual_path LIKE '/workspace/demo/%';
+          # if this table is empty the index step returns "Files indexed: 0".
+          echo "Step 2: Checking file_paths table after demo init..."
+          docker exec -i nexus-e2e python3 - <<'PY' || echo "  (SQL diagnostic unavailable — skipping)"
+          from sqlalchemy import create_engine, text
+          eng = create_engine("postgresql://postgres:nexus@localhost/nexus")
+          with eng.connect() as conn:
+              row = conn.execute(text(
+                  "SELECT count(*) AS demo_files, min(zone_id) AS min_zone, max(zone_id) AS max_zone "
+                  "FROM file_paths WHERE virtual_path LIKE '/workspace/demo%' AND deleted_at IS NULL"
+              )).mappings().one()
+              op_rows = conn.execute(text(
+                  "SELECT count(*) FROM operation_log WHERE path LIKE '/workspace/demo%'"
+              )).scalar()
+          print(f"  demo_files={row['demo_files']} zones={row['min_zone']}..{row['max_zone']} op_log_rows={op_rows}")
+          PY
+
+          # Step 3: Show search daemon stats for diagnostics
+          echo "Step 3: Search daemon stats..."
+          curl --max-time 5 -sf \
+            -H "Authorization: Bearer ${NEXUS_API_KEY}" \
+            http://127.0.0.1:2026/api/v2/search/stats 2>/dev/null \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(f\"  backend={d.get('backend')} bm25_docs={d.get('bm25_documents')} txtai_model={d.get('txtai_model')} last_refresh={d.get('last_index_refresh')}\")" 2>/dev/null || true
+
+          # Step 4: Explicit search index (retry up to 3×).
+          # Do this before readiness queries: on cold runners, querying hybrid
+          # search while txtai is still warming can block long enough to burn
+          # the workflow timeout before explicit indexing ever runs.
+          echo "Step 4: Explicit search index (with 3-attempt retry)..."
+          for i in $(seq 1 3); do
+            idx_out=$(timeout 300s docker exec \
+              -e NEXUS_URL=http://127.0.0.1:2026 \
+              -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+              -e NEXUS_PROFILE=remote \
+              -e NEXUS_GRPC_PORT=2028 \
+              -e NEXUS_GRPC_TLS=false \
+              nexus-e2e nexus search index /workspace/demo 2>&1 || true)
+            files_indexed=$(echo "$idx_out" | grep -oP "Files indexed:\s*\K[0-9]+" || echo "0")
+            echo "  attempt ${i}: Files indexed=${files_indexed}"
+            if [ "${files_indexed:-0}" -gt 0 ] 2>/dev/null; then
+              echo "  Indexing succeeded on attempt ${i}"
+              break
+            fi
+            echo "  0 files — waiting 30s before retry (model may still be loading)..."
+            sleep 30
+          done
+
+          # Step 5: Final diagnostics and readiness check
+          echo "Step 5: Final search daemon stats..."
+          curl --max-time 5 -sf \
+            -H "Authorization: Bearer ${NEXUS_API_KEY}" \
+            http://127.0.0.1:2026/api/v2/search/stats 2>/dev/null \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(f\"  backend={d.get('backend')} bm25={d.get('bm25_documents')} refresh={d.get('last_index_refresh')}\")" 2>/dev/null || true
+          # Final status (non-fatal — test script enforces the HERB gate)
+          timeout 30s docker exec \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            nexus-e2e nexus search query "Nexus Core" --path /workspace/demo/herb --mode hybrid --limit 1 || true
+
+      - name: Run build perf e2e
+        run: |
+          docker exec \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            -e NEXUS_GRPC_PORT=2028 \
+            -e NEXUS_GRPC_TLS=false \
+            nexus-e2e python3 /tmp/test_build_perf_e2e.py
+
+      - name: Collect container logs on failure
+        if: failure() || cancelled()
+        run: |
+          docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
+          echo "Crash signatures from container logs:"
+          docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true
+          echo "Last 200 container log lines:"
+          docker logs nexus-e2e 2>&1 | tail -200 || true
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f nexus-e2e 2>/dev/null || true

@@ -26,8 +26,11 @@ from nexus.bricks.mcp.profiles import (
     revoke_tools_by_tuple_ids,
 )
 from nexus.bricks.mcp.server import create_mcp_server
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -45,7 +48,12 @@ def rebac_engine():
 @pytest.fixture
 def rebac_manager(rebac_engine):
     """Real EnhancedReBACManager on in-memory SQLite."""
-    return EnhancedReBACManager(engine=rebac_engine, cache_ttl_seconds=1)
+    return EnhancedReBACManager(
+        engine=rebac_engine,
+        cache_ttl_seconds=1,
+        version_store=MetastoreVersionStore(InMemoryNexusFS()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
 
 
 @pytest.fixture
@@ -100,8 +108,8 @@ def profiles():
     )
 
 
-def _get_tool(server, name):
-    return server._tool_manager._tools[name]
+async def _get_tool(server, name):
+    return await server.get_tool(name)
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +212,10 @@ class TestGrantRevocation:
 class TestDiscoveryEndToEnd:
     """Full flow: grant profile → discovery tools filter correctly."""
 
-    def test_search_tools_filtered_by_profile(self, rebac_manager, middleware, mock_nx, profiles):
+    @pytest.mark.asyncio
+    async def test_search_tools_filtered_by_profile(
+        self, rebac_manager, middleware, mock_nx, profiles
+    ):
         """nexus_discovery_search_tools returns only visible tools."""
         reader_profile = profiles.get_profile("reader")
         grant_tools_for_profile(
@@ -213,8 +224,8 @@ class TestDiscoveryEndToEnd:
             profile=reader_profile,
         )
 
-        server = create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
-        tool_fn = _get_tool(server, "nexus_discovery_search_tools")
+        server = await create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
+        tool_fn = await _get_tool(server, "nexus_discovery_search_tools")
 
         ctx = Mock()
         ctx.get_state = Mock(
@@ -232,7 +243,8 @@ class TestDiscoveryEndToEnd:
         # Specifically should NOT see write tools
         assert "nexus_write_file" not in visible_names
 
-    def test_get_tool_details_invisible_returns_not_found(
+    @pytest.mark.asyncio
+    async def test_get_tool_details_invisible_returns_not_found(
         self, rebac_manager, middleware, mock_nx, profiles
     ):
         """Invisible tools return 'not found' from get_tool_details."""
@@ -243,8 +255,8 @@ class TestDiscoveryEndToEnd:
             profile=reader_profile,
         )
 
-        server = create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
-        tool_fn = _get_tool(server, "nexus_discovery_get_tool_details")
+        server = await create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
+        tool_fn = await _get_tool(server, "nexus_discovery_get_tool_details")
 
         ctx = Mock()
         ctx.get_state = Mock(

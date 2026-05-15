@@ -13,11 +13,15 @@ the original file from the underlying filesystem and returns a parsed
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import Permission
 from nexus.contracts.vfs_hooks import VFSPathResolver
+
+if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
 
 logger = logging.getLogger(__name__)
 
@@ -25,92 +29,82 @@ logger = logging.getLogger(__name__)
 class VirtualViewResolver(VFSPathResolver):
     """PRE-DISPATCH resolver for virtual parsed view paths.
 
-    Implements ``VFSPathResolver`` protocol:
-    - ``matches(path)`` — routing predicate
-    - ``read(path, ...)`` — read original file + parse to markdown
-    - ``write(path, content)`` — always raises (read-only)
-    - ``delete(path, ...)`` — always raises (read-only)
+    Implements ``VFSPathResolver`` single-call ``try_*`` protocol (#1665):
+    - ``try_read(path, ...)`` — check if virtual view, read + parse to markdown
+    - ``try_write(path, content)`` — raises if virtual view, else returns None
+    - ``try_delete(path, ...)`` — raises if virtual view, else returns None
 
     Dependencies injected via constructor:
     - metadata: MetastoreABC (file existence + metadata lookup)
-    - path_router: PathRouter (CAS content routing)
+    - kernel: Rust kernel (VFS routing)
+    - dlc: DriverLifecycleCoordinator (backend refs)
     - permission_checker: PermissionChecker (read permission verification)
     - parse_fn: Optional callable for content parsing
-    - viewer_filter_fn: Optional callable for CSV dynamic viewer filtering
     - read_tracker_fn: Optional callable for dependency tracking (#1166)
     """
 
     __slots__ = (
         "_metadata",
-        "_path_router",
+        "_kernel",
+        "_dlc",
         "_permission_checker",
         "_parse_fn",
-        "_viewer_filter_fn",
         "_read_tracker_fn",
     )
+
+    # ── Hook spec (duck-typed) (Issue #1612) ──────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(resolvers=(self,))
 
     def __init__(
         self,
         metadata: Any,
-        path_router: Any,
-        permission_checker: Any,
+        dlc: Any = None,
+        permission_checker: Any = None,
         parse_fn: Any = None,
-        viewer_filter_fn: Any = None,
         read_tracker_fn: Any = None,
     ) -> None:
         self._metadata = metadata
-        self._path_router = path_router
+        # Pull the kernel out of the proxy for direct ``metastore_*`` callbacks.
+        self._kernel: Any = metadata
+        self._dlc = dlc
         self._permission_checker = permission_checker
         self._parse_fn = parse_fn
-        self._viewer_filter_fn = viewer_filter_fn
         self._read_tracker_fn = read_tracker_fn
 
     # ------------------------------------------------------------------
-    # VFSPathResolver protocol
+    # VFSPathResolver single-call try_* protocol (#1665)
     # ------------------------------------------------------------------
 
-    def matches(self, path: str) -> bool:
-        """Return True if *path* is a virtual parsed view."""
-        from nexus.lib.virtual_views import parse_virtual_path
-
-        _, view_type = parse_virtual_path(path, self._metadata.exists)
-        return view_type == "md"
-
-    def read(
-        self, path: str, *, return_metadata: bool = False, context: Any = None
-    ) -> bytes | dict[str, Any]:
-        """Read virtual parsed view."""
+    def try_read(self, path: str, *, context: Any = None) -> bytes | None:
+        """Read virtual parsed view, or return None if not a virtual view."""
         from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
-        original_path, view_type = parse_virtual_path(path, self._metadata.exists)
+        # Single kernel lookup: sys_stat returns dict (truthy) or None (falsy).
+        # parse_virtual_path passes the result through.
+        original_path, view_type, meta = parse_virtual_path(
+            path, lambda p: self._kernel.sys_stat(p, ROOT_ZONE_ID)
+        )
         if view_type != "md":
-            raise NexusFileNotFoundError(f"Not a virtual view: {path}")
+            return None
 
         # Permission check — resolver owns its permission semantics.
-        # The checker resolves virtual paths to the original file internally.
         self._permission_checker.check(path, Permission.READ, context)
 
         logger.info("read: Virtual view detected, reading original file: %s", original_path)
 
         # Route and read original file content
-        is_admin = bool(getattr(context, "is_admin", False)) if context else False
-        route = self._path_router.route(original_path, is_admin=is_admin, check_write=False)
-        meta = self._metadata.get(original_path)
-        if meta is None or meta.etag is None:
+        if meta is None or meta.get("content_id") is None:
             raise NexusFileNotFoundError(original_path)
 
-        # Add backend_path to context for path-based connectors
-        read_context = context
-        if context:
-            from dataclasses import replace
-
-            read_context = replace(context, backend_path=route.backend_path)
-
-        content: bytes = route.backend.read_content(meta.etag, context=read_context)
-
-        # Apply dynamic viewer filter for CSV files (optional, ReBAC-specific)
-        if self._viewer_filter_fn is not None:
-            content = self._viewer_filter_fn(original_path, content, context)
+        # Read content via kernel syscall — sys_read_raw raises on missing path.
+        _kernel = getattr(self._dlc, "_kernel", None) if self._dlc else None
+        if _kernel is None:
+            raise NexusFileNotFoundError(original_path)
+        content: bytes = _kernel.sys_read_raw(original_path, "root")
 
         # Parse content to markdown
         content = get_parsed_content(
@@ -124,21 +118,26 @@ class VirtualViewResolver(VFSPathResolver):
         if self._read_tracker_fn is not None:
             self._read_tracker_fn(context, "file", original_path, "content")
 
-        if return_metadata:
-            return {
-                "content": content,
-                "etag": meta.etag + ".md",  # Synthetic etag for virtual view
-                "version": meta.version,
-                "modified_at": meta.modified_at,
-                "size": len(content),
-            }
         return content
 
-    def write(self, path: str, content: bytes) -> dict[str, Any]:
-        """Virtual views are read-only."""
-        raise NexusFileNotFoundError(f"Cannot write to virtual view: {path} ({len(content)} bytes)")
+    def try_write(self, path: str, content: bytes, *, context: Any = None) -> dict[str, Any] | None:
+        """Virtual views are read-only — raise if virtual view, else return None."""
+        _ = context
+        from nexus.lib.virtual_views import parse_virtual_path
 
-    def delete(self, path: str, *, context: Any = None) -> None:
-        """Virtual views are read-only."""
-        _ = context  # Required by VFSPathResolver protocol
-        raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")
+        _, view_type, _ = parse_virtual_path(path, lambda p: self._kernel.access(p, ROOT_ZONE_ID))
+        if view_type == "md":
+            raise NexusFileNotFoundError(
+                f"Cannot write to virtual view: {path} ({len(content)} bytes)"
+            )
+        return None
+
+    def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None:
+        """Virtual views are read-only — raise if virtual view, else return None."""
+        from nexus.lib.virtual_views import parse_virtual_path
+
+        _ = context
+        _, view_type, _ = parse_virtual_path(path, lambda p: self._kernel.access(p, ROOT_ZONE_ID))
+        if view_type == "md":
+            raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")
+        return None

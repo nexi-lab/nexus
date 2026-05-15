@@ -8,6 +8,7 @@ Provides version tracking and history management:
 """
 
 import builtins
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -33,7 +34,7 @@ class VersionManager:
         """Get a specific version of a file.
 
         Retrieves file metadata for a specific version from version history.
-        The content_hash in the returned metadata can be used to fetch the
+        The content_id in the returned metadata can be used to fetch the
         actual content from CAS storage.
 
         Args:
@@ -52,8 +53,8 @@ class VersionManager:
             >>> with store.session_factory() as session:
             ...     metadata = VersionManager.get_version(session, "/workspace/data.txt", version=2)
             ...     if metadata:
-            ...         content_hash = metadata.etag
-            ...         # Use content_hash to fetch from CAS
+            ...         content_id = metadata.content_id
+            ...         # Use content_id to fetch from CAS
         """
         try:
             # Extract version from path (format: path@version)
@@ -97,10 +98,8 @@ class VersionManager:
 
             return FileMetadata(
                 path=file_path.virtual_path,
-                backend_name=file_path.backend_id,
-                physical_path=version_entry.content_hash,  # CAS: hash is the physical path
                 size=version_entry.size_bytes,
-                etag=version_entry.content_hash,
+                content_id=version_entry.content_id,
                 mime_type=version_entry.mime_type,
                 created_at=version_entry.created_at,
                 modified_at=version_entry.created_at,
@@ -128,7 +127,7 @@ class VersionManager:
 
         Example:
             >>> with store.session_factory() as session:
-            ...     versions = VersionManager.list_versions(session, "/workspace/SKILL.md")
+            ...     versions = VersionManager.list_versions(session, "/workspace/README.md")
             ...     for v in versions:
             ...         print(f"v{v['version']}: {v['size']} bytes, {v['created_at']}")
         """
@@ -155,10 +154,16 @@ class VersionManager:
 
             versions = []
             for v in session.scalars(versions_stmt):
+                is_rollback = v.source_type == "rollback"
+                rollback_from: int | None = None
+                if is_rollback and v.change_reason:
+                    m = re.search(r"version (\d+)", v.change_reason)
+                    if m:
+                        rollback_from = int(m.group(1))
                 versions.append(
                     {
                         "version": v.version_number,
-                        "content_hash": v.content_hash,
+                        "content_id": v.content_id,
                         "size": v.size_bytes,
                         "mime_type": v.mime_type,
                         "created_at": v.created_at,
@@ -166,6 +171,8 @@ class VersionManager:
                         "change_reason": v.change_reason,
                         "source_type": v.source_type,
                         "parent_version_id": v.parent_version_id,
+                        "is_rollback": is_rollback,
+                        "rollback_from": rollback_from,
                     }
                 )
 
@@ -220,7 +227,7 @@ class VersionManager:
                 raise MetadataError(f"File not found: {path}", path=path)
 
             logger.info(
-                f"[VERSION_MANAGER.rollback] Found file: path_id={file_path.path_id}, current_version={file_path.current_version}, content_hash={file_path.content_hash[:16] if file_path.content_hash else 'None'}"
+                f"[VERSION_MANAGER.rollback] Found file: path_id={file_path.path_id}, current_version={file_path.current_version}, content_id={file_path.content_id[:16] if file_path.content_id else 'None'}"
             )
 
             # Get target version
@@ -241,7 +248,7 @@ class VersionManager:
                 raise MetadataError(f"Version {version} not found for {path}", path=path)
 
             logger.info(
-                f"[VERSION_MANAGER.rollback] Found target version: version={version}, content_hash={target_version.content_hash[:16]}, size={target_version.size_bytes}"
+                f"[VERSION_MANAGER.rollback] Found target version: version={version}, content_id={target_version.content_id[:16]}, size={target_version.size_bytes}"
             )
 
             # Get current version entry for lineage
@@ -263,14 +270,14 @@ class VersionManager:
                 "[VERSION_MANAGER.rollback] Updating file_paths record to target version's content"
             )
             logger.info(
-                f"[VERSION_MANAGER.rollback] Before: content_hash={file_path.content_hash[:16] if file_path.content_hash else 'None'}, size={file_path.size_bytes}"
+                f"[VERSION_MANAGER.rollback] Before: content_id={file_path.content_id[:16] if file_path.content_id else 'None'}, size={file_path.size_bytes}"
             )
-            file_path.content_hash = target_version.content_hash
+            file_path.content_id = target_version.content_id
             file_path.size_bytes = target_version.size_bytes
             file_path.file_type = target_version.mime_type
             file_path.updated_at = datetime.now(UTC)
             logger.info(
-                f"[VERSION_MANAGER.rollback] After: content_hash={file_path.content_hash[:16]}, size={file_path.size_bytes}"
+                f"[VERSION_MANAGER.rollback] After: content_id={file_path.content_id[:16]}, size={file_path.size_bytes}"
             )
 
             # Atomically increment version at database level to prevent race conditions
@@ -295,7 +302,7 @@ class VersionManager:
                 resource_type="file",
                 resource_id=file_path.path_id,
                 version_number=file_path.current_version,  # NEW version number
-                content_hash=target_version.content_hash,  # Points to old content
+                content_id=target_version.content_id,  # Points to old content
                 size_bytes=target_version.size_bytes,
                 mime_type=target_version.mime_type,
                 parent_version_id=current_version_entry.version_id
@@ -373,9 +380,9 @@ class VersionManager:
                 "path": path,
                 "v1": v1,
                 "v2": v2,
-                "content_hash_v1": version1.content_hash,
-                "content_hash_v2": version2.content_hash,
-                "content_changed": version1.content_hash != version2.content_hash,
+                "content_id_v1": version1.content_id,
+                "content_id_v2": version2.content_id,
+                "content_changed": version1.content_id != version2.content_id,
                 "size_v1": version1.size_bytes,
                 "size_v2": version2.size_bytes,
                 "size_delta": version2.size_bytes - version1.size_bytes,

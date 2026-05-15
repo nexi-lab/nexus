@@ -9,7 +9,7 @@ Services covered:
 3. OAuthService       - provider/credential listing
 4. MCPService         - MCP mount listing
 5. ShareLinkService   - share link CRUD + access (extracted from mixin)
-6. EventsService      - lock/unlock (extracted from mixin)
+6. LockManager        - lock/unlock (kernel-owned, sys_lock/sys_unlock)
 7. SkillService       - covered in test_skills_async_e2e.py
 8. MountService       - covered indirectly (already async, pre-existing)
 
@@ -210,7 +210,7 @@ class TestShareLinkServiceE2E:
     """Share link operations through FastAPI → NexusFS → ShareLinkService."""
 
     def _extract_data(self, result: dict) -> dict:
-        """Extract inner data from HandlerResponse wrapper."""
+        """Extract inner data dict if nested, else return as-is."""
         if isinstance(result, dict) and "data" in result:
             return result["data"]
         return result
@@ -313,14 +313,14 @@ class TestShareLinkServiceE2E:
         assert result.get("expires_at") is not None
 
 
-# ─── EventsService (Lock/Unlock) ─────────────────────────────────────
+# ─── LockManager (Lock/Unlock) ───────────────────────────────────────
 
 
-class TestEventsServiceE2E:
+class TestLockManagerE2E:
     """Lock/unlock operations through FastAPI REST API (/api/v2/locks).
 
     Lock operations use REST endpoints, not JSON-RPC auto-dispatch.
-    The lock manager uses Raft consensus via RaftMetadataStore (no Redis needed).
+    The lock manager is kernel-owned (sys_lock/sys_unlock syscalls).
     """
 
     def test_lock_and_unlock(self, test_app):

@@ -1,0 +1,144 @@
+"""Tripwire migration tests (#3871)."""
+
+from __future__ import annotations
+
+import importlib.util
+import pathlib
+
+import pytest
+from sqlalchemy import create_engine, text
+
+
+def _load_migration_module():
+    # Anchor to the project root via this file's location so pytest-xdist
+    # workers (which may run from a different cwd) resolve the path correctly.
+    project_root = pathlib.Path(__file__).resolve().parent.parent.parent.parent.parent
+    versions = project_root / "alembic" / "versions"
+    matches = list(versions.glob("*assert_api_key_junction_populated_for_3871*.py"))
+    assert len(matches) == 1, f"Expected one migration file, found {matches}"
+    spec = importlib.util.spec_from_file_location("tripwire_3871", matches[0])
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run_upgrade_against(engine):
+    """Run the tripwire's upgrade() against the given engine.
+
+    The migration uses op.get_bind(); we shim that via unittest.mock.patch so
+    the test runner never sees a bare type: ignore comment.
+    """
+    from unittest.mock import patch
+
+    module = _load_migration_module()
+    with engine.begin() as conn, patch("alembic.op.get_bind", return_value=conn):
+        module.upgrade()
+
+
+@pytest.fixture
+def engine_with_schema():
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+            CREATE TABLE api_keys (
+                key_id TEXT PRIMARY KEY,
+                zone_id TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                is_admin INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        )
+        conn.execute(
+            text("""
+            CREATE TABLE api_key_zones (
+                key_id TEXT NOT NULL,
+                zone_id TEXT NOT NULL,
+                PRIMARY KEY (key_id, zone_id)
+            )
+        """)
+        )
+    return engine
+
+
+def test_tripwire_no_op_on_healthy_db(engine_with_schema):
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('k1', 'eng')"))
+        conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('k1', 'eng')"))
+    _run_upgrade_against(engine_with_schema)  # must not raise
+
+
+def test_tripwire_raises_on_legacy_zone_scoped_key(engine_with_schema):
+    """Non-admin key with legacy zone_id but no junction row must trip."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('orphan', 'eng')"))
+    with pytest.raises(RuntimeError, match="would lose access after the upgrade"):
+        _run_upgrade_against(engine_with_schema)
+
+
+def test_tripwire_raises_on_legacy_zone_scoped_admin(engine_with_schema):
+    """Admin key with legacy zone_id and no junction must trip — otherwise the
+    new auth path silently reinterprets it as a zoneless/global admin (#3871)."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(
+            text("INSERT INTO api_keys (key_id, zone_id, is_admin) VALUES ('zadm', 'eng', 1)")
+        )
+    with pytest.raises(RuntimeError, match="would lose access after the upgrade"):
+        _run_upgrade_against(engine_with_schema)
+
+
+def test_tripwire_ignores_zoneless_admin(engine_with_schema):
+    """Truly zoneless admin (zone_id IS NULL) is exempt — no privilege to escalate."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id, is_admin) VALUES ('admin', 1)"))
+    _run_upgrade_against(engine_with_schema)  # must not raise
+
+
+def test_tripwire_ignores_revoked_keys(engine_with_schema):
+    with engine_with_schema.begin() as conn:
+        conn.execute(
+            text("INSERT INTO api_keys (key_id, zone_id, revoked) VALUES ('dead', 'eng', 1)")
+        )
+    _run_upgrade_against(engine_with_schema)  # must not raise
+
+
+def test_tripwire_raises_on_mismatched_backfill(engine_with_schema):
+    """Backfilled junction row for the WRONG zone must trip — otherwise the
+    key silently loses access to its legacy zone after Phase 2 (#3871 round 4)."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('mismatch', 'eng')"))
+        conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('mismatch', 'ops')"))
+    with pytest.raises(RuntimeError, match="would lose access after the upgrade"):
+        _run_upgrade_against(engine_with_schema)
+
+
+def test_tripwire_raises_on_zoneless_non_admin(engine_with_schema):
+    """Pre-Phase-2 non-admin row with zone_id=NULL and no junction must trip —
+    round 4 made auth fail closed for empty-junction non-admin tokens, so
+    upgrade would otherwise succeed and break the token on first use (#3871)."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id) VALUES ('zless')"))
+    with pytest.raises(RuntimeError, match="would lose access after the upgrade"):
+        _run_upgrade_against(engine_with_schema)
+
+
+def test_tripwire_passes_on_zoneless_non_admin_with_junction(engine_with_schema):
+    """Non-admin with junction zones (and no legacy column) is fine."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id) VALUES ('migrated')"))
+        conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('migrated', 'eng')"))
+    _run_upgrade_against(engine_with_schema)  # must not raise
+
+
+def test_tripwire_passes_on_correct_backfill(engine_with_schema):
+    """Backfilled junction row for the legacy zone passes (alongside other zones is fine)."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('multi', 'eng')"))
+        conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('multi', 'eng')"))
+        conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('multi', 'ops')"))
+    _run_upgrade_against(engine_with_schema)  # must not raise
+
+
+def test_tripwire_downgrade_is_noop():
+    module = _load_migration_module()
+    module.downgrade()  # must not raise

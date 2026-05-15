@@ -4,8 +4,7 @@ Migrates scattered hardcoded performance thresholds to deployment profiles.
 Each DeploymentProfile maps to a ProfileTuning frozen dataclass composed
 of 11 domain-specific tuning slices.
 
-Pattern follows IOProfile (Issue #1413): frozen dataclasses, profile-selected,
-wired via DI in factory.py.
+Frozen dataclasses per domain, profile-selected, wired via DI in factory.py.
 
 Domain configs:
 - ConcurrencyTuning: worker counts, thread pool sizes
@@ -63,7 +62,7 @@ class ConcurrencyTuning:
 class NetworkTuning:
     """HTTP and webhook timeout configuration.
 
-    Consumers: batch_executor, subscriptions/manager, a2a/streaming, mcp/mount.
+    Consumers: batch_executor, subscriptions/manager, mcp/mount.
     """
 
     default_http_timeout: float
@@ -527,10 +526,53 @@ _LITE_TUNING = ProfileTuning(
     ),
 )
 
+_SANDBOX_TUNING = ProfileTuning(
+    concurrency=ConcurrencyTuning(
+        default_workers=2,
+        thread_pool_size=8,
+        max_async_concurrency=4,
+        task_runner_workers=2,
+    ),
+    network=NetworkTuning(
+        default_http_timeout=10.0,
+        webhook_timeout=5.0,
+        long_operation_timeout=30.0,
+    ),
+    storage=StorageTuning(
+        write_buffer_flush_ms=100,
+        write_buffer_max_size=50,
+        changelog_chunk_size=100,
+        db_pool_size=2,
+        db_max_overflow=2,
+    ),
+    search=SearchTuning(
+        grep_parallel_workers=2,
+        list_parallel_workers=2,
+        search_max_concurrency=2,
+        vector_pool_workers=0,  # no local vector backend
+    ),
+    cache=CacheTuning(
+        tiger_max_workers=1,
+        tiger_batch_size=20,
+    ),
+    # Reuse LITE values for remaining slices
+    background_task=_LITE_TUNING.background_task,
+    resiliency=_LITE_TUNING.resiliency,
+    connector=_LITE_TUNING.connector,
+    pool=PoolTuning(
+        asyncpg_min_size=0,
+        asyncpg_max_size=0,  # SQLite, no asyncpg
+        httpx_max_connections=10,
+        remote_pool_maxsize=10,
+    ),
+    eviction=_LITE_TUNING.eviction,
+    qos=_LITE_TUNING.qos,
+)
+
 _FULL_TUNING = ProfileTuning(
     concurrency=ConcurrencyTuning(
         default_workers=4,
-        thread_pool_size=200,
+        thread_pool_size=40,  # Issue #3997: was 200; anyio upstream default for single-tenant
         max_async_concurrency=10,
         task_runner_workers=4,
     ),
@@ -543,8 +585,8 @@ _FULL_TUNING = ProfileTuning(
         write_buffer_flush_ms=100,
         write_buffer_max_size=100,
         changelog_chunk_size=500,
-        db_pool_size=20,
-        db_max_overflow=30,
+        db_pool_size=5,  # Issue #3997: was 20; Cloud SQL sample sizing for single-tenant
+        db_max_overflow=5,  # Issue #3997: was 30; single-tenant burst headroom
     ),
     search=SearchTuning(
         grep_parallel_workers=4,
@@ -573,13 +615,13 @@ _FULL_TUNING = ProfileTuning(
     connector=ConnectorTuning(
         blob_operation_timeout=60.0,
         large_upload_timeout=300.0,
-        connector_max_workers=20,
+        connector_max_workers=6,  # Issue #3997: was 20; blob ops are I/O-bound
     ),
     pool=PoolTuning(
         asyncpg_min_size=2,
         asyncpg_max_size=5,
-        httpx_max_connections=100,
-        remote_pool_maxsize=20,
+        httpx_max_connections=20,  # Issue #3997: was 100; HTTP/2 collapses anyway
+        remote_pool_maxsize=10,  # Issue #3997: was 20; single-tenant sizing
     ),
     eviction=EvictionTuning(
         memory_high_watermark_pct=85,
@@ -691,12 +733,13 @@ def _get_profile_tuning_map() -> dict[str, ProfileTuning]:
     from nexus.contracts.deployment_profile import DeploymentProfile
 
     return {
-        DeploymentProfile.MINIMAL: _MINIMAL_TUNING,
+        DeploymentProfile.CLUSTER: _MINIMAL_TUNING,  # CLUSTER reuses minimal tuning
         DeploymentProfile.EMBEDDED: _EMBEDDED_TUNING,
         DeploymentProfile.LITE: _LITE_TUNING,
+        DeploymentProfile.SANDBOX: _SANDBOX_TUNING,
         DeploymentProfile.FULL: _FULL_TUNING,
         DeploymentProfile.CLOUD: _CLOUD_TUNING,
-        DeploymentProfile.REMOTE: _MINIMAL_TUNING,  # REMOTE reuses MINIMAL tuning
+        DeploymentProfile.REMOTE: _MINIMAL_TUNING,  # REMOTE reuses minimal tuning
     }
 
 

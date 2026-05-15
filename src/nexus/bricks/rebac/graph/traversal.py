@@ -374,7 +374,7 @@ class PermissionComputer:
         computed_userset = ttu["computedUserset"]
 
         # Pattern 1 (parent-style): Find objects where (obj, tupleset_relation, ?)
-        related_objects = self._repo.find_related_objects(obj, tupleset_relation)
+        related_objects = self._repo.find_related_objects(obj, tupleset_relation, context)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "  [depth=%d] Pattern 1 (parent): Found %d related objects via tupleset '%s'",
@@ -401,8 +401,22 @@ class PermissionComputer:
                     )
                 return True
 
+        # Fix nexi-lab/nexus#3733 Bug A: skip Pattern 2 for ``parent``
+        # tupleset. See the identical guard in
+        # ``zone_traversal.py`` and ``bulk_evaluator.py``. Pattern 2
+        # inverts parent semantics (finds children instead of the parent)
+        # and causes privilege escalation where owning any child grants
+        # access to all siblings via the parent.
+        if tupleset_relation == "parent":
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "  [depth=%d] skipping Pattern 2 for 'parent' tupleset (not a group pattern)",
+                    depth,
+                )
+            return False
+
         # Pattern 2 (group-style): Find subjects where (?, tupleset_relation, obj)
-        related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation)
+        related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation, context)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "  [depth=%d] Pattern 2 (group): Found %d subjects with '%s' on %s",
@@ -540,7 +554,9 @@ class PermissionComputer:
 
             # Check 2: Wildcard/public access
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
-                wildcard_result = self._check_wildcard_access(cursor, relation, obj, zone_id)
+                wildcard_result = self._check_wildcard_access(
+                    cursor, relation, obj, zone_id, context
+                )
                 if wildcard_result is not None:
                     return wildcard_result
 
@@ -649,6 +665,7 @@ class PermissionComputer:
         relation: str,
         obj: Entity,
         zone_id: str | None,
+        context: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         """Check wildcard/public access (*:*) including cross-zone."""
         wildcard_entity = Entity(WILDCARD_SUBJECT[0], WILDCARD_SUBJECT[1])
@@ -668,7 +685,6 @@ class PermissionComputer:
                       AND object_type = ? AND object_id = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
                       AND zone_id IS NULL
-                    LIMIT 1
                     """
                 ),
                 (
@@ -693,7 +709,6 @@ class PermissionComputer:
                       AND object_type = ? AND object_id = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
                       AND zone_id = ?
-                    LIMIT 1
                     """
                 ),
                 (
@@ -707,9 +722,10 @@ class PermissionComputer:
                 ),
             )
 
-        row = cursor.fetchone()
-        if row:
-            return dict(row)
+        for row in cursor.fetchall():
+            result = self._evaluate_tuple_conditions(dict(row), context)
+            if result is not None:
+                return result
 
         # Check 2b: Cross-zone wildcard access (Issue #1064)
         if zone_id is not None:
@@ -724,7 +740,6 @@ class PermissionComputer:
                       AND relation = ?
                       AND object_type = ? AND object_id = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
-                    LIMIT 1
                     """
                 ),
                 (
@@ -736,15 +751,17 @@ class PermissionComputer:
                     now_iso,
                 ),
             )
-            row = cursor.fetchone()
-            if row:
+            for row in cursor.fetchall():
+                result = self._evaluate_tuple_conditions(dict(row), context)
+                if result is None:
+                    continue
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
                         "    Cross-zone wildcard access: *:* -> %s -> %s",
                         relation,
                         obj,
                     )
-                return dict(row)
+                return result
 
         return None
 
@@ -758,33 +775,56 @@ class PermissionComputer:
         zone_id: str | None,
     ) -> dict[str, Any] | None:
         """Check userset-as-subject grants (e.g., group:eng#member)."""
+        now_iso = datetime.now(UTC).isoformat()
         fix = self._repo.fix_sql_placeholders
 
-        subject_sets = self._repo.find_subject_sets(relation, obj, zone_id)
-        for set_type, set_id, set_relation in subject_sets:
+        if zone_id is None:
+            cursor.execute(
+                fix(
+                    """
+                    SELECT tuple_id, subject_type, subject_id, subject_relation,
+                           relation, object_type, object_id, conditions, expires_at
+                    FROM rebac_tuples
+                    WHERE zone_id IS NULL
+                      AND relation = ?
+                      AND object_type = ? AND object_id = ?
+                      AND subject_relation IS NOT NULL
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                    """
+                ),
+                (relation, obj.entity_type, obj.entity_id, now_iso),
+            )
+        else:
+            cursor.execute(
+                fix(
+                    """
+                    SELECT tuple_id, subject_type, subject_id, subject_relation,
+                           relation, object_type, object_id, conditions, expires_at
+                    FROM rebac_tuples
+                    WHERE zone_id = ?
+                      AND relation = ?
+                      AND object_type = ? AND object_id = ?
+                      AND subject_relation IS NOT NULL
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                    """
+                ),
+                (zone_id, relation, obj.entity_type, obj.entity_id, now_iso),
+            )
+
+        userset_grants = [dict(row) for row in cursor.fetchall()]
+        for grant in userset_grants:
+            set_type = grant["subject_type"]
+            set_id = grant["subject_id"]
+            set_relation = grant["subject_relation"]
+
+            if self._evaluate_tuple_conditions(grant, context) is None:
+                continue
+
             # Recursively check if subject has set_relation on the set entity
             if self.has_direct_relation(
                 subject, set_relation, Entity(set_type, set_id), context, zone_id
             ):
-                # Return the userset tuple that granted access
-                cursor.execute(
-                    fix(
-                        """
-                        SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, conditions, expires_at
-                        FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND subject_relation = ?
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                        LIMIT 1
-                        """
-                    ),
-                    (set_type, set_id, set_relation, relation, obj.entity_type, obj.entity_id),
-                )
-                row = cursor.fetchone()
-                if row:
-                    return dict(row)
+                return grant
 
         return None
 
@@ -988,7 +1028,12 @@ class PermissionComputer:
             # Pattern 1 (parent-style)
             related_objects = self._repo.find_related_objects(obj, tupleset_relation)
             # Pattern 2 (group-style)
-            related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation)
+            # Fix nexi-lab/nexus#3733 Bug A: skip for ``parent`` tupleset.
+            # See the guard in compute_permission() above.
+            if tupleset_relation == "parent":
+                related_subjects: list[Entity] = []
+            else:
+                related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation)
 
             path_entry["tupleToUserset"] = {
                 "tupleset": tupleset_relation,

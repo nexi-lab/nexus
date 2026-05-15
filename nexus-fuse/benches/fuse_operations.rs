@@ -11,19 +11,16 @@
 //!
 //! Run with: cargo bench
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use nexus_fuse::client::NexusClient;
+use std::hint::black_box;
 use std::time::Duration;
 
 /// Setup test server connection
 fn setup_client() -> NexusClient {
     // Use local test server (must be running)
-    NexusClient::new(
-        "http://localhost:2026",
-        "sk-test-key-123",
-        None,
-    )
-    .expect("Failed to create NexusClient")
+    NexusClient::new("http://localhost:2026", "sk-test-key-123", None)
+        .expect("Failed to create NexusClient")
 }
 
 /// Benchmark file read operations (cached)
@@ -118,7 +115,9 @@ fn bench_write(c: &mut Criterion) {
         b.iter(|| {
             let path = format!("/bench-write-{}.txt", counter);
             counter += 1;
-            client.write(black_box(&path), black_box(&test_content)).unwrap();
+            client
+                .write(black_box(&path), black_box(&test_content))
+                .unwrap();
         });
     });
 
@@ -146,7 +145,9 @@ fn bench_write_sizes(c: &mut Criterion) {
                 b.iter(|| {
                     let path = format!("/bench-write-{}kb-{}.txt", size_kb, counter);
                     counter += 1;
-                    client.write(black_box(&path), black_box(&test_content)).unwrap();
+                    client
+                        .write(black_box(&path), black_box(&test_content))
+                        .unwrap();
                 });
             },
         );
@@ -262,7 +263,9 @@ fn bench_rename(c: &mut Criterion) {
             client.write(&old_path, b"test").unwrap();
 
             // Rename
-            client.rename(black_box(&old_path), black_box(&new_path)).unwrap();
+            client
+                .rename(black_box(&old_path), black_box(&new_path))
+                .unwrap();
 
             // Cleanup
             let _ = client.delete(&new_path);

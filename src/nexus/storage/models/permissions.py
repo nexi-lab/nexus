@@ -146,27 +146,6 @@ class ReBACTupleModel(Base):
     )
 
 
-class ReBACNamespaceModel(Base):
-    """Namespace configuration for ReBAC permission expansion."""
-
-    __tablename__ = "rebac_namespaces"
-
-    namespace_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    object_type: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
-
-    config: Mapped[str] = mapped_column(Text, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-        nullable=False,
-    )
-
-
 class ReBACGroupClosureModel(Base):
     """Leopard-style transitive group closure for O(1) membership lookups."""
 
@@ -232,62 +211,6 @@ class ReBACVersionSequenceModel(Base):
     )
 
     __table_args__: tuple = ()
-
-
-class FileSystemVersionSequenceModel(Base):
-    """Per-zone version sequence for filesystem consistency tokens (Issue #1187)."""
-
-    __tablename__ = "filesystem_version_sequences"
-
-    zone_id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    current_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    __table_args__: tuple = ()
-
-
-class ReBACCheckCacheModel(Base):
-    """Cache for ReBAC permission check results."""
-
-    __tablename__ = "rebac_check_cache"
-
-    cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
-
-    subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    permission: Mapped[str] = mapped_column(String(50), nullable=False)
-    object_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    object_id: Mapped[str] = mapped_column(String(255), nullable=False)
-
-    result: Mapped[bool] = mapped_column(Integer, nullable=False)
-    computed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
-    )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        Index(
-            "idx_rebac_cache_zone_check",
-            "zone_id",
-            "subject_type",
-            "subject_id",
-            "permission",
-            "object_type",
-            "object_id",
-        ),
-        Index(
-            "idx_rebac_cache_check",
-            "subject_type",
-            "subject_id",
-            "permission",
-            "object_type",
-            "object_id",
-        ),
-    )
 
 
 class TigerResourceMapModel(Base):

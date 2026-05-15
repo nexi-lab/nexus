@@ -1,64 +1,86 @@
-"""Unit tests for WorkflowDispatchService (#625 partial, #808).
+"""Unit tests for WorkflowDispatchService (#625 partial, #808, #1812).
 
-Tests the service directly (not via FakeCoreMixin) — fire(), on_mutation(),
-start()/stop() lifecycle, and PipeManager integration.
+Tests the service directly — fire(),
+start()/stop() lifecycle, and Rust kernel IPC pipe integration.
+on_mutation() tests deleted: Rust kernel now dispatches observers directly.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, patch
+import threading
+import time
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.contracts.metadata import FileMetadata
-from nexus.core.file_events import FileEvent, FileEventType
-from nexus.system_services.lifecycle.workflow_dispatch_service import WorkflowDispatchService
-from nexus.system_services.pipe_manager import PipeManager
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.services.lifecycle.workflow_dispatch_service import WorkflowDispatchService
 
 # ======================================================================
 # Fixtures
 # ======================================================================
 
+_WORKFLOW_PIPE_PATH = "/nexus/pipes/workflow-events"
 
-class MockMetastore:
-    """Minimal MetastoreABC mock."""
 
-    def __init__(self) -> None:
-        self._store: dict[str, FileMetadata] = {}
+def _make_mock_nx() -> MagicMock:
+    """Create a mock NexusFS exposing VFS pipe API.
 
-    def get(self, path: str) -> FileMetadata | None:
-        return self._store.get(path)
-
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
-        if metadata.path:
-            self._store[metadata.path] = metadata
-
-    def delete(self, path: str, *, consistency: str = "sc") -> dict | None:
-        return {"path": path} if self._store.pop(path, None) else None
-
-    def exists(self, path: str) -> bool:
-        return path in self._store
-
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs) -> list:  # noqa: ARG002
-        return [m for p, m in self._store.items() if p.startswith(prefix)]
-
-    def close(self) -> None:
-        pass
+    Production code calls ``self._nx.sys_write`` (DT_PIPE routes through
+    Rust dcache) / ``self._nx.pipe_close`` and ``self._nx.sys_setattr`` /
+    ``self._nx.sys_read`` (sync).
+    """
+    nx = MagicMock()
+    # Sync passthrough methods
+    nx.sys_write = MagicMock(return_value={"path": _WORKFLOW_PIPE_PATH, "bytes_written": 0})
+    nx.pipe_close = MagicMock()
+    # Sync syscalls — NexusFS methods are sync def
+    nx.sys_setattr = MagicMock(return_value={"path": _WORKFLOW_PIPE_PATH, "created": True})
+    # sys_read is sync — returns bytes. Raising NexusFileNotFoundError signals
+    # "pipe closed" to the consumer loop (which catches it gracefully).
+    nx.sys_read = MagicMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
+    return nx
 
 
 def _make_service(
-    *, enable_workflows: bool = True, pipe_manager: PipeManager | None = None
-) -> tuple[WorkflowDispatchService, PipeManager | None]:
-    pm = pipe_manager or PipeManager(MockMetastore(), zone_id="test")
+    *, enable_workflows: bool = True, nx: MagicMock | None = None
+) -> tuple[WorkflowDispatchService, MagicMock | None]:
+    mock_nx = nx or _make_mock_nx()
     engine = AsyncMock()
     svc = WorkflowDispatchService(
-        pipe_manager=pm,
+        nx=mock_nx,
         workflow_engine=engine,
         enable_workflows=enable_workflows,
     )
-    return svc, pm
+    return svc, mock_nx
+
+
+class _BlockingReadNx:
+    def __init__(self) -> None:
+        self.closed = False
+        self.read_started = threading.Event()
+        self.read_timeouts: list[int | None] = []
+        self.setattr_calls: list[tuple[str, dict[str, object]]] = []
+
+    def sys_setattr(self, path: str, **attrs: object) -> None:
+        self.setattr_calls.append((path, attrs))
+
+    def sys_read(self, path: str, *, timeout_ms: int | None = None) -> bytes:
+        self.read_started.set()
+        self.read_timeouts.append(timeout_ms)
+        time.sleep(0.5)
+        if self.closed:
+            raise NexusFileNotFoundError(path)
+        return b""
+
+    def sys_write(self, path: str, data: bytes) -> dict[str, object]:  # noqa: ARG002
+        return {"path": path, "bytes_written": len(data)}
+
+    def pipe_close(self, path: str) -> None:  # noqa: ARG002
+        self.closed = True
 
 
 # ======================================================================
@@ -69,145 +91,64 @@ def _make_service(
 class TestFire:
     @pytest.mark.asyncio
     async def test_writes_to_pipe(self) -> None:
-        """Event should be serialized and written to PipeManager."""
-        svc, pm = _make_service()
-        # Must start to create pipe
+        """Event should be serialized and written to kernel pipe via sys_write."""
+        svc, nx = _make_service()
         await svc.start()
 
-        svc.fire("file_write", {"path": "/foo.txt"}, "file_write:/foo.txt")
+        await svc.fire("file_write", {"path": "/foo.txt"}, "file_write:/foo.txt")
 
-        data = pm.pipe_peek("/nexus/pipes/workflow-events")
-        assert data is not None
-        msg = json.loads(data)
+        # Verify sys_write was called with serialized data
+        nx.sys_write.assert_called_once()
+        call_args = nx.sys_write.call_args
+        assert call_args[0][0] == _WORKFLOW_PIPE_PATH
+        msg = json.loads(call_args[0][1])
         assert msg["type"] == "file_write"
         assert msg["ctx"]["path"] == "/foo.txt"
 
         await svc.stop()
 
-    def test_drops_on_full(self) -> None:
+    @pytest.mark.asyncio
+    async def test_drops_on_full(self) -> None:
         """Overflow should log warning, not raise."""
-        svc, pm = _make_service()
-        # Create pipe with small capacity
-        pm.create("/nexus/pipes/workflow-events", capacity=256, owner_id="kernel")
-        svc._pipe_ready = True
+        svc, nx = _make_service()
+        await svc.start()
 
-        # Fill the pipe
-        pm.pipe_write_nowait("/nexus/pipes/workflow-events", b"x" * 256)
+        # Make sys_write raise to simulate full pipe
+        nx.sys_write.side_effect = RuntimeError("PipeFull: buffer full")
 
         # Should not raise
-        svc.fire("file_write", {"path": "/big.txt"}, "file_write:/big.txt")
+        await svc.fire("file_write", {"path": "/big.txt"}, "file_write:/big.txt")
 
-    def test_fallback_without_pipe_manager(self) -> None:
-        """No pipe manager -> fire-and-forget fallback."""
+    @pytest.mark.asyncio
+    async def test_fallback_without_nx(self) -> None:
+        """No NexusFS -> direct async call fallback."""
         engine = AsyncMock()
         svc = WorkflowDispatchService(
-            pipe_manager=None,
+            nx=None,
             workflow_engine=engine,
             enable_workflows=True,
         )
 
-        with patch("nexus.lib.sync_bridge.fire_and_forget") as mock_ff:
-            svc.fire("file_delete", {"path": "/x"}, "file_delete:/x")
-            mock_ff.assert_called_once()
+        await svc.fire("file_delete", {"path": "/x"}, "file_delete:/x")
+        engine.fire_event.assert_called_once_with("file_delete", {"path": "/x"})
 
-    def test_fallback_before_start(self) -> None:
-        """Pipe manager exists but start() not called yet."""
+    @pytest.mark.asyncio
+    async def test_fallback_before_start(self) -> None:
+        """NexusFS exists but start() not called yet."""
         svc, _ = _make_service()
 
-        with patch("nexus.lib.sync_bridge.fire_and_forget") as mock_ff:
-            svc.fire("file_write", {"path": "/y"}, "file_write:/y")
-            mock_ff.assert_called_once()
+        await svc.fire("file_write", {"path": "/y"}, "file_write:/y")
+        svc._workflow_engine.fire_event.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_noop_when_workflows_disabled(self) -> None:
         """Should do nothing when workflows are disabled."""
-        svc, pm = _make_service(enable_workflows=False)
+        svc, nx = _make_service(enable_workflows=False)
         await svc.start()
 
-        svc.fire("file_write", {"path": "/z"}, "file_write:/z")
-        # Pipe should be empty
-        assert pm.pipe_peek("/nexus/pipes/workflow-events") is None
-
-        await svc.stop()
-
-
-# ======================================================================
-# on_mutation() — VFSObserver
-# ======================================================================
-
-
-class TestOnMutation:
-    @pytest.mark.asyncio
-    async def test_write_event(self) -> None:
-        """on_mutation(WRITE) should call fire() with correct trigger type."""
-        svc, pm = _make_service()
-        await svc.start()
-
-        event = FileEvent(
-            type=FileEventType.FILE_WRITE,
-            path="/test/file.txt",
-            zone_id="root",
-            revision=42,
-            agent_id="agent-1",
-            user_id="user-1",
-            timestamp="2026-02-19T00:00:00",
-            etag="abc123",
-            size=1024,
-            version=3,
-            is_new=True,
-        )
-        svc.on_mutation(event)
-
-        data = pm.pipe_peek("/nexus/pipes/workflow-events")
-        assert data is not None
-        msg = json.loads(data)
-        assert msg["type"] == "file_write"
-        assert msg["ctx"]["file_path"] == "/test/file.txt"
-        assert msg["ctx"]["created"] is True
-
-        await svc.stop()
-
-    @pytest.mark.asyncio
-    async def test_delete_event(self) -> None:
-        """on_mutation(DELETE) should produce file_delete trigger."""
-        svc, pm = _make_service()
-        await svc.start()
-
-        event = FileEvent(
-            type=FileEventType.FILE_DELETE,
-            path="/test/gone.txt",
-            zone_id="root",
-            revision=43,
-        )
-        svc.on_mutation(event)
-
-        data = pm.pipe_peek("/nexus/pipes/workflow-events")
-        msg = json.loads(data)
-        assert msg["type"] == "file_delete"
-        assert msg["ctx"]["file_path"] == "/test/gone.txt"
-
-        await svc.stop()
-
-    @pytest.mark.asyncio
-    async def test_rename_event(self) -> None:
-        """on_mutation(RENAME) should produce file_rename trigger with old/new paths."""
-        svc, pm = _make_service()
-        await svc.start()
-
-        event = FileEvent(
-            type=FileEventType.FILE_RENAME,
-            path="/old/path.txt",
-            zone_id="root",
-            revision=44,
-            new_path="/new/path.txt",
-        )
-        svc.on_mutation(event)
-
-        data = pm.pipe_peek("/nexus/pipes/workflow-events")
-        msg = json.loads(data)
-        assert msg["type"] == "file_rename"
-        assert msg["ctx"]["old_path"] == "/old/path.txt"
-        assert msg["ctx"]["new_path"] == "/new/path.txt"
+        await svc.fire("file_write", {"path": "/z"}, "file_write:/z")
+        # sys_write should NOT be called
+        nx.sys_write.assert_not_called()
 
         await svc.stop()
 
@@ -221,18 +162,18 @@ class TestConsumer:
     @pytest.mark.asyncio
     async def test_consumer_reads_and_fires(self) -> None:
         """Consumer should deserialize messages and call engine.fire_event."""
-        svc, pm = _make_service()
-        await svc.start()
+        svc, nx = _make_service()
 
-        # Write events directly
-        for i in range(3):
-            svc.fire("file_write", {"idx": i}, f"file_write:{i}")
+        # Set up sys_read to return 3 events then raise (pipe closed)
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        events = [json.dumps({"type": "file_write", "ctx": {"idx": i}}).encode() for i in range(3)]
+        nx.sys_read = MagicMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
+
+        await svc.start()
 
         # Wait for consumer to drain
         await asyncio.sleep(0.05)
-
-        # Shut down
-        pm.close_all()
         await svc.stop()
 
         assert svc._workflow_engine.fire_event.call_count == 3
@@ -240,32 +181,63 @@ class TestConsumer:
     @pytest.mark.asyncio
     async def test_consumer_exits_on_close(self) -> None:
         """Consumer should exit cleanly when pipe is closed."""
-        svc, pm = _make_service()
-        await svc.start()
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
+        svc, nx = _make_service()
+        nx.sys_read = MagicMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
+
+        await svc.start()
         await asyncio.sleep(0.01)
-        pm.close_all()
         await svc.stop()  # should not hang
 
     @pytest.mark.asyncio
     async def test_consumer_survives_engine_error(self) -> None:
         """Consumer should continue processing after engine error."""
-        svc, pm = _make_service()
-        await svc.start()
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        svc, nx = _make_service()
+
+        events = [
+            json.dumps({"type": "file_write", "ctx": {"x": 1}}).encode(),
+            json.dumps({"type": "file_write", "ctx": {"x": 2}}).encode(),
+        ]
+        nx.sys_read = MagicMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
 
         svc._workflow_engine.fire_event.side_effect = [
             RuntimeError("boom"),
             None,
         ]
 
-        svc.fire("file_write", {"x": 1}, "w:1")
-        svc.fire("file_write", {"x": 2}, "w:2")
-
+        await svc.start()
         await asyncio.sleep(0.05)
-        pm.close_all()
         await svc.stop()
 
         assert svc._workflow_engine.fire_event.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_blocking_pipe_read_does_not_block_event_loop(self) -> None:
+        """Blocking pipe reads should not freeze unrelated HTTP request handling."""
+        nx = _BlockingReadNx()
+        engine = AsyncMock()
+        svc = WorkflowDispatchService(
+            nx=cast(Any, nx),
+            workflow_engine=engine,
+            enable_workflows=True,
+        )
+
+        await svc.start()
+        try:
+
+            async def _wait_for_read() -> None:
+                while not nx.read_started.is_set():
+                    await asyncio.sleep(0.01)
+
+            started_at = time.perf_counter()
+            await asyncio.wait_for(_wait_for_read(), timeout=1.0)
+            assert time.perf_counter() - started_at < 0.25
+            assert nx.read_timeouts == [0]
+        finally:
+            await svc.stop()
 
 
 # ======================================================================
@@ -276,32 +248,30 @@ class TestConsumer:
 class TestLifecycle:
     @pytest.mark.asyncio
     async def test_start_creates_pipe(self) -> None:
-        """start() should create pipe at the correct path."""
-        svc, pm = _make_service()
+        """start() should create pipe via sys_setattr."""
+        svc, nx = _make_service()
         await svc.start()
 
         assert svc._pipe_ready is True
-        pipes = pm.list_pipes()
-        assert "/nexus/pipes/workflow-events" in pipes
+        nx.sys_setattr.assert_called_once()
 
         await svc.stop()
 
     @pytest.mark.asyncio
     async def test_start_idempotent(self) -> None:
         """Calling start() twice should not raise."""
-        svc, pm = _make_service()
+        svc, nx = _make_service()
         await svc.start()
         await svc.start()  # should not raise
 
-        pm.close_all()
         await svc.stop()
 
     @pytest.mark.asyncio
-    async def test_start_noop_without_pipe_manager(self) -> None:
-        """No pipe manager (CLI mode) -> no-op."""
+    async def test_start_noop_without_nx(self) -> None:
+        """No NexusFS (CLI mode) -> no-op."""
         engine = AsyncMock()
         svc = WorkflowDispatchService(
-            pipe_manager=None,
+            nx=None,
             workflow_engine=engine,
             enable_workflows=True,
         )
@@ -309,16 +279,20 @@ class TestLifecycle:
         assert svc._pipe_ready is False
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_stop_cancels_consumer(self) -> None:
         """stop() should cancel the consumer task."""
-        svc, pm = _make_service()
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        svc, nx = _make_service()
+        # sys_read raises immediately (pipe closed) — consumer exits promptly.
+        nx.sys_read = MagicMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
+
         await svc.start()
 
         assert svc._consumer_task is not None
-        assert not svc._consumer_task.done()
 
-        pm.close_all()
-        await svc.stop()
+        await svc.stop()  # should not hang
 
         assert svc._consumer_task is None
         assert svc._pipe_ready is False

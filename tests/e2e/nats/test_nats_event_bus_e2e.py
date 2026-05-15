@@ -21,6 +21,8 @@ from typing import Any
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # ============================================================================
 # Skip conditions
 # ============================================================================
@@ -161,7 +163,7 @@ def server_app():
     assert isinstance(nexus_fs, NexusFS)
 
     # Verify event bus is NATS
-    from nexus.services.event_subsystem.bus.nats import NatsEventBus
+    from nexus.services.event_bus.nats import NatsEventBus
 
     assert nexus_fs._event_bus is not None
     assert isinstance(nexus_fs._event_bus, NatsEventBus)
@@ -217,7 +219,7 @@ class TestServerStartup:
 
     def test_event_bus_is_nats(self, client, nexus_fs):
         """Event bus should be NatsEventBus."""
-        from nexus.services.event_subsystem.bus.nats import NatsEventBus
+        from nexus.services.event_bus.nats import NatsEventBus
 
         assert isinstance(nexus_fs._event_bus, NatsEventBus)
 
@@ -252,13 +254,13 @@ class TestDirectPublish:
 
     def test_direct_publish_received(self, client, nexus_fs):
         """Events published directly to bus should appear in NATS stream."""
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         unique_path = f"/e2e-nats-test/direct-{uuid.uuid4().hex[:8]}.txt"
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path=unique_path,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Publish directly to NATS via the bus (schedule on main loop)
@@ -374,7 +376,7 @@ class TestDurableSubscriber:
         """A durable consumer should receive events from direct NexusFS writes."""
         import nats as nats_lib
 
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         unique_path = f"/e2e-nats-test/durable-{uuid.uuid4().hex[:8]}.txt"
 
@@ -398,7 +400,7 @@ class TestDurableSubscriber:
             event = FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=unique_path,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
             future = asyncio.run_coroutine_threadsafe(
                 nexus_fs._event_bus.publish(event),
@@ -525,13 +527,13 @@ class TestDeduplication:
 
     def test_duplicate_events_deduplicated(self, client, nexus_fs):
         """Publishing the same event_id twice should be deduplicated."""
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         dedup_id = f"dedup-e2e-{uuid.uuid4().hex[:8]}"
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path=f"/e2e-nats-test/dedup-{dedup_id}.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             event_id=dedup_id,
         )
 

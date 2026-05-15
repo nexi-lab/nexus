@@ -3,14 +3,16 @@
 import asyncio
 import json
 import os
+from typing import Any
 
 import click
 from rich.table import Table
 
-from nexus.cli.utils import console, handle_error
+from nexus.cli.theme import console
+from nexus.cli.utils import handle_error
 
 
-def _get_engine_with_storage():  # type: ignore[no-untyped-def]
+async def _get_engine_with_storage() -> Any:
     """Get workflow engine from NexusFS (factory-created, no private access).
 
     Uses the public ``workflow_engine`` attribute already wired by the factory
@@ -19,8 +21,8 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
     """
     import nexus
 
-    # Get data directory from env or default
-    data_dir = os.getenv("NEXUS_DATA_DIR", "./nexus-data")
+    # Get data directory from env or default (consistent with rest of CLI)
+    data_dir = os.getenv("NEXUS_DATA_DIR", os.path.join(os.path.expanduser("~"), ".nexus", "data"))
 
     # Connect to Nexus — factory creates workflow_engine via _create_workflow_engine()
     nx = nexus.connect(config={"data_dir": str(data_dir)})
@@ -33,7 +35,7 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
         )
 
     # Load workflows from persistent storage (async startup)
-    asyncio.run(engine.startup())
+    await engine.startup()
 
     return engine
 
@@ -70,14 +72,15 @@ def workflows() -> None:
 @click.option("--enabled/--disabled", default=True, help="Enable workflow after loading")
 def workflows_load(file_path: str, enabled: bool) -> None:
     """Load a workflow from a YAML file."""
-    try:
+
+    async def _impl() -> None:
         from nexus.bricks.workflows import WorkflowLoader
 
         # Load workflow definition
         definition = WorkflowLoader.load_from_file(file_path)
 
         # Get workflow engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
 
         # Load into engine (will persist to database)
         success = engine.load_workflow(definition, enabled=enabled)
@@ -85,14 +88,16 @@ def workflows_load(file_path: str, enabled: bool) -> None:
         if success:
             status = "enabled" if enabled else "disabled"
             console.print(
-                f"[green]✓[/green] Loaded workflow: [cyan]{definition.name}[/cyan] ({status})"
+                f"[nexus.success]✓[/nexus.success] Loaded workflow: [nexus.value]{definition.name}[/nexus.value] ({status})"
             )
             console.print(f"  Version: {definition.version}")
             console.print(f"  Triggers: {len(definition.triggers)}")
             console.print(f"  Actions: {len(definition.actions)}")
         else:
-            console.print(f"[red]✗[/red] Failed to load workflow from {file_path}")
+            console.print(f"[nexus.error]✗[/nexus.error] Failed to load workflow from {file_path}")
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -100,23 +105,26 @@ def workflows_load(file_path: str, enabled: bool) -> None:
 @workflows.command(name="list")
 def workflows_list() -> None:
     """List all loaded workflows."""
-    try:
+
+    async def _impl() -> None:
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
         workflow_list = engine.list_workflows()
 
         if not workflow_list:
-            console.print("[yellow]No workflows loaded.[/yellow]")
-            console.print("\nLoad workflows with: [cyan]nexus workflows load <file>[/cyan]")
+            console.print("[nexus.warning]No workflows loaded.[/nexus.warning]")
+            console.print(
+                "\nLoad workflows with: [nexus.value]nexus workflows load <file>[/nexus.value]"
+            )
             return
 
         table = Table(title="Loaded Workflows")
-        table.add_column("Name", style="cyan")
-        table.add_column("Version", style="green")
+        table.add_column("Name", style="nexus.value")
+        table.add_column("Version", style="nexus.success")
         table.add_column("Description")
         table.add_column("Triggers", justify="right")
         table.add_column("Actions", justify="right")
-        table.add_column("Status", style="yellow")
+        table.add_column("Status", style="nexus.warning")
 
         for workflow in workflow_list:
             status = "✓ Enabled" if workflow["enabled"] else "✗ Disabled"
@@ -131,6 +139,8 @@ def workflows_list() -> None:
 
         console.print(table)
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -145,7 +155,8 @@ def workflows_list() -> None:
 )
 def workflows_test(workflow_name: str, file_path: str | None, context: str) -> None:
     """Test a workflow execution."""
-    try:
+
+    async def _impl() -> None:
         # Parse context
         event_context = json.loads(context)
 
@@ -154,17 +165,19 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
             event_context["file_path"] = file_path
 
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
 
         # Execute workflow
-        console.print(f"[cyan]Testing workflow:[/cyan] {workflow_name}")
+        console.print(f"[nexus.value]Testing workflow:[/nexus.value] {workflow_name}")
         if file_path:
-            console.print(f"[cyan]File:[/cyan] {file_path}")
+            console.print(f"[nexus.path]File:[/nexus.path] {file_path}")
 
-        execution = asyncio.run(engine.trigger_workflow(workflow_name, event_context))
+        execution = await engine.trigger_workflow(workflow_name, event_context)
 
         if not execution:
-            console.print(f"[red]✗[/red] Failed to execute workflow '{workflow_name}'")
+            console.print(
+                f"[nexus.error]✗[/nexus.error] Failed to execute workflow '{workflow_name}'"
+            )
             return
 
         # Display results
@@ -181,16 +194,18 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
             console.print("\n[bold]Action Results:[/bold]")
             for result in execution.action_results:
                 status_icon = "✓" if result.success else "✗"
-                status_color = "green" if result.success else "red"
+                status_color = "nexus.success" if result.success else "nexus.error"
                 console.print(
                     f"  [{status_color}]{status_icon}[/{status_color}] {result.action_name} ({result.duration_ms:.2f}ms)"
                 )
                 if result.error:
-                    console.print(f"    [red]Error: {result.error}[/red]")
+                    console.print(f"    [nexus.error]Error: {result.error}[/nexus.error]")
 
         if execution.error_message:
-            console.print(f"\n[red]Error:[/red] {execution.error_message}")
+            console.print(f"\n[nexus.error]Error:[/nexus.error] {execution.error_message}")
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -201,7 +216,9 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
 def workflows_runs(workflow_name: str, limit: int) -> None:
     """View workflow execution history."""
     try:
-        console.print("[yellow]Workflow execution history not yet implemented.[/yellow]")
+        console.print(
+            "[nexus.warning]Workflow execution history not yet implemented.[/nexus.warning]"
+        )
         console.print(f"This will show the last {limit} executions of '{workflow_name}'")
         # TODO(#1443): implement workflow execution history when database storage is ready
 
@@ -213,13 +230,18 @@ def workflows_runs(workflow_name: str, limit: int) -> None:
 @click.argument("workflow_name")
 def workflows_enable(workflow_name: str) -> None:
     """Enable a workflow."""
-    try:
+
+    async def _impl() -> None:
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
         engine.enable_workflow(workflow_name)
 
-        console.print(f"[green]✓[/green] Enabled workflow: [cyan]{workflow_name}[/cyan]")
+        console.print(
+            f"[nexus.success]✓[/nexus.success] Enabled workflow: [nexus.value]{workflow_name}[/nexus.value]"
+        )
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -228,13 +250,18 @@ def workflows_enable(workflow_name: str) -> None:
 @click.argument("workflow_name")
 def workflows_disable(workflow_name: str) -> None:
     """Disable a workflow."""
-    try:
+
+    async def _impl() -> None:
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
         engine.disable_workflow(workflow_name)
 
-        console.print(f"[yellow]✓[/yellow] Disabled workflow: [cyan]{workflow_name}[/cyan]")
+        console.print(
+            f"[nexus.warning]✓[/nexus.warning] Disabled workflow: [nexus.value]{workflow_name}[/nexus.value]"
+        )
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -243,16 +270,21 @@ def workflows_disable(workflow_name: str) -> None:
 @click.argument("workflow_name")
 def workflows_unload(workflow_name: str) -> None:
     """Unload a workflow."""
-    try:
+
+    async def _impl() -> None:
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
         success = engine.unload_workflow(workflow_name)
 
         if success:
-            console.print(f"[green]✓[/green] Unloaded workflow: [cyan]{workflow_name}[/cyan]")
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Unloaded workflow: [nexus.value]{workflow_name}[/nexus.value]"
+            )
         else:
-            console.print(f"[red]✗[/red] Workflow '{workflow_name}' not found")
+            console.print(f"[nexus.error]✗[/nexus.error] Workflow '{workflow_name}' not found")
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -262,22 +294,23 @@ def workflows_unload(workflow_name: str) -> None:
 @click.option("--load", is_flag=True, help="Load discovered workflows")
 def workflows_discover(directory: str, load: bool) -> None:
     """Discover workflows in a directory."""
-    try:
+
+    async def _impl() -> None:
         from nexus.bricks.workflows import WorkflowLoader
 
         # Discover workflows
         workflows_found = WorkflowLoader.discover_workflows(directory)
 
         if not workflows_found:
-            console.print(f"[yellow]No workflows found in {directory}[/yellow]")
+            console.print(f"[nexus.warning]No workflows found in {directory}[/nexus.warning]")
             return
 
-        console.print(f"[green]✓[/green] Found {len(workflows_found)} workflow(s)")
+        console.print(f"[nexus.success]✓[/nexus.success] Found {len(workflows_found)} workflow(s)")
 
         # Display discovered workflows
         table = Table(title=f"Workflows in {directory}")
-        table.add_column("Name", style="cyan")
-        table.add_column("Version", style="green")
+        table.add_column("Name", style="nexus.value")
+        table.add_column("Version", style="nexus.success")
         table.add_column("Description")
         table.add_column("Triggers", justify="right")
         table.add_column("Actions", justify="right")
@@ -296,13 +329,15 @@ def workflows_discover(directory: str, load: bool) -> None:
         # Load workflows if requested
         if load:
             # Get engine with persistent storage
-            engine = _get_engine_with_storage()
+            engine = await _get_engine_with_storage()
             loaded_count = 0
             for workflow in workflows_found:
                 if engine.load_workflow(workflow, enabled=True):
                     loaded_count += 1
 
-            console.print(f"\n[green]✓[/green] Loaded {loaded_count} workflow(s)")
+            console.print(f"\n[nexus.success]✓[/nexus.success] Loaded {loaded_count} workflow(s)")
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)

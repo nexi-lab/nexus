@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.exchange_audit_logger import (
     ExchangeAuditLogger,
     _build_merkle_root,
@@ -105,7 +106,7 @@ class TestRecordCreation:
         assert row.currency == "credits"
         assert row.status == "settled"
         assert row.application == "gateway"
-        assert row.zone_id == "root"
+        assert row.zone_id == ROOT_ZONE_ID
         assert row.transfer_id == "tx-001"
 
     def test_record_returns_uuid_string(self, audit_logger: ExchangeAuditLogger) -> None:
@@ -171,7 +172,7 @@ class TestHashComputation:
             currency="credits",
             status="settled",
             application="gateway",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             trace_id=None,
             transfer_id="tx-001",
             created_at=ts,
@@ -437,7 +438,7 @@ class TestAggregations:
                 )
             )
 
-        agg = audit_logger.get_aggregations(zone_id="root")
+        agg = audit_logger.get_aggregations(zone_id=ROOT_ZONE_ID)
         assert int(float(agg["total_volume"])) == 30
         assert agg["tx_count"] == 3
 
@@ -454,7 +455,7 @@ class TestAggregations:
             **_make_record_kwargs(buyer_agent_id="bob", amount=Decimal("10"), transfer_id="top-3")
         )
 
-        agg = audit_logger.get_aggregations(zone_id="root")
+        agg = audit_logger.get_aggregations(zone_id=ROOT_ZONE_ID)
         assert len(agg["top_buyers"]) >= 2
         # Alice should be first (highest volume)
         assert agg["top_buyers"][0]["agent_id"] == "alice"

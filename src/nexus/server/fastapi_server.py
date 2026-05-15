@@ -32,14 +32,14 @@ from fastapi import (
     Depends,
     FastAPI,
     HTTPException,
-    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.routing import Route as _StarletteRoute
 
-from nexus.contracts.constants import DEFAULT_NEXUS_URL, ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     NexusError,
 )
@@ -47,7 +47,6 @@ from nexus.server.auth.oauth_init import (  # noqa: E402
     initialize_oauth_provider as _initialize_oauth_provider,
 )
 from nexus.server.dependencies import (  # noqa: E402
-    get_auth_result,
     require_auth,
 )
 from nexus.server.error_handlers import (  # noqa: E402
@@ -72,17 +71,11 @@ logger = logging.getLogger(__name__)
 # Module-level limiter instance; initialized in create_app().
 limiter: Limiter
 
-# Lock API Models — re-exported for backward compatibility with tests/consumers.
-# Canonical location: api/v2/models/locks.py (Issue #2056).
-from nexus.server.api.v2.models.locks import LOCK_MAX_TTL as LOCK_MAX_TTL  # noqa: E402
-from nexus.server.api.v2.models.locks import LockAcquireRequest as LockAcquireRequest  # noqa: E402
-from nexus.server.api.v2.models.locks import LockExtendRequest as LockExtendRequest  # noqa: E402
-from nexus.server.api.v2.models.locks import LockHolderResponse as LockHolderResponse  # noqa: E402
-from nexus.server.api.v2.models.locks import LockInfoMutex as LockInfoMutex  # noqa: E402
-from nexus.server.api.v2.models.locks import LockInfoSemaphore as LockInfoSemaphore  # noqa: E402
-from nexus.server.api.v2.models.locks import LockListResponse as LockListResponse  # noqa: E402
-from nexus.server.api.v2.models.locks import LockResponse as LockResponse  # noqa: E402
-from nexus.server.api.v2.models.locks import LockStatusResponse as LockStatusResponse  # noqa: E402
+
+def _rate_limit_enabled_from_env() -> bool:
+    """Return whether HTTP rate limiting was explicitly enabled."""
+    return os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in ("1", "true", "yes")
+
 
 # ============================================================================
 # Thread Pool Utilities (Issue #932)
@@ -131,6 +124,69 @@ async def to_thread_with_timeout(
 
 
 # ============================================================================
+# Issue #3778: SANDBOX HTTP allowlist
+# ============================================================================
+
+SANDBOX_HTTP_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        # Issue #3778: SANDBOX HTTP surface
+        "/health",
+        "/api/v2/features",
+        # FastAPI built-ins
+        "/openapi.json",
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/redoc",
+    }
+)
+
+
+def _federation_rpc_active(kernel: Any) -> bool:
+    """Decide whether to mount FederationRPCService on the RPC surface.
+
+    Gates on the DistributedCoordinator readiness probe — Phase H made
+    zone lifecycle a kernel-internal HAL trait, so the kernel no
+    longer exposes ``mount_reconciliation_done`` / ``zone_list`` as
+    PyO3 methods.  ``nexus_runtime.federation_is_initialized(kernel)``
+    is the supported readiness probe; it returns True once the
+    ZoneManager is bootstrapped on this node.
+
+    Does NOT inspect ``federation_list_zones``'s result: a brand-new
+    stack has zero zones, and ``federation_list_zones`` is the primary
+    way to observe that state.  Gating on non-empty would make
+    bootstrap chicken-and-egg.
+
+    Standalone mode (#3793): the kernel is present but federation
+    coordinator isn't initialized.  We still mount the service so that
+    data-portability RPCs (federation_list_zones,
+    federation_export_zone, federation_import_zone) reach the kernel —
+    standalone has a default ``root`` zone visible via the
+    ``/__sys__/zones/`` procfs view.  Federation-only RPCs
+    (federation_join, federation_share, federation_create_zone) will
+    surface a clear error from the underlying kernel call when invoked
+    in standalone — preferable to ``Method not found`` which obscures
+    the cause.
+    """
+    return kernel is not None
+
+
+def _filter_routes_for_sandbox(app: "FastAPI") -> None:
+    """Issue #3778: remove every `Route` not in SANDBOX_HTTP_ALLOWLIST.
+
+    Idempotent. Leaves `Mount`s, `WebSocketRoute`s, and startup/shutdown
+    event handlers untouched — only path-bound `Route` instances are
+    filtered. Called once after all routers have been included, when the
+    profile is sandbox.
+    """
+    kept = []
+    for r in app.router.routes:
+        if isinstance(r, _StarletteRoute) and r.path not in SANDBOX_HTTP_ALLOWLIST:
+            continue
+        kept.append(r)
+    app.router.routes = kept
+
+
+# ============================================================================
 # Application State (Issue #1288: Eliminated AppState class)
 # ============================================================================
 #
@@ -169,7 +225,7 @@ def create_app(
         database_url: Database URL for async operations
         thread_pool_size: Thread pool size for sync operations (default: 200)
         operation_timeout: Timeout for sync operations in seconds (default: 30.0)
-        data_dir: Server data directory for persistent storage (A2A tasks, etc.)
+        data_dir: Server data directory for persistent storage
 
     Returns:
         Configured FastAPI application
@@ -182,7 +238,7 @@ def create_app(
     # Create app first so we can store state on it
     app = FastAPI(
         title="Nexus RPC Server",
-        description="AI-Native Distributed Filesystem API",
+        description="Nexus = filesystem/context plane.",
         version="1.0.0",
         lifespan=_modular_lifespan,
     )
@@ -202,6 +258,10 @@ def create_app(
         data_dir=data_dir,
     )
 
+    from nexus.runtime.zone_runner import ZoneRegistry
+
+    app.state.zone_registry = ZoneRegistry()
+
     # Issue #1399: BrickContainer for DI (auth brick + future bricks)
     from nexus.lib.brick_container import BrickContainer
 
@@ -212,12 +272,23 @@ def create_app(
         if isinstance(auth_provider, AuthBrickProtocol):
             app.state.brick_container.register(AuthBrickProtocol, auth_provider)
 
-    # Deployment profile (Issue #1389, #1708): resolve enabled bricks from NEXUS_PROFILE env
+    # Deployment profile (Issue #1389, #1708, #3778 R3):
+    # Resolve from the NexusFS's attached `_config.profile` when available so
+    # the SANDBOX route allowlist is enforced even when the caller selected
+    # sandbox via the config object/CLI without exporting NEXUS_PROFILE into
+    # env. Env is used only as a fallback when no config is attached.
     from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
-    _profile_str = os.environ.get("NEXUS_PROFILE", "full")
+    _cfg_profile = None
+    _nx_cfg_for_profile = getattr(nexus_fs, "_config", None)
+    if _nx_cfg_for_profile is not None:
+        _cfg_profile_val = getattr(_nx_cfg_for_profile, "profile", None)
+        if _cfg_profile_val:
+            _cfg_profile = str(_cfg_profile_val)
+
+    _profile_str = _cfg_profile or os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":
-        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
+        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
 
         _caps = detect_capabilities()
         _profile = suggest_profile(_caps)
@@ -235,10 +306,10 @@ def create_app(
             logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
             _profile = DeploymentProfile.FULL
         # Warn if explicit profile may exceed device capabilities
-        from nexus.core.device_capabilities import (
+        from nexus.lib.device_capabilities import (
             detect_capabilities as _detect_caps,
         )
-        from nexus.core.device_capabilities import (
+        from nexus.lib.device_capabilities import (
             warn_if_profile_exceeds_device,
         )
 
@@ -278,7 +349,11 @@ def create_app(
     # Kept for backward compatibility with handlers not yet migrated.
     if _record_store is not None:
         app.state.session_factory = _record_store.session_factory
-    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+    elif (
+        nexus_fs is not None
+        and hasattr(nexus_fs, "SessionLocal")
+        and nexus_fs.SessionLocal is not None
+    ):
         app.state.session_factory = nexus_fs.SessionLocal
     else:
         app.state.session_factory = None
@@ -295,11 +370,22 @@ def create_app(
         app.state.read_session_factory = None
         app.state.async_read_session_factory = None
 
-    # Expose kernel services on app.state so routers never reach into
+    # Expose services on app.state so routers never reach into
     # NexusFS private attributes (Issue #701).
-    app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
-    app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
-    app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
+    # Prefer the ServiceRegistry lookup (``nexus_fs.service(...)``) because
+    # the private ``_rebac_manager`` attribute is None in deployments where
+    # the brick is registered on-demand; the registry returns the live
+    # instance in that case.
+    def _resolve_service(name: str, private_attr: str) -> Any:
+        if hasattr(nexus_fs, "service"):
+            svc = nexus_fs.service(name)
+            if svc is not None:
+                return svc
+        return getattr(nexus_fs, private_attr, None)
+
+    app.state.rebac_manager = _resolve_service("rebac_manager", "_rebac_manager")
+    app.state.entity_registry = _resolve_service("entity_registry", "_entity_registry")
+    app.state.namespace_manager = _resolve_service("namespace_manager", "_namespace_manager")
 
     # Thread pool and timeout settings (Issue #932, #2071)
     _tuning_pool_size = str(app.state.profile_tuning.concurrency.thread_pool_size)
@@ -310,49 +396,111 @@ def create_app(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")
     )
 
-    # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
+    # Discover exposed methods — includes brick + RPC services (Issue #2035, Follow-up 1)
     # Services with @rpc_expose override kernel stubs (later sources win).
-    _brick_sources: list[Any] = []
-    for _attr_name in (
-        "skill_service",
-        "skill_package_service",
-        "task_queue_service",
-        "mcp_service",
-        "llm_service",
-        "oauth_service",
-        "mount_service",
-        "search_service",
-        "version_service",
-        "share_link_service",
-        "rebac_service",
-    ):
-        _brick_svc = getattr(nexus_fs, _attr_name, None)
-        if _brick_svc is not None:
-            _brick_sources.append(_brick_svc)
-    # AgentRPCService: stored as private attr _agent_rpc_service on NexusFS
-    _agent_rpc = getattr(nexus_fs, "_agent_rpc_service", None)
-    if _agent_rpc is not None:
-        _brick_sources.append(_agent_rpc)
-    # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
-    try:
-        from nexus.factory import create_memory_service
+    if nexus_fs is not None:
+        _rpc_sources: list[Any] = []
+        for _svc_name in (
+            "mcp",
+            "oauth",
+            "mount",
+            "search",
+            "share_link",
+            "rebac",
+        ):
+            _brick_svc = nexus_fs.service(_svc_name)
+            if _brick_svc is not None:
+                _rpc_sources.append(_brick_svc)
+        _version_svc = getattr(nexus_fs, "version_service", None)
+        if _version_svc is not None:
+            _rpc_sources.append(_version_svc)
+        # AgentRPCService
+        _agent_rpc = nexus_fs.service("agent_rpc")
+        if _agent_rpc is not None:
+            _rpc_sources.append(_agent_rpc)
+        # WorkspaceRPCService
+        _workspace_rpc = nexus_fs.service("workspace_rpc")
+        if _workspace_rpc is not None:
+            _rpc_sources.append(_workspace_rpc)
+        # AcpRPCService is owned by the Rust kernel (commit 22 cutover);
+        # the gRPC Call handler routes acp_* methods through Rust dispatch.
+        # Issue #841: MetadataExportService lives outside kernel
+        try:
+            from nexus.factory import create_metadata_export_service
 
-        _memory_svc = create_memory_service(nexus_fs)
-        if _memory_svc is not None:
-            _brick_sources.append(_memory_svc)
-            app.state.memory_service = _memory_svc  # for cleanup in lifespan
-    except Exception as _exc:
-        logger.debug("MemoryService unavailable: %s", _exc)
-    # Issue #841: MetadataExportService lives outside kernel
-    try:
-        from nexus.factory import create_metadata_export_service
+            _meta_export_svc = create_metadata_export_service(nexus_fs)
+            if _meta_export_svc is not None:
+                _rpc_sources.append(_meta_export_svc)
+        except Exception as _exc:
+            logger.debug("MetadataExportService unavailable: %s", _exc)
+        # Issue #1410: VersionService @rpc_expose methods (moved from NexusFS)
+        _version_svc = nexus_fs.service("version_service") if hasattr(nexus_fs, "service") else None
+        if _version_svc is not None:
+            _rpc_sources.append(_version_svc)
+        # R20.18.5 Phase B: FederationRPCService backs the federation_*
+        # gRPC surface. It now delegates every call to kernel zone_*
+        # accessors (tolerated tech debt — the boundary-rule-compliant
+        # replacement is /__sys__/zones/ procfs through sys_stat, tracked
+        # as a post-merge follow-up).
+        _kernel = getattr(nexus_fs, "_kernel", None)
+        if _federation_rpc_active(_kernel):
+            from nexus.server.rpc.services.federation_rpc import FederationRPCService
 
-        _meta_export_svc = create_metadata_export_service(nexus_fs)
-        if _meta_export_svc is not None:
-            _brick_sources.append(_meta_export_svc)
-    except Exception as _exc:
-        logger.debug("MetadataExportService unavailable: %s", _exc)
-    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
+            _rpc_sources.append(FederationRPCService(_kernel, nexus_fs))
+        # Lock syscalls (sys_lock, sys_unlock, lock_info, lock_list, etc.)
+        # are @rpc_expose on NexusFS — auto-discovered by _discover_exposed_methods.
+        # LocksRPCService deleted — no separate RPC service needed.
+        # --- Pay (Issue #1133) ---
+        try:
+            from nexus.bricks.pay import CreditsService
+            from nexus.server.rpc.services.pay_rpc import PayRPCService
+
+            _rpc_sources.append(PayRPCService(CreditsService()))
+        except Exception as _exc:
+            logger.debug("PayRPCService unavailable: %s", _exc)
+        # --- Audit (Issue #1133) ---
+        _record_store = getattr(nexus_fs, "_record_store", None)
+        if _record_store is not None:
+            try:
+                from nexus.server.rpc.services.audit_rpc import AuditRPCService
+                from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
+
+                _rpc_sources.append(
+                    AuditRPCService(ExchangeAuditLogger(record_store=_record_store))
+                )
+            except Exception as _exc:
+                logger.debug("AuditRPCService unavailable: %s", _exc)
+        # --- Governance (Issue #1133) ---
+        _svc_fn = getattr(nexus_fs, "service", None)
+        if _svc_fn is not None:
+            _anomaly = _svc_fn("governance_anomaly_service")
+            _collusion = _svc_fn("governance_collusion_service")
+            if _anomaly is not None or _collusion is not None:
+                from nexus.server.rpc.services.governance_rpc import GovernanceRPCService
+
+                _rpc_sources.append(GovernanceRPCService(_anomaly, _collusion))
+        # --- Events (Issue #1133) ---
+        if _record_store is not None:
+            try:
+                from nexus.server.rpc.services.events_rpc import EventsRPCService
+                from nexus.services.event_log.replay import EventReplayService
+
+                _evt_signal = None
+                _rpc_sources.append(
+                    EventsRPCService(EventReplayService(_record_store, event_signal=_evt_signal))
+                )
+            except Exception as _exc:
+                logger.debug("EventsRPCService unavailable: %s", _exc)
+        # --- Snapshots (Issue #1133) ---
+        _snap = nexus_fs.service("snapshot_service") if hasattr(nexus_fs, "service") else None
+        if _snap is not None:
+            from nexus.server.rpc.services.snapshots_rpc import SnapshotsRPCService
+
+            _rpc_sources.append(SnapshotsRPCService(_snap))
+        app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_rpc_sources)
+    else:
+        logger.info("create_app() started without NexusFS; service discovery disabled")
+        app.state.exposed_methods = {}
 
     # Defaults for optional services are set by init_app_state() above (Issue #2135)
 
@@ -368,7 +516,7 @@ def create_app(
 
     # Initialize subscription manager if we have a metadata store
     try:
-        if hasattr(nexus_fs, "SessionLocal"):
+        if nexus_fs is not None and hasattr(nexus_fs, "SessionLocal"):
             from nexus.server.subscriptions import (
                 SubscriptionManager,
                 set_subscription_manager,
@@ -386,7 +534,8 @@ def create_app(
             # Issue #914: Inject getter into delivery worker (fixes services→server import)
             from nexus.server.subscriptions import get_subscription_manager
 
-            _dw = nexus_fs.exposed_services().get("delivery_worker")
+            # Issue #1771: access delivery_worker via ServiceRegistry
+            _dw = nexus_fs.service("delivery_worker") if nexus_fs else None
             if _dw is not None:
                 _dw._subscription_manager_getter = get_subscription_manager
             logger.info("Subscription manager initialized and injected into NexusFS")
@@ -394,17 +543,39 @@ def create_app(
         logger.warning(f"Failed to initialize subscription manager: {e}")
 
     # Add CORS middleware (Issue #1596: env-based allowlist, never wildcard + credentials)
+    #
+    # OAuth cookie-binding note: ``/auth/oauth/google/authorize`` sets an
+    # HttpOnly ``nexus_oauth_binding`` cookie that must come back on
+    # ``/auth/oauth/check`` and ``/auth/oauth/callback``. For split-origin
+    # setups (frontend on :5173 or :3000, server elsewhere) the browser only
+    # persists and re-sends that cookie when BOTH of these are true:
+    #   (a) the fetch from the frontend uses ``credentials: 'include'``;
+    #   (b) this CORS middleware echoes the origin back AND sets
+    #       ``Access-Control-Allow-Credentials: true``.
+    #
+    # ``allow_origins`` here is always an explicit allowlist — never "*" —
+    # so enabling credentials on the *server* side is safe by CORS spec
+    # (the wildcard+credentials combination flagged by Issue #1596 is
+    # structurally impossible below). We therefore enable credentials
+    # unconditionally; otherwise the OAuth binding cookie silently drops
+    # in default dev wiring and callback fails with "invalid, expired, or
+    # unbound — possible CSRF attack".
     _cors_origins_raw = os.environ.get("CORS_ORIGINS", "")
     _cors_origins: list[str] = (
         [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
         if _cors_origins_raw
         else ["http://localhost:3000", "http://localhost:5173"]
     )
-    _cors_allow_credentials = bool(_cors_origins_raw)  # credentials only with explicit origins
+    if "*" in _cors_origins:
+        # Defensive: the allowlist must never be wildcard with credentials=True.
+        raise RuntimeError(
+            "CORS_ORIGINS=* is not allowed — credentials require explicit origins. "
+            "Set CORS_ORIGINS to a comma-separated list of allowed origins."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,
-        allow_credentials=_cors_allow_credentials,
+        allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Zone-ID", "X-Request-ID"],
     )
@@ -419,11 +590,7 @@ def create_app(
     import nexus.server.rate_limiting as _rate_limiting_mod
 
     global limiter
-    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
+    rate_limit_enabled = _rate_limit_enabled_from_env()
     from nexus.lib.env import get_dragonfly_url, get_redis_url
 
     redis_url = get_redis_url() or get_dragonfly_url()
@@ -462,9 +629,7 @@ def create_app(
             f"Premium: {RATE_LIMIT_PREMIUM}"
         )
     else:
-        logger.info(
-            "Rate limiting is DISABLED (default, set NEXUS_RATE_LIMIT_ENABLED=true to enable)"
-        )
+        logger.warning("Rate limiting is DISABLED (set NEXUS_RATE_LIMIT_ENABLED=true to re-enable)")
 
     # Initialize authentication provider for user registration/login endpoints
     if auth_provider is not None:
@@ -503,10 +668,11 @@ def create_app(
     # Register NexusFS instance for zone routes, migration, and user provisioning.
     # This must happen unconditionally (not only when OAuth is configured).
     try:
-        from nexus.server.auth.auth_routes import set_nexus_instance
+        if nexus_fs is not None:
+            from nexus.server.auth.auth_routes import set_nexus_instance
 
-        set_nexus_instance(nexus_fs)
-        logger.info("NexusFS instance registered for zone management")
+            set_nexus_instance(nexus_fs)
+            logger.info("NexusFS instance registered for zone management")
     except Exception as e:
         logger.warning(f"Failed to register NexusFS instance: {e}")
 
@@ -544,7 +710,60 @@ def create_app(
     except ImportError:
         pass
 
+    # Issue #3778: SANDBOX profile restricts HTTP surface. Gate on the
+    # resolved enum (not the raw string) so invalid/unknown env values that
+    # fell through to DeploymentProfile.FULL above don't accidentally enable
+    # or skip the allowlist.
+    if _profile == DeploymentProfile.SANDBOX:
+        _filter_routes_for_sandbox(app)
+
     return app
+
+
+def _build_envelope_provider_from_env(choice: str) -> tuple[Any, str]:
+    """Construct an EncryptionProvider from env vars (#3818).
+
+    Returns ``(provider, kind)`` where kind is one of:
+      ``inmemory`` — fresh per-process key (dev only).
+      ``vault_transit`` — Vault Transit via NEXUS_VAULT_ADDR/TOKEN/KEY/MOUNT.
+      ``aws_kms`` — AWS KMS via NEXUS_AWS_KMS_KEY_ID/REGION.
+
+    Raises on missing required env vars or import failures so the caller
+    can disable the route with a clear log line instead of silently
+    falling through to a non-functional in-memory KEK.
+    """
+    if choice == "inmemory":
+        from nexus.bricks.auth.envelope_providers.in_memory import InMemoryEncryptionProvider
+
+        return InMemoryEncryptionProvider(), "inmemory"
+    if choice == "vault_transit":
+        import hvac  # raises ImportError → caller logs + disables
+
+        from nexus.bricks.auth.envelope_providers.vault_transit import VaultTransitProvider
+
+        addr = os.environ.get("NEXUS_VAULT_ADDR") or ""
+        token = os.environ.get("NEXUS_VAULT_TOKEN") or ""
+        key = os.environ.get("NEXUS_VAULT_TRANSIT_KEY") or ""
+        mount = os.environ.get("NEXUS_VAULT_TRANSIT_MOUNT", "transit")
+        if not (addr and token and key):
+            raise ValueError(
+                "vault_transit requires NEXUS_VAULT_ADDR, NEXUS_VAULT_TOKEN, "
+                "NEXUS_VAULT_TRANSIT_KEY"
+            )
+        client = hvac.Client(url=addr, token=token)
+        return VaultTransitProvider(client, key, mount_point=mount), "vault_transit"
+    if choice == "aws_kms":
+        import boto3
+
+        from nexus.bricks.auth.envelope_providers.aws_kms import AwsKmsProvider
+
+        key_id = os.environ.get("NEXUS_AWS_KMS_KEY_ID") or ""
+        region = os.environ.get("NEXUS_AWS_REGION") or os.environ.get("AWS_REGION", "")
+        if not (key_id and region):
+            raise ValueError("aws_kms requires NEXUS_AWS_KMS_KEY_ID and NEXUS_AWS_REGION")
+        kms = boto3.client("kms", region_name=region)
+        return AwsKmsProvider(kms, key_id), "aws_kms"
+    raise ValueError(f"unknown NEXUS_ENVELOPE_PROVIDER: {choice!r}")
 
 
 def _register_routes(app: FastAPI) -> None:
@@ -553,6 +772,7 @@ def _register_routes(app: FastAPI) -> None:
     # Features endpoint (Issue #1389) — public, rate-limit exempt
     # ---- Core API routers (extracted from inline endpoints, #1602) ----
     from nexus.server.api.core.debug import router as debug_router
+    from nexus.server.api.core.extensions import router as extensions_router
     from nexus.server.api.core.features import router as features_router
     from nexus.server.api.core.health import router as health_router
     from nexus.server.api.core.rpc import router as rpc_router
@@ -568,15 +788,31 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(debug_router)
     app.include_router(streaming_router)
     app.include_router(rpc_router)
+    # Issue #3962: cross-kind extension introspection
+    app.include_router(extensions_router)
 
-    # Authentication routes
+    # Authentication routes — fail fast. A server that boots without auth
+    # endpoints looks healthy but silently 404s every login/OAuth request,
+    # which is worse than not starting. If a deployment genuinely doesn't
+    # want auth routes (rare — isolated internal service), set
+    # ``NEXUS_ALLOW_MISSING_AUTH_ROUTES=true`` to preserve the old tolerant
+    # behavior.
     try:
         from nexus.server.auth.auth_routes import router as auth_router
 
         app.include_router(auth_router)
         logger.info("Authentication routes registered")
     except ImportError as e:
-        logger.warning(f"Failed to import auth routes: {e}. OAuth endpoints will not be available.")
+        if os.environ.get("NEXUS_ALLOW_MISSING_AUTH_ROUTES", "").lower() in ("true", "1", "yes"):
+            logger.warning(
+                f"Failed to import auth routes: {e}. Proceeding because "
+                "NEXUS_ALLOW_MISSING_AUTH_ROUTES is set. OAuth endpoints will not be available."
+            )
+        else:
+            raise RuntimeError(
+                f"Failed to import auth routes ({e}). Missing a required dependency? "
+                "Set NEXUS_ALLOW_MISSING_AUTH_ROUTES=true to start without auth routes."
+            ) from e
 
     # Zone management routes
     try:
@@ -588,11 +824,9 @@ def _register_routes(app: FastAPI) -> None:
         logger.warning(f"Failed to import zone routes: {e}. Zone management unavailable.")
 
     # Test hooks REST API (Issue #2) — only when NEXUS_TEST_HOOKS=true
-    import os
-
     if os.getenv("NEXUS_TEST_HOOKS") == "true":
         try:
-            from nexus.core.test_hooks import build_test_hooks_router
+            from nexus.server.test_hooks import build_test_hooks_router
 
             app.include_router(build_test_hooks_router())
             logger.info("Test hooks routes registered (NEXUS_TEST_HOOKS=true)")
@@ -610,10 +844,21 @@ def _register_routes(app: FastAPI) -> None:
     v2_registry = build_v2_registry(
         nexus_fs_getter=lambda: app.state.nexus_fs,
         chunked_upload_service_getter=lambda: app.state.chunked_upload_service,
+        zone_registry_getter=lambda: app.state.zone_registry,
     )
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)
     app.add_middleware(DeprecationMiddleware, registry=v2_registry)
+
+    # Dashboard: Task Manager UI (self-contained HTML)
+    from pathlib import Path
+
+    from fastapi.responses import HTMLResponse
+
+    @app.get("/dashboard/tasks", response_class=HTMLResponse, include_in_schema=False)
+    async def task_manager_dashboard() -> HTMLResponse:
+        html_path = Path(__file__).parent / "static" / "task_manager.html"
+        return HTMLResponse(html_path.read_text())
 
     # Request correlation middleware (Issue #1002).
     # MUST be the last add_middleware call — Starlette applies in reverse order,
@@ -632,56 +877,61 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to register Exchange error handler: {e}.")
 
-    # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
+    # Payment endpoints (Issue #3250: TUI Payments panel)
     try:
-        from nexus.server.api.v2.routers.a2a import create_a2a_router
+        from nexus.server.api.v2.routers.pay import audit_router as pay_audit_router
+        from nexus.server.api.v2.routers.pay import router as pay_router
 
-        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
-        a2a_auth_required = bool(
-            getattr(app.state, "api_key", None) or getattr(app.state, "auth_provider", None)
-        )
-
-        # Auth adapter: server-side concern, NOT imported by the brick.
-        # Passes through the auth result for zone_id / agent_id extraction.
-        # Note: resolve_auth may return {"authenticated": False} for
-        # invalid tokens — this is consistent with the pre-existing
-        # behavior where the router checks for header presence, not
-        # token validity.  A separate fix for resolve_auth (#TBD) will
-        # tighten this.
-        async def _a2a_auth_adapter(request: Request) -> dict[str, Any] | None:
-            try:
-                return await get_auth_result(
-                    request=request,
-                    authorization=request.headers.get("Authorization"),
-                    x_agent_id=request.headers.get("X-Agent-ID"),
-                    x_nexus_subject=request.headers.get("X-Nexus-Subject"),
-                    x_nexus_zone_id=request.headers.get("X-Nexus-Zone-ID"),
-                )
-            except Exception:
-                return None
-
-        a2a_router, a2a_task_manager = create_a2a_router(
-            nexus_fs=app.state.nexus_fs,
-            config=None,
-            base_url=a2a_base_url,
-            auth_required=a2a_auth_required,
-            auth_fn=_a2a_auth_adapter,
-            data_dir=getattr(app.state, "data_dir", None),
-        )
-        app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
-        app.include_router(a2a_router)
-        logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
+        app.include_router(pay_router)
+        app.include_router(pay_audit_router)
+        logger.info("Payment endpoints registered (/api/v2/pay/*, /api/v2/audit/*)")
     except ImportError as e:
-        logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
+        logger.debug(f"Pay router unavailable: {e}")
 
-    # IPC Brick endpoints (Issue #1727, LEGO §8)
+    # Catalog, Aspects, Lineage, Graph endpoints (Issue #3250: TUI Search/Knowledge)
     try:
-        from nexus.server.api.v2.routers.ipc import router as ipc_router
+        from nexus.server.api.v2.routers.catalog import router as catalog_router
 
-        app.include_router(ipc_router)
-        logger.info("IPC endpoints registered (/api/v2/ipc/*)")
+        app.include_router(catalog_router)
+        logger.info("Catalog endpoints registered (/api/v2/catalog/*)")
     except ImportError as e:
-        logger.debug(f"IPC router unavailable: {e}")
+        logger.debug(f"Catalog router unavailable: {e}")
+
+    try:
+        from nexus.server.api.v2.routers.aspects import router as aspects_router
+
+        app.include_router(aspects_router)
+        logger.info("Aspects endpoints registered (/api/v2/aspects/*)")
+    except ImportError as e:
+        logger.debug(f"Aspects router unavailable: {e}")
+
+    try:
+        from nexus.server.api.v2.routers.lineage import router as lineage_router
+
+        app.include_router(lineage_router)
+        logger.info("Lineage endpoints registered (/api/v2/lineage/*)")
+    except ImportError as e:
+        logger.debug(f"Lineage router unavailable: {e}")
+
+    try:
+        from nexus.server.api.v2.routers.graph import router as graph_router
+
+        app.include_router(graph_router)
+        logger.info("Graph endpoints registered (/api/v2/graph/*)")
+    except ImportError as e:
+        logger.debug(f"Graph router unavailable: {e}")
+
+    # Locks endpoints (Issue #3250: TUI Locks tab)
+    try:
+        from nexus.server.api.v2.routers.locks import router as locks_router
+
+        app.include_router(locks_router)
+        logger.info("Locks endpoints registered (/api/v2/locks/*)")
+    except ImportError as e:
+        logger.debug(f"Locks router unavailable: {e}")
+
+    # IPC brick + its `/api/v2/ipc/*` router deleted in Phase M of the
+    # parallel-layers PR; PR #3912 ships the Rust replacement.
 
     # Secrets audit log endpoints (Issue #997)
     try:
@@ -717,6 +967,315 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("Secrets audit routes registered")
     except ImportError as e:
         logger.warning(f"Failed to import secrets audit router: {e}")
+
+    # Secrets store endpoints (general-purpose secret storage with versioning)
+    try:
+        from nexus.bricks.auth.oauth.crypto import OAuthCrypto
+        from nexus.bricks.secrets.service import SecretsService
+        from nexus.server.api.v2.routers.secrets import (
+            get_secrets_service as _secrets_service_dep,
+        )
+        from nexus.server.api.v2.routers.secrets import (
+            router as secrets_router,
+        )
+        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
+        _secrets_service_instance: SecretsService | None = None
+
+        def _get_secrets_service_override() -> SecretsService:
+            nonlocal _secrets_service_instance
+            if _secrets_service_instance is None:
+                _sa_rs = getattr(app.state, "record_store", None)
+                if _sa_rs is None:
+                    raise HTTPException(status_code=500, detail="Secrets service not configured")
+
+                # Persist OAuth encryption key in the record_store (SQL) —
+                # the services-tier SSOT for application-level settings.
+                # Pre-R20.18.5 this went through a second Kernel() instance
+                # + RustMetastoreProxy pointing at ~/.nexus/metastore.redb,
+                # which mixed filesystem-metastore tier with app-level
+                # settings and was the root cause of the silent OAuth-key
+                # data-loss on upgrade (the redb filename changed between
+                # versions with no migration path).
+                from nexus.storage.auth_stores.legacy_oauth_key_migration import (
+                    migrate_legacy_oauth_key,
+                )
+                from nexus.storage.auth_stores.sqlalchemy_system_settings_store import (
+                    SQLAlchemySystemSettingsStore,
+                )
+
+                _settings_store = SQLAlchemySystemSettingsStore(_sa_rs.session_factory)
+                # One-shot upgrade path: copy OAuth key from a legacy
+                # ~/.nexus/metastore[.redb] file into SQL if present. Idempotent;
+                # no-ops once SQL already has the key.
+                # Pass the main NexusFS metastore so migration reuses the
+                # Kernel's existing redb connection instead of creating a
+                # second Kernel() that would hit the exclusive file lock.
+                _nx_fs = getattr(app.state, "nexus_fs", None)
+                _existing_metastore = getattr(_nx_fs, "metadata", None) if _nx_fs else None
+                migrate_legacy_oauth_key(
+                    _settings_store,
+                    existing_metastore=_existing_metastore,
+                )
+                _oauth_crypto = OAuthCrypto(settings_store=_settings_store)
+                _audit_logger = SecretsAuditLogger(record_store=_sa_rs)
+                _secrets_service_instance = SecretsService(
+                    record_store=_sa_rs,
+                    oauth_crypto=_oauth_crypto,
+                    audit_logger=_audit_logger,
+                )
+            return _secrets_service_instance
+
+        app.dependency_overrides[_secrets_service_dep] = _get_secrets_service_override
+        app.include_router(secrets_router)
+        logger.info("Secrets store routes registered")
+
+        # Password vault endpoints (domain wrapper over SecretsService).
+        # Nested inside the secrets try so the _get_secrets_service_override
+        # closure is guaranteed to exist when we build the vault singleton.
+        try:
+            from nexus.server.api.v2.routers.password_vault import (
+                get_password_vault_service as _pv_service_dep,
+            )
+            from nexus.server.api.v2.routers.password_vault import (
+                router as password_vault_router,
+            )
+            from nexus.services.password_vault.service import PasswordVaultService
+
+            _password_vault_instance: PasswordVaultService | None = None
+
+            def _get_password_vault_override() -> PasswordVaultService:
+                nonlocal _password_vault_instance
+                if _password_vault_instance is None:
+                    _password_vault_instance = PasswordVaultService(
+                        secrets_service=_get_secrets_service_override(),
+                    )
+                return _password_vault_instance
+
+            app.dependency_overrides[_pv_service_dep] = _get_password_vault_override
+            app.include_router(password_vault_router)
+            logger.info("Password vault routes registered")
+        except ImportError as e:
+            logger.warning(f"Failed to import password vault router: {e}")
+    except ImportError as e:
+        logger.warning(f"Failed to import secrets router: {e}")
+
+    # ---- /v1 (nexus-bot daemon, #3804) ----
+    # Daemon enroll/refresh + auth-profiles routers — gated on JWT signing key
+    # + enroll-token secret. If either env var is missing, skip with a warning;
+    # deployments that don't use the nexus-bot daemon are unaffected.
+    _jwt_signing_key = os.environ.get("NEXUS_JWT_SIGNING_KEY")
+    _enroll_token_secret = os.environ.get("NEXUS_ENROLL_TOKEN_SECRET", "")
+    if _jwt_signing_key and _enroll_token_secret:
+        _database_url = getattr(app.state, "database_url", None)
+        if not _database_url:
+            logger.warning("v1 daemon routes disabled: database_url unavailable on app.state")
+        else:
+            try:
+                from sqlalchemy import create_engine
+
+                from nexus.bricks.auth.postgres_profile_store import (
+                    ensure_schema as _ensure_v1_schema,
+                )
+                from nexus.server.api.v1.jwt_signer import JwtSigner
+                from nexus.server.api.v1.routers.auth_profiles import (
+                    make_auth_profiles_router,
+                )
+                from nexus.server.api.v1.routers.daemon import make_daemon_router
+                from nexus.server.api.v1.routers.jwks import make_jwks_router
+            except ImportError as e:
+                logger.warning(f"Failed to import v1 daemon routers: {e}")
+            else:
+                # Signer init can fail with OSError (key path unreadable), ValueError
+                # (PEM malformed), or cryptography-specific errors. A miswired daemon
+                # key file is an operator mistake in a strictly optional subsystem; it
+                # must degrade gracefully to "daemon routes disabled" rather than take
+                # the whole API server down during startup.
+                try:
+                    _v1_engine = create_engine(_database_url, future=True)
+                    # Idempotent: creates tenants / principals / auth_profiles /
+                    # daemon_machines / auth_profile_reads / RLS policies if absent.
+                    # Without this a fresh stack returns 500 ProgrammingError on the
+                    # first /v1/admin/daemon-bootstrap call.
+                    _ensure_v1_schema(_v1_engine)
+                    _v1_signer = JwtSigner.from_path(
+                        _jwt_signing_key,
+                        issuer=os.environ.get("NEXUS_JWT_ISSUER", "https://nexus.local"),
+                    )
+                except (OSError, ValueError) as e:
+                    logger.warning(
+                        "v1 daemon routes disabled: failed to load JWT signing key "
+                        "from %s (%s: %s). Fix NEXUS_JWT_SIGNING_KEY or leave it "
+                        "unset to run without the daemon subsystem.",
+                        _jwt_signing_key,
+                        type(e).__name__,
+                        e,
+                    )
+                    _v1_signer = None
+                except Exception as e:  # noqa: BLE001
+                    # Cryptography raises subclasses of Exception that are not
+                    # strictly OSError/ValueError (e.g. UnsupportedAlgorithm).
+                    # Fail closed on daemon routes rather than abort startup.
+                    logger.warning(
+                        "v1 daemon routes disabled: unexpected %s while loading signing key: %s",
+                        type(e).__name__,
+                        e,
+                    )
+                    _v1_signer = None
+                if _v1_signer is not None:
+                    app.include_router(
+                        make_daemon_router(
+                            engine=_v1_engine,
+                            signer=_v1_signer,
+                            enroll_secret=_enroll_token_secret.encode(),
+                        )
+                    )
+                    app.include_router(
+                        make_auth_profiles_router(engine=_v1_engine, signer=_v1_signer)
+                    )
+                    app.include_router(make_jwks_router(signer=_v1_signer))
+                    logger.info("v1 daemon + auth-profiles + jwks routes registered")
+
+                    # Token-exchange (#3818): read path. Reuses _v1_engine + _v1_signer
+                    # from the daemon block. Adds an EncryptionProvider (envelope
+                    # decrypt) and a CredentialConsumer orchestrator. Default off
+                    # until ops verifies KMS/Vault wiring (NEXUS_TOKEN_EXCHANGE_ENABLED).
+                    # The consumer is constructed with engine=_v1_engine — it builds
+                    # a fresh tenant-scoped PostgresAuthProfileStore per request from
+                    # the JWT-verified DaemonClaims, so there's no boot-time tenant
+                    # placeholder leaking into the SQL WHERE clause.
+                    try:
+                        from nexus.bricks.auth.consumer import CredentialConsumer
+                        from nexus.bricks.auth.consumer_cache import ResolvedCredCache
+                        from nexus.bricks.auth.consumer_providers import (
+                            default_adapters,
+                        )
+                        from nexus.bricks.auth.envelope import DEKCache
+                        from nexus.bricks.auth.envelope_providers.in_memory import (
+                            InMemoryEncryptionProvider,
+                        )
+                        from nexus.bricks.auth.read_audit import ReadAuditWriter
+                        from nexus.server.api.v1.routers.token_exchange import (
+                            make_token_exchange_router,
+                        )
+                    except ImportError as e:
+                        logger.warning("v1 token-exchange disabled: import failed (%s)", e)
+                    else:
+                        _token_exchange_enabled = os.environ.get(
+                            "NEXUS_TOKEN_EXCHANGE_ENABLED", ""
+                        ).lower() in ("1", "true", "yes")
+
+                        # Provider resolution order:
+                        #   1. app.state.encryption_provider (pre-wired by host
+                        #      that imports create_app — wins for tests + custom
+                        #      embeddings).
+                        #   2. NEXUS_ENVELOPE_PROVIDER env var (vault_transit /
+                        #      aws_kms / inmemory).
+                        #   3. InMemoryEncryptionProvider (dev default).
+                        _enc = getattr(app.state, "encryption_provider", None)
+                        _enc_kind = "preset"
+                        if _enc is None:
+                            _provider_choice = os.environ.get(
+                                "NEXUS_ENVELOPE_PROVIDER", "inmemory"
+                            ).lower()
+                            try:
+                                _enc, _enc_kind = _build_envelope_provider_from_env(
+                                    _provider_choice
+                                )
+                            except Exception as e:  # noqa: BLE001
+                                logger.error(
+                                    "v1 token-exchange refused: failed to construct "
+                                    "encryption provider %r from env (%s: %s)",
+                                    _provider_choice,
+                                    type(e).__name__,
+                                    e,
+                                )
+                                _token_exchange_enabled = False
+                                _enc = InMemoryEncryptionProvider()
+                                _enc_kind = "inmemory_fallback"
+
+                        # Production safety: in-memory KEK cannot unwrap
+                        # envelopes a daemon pushed (different per-process key).
+                        # Operators MUST opt-in explicitly to acknowledge
+                        # this is a dev-only configuration.
+                        _dev_ok = os.environ.get(
+                            "NEXUS_TOKEN_EXCHANGE_DEV_INMEMORY_OK", ""
+                        ).lower() in ("1", "true", "yes")
+                        if (
+                            _token_exchange_enabled
+                            and _enc_kind in ("inmemory", "inmemory_fallback")
+                            and not _dev_ok
+                        ):
+                            logger.error(
+                                "v1 token-exchange refused: enabled=1 but envelope "
+                                "provider is in-memory (per-process random KEK can't "
+                                "unwrap daemon-pushed envelopes). Set "
+                                "NEXUS_ENVELOPE_PROVIDER=vault_transit|aws_kms or "
+                                "explicitly accept dev-only behaviour with "
+                                "NEXUS_TOKEN_EXCHANGE_DEV_INMEMORY_OK=1."
+                            )
+                            _token_exchange_enabled = False
+                        _consumer = CredentialConsumer(
+                            engine=_v1_engine,
+                            encryption=_enc,
+                            dek_cache=DEKCache(),
+                            cred_cache=ResolvedCredCache(),
+                            adapters=default_adapters(),
+                            audit=ReadAuditWriter(engine=_v1_engine),
+                        )
+                        app.include_router(
+                            make_token_exchange_router(
+                                enabled=_token_exchange_enabled,
+                                signer=_v1_signer,
+                                consumer=_consumer,
+                                encryption=_enc,
+                            )
+                        )
+                        logger.info(
+                            "v1 token-exchange route registered (enabled=%s)",
+                            _token_exchange_enabled,
+                        )
+
+                    # Dev-loop convenience: mint tenant/principal/enroll-token in
+                    # one call. Requires admin-bypass explicitly on AND a
+                    # non-empty NEXUS_ADMIN_BOOTSTRAP_TOKEN so a spoofable header
+                    # alone cannot mint credentials. Production deployments
+                    # (bypass=false or token unset) never expose this endpoint.
+                    _admin_bootstrap_token = os.environ.get("NEXUS_ADMIN_BOOTSTRAP_TOKEN", "")
+                    if (
+                        os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower()
+                        in ("1", "true", "yes")
+                        and _admin_bootstrap_token
+                    ):
+                        from nexus.server.api.v1.routers.admin_bootstrap import (
+                            make_admin_bootstrap_router,
+                        )
+
+                        app.include_router(
+                            make_admin_bootstrap_router(
+                                engine=_v1_engine,
+                                enroll_secret=_enroll_token_secret.encode(),
+                                admin_user=os.environ.get("NEXUS_ADMIN_USER", "admin"),
+                                bootstrap_token=_admin_bootstrap_token.encode(),
+                            )
+                        )
+                        logger.info("v1 admin daemon-bootstrap route registered (dev-only)")
+                    elif os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower() in (
+                        "1",
+                        "true",
+                        "yes",
+                    ):
+                        logger.warning(
+                            "v1 admin daemon-bootstrap route NOT registered: "
+                            "NEXUS_ALLOW_ADMIN_BYPASS=true but "
+                            "NEXUS_ADMIN_BOOTSTRAP_TOKEN is unset — set it to a "
+                            "random 32+ byte secret to enable dev bootstrap."
+                        )
+    else:
+        logger.warning(
+            "v1 daemon routes disabled: NEXUS_JWT_SIGNING_KEY and/or "
+            "NEXUS_ENROLL_TOKEN_SECRET unset"
+        )
 
     # Asyncio debug endpoint (Python 3.14+) — gated behind env flag + admin auth (Issue #1596)
     if os.environ.get("NEXUS_DEBUG_ENABLED", "").lower() in ("1", "true", "yes"):
@@ -811,11 +1370,18 @@ def run_server(
     import uvicorn
 
     from nexus.core import setup_uvloop
+    from nexus.server.debug_stacks import install_stack_dump_signal
 
     # Install uvloop for better async performance (2-4x faster)
-    # This must be called before uvicorn creates its event loop
-    if setup_uvloop():
+    # This must be called before uvicorn creates its event loop.  Also pass
+    # the resolved loop explicitly to uvicorn: its default "auto" mode will
+    # otherwise import uvloop whenever it is installed, even when
+    # NEXUS_USE_UVLOOP=false disabled our setup hook.
+    uvloop_enabled = setup_uvloop()
+    if uvloop_enabled:
         logger.info("uvloop installed as default event loop policy")
+    uvicorn_loop = "uvloop" if uvloop_enabled else "asyncio"
+    install_stack_dump_signal()
 
     # Get workers from parameter or environment variable
     if workers is None:
@@ -837,6 +1403,7 @@ def run_server(
         host=host,
         port=port,
         log_level=log_level,
+        loop=uvicorn_loop,
         workers=workers if workers > 1 else None,
     )
 

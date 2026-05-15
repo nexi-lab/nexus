@@ -84,7 +84,7 @@ def repair_directory(nx: Any, path: str, dry_run: bool = False) -> bool:
             return True
 
         # Get zone_id from default context
-        zone_id = nx._default_context.zone_id if hasattr(nx, "_default_context") else None
+        zone_id = nx._init_cred.zone_id if hasattr(nx, "_init_cred") else None
 
         created_count = nx._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id)
 

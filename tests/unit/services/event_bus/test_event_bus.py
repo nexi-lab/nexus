@@ -15,11 +15,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.event_subsystem.bus.base import EventBusBase
-from nexus.services.event_subsystem.bus.factory import create_event_bus
-from nexus.services.event_subsystem.bus.protocol import AckableEvent, EventBusProtocol
-from nexus.services.event_subsystem.bus.redis import RedisEventBus
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.services.event_bus.base import EventBusBase
+from nexus.services.event_bus.factory import create_event_bus
+from nexus.services.event_bus.protocol import AckableEvent, EventBusProtocol
+from nexus.services.event_bus.redis import RedisEventBus
+from nexus.services.event_bus.types import FileEvent, FileEventType
 
 # =============================================================================
 # FileEventType Tests
@@ -73,13 +73,13 @@ class TestFileEvent:
             zone_id="zone1",
             old_path="/inbox/old.txt",
             size=1024,
-            etag="abc123",
+            content_id="abc123",
             agent_id="agent-1",
         )
 
         assert event.old_path == "/inbox/old.txt"
         assert event.size == 1024
-        assert event.etag == "abc123"
+        assert event.content_id == "abc123"
         assert event.agent_id == "agent-1"
 
     def test_to_dict_basic(self):
@@ -113,7 +113,7 @@ class TestFileEvent:
 
         assert data["old_path"] == "/inbox/old.txt"
         assert data["size"] == 1024
-        assert "etag" not in data  # None values not included
+        assert "content_id" not in data  # None values not included
         assert "agent_id" not in data
 
     def test_to_json(self):
@@ -174,7 +174,7 @@ class TestFileEvent:
             zone_id="zone1",
             old_path="/inbox/old.txt",
             size=2048,
-            etag="hash123",
+            content_id="hash123",
         )
 
         json_str = original.to_json()
@@ -185,7 +185,7 @@ class TestFileEvent:
         assert restored.zone_id == original.zone_id
         assert restored.old_path == original.old_path
         assert restored.size == original.size
-        assert restored.etag == original.etag
+        assert restored.content_id == original.content_id
 
     def test_event_with_none_zone_id(self):
         """Test that zone_id can be None (Layer 1 local events)."""
@@ -214,116 +214,6 @@ class TestFileEvent:
         assert event.zone_id is None
         assert event.type == "file_write"
         assert event.path == "/inbox/test.txt"
-
-
-class TestFileEventFromFileChange:
-    """Tests for FileEvent.from_file_change() conversion from Layer 1."""
-
-    def test_from_file_change_created(self):
-        """Test converting CREATED FileChange to FILE_WRITE FileEvent."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            CREATED = "created"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(type=MockChangeType.CREATED, path="new_file.txt")
-        event = FileEvent.from_file_change(change)
-
-        assert event.type == FileEventType.FILE_WRITE
-        assert event.path == "new_file.txt"
-        assert event.zone_id is None
-        assert event.event_id is not None
-
-    def test_from_file_change_modified(self):
-        """Test converting MODIFIED FileChange to FILE_WRITE FileEvent."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            MODIFIED = "modified"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(type=MockChangeType.MODIFIED, path="changed_file.txt")
-        event = FileEvent.from_file_change(change)
-
-        assert event.type == FileEventType.FILE_WRITE
-        assert event.path == "changed_file.txt"
-
-    def test_from_file_change_deleted(self):
-        """Test converting DELETED FileChange to FILE_DELETE FileEvent."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            DELETED = "deleted"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(type=MockChangeType.DELETED, path="deleted_file.txt")
-        event = FileEvent.from_file_change(change)
-
-        assert event.type == FileEventType.FILE_DELETE
-        assert event.path == "deleted_file.txt"
-
-    def test_from_file_change_renamed(self):
-        """Test converting RENAMED FileChange to FILE_RENAME FileEvent."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            RENAMED = "renamed"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(
-            type=MockChangeType.RENAMED,
-            path="new_name.txt",
-            old_path="old_name.txt",
-        )
-        event = FileEvent.from_file_change(change)
-
-        assert event.type == FileEventType.FILE_RENAME
-        assert event.path == "new_name.txt"
-        assert event.old_path == "old_name.txt"
-
-    def test_from_file_change_with_zone_id(self):
-        """Test converting FileChange with zone_id."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            CREATED = "created"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(type=MockChangeType.CREATED, path="file.txt")
-        event = FileEvent.from_file_change(change, zone_id="my-zone")
-
-        assert event.zone_id == "my-zone"
 
 
 class TestFileEventPathMatching:
@@ -373,8 +263,8 @@ class TestFileEventPathMatching:
 
         assert event.matches_path_pattern("/inbox/*.txt") is True
         assert event.matches_path_pattern("/inbox/*.pdf") is False
-        # Note: fnmatch's * matches any characters, so /*.txt matches /inbox/test.txt
-        assert event.matches_path_pattern("/*.txt") is True  # fnmatch * matches slashes too
+        # * does NOT cross / boundaries (proper glob semantics, not fnmatch)
+        assert event.matches_path_pattern("/*.txt") is False  # * stops at /
 
     def test_glob_question_pattern(self):
         """Test glob ? pattern matching."""
@@ -723,24 +613,29 @@ class TestRedisEventBus:
 
 
 class TestEventBusFactory:
-    """Tests for event bus factory function."""
+    """Tests for self-resolving event bus factory."""
 
-    def test_create_redis_event_bus(self, mock_redis_client):
-        """Test creating Redis event bus via factory."""
-        bus = create_event_bus(backend="redis", redis_client=mock_redis_client)
-
+    def test_create_redis_event_bus_with_url(self):
+        """Test creating Redis event bus via factory with explicit URL."""
+        bus = create_event_bus(backend="redis", url="redis://localhost:6379")
         assert isinstance(bus, RedisEventBus)
         assert isinstance(bus, EventBusBase)
 
-    def test_create_redis_requires_client(self):
-        """Test that Redis backend requires redis_client."""
-        with pytest.raises(ValueError, match="redis_client is required"):
+    def test_create_redis_no_url_raises(self):
+        """Test that Redis backend raises when no URL available."""
+        from unittest.mock import patch
+
+        with (
+            patch("nexus.lib.env.get_redis_url", return_value=None),
+            patch("nexus.lib.env.get_dragonfly_url", return_value=None),
+            pytest.raises(ValueError, match="No event bus backend available"),
+        ):
             create_event_bus(backend="redis")
 
-    def test_unsupported_backend(self, mock_redis_client):
+    def test_unsupported_backend(self):
         """Test error for unsupported backend."""
-        with pytest.raises(ValueError, match="Unsupported event bus backend"):
-            create_event_bus(backend="unknown", redis_client=mock_redis_client)
+        with pytest.raises(ValueError, match="No event bus backend available"):
+            create_event_bus(backend="unknown")
 
 
 class TestEventBusProtocolCompliance:
@@ -1067,22 +962,33 @@ class TestEventBusFactoryExtended:
         """Test creating NATS event bus via factory."""
         from unittest.mock import patch
 
-        with patch("nexus.services.event_subsystem.bus.nats.NatsEventBus") as MockNats:
+        with patch("nexus.services.event_bus.nats.NatsEventBus") as MockNats:
             MockNats.return_value = MagicMock()
             create_event_bus(backend="nats", nats_url="nats://test:4222")
             MockNats.assert_called_once_with(nats_url="nats://test:4222")
 
-    def test_create_nats_requires_url(self):
-        """Test that NATS backend requires nats_url."""
-        with pytest.raises(ValueError, match="nats_url is required"):
-            create_event_bus(backend="nats")
+    def test_create_nats_uses_default_url(self):
+        """Test that NATS backend uses DEFAULT_NATS_URL when no url override."""
+        from unittest.mock import patch
 
-    def test_create_redis_still_works(self, mock_redis_client):
-        """Test that Redis backend still works (regression test)."""
-        bus = create_event_bus(backend="redis", redis_client=mock_redis_client)
+        with patch("nexus.services.event_bus.nats.NatsEventBus") as MockNats:
+            MockNats.return_value = MagicMock()
+            create_event_bus(backend="nats")
+            # Should use DEFAULT_NATS_URL from constants
+            MockNats.assert_called_once()
+
+    def test_create_redis_with_url(self):
+        """Test that Redis backend works with explicit URL."""
+        bus = create_event_bus(backend="redis", url="redis://localhost:6379")
         assert isinstance(bus, RedisEventBus)
 
     def test_unsupported_backend_still_raises(self):
-        """Test error for unsupported backend."""
-        with pytest.raises(ValueError, match="Unsupported event bus backend"):
+        """Test error for unsupported backend raises ValueError."""
+        from unittest.mock import patch
+
+        with (
+            patch("nexus.lib.env.get_redis_url", return_value=None),
+            patch("nexus.lib.env.get_dragonfly_url", return_value=None),
+            pytest.raises(ValueError, match="No event bus backend available"),
+        ):
             create_event_bus(backend="unknown")

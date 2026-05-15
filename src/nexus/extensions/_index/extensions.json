@@ -1,0 +1,259 @@
+{
+  "generated_at": "2026-05-10T07:04:18Z",
+  "manifests": [
+    {
+      "config_schema": null,
+      "consumes": [],
+      "description": "Per-mount access policy compiler service",
+      "factory": "create",
+      "import_probes": [],
+      "kind": "brick",
+      "metadata_complete": true,
+      "module": "nexus.bricks.access_manifest.brick_factory",
+      "name": "access_manifest",
+      "produces": [],
+      "profile_gate": null,
+      "result_key": "access_manifest_service",
+      "runtime_deps": [],
+      "tier": "independent"
+    },
+    {
+      "capabilities": [
+        "readme_doc"
+      ],
+      "config_mapping": {},
+      "config_schema": null,
+      "connection_args": {
+        "cache_ttl": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": 300,
+          "description": "Default cache TTL in seconds",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "integer"
+        },
+        "include_comments": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": true,
+          "description": "Include nested comments in story files",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "boolean"
+        },
+        "stories_per_feed": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": 10,
+          "description": "Number of stories per feed (1-30)",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "integer"
+        }
+      },
+      "description": "Read-only HackerNews public API as a virtual filesystem",
+      "factory": "PathHNBackend",
+      "import_probes": [
+        "httpx"
+      ],
+      "kind": "connector",
+      "metadata_complete": true,
+      "module": "nexus.backends.connectors.hn.connector",
+      "name": "hn_connector",
+      "profile_gate": null,
+      "runtime_deps": [],
+      "service_name": "hackernews",
+      "user_scoped": false
+    },
+    {
+      "capabilities": [
+        "batch_content",
+        "directory_listing",
+        "multipart_upload",
+        "native_versioning",
+        "path_delete",
+        "rename",
+        "resumable_upload",
+        "signed_url",
+        "streaming"
+      ],
+      "config_mapping": {
+        "bucket": "bucket_name"
+      },
+      "config_schema": null,
+      "connection_args": {
+        "access_key_id": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": null,
+          "description": "AWS access key ID",
+          "env_var": "AWS_ACCESS_KEY_ID",
+          "required": false,
+          "secret": true,
+          "type": "secret"
+        },
+        "bucket_name": {
+          "audit_safe": false,
+          "config_key": "bucket",
+          "default": null,
+          "description": "S3 bucket name",
+          "env_var": null,
+          "required": true,
+          "secret": false,
+          "type": "string"
+        },
+        "credentials_path": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": null,
+          "description": "Path to AWS credentials JSON file",
+          "env_var": null,
+          "required": false,
+          "secret": true,
+          "type": "path"
+        },
+        "prefix": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": "",
+          "description": "Path prefix for all files in bucket",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "string"
+        },
+        "region_name": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": null,
+          "description": "AWS region (e.g., us-east-1)",
+          "env_var": "AWS_DEFAULT_REGION",
+          "required": false,
+          "secret": false,
+          "type": "string"
+        },
+        "secret_access_key": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": null,
+          "description": "AWS secret access key",
+          "env_var": "AWS_SECRET_ACCESS_KEY",
+          "required": false,
+          "secret": true,
+          "type": "password"
+        },
+        "session_token": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": null,
+          "description": "AWS session token (for temporary credentials)",
+          "env_var": "AWS_SESSION_TOKEN",
+          "required": false,
+          "secret": true,
+          "type": "secret"
+        }
+      },
+      "description": "AWS S3 with direct path mapping",
+      "factory": "PathS3Backend",
+      "import_probes": [
+        "boto3"
+      ],
+      "kind": "connector",
+      "metadata_complete": true,
+      "module": "nexus.backends.storage.path_s3",
+      "name": "path_s3",
+      "profile_gate": null,
+      "runtime_deps": [
+        {
+          "extras": [
+            "s3"
+          ],
+          "install_hint": "pip install nexus-fs[s3]",
+          "kind": "python",
+          "name": "boto3"
+        }
+      ],
+      "service_name": "s3",
+      "user_scoped": false
+    },
+    {
+      "capabilities": [
+        "oauth",
+        "readme_doc",
+        "token_manager",
+        "user_scoped"
+      ],
+      "config_mapping": {},
+      "config_schema": null,
+      "connection_args": {
+        "max_messages_per_channel": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": 100,
+          "description": "Maximum number of messages to fetch per channel",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "integer"
+        },
+        "provider": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": "slack",
+          "description": "OAuth provider name from config",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "string"
+        },
+        "token_manager_db": {
+          "audit_safe": true,
+          "config_key": null,
+          "default": null,
+          "description": "Path to TokenManager database or database URL (path, not credential)",
+          "env_var": null,
+          "required": true,
+          "secret": false,
+          "type": "path"
+        },
+        "user_email": {
+          "audit_safe": false,
+          "config_key": null,
+          "default": null,
+          "description": "User email for OAuth lookup (None for multi-user from context)",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "string"
+        }
+      },
+      "description": "Slack workspace with OAuth 2.0 authentication",
+      "factory": "PathSlackBackend",
+      "import_probes": [
+        "slack_sdk"
+      ],
+      "kind": "connector",
+      "metadata_complete": true,
+      "module": "nexus.backends.connectors.slack.connector",
+      "name": "slack_connector",
+      "profile_gate": null,
+      "runtime_deps": [
+        {
+          "extras": [
+            "slack"
+          ],
+          "install_hint": "pip install nexus-fs[slack]",
+          "kind": "python",
+          "name": "slack-sdk"
+        }
+      ],
+      "service_name": "slack",
+      "user_scoped": true
+    }
+  ],
+  "schema_version": 1
+}

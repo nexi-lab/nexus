@@ -19,7 +19,7 @@ from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.constants import TIER_ALIASES, PriorityTier
 from nexus.contracts.credential_types import (
     DEFAULT_CREDENTIAL_TTL,
-    MAX_CAPABILITIES_PER_CREDENTIAL,
+    MAX_BACKEND_FEATURES_PER_CREDENTIAL,
     MAX_CREDENTIAL_TTL,
     MAX_DELEGATION_DEPTH,
     MIN_CREDENTIAL_TTL,
@@ -81,15 +81,12 @@ from nexus.contracts.metadata import (
     DT_PIPE,
     DT_REG,
     FileMetadata,
-    PaginatedResult,
 )
+from nexus.contracts.oauth_types import OAuthConfig, OAuthProviderConfig
 from nexus.contracts.rebac_types import (
     CROSS_ZONE_ALLOWED_RELATIONS,
     WILDCARD_SUBJECT,
     CheckResult,
-    ConsistencyLevel,
-    ConsistencyMode,
-    ConsistencyRequirement,
     Entity,
     GraphLimitExceeded,
     GraphLimits,
@@ -125,7 +122,6 @@ __all__ = [
     "DT_PIPE",
     "DT_REG",
     "FileMetadata",
-    "PaginatedResult",
     # Validators
     "EmailAddress",
     "EmailList",
@@ -183,11 +179,11 @@ __all__ = [
     "Describable",
     "WirableFS",
     "WriteObserverProtocol",
+    # OAuth types (Issue #3230)
+    "OAuthConfig",
+    "OAuthProviderConfig",
     # ReBAC types (Issue #2190)
     "CheckResult",
-    "ConsistencyLevel",
-    "ConsistencyMode",
-    "ConsistencyRequirement",
     "CROSS_ZONE_ALLOWED_RELATIONS",
     "Entity",
     "GraphLimitExceeded",
@@ -204,7 +200,7 @@ __all__ = [
     "CredentialClaims",
     "CredentialStatus",
     "DEFAULT_CREDENTIAL_TTL",
-    "MAX_CAPABILITIES_PER_CREDENTIAL",
+    "MAX_BACKEND_FEATURES_PER_CREDENTIAL",
     "MAX_CREDENTIAL_TTL",
     "MAX_DELEGATION_DEPTH",
     "MIN_CREDENTIAL_TTL",

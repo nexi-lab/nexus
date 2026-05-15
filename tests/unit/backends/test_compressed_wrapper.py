@@ -21,13 +21,19 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.backends.wrappers.compressed import is_zstd_available
 from nexus.contracts.describable import Describable
 from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
+
+pytestmark = pytest.mark.skipif(
+    not is_zstd_available(),
+    reason="zstd not available (requires Python 3.14+ stdlib compression.zstd)",
+)
 
 # ---------------------------------------------------------------------------
 # describe() Tests
@@ -38,7 +44,7 @@ class TestCompressedDescribe:
     """describe() should prepend compression layer info."""
 
     def test_single_wrapper(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         leaf = make_leaf("local")
         config = CompressedStorageConfig(metrics_enabled=False)
@@ -46,7 +52,7 @@ class TestCompressedDescribe:
         assert wrapper.describe() == "compress(zstd) → local"
 
     def test_chain_with_logging(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         leaf = make_leaf("s3")
         leaf.describe.return_value = "logging → s3"
@@ -55,7 +61,7 @@ class TestCompressedDescribe:
         assert wrapper.describe() == "compress(zstd) → logging → s3"
 
     def test_is_describable(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         leaf = make_leaf("local")
         config = CompressedStorageConfig(metrics_enabled=False)
@@ -72,7 +78,7 @@ class TestCompressedRoundtrip:
     """Write + read should return identical content."""
 
     def test_basic_roundtrip(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
@@ -82,11 +88,11 @@ class TestCompressedRoundtrip:
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == plaintext
 
     def test_binary_roundtrip(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
@@ -96,11 +102,11 @@ class TestCompressedRoundtrip:
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == plaintext
 
     def test_large_content_roundtrip(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(metrics_enabled=False)
@@ -110,7 +116,7 @@ class TestCompressedRoundtrip:
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == plaintext
 
 
@@ -123,15 +129,15 @@ class TestCompressedCASDedup:
     """Same content + same level should produce same compressed output → same hash."""
 
     def test_deterministic_compression(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
         content = b"deterministic content " * 100
-        hash1 = wrapper.write_content(content).content_hash
-        hash2 = wrapper.write_content(content).content_hash
+        hash1 = wrapper.write_content(content).content_id
+        hash2 = wrapper.write_content(content).content_id
         assert hash1 == hash2, "zstd should produce identical output for identical input"
 
 
@@ -144,7 +150,7 @@ class TestCompressedThreshold:
     """Content below min_size should be stored uncompressed."""
 
     def test_below_threshold_passthrough(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=1024, metrics_enabled=False)
@@ -155,11 +161,11 @@ class TestCompressedThreshold:
         assert isinstance(write_resp, WriteResult)
 
         # Read should return original content
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == small_content
 
     def test_above_threshold_compressed(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=64, metrics_enabled=False)
@@ -171,11 +177,11 @@ class TestCompressedThreshold:
         assert isinstance(write_resp, WriteResult)
 
         # The stored content should be smaller than original
-        stored = storage[write_resp.content_hash]
+        stored = storage[write_resp.content_id]
         assert len(stored) < len(large_content)
 
         # Read should return original
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == large_content
 
 
@@ -190,7 +196,7 @@ class TestCompressedNegativeRatio:
     def test_random_content_passthrough(self) -> None:
         import os
 
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
@@ -202,7 +208,7 @@ class TestCompressedNegativeRatio:
         assert isinstance(write_resp, WriteResult)
 
         # Read should return original regardless of whether compression was skipped
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == random_data
 
 
@@ -215,7 +221,7 @@ class TestCompressedEmptyContent:
     """Empty content should pass through without compression."""
 
     def test_empty_roundtrip(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
@@ -224,7 +230,7 @@ class TestCompressedEmptyContent:
         write_resp = wrapper.write_content(b"")
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == b""
 
 
@@ -237,7 +243,7 @@ class TestCompressedDelegation:
     """Non-content ops should pass through to inner backend."""
 
     def test_mkdir_delegates(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         leaf = make_leaf("local")
         leaf.mkdir.return_value = None
@@ -249,7 +255,7 @@ class TestCompressedDelegation:
         assert result is None
 
     def test_delete_delegates(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         leaf = make_leaf("local")
         leaf.delete_content.return_value = None
@@ -270,7 +276,7 @@ class TestCompressedConfig:
     """Config validation."""
 
     def test_default_config(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorageConfig
 
         config = CompressedStorageConfig()
         assert config.level == 3
@@ -278,13 +284,13 @@ class TestCompressedConfig:
         assert config.metrics_enabled is True
 
     def test_custom_level(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorageConfig
 
         config = CompressedStorageConfig(level=10)
         assert config.level == 10
 
     def test_invalid_level_raises(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorageConfig
 
         with pytest.raises(ValueError, match="level"):
             CompressedStorageConfig(level=0)
@@ -302,7 +308,7 @@ class TestCompressedBatch:
     """batch_read_content should decompress each item individually."""
 
     def test_batch_read_decompresses_all(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
@@ -313,9 +319,9 @@ class TestCompressedBatch:
         content_b = b"beta " * 100
         content_c = b"gamma " * 100
 
-        h1 = wrapper.write_content(content_a).content_hash
-        h2 = wrapper.write_content(content_b).content_hash
-        h3 = wrapper.write_content(content_c).content_hash
+        h1 = wrapper.write_content(content_a).content_id
+        h2 = wrapper.write_content(content_b).content_id
+        h3 = wrapper.write_content(content_c).content_id
 
         # Batch read
         results = wrapper.batch_read_content([h1, h2, h3])
@@ -324,13 +330,13 @@ class TestCompressedBatch:
         assert results[h3] == content_c
 
     def test_batch_read_handles_missing(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
-        h1 = wrapper.write_content(b"exists " * 100).content_hash
+        h1 = wrapper.write_content(b"exists " * 100).content_id
         results = wrapper.batch_read_content([h1, "nonexistent"])
         assert results[h1] == b"exists " * 100
         assert results["nonexistent"] is None
@@ -345,7 +351,7 @@ class TestCompressedFailureFallback:
     """Compression failure should fall back to uncompressed storage."""
 
     def test_compress_failure_stores_uncompressed(self) -> None:
-        from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
+        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
 
         mock, storage = make_storage_mock()
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
@@ -353,21 +359,19 @@ class TestCompressedFailureFallback:
 
         content = b"this should be stored uncompressed " * 100
 
-        # Mock the compressor to raise
-        with (
-            patch.object(wrapper, "_cached_compressor", None),
-            patch(
-                "nexus.backends.compressed_wrapper._zstd_compress",
-                side_effect=RuntimeError("compressor broken"),
-            ),
-        ):
+        # Replace the cached compressor with a mock that raises on compress.
+        # ZstdCompressor.compress is a read-only C slot, so we swap the whole
+        # object rather than patching the attribute directly.
+        broken_compressor = MagicMock()
+        broken_compressor.compress.side_effect = RuntimeError("compressor broken")
+        with patch.object(wrapper, "_cached_compressor", broken_compressor):
             write_resp = wrapper.write_content(content)
 
         # Write should succeed with uncompressed content
         assert isinstance(write_resp, WriteResult)
-        stored = storage[write_resp.content_hash]
+        stored = storage[write_resp.content_id]
         assert stored == content  # Stored raw, no NEXZ header
 
         # Read should return original
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == content

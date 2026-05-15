@@ -1,0 +1,258 @@
+"""Tests for namespace operations with v0.6.0+ ReBAC architecture.
+
+These tests verify that namespace routing works correctly with the new
+ReBAC permission model where subject is passed via OperationContext
+per-operation rather than at NexusFS construction time.
+"""
+
+import gc
+import platform
+import tempfile
+import time
+from pathlib import Path
+
+import pytest
+
+from nexus import CASLocalBackend
+from nexus.contracts.types import OperationContext
+from nexus.core.config import ParseConfig, PermissionConfig
+from nexus.factory import create_nexus_fs
+from nexus.storage.record_store import SQLAlchemyRecordStore
+
+
+def cleanup_windows_db():
+    """Force cleanup of database connections on Windows."""
+    gc.collect()
+    if platform.system() == "Windows":
+        time.sleep(0.05)
+
+
+@pytest.mark.asyncio
+def test_workspace_namespace_operations():
+    """Test basic operations in workspace namespace with ReBAC."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        nx = create_nexus_fs(
+            parsing=ParseConfig(auto_parse=False),
+            backend=CASLocalBackend(tmpdir),
+            metadata_store=str(Path(tmpdir) / "raft-metadata"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
+            permissions=PermissionConfig(
+                enforce=False
+            ),  # Test namespace routing without permissions
+        )
+
+        # v0.6.0+: Create OperationContext with subject identity
+        ctx = OperationContext(
+            user_id="agent1",
+            subject_type="agent",
+            subject_id="agent1",
+            groups=[],
+            zone_id="acme",
+            is_admin=False,
+        )
+
+        # Write to workspace
+        nx.write("/workspace/acme/agent1/code.py", b"print('hello')", context=ctx)
+
+        # Read back
+        content = nx.sys_read("/workspace/acme/agent1/code.py", context=ctx)
+        assert content == b"print('hello')"
+
+        # Check existence
+        assert nx.access("/workspace/acme/agent1/code.py", context=ctx)
+
+        # List files
+        files = nx.sys_readdir("/workspace/acme/agent1", context=ctx)
+        assert "/workspace/acme/agent1/code.py" in files
+
+        # Delete
+        nx.sys_unlink("/workspace/acme/agent1/code.py", context=ctx)
+        assert not nx.access("/workspace/acme/agent1/code.py", context=ctx)
+
+        nx.close()
+        cleanup_windows_db()
+
+
+@pytest.mark.asyncio
+def test_shared_namespace_operations():
+    """Test basic operations in shared namespace with ReBAC."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        nx = create_nexus_fs(
+            backend=CASLocalBackend(tmpdir),
+            metadata_store=str(Path(tmpdir) / "raft-metadata"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
+        )
+
+        ctx = OperationContext(
+            user_id="alice",
+            subject_type="user",
+            subject_id="alice",
+            groups=[],
+            zone_id="acme",
+            is_admin=False,
+        )
+
+        # Write to shared namespace
+        nx.write("/shared/acme/models/model.pkl", b"model data", context=ctx)
+
+        # Read back
+        content = nx.sys_read("/shared/acme/models/model.pkl", context=ctx)
+        assert content == b"model data"
+
+        # List files
+        files = nx.sys_readdir("/shared/acme/models", context=ctx)
+        assert "/shared/acme/models/model.pkl" in files
+
+        # Delete
+        nx.sys_unlink("/shared/acme/models/model.pkl", context=ctx)
+        assert not nx.access("/shared/acme/models/model.pkl", context=ctx)
+
+        nx.close()
+        cleanup_windows_db()
+
+
+@pytest.mark.asyncio
+def test_external_namespace_operations():
+    """Test basic operations in external namespace with ReBAC."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        nx = create_nexus_fs(
+            backend=CASLocalBackend(tmpdir),
+            metadata_store=str(Path(tmpdir) / "raft-metadata"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
+        )
+
+        ctx = OperationContext(
+            user_id="anonymous",
+            subject_type="user",
+            subject_id="anonymous",
+            groups=[],
+            is_admin=False,
+        )  # External namespace doesn't require zone_id
+
+        # Write to external namespace
+        nx.write("/external/s3/bucket/file.txt", b"external data", context=ctx)
+
+        # Read back
+        content = nx.sys_read("/external/s3/bucket/file.txt", context=ctx)
+        assert content == b"external data"
+
+        # List files
+        files = nx.sys_readdir("/external/s3/bucket", context=ctx)
+        assert "/external/s3/bucket/file.txt" in files
+
+        # Delete
+        nx.sys_unlink("/external/s3/bucket/file.txt", context=ctx)
+        assert not nx.access("/external/s3/bucket/file.txt", context=ctx)
+
+        nx.close()
+        cleanup_windows_db()
+
+
+@pytest.mark.asyncio
+def test_multi_namespace_operations_single_zone():
+    """Test operations across multiple namespaces for single zone."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        nx = create_nexus_fs(
+            backend=CASLocalBackend(tmpdir),
+            metadata_store=str(Path(tmpdir) / "raft-metadata"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
+        )
+
+        ctx = OperationContext(
+            user_id="agent1",
+            subject_type="agent",
+            subject_id="agent1",
+            groups=[],
+            zone_id="acme",
+            is_admin=False,
+        )
+
+        # Write to different namespaces
+        nx.write("/workspace/acme/agent1/code.py", b"code", context=ctx)
+        nx.write("/shared/acme/data.txt", b"data", context=ctx)
+        nx.write("/external/gcs/bucket/file.txt", b"external", context=ctx)
+
+        # Verify all namespaces work
+        assert nx.access("/workspace/acme/agent1/code.py", context=ctx)
+        assert nx.access("/shared/acme/data.txt", context=ctx)
+        assert nx.access("/external/gcs/bucket/file.txt", context=ctx)
+
+        nx.close()
+        cleanup_windows_db()
+
+
+@pytest.mark.asyncio
+def test_namespace_isolation_between_zones():
+    """Test that different zones' workspaces are isolated."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        nx = create_nexus_fs(
+            backend=CASLocalBackend(tmpdir),
+            metadata_store=str(Path(tmpdir) / "raft-metadata"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
+        )
+
+        # Zone 1 writes
+        nx.write(
+            "/workspace/acme/agent1/secret.txt",
+            b"acme secret",
+            context=OperationContext(
+                user_id="agent1",
+                subject_type="agent",
+                subject_id="agent1",
+                groups=[],
+                zone_id="acme",
+                is_admin=False,
+            ),
+        )
+
+        # Zone 2 writes to same path structure (different zone)
+        nx.write(
+            "/workspace/globex/agent1/secret.txt",
+            b"globex secret",
+            context=OperationContext(
+                user_id="agent1",
+                subject_type="agent",
+                subject_id="agent1",
+                groups=[],
+                zone_id="globex",
+                is_admin=False,
+            ),
+        )
+
+        # Verify isolation - each zone sees only their data
+        acme_content = nx.sys_read(
+            "/workspace/acme/agent1/secret.txt",
+            context=OperationContext(
+                user_id="agent1",
+                subject_type="agent",
+                subject_id="agent1",
+                groups=[],
+                zone_id="acme",
+                is_admin=False,
+            ),
+        )
+        globex_content = nx.sys_read(
+            "/workspace/globex/agent1/secret.txt",
+            context=OperationContext(
+                user_id="agent1",
+                subject_type="agent",
+                subject_id="agent1",
+                groups=[],
+                zone_id="globex",
+                is_admin=False,
+            ),
+        )
+
+        assert acme_content == b"acme secret"
+        assert globex_content == b"globex secret"
+
+        nx.close()
+        cleanup_windows_db()

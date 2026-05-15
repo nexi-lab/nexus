@@ -1,4 +1,4 @@
-"""Realtime startup/shutdown: event bus, event log, WebSocket, WriteBack, locks.
+"""Realtime startup/shutdown: event bus, WebSocket, locks.
 
 Extracted from fastapi_server.py (#1602).
 """
@@ -20,20 +20,16 @@ async def startup_realtime(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     """Initialize realtime infrastructure and return background tasks.
 
     Covers:
-    - Event Log WAL (Issue #1397)
     - Event bus start + wiring
     - Event Stream Exporters (Issue #1138)
     - WebSocket Manager (Issue #1116)
-    - WriteBack Service (Issue #1129)
     - Lock Manager coordination (Issue #1186)
     """
     bg_tasks: list[asyncio.Task] = []
 
-    _startup_event_log(app, svc)
     await _startup_event_bus(app, svc)
     _startup_exporter_registry(app, svc)
     await _startup_websocket(app, svc)
-    await _startup_writeback(app, svc)
     await _startup_lock_manager(app, svc)
 
     return bg_tasks
@@ -58,14 +54,6 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception as e:
             logger.warning("Error shutting down WebSocket manager: %s", e, exc_info=True)
 
-    # Stop WriteBack Service (Issue #1129)
-    if app.state.write_back_service:
-        try:
-            await app.state.write_back_service.stop()
-            logger.info("WriteBack service stopped")
-        except Exception as e:
-            logger.warning("Error shutting down WriteBack service: %s", e, exc_info=True)
-
     # Stop event bus (Issue #1331)
     _ebus = svc.event_bus
     if _ebus is not None:
@@ -84,14 +72,6 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception as e:
             logger.warning("Error closing exporter registry: %s", e, exc_info=True)
 
-    # Close Event Log WAL (Issue #1397)
-    if app.state.event_log:
-        try:
-            await app.state.event_log.close()
-            logger.info("Event log closed")
-        except Exception as e:
-            logger.warning("Error closing event log: %s", e, exc_info=True)
-
     # Close subscription manager
     if app.state.subscription_manager:
         await app.state.subscription_manager.close()
@@ -105,20 +85,8 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_event_log(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Wire factory-created EventLog into app.state (Issue #2195).
-
-    Construction moved to ``factory._boot_system_services``.
-    Lifespan reads the pre-built instance from LifespanServices (extracted
-    once in ``from_app()``).
-    """
-    app.state.event_log = svc.event_log
-    if app.state.event_log:
-        logger.info("Event log wired from factory (WAL)")
-
-
-async def _startup_event_bus(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Start event bus and wire event log for WAL-first persistence (Issue #1397)."""
+async def _startup_event_bus(_app: "FastAPI", svc: "LifespanServices") -> None:
+    """Start event bus."""
     if not svc.nexus_fs:
         return
 
@@ -145,11 +113,6 @@ async def _startup_event_bus(app: "FastAPI", svc: "LifespanServices") -> None:
     # Issue #1331: Store main event loop ref for cross-thread event publishing
     svc.nexus_fs._main_event_loop = asyncio.get_running_loop()
 
-    # Wire event_log into EventBus for WAL-first durability (Issue #1397)
-    if app.state.event_log is not None and hasattr(event_bus_ref, "set_event_log"):
-        event_bus_ref.set_event_log(app.state.event_log)
-        logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
-
 
 async def _startup_websocket(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize WebSocket Manager for real-time events (Issue #1116)."""
@@ -166,80 +129,6 @@ async def _startup_websocket(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.info("WebSocket manager started for real-time events")
     except Exception as e:
         logger.warning("Failed to start WebSocket manager: %s", e)
-
-
-async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Initialize WriteBack Service for bidirectional sync (Issue #1129/#1130).
-
-    When ``NEXUS_WRITE_BACK=true`` and an event bus is available, the full
-    WriteBackService starts with conflict resolution and backlog stores.
-
-    Otherwise, an ``InMemoryWriteBack`` fallback is installed so that sync
-    endpoints return zero-change responses instead of 503 — this keeps
-    the API surface consistent in standalone mode.
-    """
-    if not svc.nexus_fs:
-        return
-
-    write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
-
-    try:
-        if write_back_enabled:
-            from nexus.services.gateway import NexusFSGateway
-            from nexus.system_services.sync.change_log_store import ChangeLogStore
-            from nexus.system_services.sync.conflict_log_store import ConflictLogStore
-            from nexus.system_services.sync.conflict_resolution import ConflictStrategy
-            from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
-            from nexus.system_services.sync.write_back_service import WriteBackService
-
-            gw = NexusFSGateway(svc.nexus_fs)
-
-            # ConflictLogStore is always available for the REST API
-            _is_pg = gw.is_postgresql
-            conflict_log_store = ConflictLogStore(
-                record_store=gw.record_store, is_postgresql=_is_pg
-            )
-            app.state.conflict_log_store = conflict_log_store
-
-            wb_event_bus = svc.event_bus
-            if wb_event_bus:
-                backlog_store = SyncBacklogStore(record_store=gw.record_store, is_postgresql=_is_pg)
-                change_log_store = ChangeLogStore(
-                    record_store=gw.record_store, is_postgresql=_is_pg
-                )
-
-                # Map env var to ConflictStrategy (backward compat)
-                _policy_map = {
-                    "lww": ConflictStrategy.KEEP_NEWER,
-                    "fork": ConflictStrategy.RENAME_CONFLICT,
-                }
-                raw_policy = os.getenv("NEXUS_CONFLICT_POLICY", "keep_newer")
-                try:
-                    default_strategy = ConflictStrategy(raw_policy)
-                except ValueError:
-                    default_strategy = _policy_map.get(raw_policy, ConflictStrategy.KEEP_NEWER)
-
-                app.state.write_back_service = WriteBackService(
-                    gateway=gw,
-                    event_bus=wb_event_bus,
-                    backlog_store=backlog_store,
-                    change_log_store=change_log_store,
-                    default_strategy=default_strategy,
-                    conflict_log_store=conflict_log_store,
-                )
-                await app.state.write_back_service.start()
-                logger.info("WriteBack service started for bidirectional sync")
-                return
-
-        # Fallback: provide InMemoryWriteBack so sync endpoints return
-        # zero-change responses instead of 503 in standalone mode.
-        from nexus.services.protocols.write_back import InMemoryWriteBack
-
-        app.state.write_back_service = InMemoryWriteBack()
-        await app.state.write_back_service.start()
-        logger.info("WriteBack service started (in-memory fallback)")
-    except Exception as e:
-        logger.warning("Failed to start WriteBack service: %s", e)
 
 
 async def _startup_lock_manager(_app: "FastAPI", svc: "LifespanServices") -> None:
@@ -260,16 +149,15 @@ def _startup_exporter_registry(app: "FastAPI", _svc: "LifespanServices") -> None
     """Initialize ExporterRegistry and configured exporters (Issue #1138)."""
     app.state.exporter_registry = None
 
+    enabled = os.getenv("NEXUS_EVENT_STREAM_ENABLED", "").lower() in ("true", "1", "yes")
+    if not enabled:
+        logger.debug("Event stream export disabled (NEXUS_EVENT_STREAM_ENABLED not set)")
+        return
+
     try:
         from nexus.services.event_log.exporter_registry import ExporterRegistry
         from nexus.services.event_log.exporters.config import EventStreamConfig
         from nexus.services.event_log.exporters.factory import create_exporter
-
-        # Read config from env vars
-        enabled = os.getenv("NEXUS_EVENT_STREAM_ENABLED", "").lower() in ("true", "1", "yes")
-        if not enabled:
-            logger.debug("Event stream export disabled (NEXUS_EVENT_STREAM_ENABLED not set)")
-            return
 
         exporter_type = os.getenv("NEXUS_EVENT_STREAM_EXPORTER", "kafka")
         config = EventStreamConfig(enabled=True, exporter=exporter_type)

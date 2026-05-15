@@ -3,7 +3,7 @@
 Nexus GCS Connector Backend Demo (Python SDK)
 
 Demonstrates GCS connector backend with direct path mapping:
-- Mounting external GCS bucket with gcs_connector backend type
+- Mounting external GCS bucket with path_gcs backend type
 - Writing files to actual paths (not CAS hashes)
 - Reading files from GCS at real paths
 - Directory operations on GCS
@@ -24,12 +24,12 @@ Usage:
     export NEXUS_URL=http://localhost:2026
     export NEXUS_API_KEY=your-api-key
     export GCS_BUCKET_NAME=your-bucket-name
-    python examples/python/gcs_connector_demo.py
+    python examples/python/path_gcs_demo.py
 
     # Local (no server):
     export GCS_BUCKET_NAME=your-bucket-name
     export GCS_PROJECT_ID=your-project  # optional
-    python examples/python/gcs_connector_demo.py --local
+    python examples/python/path_gcs_demo.py --local
 """
 
 import argparse
@@ -106,7 +106,7 @@ def verify_gcs_files(bucket_name: str, prefix: str) -> None:
         print_error(f"Failed to verify GCS files: {e}")
 
 
-def demo_with_server():
+async def demo_with_server():
     """Run demo with Nexus server."""
     from nexus.sdk import connect
 
@@ -154,11 +154,11 @@ def demo_with_server():
     try:
         mount_id = nx.add_mount(
             mount_point=mount_point,
-            backend_type="gcs_connector",
+            backend_type="path_gcs",
             backend_config=mount_config,
         )
         print_success(f"Mounted GCS connector at {mount_point}")
-        print_info("  Backend type: gcs_connector")
+        print_info("  Backend type: path_gcs")
         print_info(f"  Bucket: gs://{bucket_name}")
         print_info(f"  Prefix: {prefix}/")
         print_info(f"  Mount ID: {mount_id}")
@@ -178,7 +178,7 @@ def demo_with_server():
     )
     print_success(f"Wrote: {mount_point}/data.json")
 
-    nx.sys_mkdir(f"{mount_point}/subdir", parents=True)
+    nx.mkdir(f"{mount_point}/subdir", parents=True)
     print_success(f"Created: {mount_point}/subdir")
 
     nx.sys_write(f"{mount_point}/subdir/nested.txt", b"File in subdirectory")
@@ -230,9 +230,9 @@ def demo_with_server():
     print_success(f"Unmounted {mount_point}")
 
 
-def demo_local():
+async def demo_local():
     """Run demo locally (no server)."""
-    from nexus.backends.gcs_connector import GCSConnectorBackend
+    from nexus.backends.storage.path_gcs import PathGCSBackend
     from nexus.sdk import connect
 
     print_section("Running Local Demo (No Server)")
@@ -255,7 +255,7 @@ def demo_local():
         # Create and add GCS connector backend
         print_section("1. Creating GCS Connector Backend")
 
-        gcs_backend = GCSConnectorBackend(
+        gcs_backend = PathGCSBackend(
             bucket_name=bucket_name, project_id=project_id, prefix="nexus-demo"
         )
         print_success("Created GCS connector backend")
@@ -275,11 +275,11 @@ def demo_local():
 
         nx.sys_write(
             "/workspace/gcs/data.json",
-            json.dumps({"local": True, "backend": "gcs_connector"}).encode(),
+            json.dumps({"local": True, "backend": "path_gcs"}).encode(),
         )
         print_success("Wrote: /workspace/gcs/data.json")
 
-        nx.sys_mkdir("/workspace/gcs/subdir", parents=True)
+        nx.mkdir("/workspace/gcs/subdir", parents=True)
         nx.sys_write("/workspace/gcs/subdir/test.txt", b"Test file")
         print_success("Wrote: /workspace/gcs/subdir/test.txt")
 
@@ -318,7 +318,7 @@ def demo_local():
         nx.rm("/workspace/gcs/hello.txt")
         nx.rm("/workspace/gcs/data.json")
         nx.rm("/workspace/gcs/subdir/test.txt")
-        nx.sys_rmdir("/workspace/gcs/subdir")
+        await nx.sys_rmdir("/workspace/gcs/subdir")
         print_success("Cleaned up test files")
 
         print_info("\nGCS bucket cleanup (optional):")

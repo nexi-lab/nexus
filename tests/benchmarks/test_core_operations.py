@@ -19,7 +19,7 @@ import pytest
 class TestFileOperationBenchmarks:
     """Benchmarks for file read/write operations."""
 
-    def test_write_tiny_file(self, benchmark, benchmark_nexus, sample_files):
+    def test_write_tiny_file(self, benchmark, benchmark_nexus, sample_files, benchmark_loop):
         """Benchmark writing a tiny file (13 bytes)."""
         nx = benchmark_nexus
         content = sample_files["tiny"]
@@ -27,12 +27,12 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            nx.sys_write(f"/bench_tiny_{counter[0]}.txt", content)
+            nx.write(f"/bench_tiny_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
     @pytest.mark.benchmark_ci
-    def test_write_small_file(self, benchmark, benchmark_nexus, sample_files):
+    def test_write_small_file(self, benchmark, benchmark_nexus, sample_files, benchmark_loop):
         """Benchmark writing a small file (1 KB)."""
         nx = benchmark_nexus
         content = sample_files["small"]
@@ -40,11 +40,11 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            nx.sys_write(f"/bench_small_{counter[0]}.txt", content)
+            nx.write(f"/bench_small_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
-    def test_write_medium_file(self, benchmark, benchmark_nexus, sample_files):
+    def test_write_medium_file(self, benchmark, benchmark_nexus, sample_files, benchmark_loop):
         """Benchmark writing a medium file (64 KB)."""
         nx = benchmark_nexus
         content = sample_files["medium"]
@@ -52,11 +52,11 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            nx.sys_write(f"/bench_medium_{counter[0]}.txt", content)
+            nx.write(f"/bench_medium_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
-    def test_write_large_file(self, benchmark, benchmark_nexus, sample_files):
+    def test_write_large_file(self, benchmark, benchmark_nexus, sample_files, benchmark_loop):
         """Benchmark writing a large file (1 MB)."""
         nx = benchmark_nexus
         content = sample_files["large"]
@@ -64,11 +64,11 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            nx.sys_write(f"/bench_large_{counter[0]}.txt", content)
+            nx.write(f"/bench_large_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
-    def test_read_tiny_file(self, benchmark, populated_nexus):
+    def test_read_tiny_file(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark reading a tiny file (13 bytes)."""
         nx = populated_nexus
 
@@ -79,7 +79,7 @@ class TestFileOperationBenchmarks:
         assert len(result) == 13
 
     @pytest.mark.benchmark_ci
-    def test_read_small_file(self, benchmark, populated_nexus):
+    def test_read_small_file(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark reading a small file (1 KB)."""
         nx = populated_nexus
 
@@ -89,7 +89,7 @@ class TestFileOperationBenchmarks:
         result = benchmark(read_file)
         assert len(result) == 1024
 
-    def test_read_medium_file(self, benchmark, populated_nexus):
+    def test_read_medium_file(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark reading a medium file (64 KB)."""
         nx = populated_nexus
 
@@ -99,7 +99,7 @@ class TestFileOperationBenchmarks:
         result = benchmark(read_file)
         assert len(result) == 64 * 1024
 
-    def test_read_large_file(self, benchmark, populated_nexus):
+    def test_read_large_file(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark reading a large file (1 MB)."""
         nx = populated_nexus
 
@@ -110,7 +110,7 @@ class TestFileOperationBenchmarks:
         assert len(result) == 1024 * 1024
 
     @pytest.mark.benchmark_ci
-    def test_read_cached_file(self, benchmark, populated_nexus):
+    def test_read_cached_file(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark reading a file that's already in cache."""
         nx = populated_nexus
         # Pre-warm cache
@@ -124,27 +124,27 @@ class TestFileOperationBenchmarks:
         assert len(result) == 1024
 
     @pytest.mark.benchmark_ci
-    def test_exists_check(self, benchmark, populated_nexus):
+    def test_exists_check(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark file existence check."""
         nx = populated_nexus
 
         def check_exists():
-            return nx.sys_access("/test_small.bin")
+            return nx.access("/test_small.bin")
 
         result = benchmark(check_exists)
         assert result is True
 
-    def test_exists_check_nonexistent(self, benchmark, populated_nexus):
+    def test_exists_check_nonexistent(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark existence check for nonexistent file."""
         nx = populated_nexus
 
         def check_exists():
-            return nx.sys_access("/nonexistent_file.txt")
+            return nx.access("/nonexistent_file.txt")
 
         result = benchmark(check_exists)
         assert result is False
 
-    def test_delete_file(self, benchmark, benchmark_nexus, sample_files):
+    def test_delete_file(self, benchmark, benchmark_nexus, sample_files, benchmark_loop):
         """Benchmark file deletion."""
         nx = benchmark_nexus
         content = sample_files["small"]
@@ -153,7 +153,7 @@ class TestFileOperationBenchmarks:
         def delete_file():
             counter[0] += 1
             path = f"/delete_bench_{counter[0]}.txt"
-            nx.sys_write(path, content)
+            nx.write(path, content)
             nx.sys_unlink(path)
 
         benchmark(delete_file)
@@ -168,7 +168,7 @@ class TestFileOperationBenchmarks:
 class TestGlobBenchmarks:
     """Benchmarks for directory listing and glob operations."""
 
-    def test_list_small_directory(self, benchmark, populated_nexus):
+    def test_list_small_directory(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark listing a directory with ~10 items."""
         nx = populated_nexus
 
@@ -179,7 +179,7 @@ class TestGlobBenchmarks:
         assert len(result) > 0
 
     @pytest.mark.benchmark_ci
-    def test_list_large_directory(self, benchmark, populated_nexus):
+    def test_list_large_directory(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark listing a directory with ~300 items."""
         nx = populated_nexus
 
@@ -189,7 +189,7 @@ class TestGlobBenchmarks:
         result = benchmark(list_dir)
         assert len(result) >= 100
 
-    def test_list_recursive(self, benchmark, populated_nexus):
+    def test_list_recursive(self, benchmark, populated_nexus, benchmark_loop):
         """Benchmark recursive directory listing."""
         nx = populated_nexus
 
@@ -205,7 +205,7 @@ class TestGlobBenchmarks:
         nx = populated_nexus
 
         def glob_files():
-            return nx.glob("*.txt", "/many_files")
+            return nx.service("search").glob("*.txt", "/many_files")
 
         result = benchmark(glob_files)
         assert len(result) >= 100
@@ -216,8 +216,8 @@ class TestGlobBenchmarks:
 
         def glob_files():
             # Find all .py and .json files
-            py_files = nx.glob("*.py", "/many_files")
-            json_files = nx.glob("*.json", "/many_files")
+            py_files = nx.service("search").glob("*.py", "/many_files")
+            json_files = nx.service("search").glob("*.json", "/many_files")
             return py_files + json_files
 
         result = benchmark(glob_files)
@@ -228,17 +228,21 @@ class TestGlobBenchmarks:
         nx = populated_nexus
 
         def glob_files():
-            return nx.glob("**/*.bin", "/")
+            return nx.service("search").glob("**/*.bin", "/")
 
         result = benchmark(glob_files)
         assert len(result) > 0
 
     @pytest.mark.benchmark_ci
-    def test_list_1k_files(self, benchmark, benchmark_nexus):
+    def test_list_1k_files(self, benchmark, benchmark_nexus, benchmark_loop):
         """Benchmark listing directory with 1000 files."""
         nx = benchmark_nexus
-        for i in range(1000):
-            nx.sys_write(f"/bench_1k/file_{i:04d}.txt", b"x")
+
+        def _setup():
+            for i in range(1000):
+                nx.write(f"/bench_1k/file_{i:04d}.txt", b"x")
+
+        _setup()
 
         def list_dir():
             return nx.sys_readdir("/bench_1k")
@@ -246,11 +250,15 @@ class TestGlobBenchmarks:
         result = benchmark(list_dir)
         assert len(result) == 1000
 
-    def test_list_10k_files(self, benchmark, benchmark_nexus):
+    def test_list_10k_files(self, benchmark, benchmark_nexus, benchmark_loop):
         """Benchmark listing directory with 10K files."""
         nx = benchmark_nexus
-        for i in range(10_000):
-            nx.sys_write(f"/bench_10k/file_{i:05d}.txt", b"x")
+
+        def _setup():
+            for i in range(10_000):
+                nx.write(f"/bench_10k/file_{i:05d}.txt", b"x")
+
+        _setup()
 
         def list_dir():
             return nx.sys_readdir("/bench_10k")
@@ -263,7 +271,7 @@ class TestGlobBenchmarks:
         nx = deep_directory_nexus
 
         def glob_files():
-            return nx.glob("*.txt", "/level_0/level_1/level_2/level_3/level_4")
+            return nx.service("search").glob("*.txt", "/level_0/level_1/level_2/level_3/level_4")
 
         result = benchmark(glob_files)
         assert result is not None
@@ -371,7 +379,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def get_meta():
-            return nx.metadata.get("/test_small.bin")
+            return nx._kernel.sys_stat("/test_small.bin", "root")
 
         result = benchmark(get_meta)
         assert result is not None
@@ -381,7 +389,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def get_meta():
-            return nx.metadata.get("/nonexistent.txt")
+            return nx._kernel.sys_stat("/nonexistent.txt", "root")
 
         result = benchmark(get_meta)
         assert result is None
@@ -391,7 +399,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def list_meta():
-            return nx.metadata.list("/dir_0/")
+            return nx._kernel.metastore_list_paginated("/dir_0/", True, 100000, None)["items"]
 
         result = benchmark(list_meta)
         assert result is not None
@@ -401,7 +409,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def list_meta():
-            return nx.metadata.list("/many_files/")
+            return nx._kernel.metastore_list_paginated("/many_files/", True, 100000, None)["items"]
 
         benchmark(list_meta)
 
@@ -409,10 +417,10 @@ class TestMetadataBenchmarks:
         """Benchmark cached metadata existence check."""
         nx = populated_nexus
         # Pre-warm cache
-        nx.metadata.get("/test_small.bin")
+        nx._kernel.sys_stat("/test_small.bin", "root")
 
         def exists_meta():
-            return nx.metadata.exists("/test_small.bin")
+            return nx._kernel.access("/test_small.bin", "root")
 
         result = benchmark(exists_meta)
         assert result is True
@@ -424,22 +432,20 @@ class TestMetadataBenchmarks:
 
         def set_meta():
             counter[0] += 1
-            nx.metadata.set_file_metadata(
-                "/test_small.bin", f"key_{counter[0]}", f"value_{counter[0]}"
-            )
+            nx._kernel.set_xattr("/test_small.bin", f"key_{counter[0]}", f"value_{counter[0]}")
 
         benchmark(set_meta)
         # Verify the last written value is readable
-        val = nx.metadata.get_file_metadata("/test_small.bin", f"key_{counter[0]}")
+        val = nx._kernel.get_xattr("/test_small.bin", f"key_{counter[0]}")
         assert val == f"value_{counter[0]}"
 
     def test_get_file_metadata(self, benchmark, populated_nexus):
         """Benchmark getting file metadata key-value."""
         nx = populated_nexus
-        nx.metadata.set_file_metadata("/test_small.bin", "bench_key", "bench_value")
+        nx._kernel.set_xattr("/test_small.bin", "bench_key", "bench_value")
 
         def get_meta():
-            return nx.metadata.get_file_metadata("/test_small.bin", "bench_key")
+            return nx._kernel.get_xattr("/test_small.bin", "bench_key")
 
         result = benchmark(get_meta)
         assert result == "bench_value"
@@ -457,7 +463,9 @@ class TestPermissionBenchmarks:
     These benchmarks test both Python and Rust implementations.
     """
 
-    def test_permission_check_simple(self, benchmark, benchmark_nexus_with_permissions):
+    def test_permission_check_simple(
+        self, benchmark, benchmark_nexus_with_permissions, benchmark_loop
+    ):
         """Benchmark simple permission check (no tuples needed)."""
         nx = benchmark_nexus_with_permissions
 
@@ -471,7 +479,7 @@ class TestPermissionBenchmarks:
 
         def check_perm():
             # This will go through permission checking
-            return nx.sys_access("/test_permission.txt")
+            return nx.access("/test_permission.txt")
 
         benchmark(check_perm)
 
@@ -513,7 +521,6 @@ class TestPermissionBenchmarks:
     def test_permission_check_bulk_rust(self, benchmark, benchmark_nexus):
         """Benchmark bulk permission checking in Rust (if available)."""
         from nexus.bricks.rebac.utils.fast import (
-            RUST_AVAILABLE,
             check_permissions_bulk_with_fallback,
         )
 
@@ -547,11 +554,7 @@ class TestPermissionBenchmarks:
         result = benchmark(check_bulk)
         assert len(result) == 100
 
-        # Print whether Rust was used
-        if RUST_AVAILABLE:
-            print("\n[INFO] Rust acceleration was used for this benchmark")
-        else:
-            print("\n[INFO] Python fallback was used (Rust not available)")
+        print("\n[INFO] Rust acceleration was used for this benchmark")
 
     def test_permission_check_scale_1000(self, benchmark, benchmark_nexus):
         """Benchmark 1000 permission checks."""
@@ -636,7 +639,7 @@ class TestBulkOperationBenchmarks:
     """Benchmarks for bulk operations."""
 
     @pytest.mark.benchmark_ci
-    def test_write_batch_10(self, benchmark, benchmark_nexus, sample_files):
+    def test_write_batch_10(self, benchmark, benchmark_nexus, sample_files, benchmark_loop):
         """Benchmark writing 10 files in a batch."""
         nx = benchmark_nexus
         content = sample_files["small"]
@@ -649,7 +652,7 @@ class TestBulkOperationBenchmarks:
 
         benchmark(write_batch)
 
-    def test_write_batch_100(self, benchmark, benchmark_nexus, sample_files):
+    def test_write_batch_100(self, benchmark, benchmark_nexus, sample_files, benchmark_loop):
         """Benchmark writing 100 files in a batch."""
         nx = benchmark_nexus
         content = sample_files["tiny"]
@@ -802,3 +805,92 @@ class TestBlake3HashingBenchmarks:
         available = is_rust_available()
         print(f"\n[INFO] Rust BLAKE3 acceleration: {'AVAILABLE' if available else 'NOT AVAILABLE'}")
         # This test always passes - just informational
+
+
+# =============================================================================
+# FUSE LEASE BENCHMARKS (Issue #3397)
+# =============================================================================
+
+
+try:
+    from nexus.fuse.cache import FUSECacheManager  # noqa: F401
+
+    _HAS_FUSE = True
+except (ImportError, OSError):
+    _HAS_FUSE = False
+
+
+@pytest.mark.benchmark_ci
+@pytest.mark.skipif(not _HAS_FUSE, reason="fusepy not installed")
+class TestFUSELeaseBenchmarks:
+    """Benchmarks for lease-gated FUSE cache operations.
+
+    Measures the overhead of adding lease validation to cached reads
+    and the improvement in cache hit rate from lease-based invalidation.
+    """
+
+    def test_direct_cache_read_baseline(self, benchmark):
+        """Baseline: direct FUSECacheManager.get_attr() without lease."""
+        from nexus.fuse.cache import FUSECacheManager
+
+        cache = FUSECacheManager(attr_cache_ttl=60)
+        cache.cache_attr("/bench.txt", {"st_size": 1024, "st_mode": 0o644})
+
+        result = benchmark(cache.get_attr, "/bench.txt")
+        assert result is not None
+
+    def test_lease_gated_read_valid_lease(self, benchmark):
+        """Lease-gated read with valid local validity cache (~100ns target)."""
+        import time
+
+        from nexus.fuse.cache import FUSECacheManager
+        from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
+
+        cache = FUSECacheManager(attr_cache_ttl=60)
+        coord = FUSELeaseCoordinator(cache=cache, holder_id="bench-mount")
+
+        # Pre-populate cache + validity
+        cache.cache_attr("/bench.txt", {"st_size": 1024})
+        coord._set_validity("/bench.txt", time.monotonic() + 300.0)
+
+        def lease_gated_read():
+            return coord.lease_gated_get(
+                path="/bench.txt",
+                cache_get=lambda: coord.get_attr("/bench.txt"),
+                cache_set=lambda v: coord.cache_attr("/bench.txt", v),
+                fetch_fn=lambda: {"st_size": 9999},
+            )
+
+        result = benchmark(lease_gated_read)
+        assert result == {"st_size": 1024}
+
+    def test_validity_cache_check_overhead(self, benchmark):
+        """Measure overhead of the local validity cache check alone."""
+        import time
+
+        from nexus.fuse.cache import FUSECacheManager
+        from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
+
+        cache = FUSECacheManager(attr_cache_ttl=60)
+        coord = FUSELeaseCoordinator(cache=cache, holder_id="bench-mount")
+        coord._set_validity("/bench.txt", time.monotonic() + 300.0)
+
+        result = benchmark(coord._check_validity, "/bench.txt")
+        assert result is True
+
+    def test_invalidate_and_revoke_no_lease_manager(self, benchmark):
+        """Invalidation without lease manager (local-only path)."""
+        from nexus.fuse.cache import FUSECacheManager
+        from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
+
+        cache = FUSECacheManager(attr_cache_ttl=60)
+        coord = FUSELeaseCoordinator(cache=cache, holder_id="bench-mount")
+        counter = [0]
+
+        def invalidate():
+            counter[0] += 1
+            path = f"/bench_{counter[0]}.txt"
+            cache.cache_attr(path, {"st_size": 1})
+            coord.invalidate_and_revoke([path])
+
+        benchmark(invalidate)

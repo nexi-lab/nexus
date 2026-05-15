@@ -5,13 +5,13 @@ to work with FastAPI and async database operations.
 
 Example:
     from nexus.bricks.rebac.async_permissions import AsyncPermissionEnforcer
-    from nexus.bricks.rebac.async_manager import AsyncReBACManager
+    from nexus.bricks.rebac.manager import AsyncReBACManager
 
     enforcer = AsyncPermissionEnforcer(async_rebac_manager)
 
     # Check permission asynchronously
     if await enforcer.check_permission("/path/to/file", Permission.READ, context):
-        content = await fs.sys_read("/path/to/file")
+        content = fs.sys_read("/path/to/file")
 """
 
 import asyncio
@@ -24,7 +24,7 @@ from nexus.contracts.types import OperationContext, Permission
 from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:
-    from nexus.bricks.rebac.async_manager import AsyncReBACManager
+    from nexus.bricks.rebac.manager import AsyncReBACManager
     from nexus.bricks.rebac.namespace_manager import NamespaceManager
 
 logger = logging.getLogger(__name__)

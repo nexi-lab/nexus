@@ -37,13 +37,11 @@ class FilePathModel(Base):
 
     # Path information
     virtual_path: Mapped[str] = mapped_column(Text, nullable=False)
-    backend_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    physical_path: Mapped[str] = mapped_column(Text, nullable=False)
 
     # File properties
     file_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -59,7 +57,7 @@ class FilePathModel(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Semantic search indexing tracking (Issue #865)
-    indexed_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    indexed_content_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Locking for concurrent access
@@ -79,24 +77,23 @@ class FilePathModel(Base):
     # Indexes and constraints
     __table_args__ = (
         Index(
-            "uq_virtual_path",
+            "uq_zone_virtual_path",
+            "zone_id",
             "virtual_path",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        Index("idx_file_paths_zone_path", "zone_id", "virtual_path"),
-        Index("idx_file_paths_backend_id", "backend_id"),
-        Index("idx_file_paths_content_hash", "content_hash"),
+        Index("idx_file_paths_content_id", "content_id"),
         Index("idx_file_paths_virtual_path", "virtual_path"),
         Index("idx_file_paths_accessed_at", "accessed_at"),
         Index("idx_file_paths_locked_by", "locked_by"),
-        Index("idx_content_hash_zone", "content_hash", "zone_id"),
+        Index("idx_content_id_zone", "content_id", "zone_id"),
         Index("idx_file_paths_posix_uid", "posix_uid"),
         Index(
             "idx_file_paths_zone_path_covering",
             "zone_id",
             "virtual_path",
-            postgresql_include=["path_id", "content_hash", "size_bytes", "updated_at", "file_type"],
+            postgresql_include=["path_id", "content_id", "size_bytes", "updated_at", "file_type"],
             postgresql_where=text("deleted_at IS NULL"),
         ),
     )
@@ -116,12 +113,6 @@ class FilePathModel(Base):
 
         if "\x00" in self.virtual_path:
             raise ValidationError("virtual_path contains null bytes")
-
-        if not self.backend_id:
-            raise ValidationError("backend_id is required")
-
-        if not self.physical_path:
-            raise ValidationError("physical_path is required")
 
         if self.size_bytes < 0:
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")

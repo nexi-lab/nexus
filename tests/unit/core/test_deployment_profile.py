@@ -16,21 +16,30 @@ import pytest
 
 from nexus.contracts.deployment_profile import (
     ALL_BRICK_NAMES,
-    BRICK_A2A,
+    ALL_DRIVER_NAMES,
     BRICK_CACHE,
     BRICK_EVENTLOG,
     BRICK_FEDERATION,
+    BRICK_IPC,
     BRICK_LLM,
     BRICK_NAMESPACE,
     BRICK_PAY,
     BRICK_PERMISSIONS,
     BRICK_SANDBOX,
     BRICK_SEARCH,
-    BRICK_SKILLS,
-    BRICK_STORAGE,
     BRICK_WORKFLOWS,
+    DRIVER_ANTHROPIC,
+    DRIVER_CAS_LOCAL,
+    DRIVER_LOCAL_CONNECTOR,
+    DRIVER_NOSTR,
+    DRIVER_OPENAI,
+    DRIVER_PATH_LOCAL,
+    DRIVER_REMOTE,
+    DRIVER_S3,
+    LOCAL_DEFAULT_DRIVERS,
     DeploymentProfile,
     resolve_enabled_bricks,
+    resolve_enabled_drivers,
 )
 
 
@@ -38,7 +47,7 @@ class TestDeploymentProfileEnum:
     """Tests for DeploymentProfile enum values."""
 
     def test_enum_values(self) -> None:
-        assert DeploymentProfile.MINIMAL == "minimal"
+        assert DeploymentProfile.CLUSTER == "cluster"
         assert DeploymentProfile.EMBEDDED == "embedded"
         assert DeploymentProfile.LITE == "lite"
         assert DeploymentProfile.FULL == "full"
@@ -57,23 +66,38 @@ class TestDeploymentProfileEnum:
         for profile in DeploymentProfile:
             bricks = profile.default_bricks()
             assert isinstance(bricks, frozenset)
-            # REMOTE has zero local bricks (NFS-client model)
-            if profile != DeploymentProfile.REMOTE:
+            # REMOTE has zero bricks (NFS-client model)
+            if profile is not DeploymentProfile.REMOTE:
                 assert len(bricks) > 0
+
+
+class TestLocalDefaultDrivers:
+    """Local-host backends are explicit per profile, not implicit."""
+
+    def test_local_default_drivers_set_contents(self) -> None:
+        assert (
+            frozenset({DRIVER_PATH_LOCAL, DRIVER_CAS_LOCAL, DRIVER_LOCAL_CONNECTOR})
+            == LOCAL_DEFAULT_DRIVERS
+        )
 
 
 class TestDefaultBrickSets:
     """Tests for per-profile default brick sets."""
 
+    def test_cluster_minimal_multinode(self) -> None:
+        bricks = DeploymentProfile.CLUSTER.default_bricks()
+        assert BRICK_IPC in bricks
+        assert BRICK_FEDERATION in bricks
+        assert BRICK_EVENTLOG not in bricks  # No audit/events
+        assert len(bricks) == 2
+
     def test_embedded_minimal(self) -> None:
         bricks = DeploymentProfile.EMBEDDED.default_bricks()
-        assert BRICK_STORAGE in bricks
         assert BRICK_EVENTLOG in bricks
-        assert len(bricks) == 2
+        assert len(bricks) == 1
 
     def test_lite_includes_core_services(self) -> None:
         bricks = DeploymentProfile.LITE.default_bricks()
-        assert BRICK_STORAGE in bricks
         assert BRICK_EVENTLOG in bricks
         assert BRICK_NAMESPACE in bricks
         assert BRICK_PERMISSIONS in bricks
@@ -82,7 +106,6 @@ class TestDefaultBrickSets:
         assert BRICK_SEARCH not in bricks
         assert BRICK_PAY not in bricks
         assert BRICK_LLM not in bricks
-        assert BRICK_SKILLS not in bricks
         assert BRICK_SANDBOX not in bricks
 
     def test_full_includes_all_except_federation(self) -> None:
@@ -90,16 +113,9 @@ class TestDefaultBrickSets:
         assert BRICK_SEARCH in bricks
         assert BRICK_PAY in bricks
         assert BRICK_LLM in bricks
-        assert BRICK_SKILLS in bricks
         assert BRICK_SANDBOX in bricks
         assert BRICK_WORKFLOWS in bricks
-        assert BRICK_A2A in bricks
-        # Federation is cloud-only
-        assert BRICK_FEDERATION not in bricks
-
-    def test_cloud_includes_federation(self) -> None:
-        bricks = DeploymentProfile.CLOUD.default_bricks()
-        assert BRICK_FEDERATION in bricks
+        # Federation is a system service (not a brick), auto-detected from ZoneManager
 
     def test_cloud_is_superset_of_full(self) -> None:
         cloud = DeploymentProfile.CLOUD.default_bricks()
@@ -205,6 +221,95 @@ class TestResolveEnabledBricks:
         assert all_from_profiles.issubset(ALL_BRICK_NAMES)
 
 
+class TestDefaultDriverSets:
+    """Driver gating mirrors brick gating; verify per-profile defaults."""
+
+    def test_cluster_is_minimum_by_default(self) -> None:
+        # The framework no longer hard-codes a deployment preference
+        # for cluster.  The Rust `nexusd-cluster` binary opts in to
+        # `path_local` via its compiled feature set; operator
+        # deployments add others on top via env overrides.
+        drivers = DeploymentProfile.CLUSTER.default_drivers()
+        assert drivers == frozenset()
+
+    def test_embedded_and_lite_have_local_defaults(self) -> None:
+        # Single-machine profiles list every local-host backend
+        # explicitly — no implicit kernel-default bypass.
+        assert DeploymentProfile.EMBEDDED.default_drivers() == LOCAL_DEFAULT_DRIVERS
+        assert DeploymentProfile.LITE.default_drivers() == LOCAL_DEFAULT_DRIVERS
+
+    def test_sandbox_includes_locals_plus_nostr_and_llm_connectors(self) -> None:
+        drivers = DeploymentProfile.SANDBOX.default_drivers()
+        assert LOCAL_DEFAULT_DRIVERS.issubset(drivers)
+        assert DRIVER_NOSTR in drivers
+        assert DRIVER_OPENAI in drivers
+        assert DRIVER_ANTHROPIC in drivers
+        # Cloud storage stays disabled in sandbox
+        assert DRIVER_S3 not in drivers
+
+    def test_full_is_superset_of_sandbox(self) -> None:
+        sandbox = DeploymentProfile.SANDBOX.default_drivers()
+        full = DeploymentProfile.FULL.default_drivers()
+        assert sandbox.issubset(full)
+        assert DRIVER_S3 in full
+        assert DRIVER_REMOTE in full
+        assert LOCAL_DEFAULT_DRIVERS.issubset(full)
+
+    def test_remote_profile_uses_only_remote_driver(self) -> None:
+        # NFS-client model: every mount goes through the remote proxy.
+        assert DeploymentProfile.REMOTE.default_drivers() == frozenset({DRIVER_REMOTE})
+
+    def test_is_driver_enabled_matches_default_drivers(self) -> None:
+        assert DeploymentProfile.SANDBOX.is_driver_enabled(DRIVER_NOSTR)
+        assert not DeploymentProfile.LITE.is_driver_enabled(DRIVER_NOSTR)
+        assert DeploymentProfile.LITE.is_driver_enabled(DRIVER_PATH_LOCAL)
+
+
+class TestResolveEnabledDrivers:
+    """resolve_enabled_drivers parallels resolve_enabled_bricks."""
+
+    def test_no_overrides_returns_defaults(self) -> None:
+        result = resolve_enabled_drivers(DeploymentProfile.SANDBOX)
+        assert result == DeploymentProfile.SANDBOX.default_drivers()
+
+    def test_override_enables_driver(self) -> None:
+        # Cluster ships nothing by default; an operator can opt in.
+        result = resolve_enabled_drivers(
+            DeploymentProfile.CLUSTER,
+            overrides={DRIVER_NOSTR: True},
+        )
+        assert DRIVER_NOSTR in result
+
+    def test_override_disables_driver(self) -> None:
+        result = resolve_enabled_drivers(
+            DeploymentProfile.SANDBOX,
+            overrides={DRIVER_NOSTR: False},
+        )
+        assert DRIVER_NOSTR not in result
+
+    def test_unknown_driver_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown driver names"):
+            resolve_enabled_drivers(
+                DeploymentProfile.FULL,
+                overrides={"nonexistent_driver": True},
+            )
+
+    def test_override_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING):
+            resolve_enabled_drivers(
+                DeploymentProfile.LITE,
+                overrides={DRIVER_NOSTR: True},
+            )
+        assert "enabling" in caplog.text.lower()
+        assert DRIVER_NOSTR in caplog.text
+
+    def test_all_driver_names_comprehensive(self) -> None:
+        all_from_profiles: set[str] = set()
+        for profile in DeploymentProfile:
+            all_from_profiles |= profile.default_drivers()
+        assert all_from_profiles.issubset(ALL_DRIVER_NAMES)
+
+
 class TestFeaturesConfigOverrides:
     """Tests for FeaturesConfig.to_overrides() integration."""
 
@@ -220,6 +325,13 @@ class TestFeaturesConfigOverrides:
         fc = FeaturesConfig(search=True, pay=False)
         overrides = fc.to_overrides()
         assert overrides == {"search": True, "pay": False}
+
+    def test_semantic_search_is_config_only_not_brick_override(self) -> None:
+        from nexus.config import FeaturesConfig
+
+        fc = FeaturesConfig(search=True, semantic_search=True)
+        overrides = fc.to_overrides()
+        assert overrides == {"search": True}
 
     def test_overrides_integrate_with_resolve(self) -> None:
         from nexus.config import FeaturesConfig
@@ -244,12 +356,22 @@ class TestNexusConfigProfile:
     def test_valid_profiles(self) -> None:
         from nexus.config import NexusConfig
 
-        for p in ["minimal", "embedded", "lite", "full", "cloud", "remote"]:
+        for p in ["cluster", "embedded", "lite", "sandbox", "full", "cloud"]:
             cfg = NexusConfig(profile=p)
             assert cfg.profile == p
+        # "remote" requires url
+        cfg = NexusConfig(profile="remote", url="grpc://localhost:50051")
+        assert cfg.profile == "remote"
 
     def test_invalid_profile_raises(self) -> None:
         from nexus.config import NexusConfig
 
         with pytest.raises(ValueError, match="profile must be one of"):
             NexusConfig(profile="invalid")
+
+    def test_semantic_search_feature_flag_is_accepted(self) -> None:
+        from nexus.config import NexusConfig
+
+        cfg = NexusConfig(features={"semantic_search": True, "search": True})
+        assert cfg.features.semantic_search is True
+        assert cfg.features.search is True

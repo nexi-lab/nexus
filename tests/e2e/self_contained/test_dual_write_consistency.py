@@ -11,33 +11,27 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
-from nexus.core.config import ParseConfig, PermissionConfig, SystemServices
+from nexus import CASLocalBackend
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.testkit.auth import TEST_CONTEXT
 
-# Try to import RaftMetadataStore — skip if native module unavailable
-try:
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-    _raft_available = True
-except Exception:
-    _raft_available = False
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 
-def _try_create_raft_store(path: str) -> object | None:
-    """Try to create a RaftMetadataStore; return None if native module unavailable."""
-    if not _raft_available:
-        return None
-    try:
-        return RaftMetadataStore.embedded(path)
-    except RuntimeError:
-        return None
+# Kernel-backed metastore (post-RaftMetadataStore-deletion) is always
+# available because the redb engine ships in the nexus_runtime extension.
+def _try_create_raft_store(path: str) -> str:
+    """Return a redb path; ``create_nexus_fs`` opens the kernel-backed proxy."""
+    return path
 
 
 @pytest.fixture
@@ -54,32 +48,18 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 
 @pytest.fixture
-def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
-    raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
-    if raft_store is None:
-        # Fallback to DictMetastore with factory-style wiring
-        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
-        from tests.helpers.dict_metastore import DictMetastore
+async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore):
+    metadata_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
 
-        metadata_store = DictMetastore()
-        write_observer = RecordStoreWriteObserver(record_store)
-
-        nx = NexusFS(
-            backend=LocalBackend(str(temp_dir / "data")),
-            metadata_store=metadata_store,
-            record_store=record_store,
-            permissions=PermissionConfig(enforce=False),
-            parsing=ParseConfig(auto_parse=False),
-            system_services=SystemServices(write_observer=write_observer),
-        )
-    else:
-        nx = create_nexus_fs(
-            backend=LocalBackend(str(temp_dir / "data")),
-            metadata_store=raft_store,
-            record_store=record_store,
-            parsing=ParseConfig(auto_parse=False),
-            permissions=PermissionConfig(enforce=False),
-        )
+    nx = create_nexus_fs(
+        backend=CASLocalBackend(str(temp_dir / "data")),
+        metadata_store=metadata_store,
+        record_store=record_store,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
+        init_cred=TEST_CONTEXT,
+        enable_write_buffer=False,  # sync observer — tests query RecordStore immediately
+    )
     yield nx
     nx.close()
 
@@ -92,16 +72,17 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
 class TestWriteConsistency:
     """After write(), both Metastore and RecordStore should be consistent."""
 
-    def test_new_file_exists_in_both_stores(
+    @pytest.mark.asyncio
+    async def test_new_file_exists_in_both_stores(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        result = nx.sys_write("/test.txt", b"hello world")
+        result = nx.write("/test.txt", b"hello world")
 
         # Metastore has the file
-        meta = nx.metadata.get("/test.txt")
+        meta = nx._kernel.sys_stat("/test.txt", "root")
         assert meta is not None
-        assert meta.etag == result["etag"]
-        assert meta.size == len(b"hello world")
+        assert meta["content_id"] == result["content_id"]
+        assert meta["size"] == len(b"hello world")
 
         # RecordStore has the file
         with record_store.session_factory() as session:
@@ -113,17 +94,18 @@ class TestWriteConsistency:
                 )
                 .one()
             )
-            assert fp.content_hash == result["etag"]
+            assert fp.content_id == result["content_id"]
             assert fp.size_bytes == len(b"hello world")
             assert fp.current_version == 1
 
-    def test_field_consistency_after_write(
+    @pytest.mark.asyncio
+    async def test_field_consistency_after_write(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         """All overlapping fields should match between Metastore and RecordStore."""
-        nx.sys_write("/consistent.txt", b"data")
+        nx.write("/consistent.txt", b"data")
 
-        meta = nx.metadata.get("/consistent.txt")
+        meta = nx._kernel.sys_stat("/consistent.txt", "root")
         assert meta is not None
 
         with record_store.session_factory() as session:
@@ -137,22 +119,24 @@ class TestWriteConsistency:
             )
 
             # Field-by-field consistency check
-            assert fp.virtual_path == meta.path
-            assert fp.content_hash == meta.etag
-            assert fp.size_bytes == meta.size
-            assert fp.current_version == meta.version
+            assert fp.virtual_path == meta["path"]
+            assert fp.content_id == meta["content_id"]
+            assert fp.size_bytes == meta["size"]
+            assert meta["version"] == 1
+            assert fp.current_version == 1
 
-    def test_update_version_consistency(
+    @pytest.mark.asyncio
+    async def test_update_version_consistency(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         """After update, version numbers should match across stores."""
-        nx.sys_write("/ver.txt", b"v1")
-        nx.sys_write("/ver.txt", b"v2")
-        nx.sys_write("/ver.txt", b"v3")
+        nx.write("/ver.txt", b"v1")
+        nx.write("/ver.txt", b"v2")
+        nx.write("/ver.txt", b"v3")
 
-        meta = nx.metadata.get("/ver.txt")
+        meta = nx._kernel.sys_stat("/ver.txt", "root")
         assert meta is not None
-        assert meta.version == 3
+        assert meta["version"] == 3
 
         with record_store.session_factory() as session:
             fp = (
@@ -163,6 +147,7 @@ class TestWriteConsistency:
                 )
                 .one()
             )
+            # RecordStore independently tracks versions: 1 create + 2 updates = 3
             assert fp.current_version == 3
 
             # Should have 3 version history entries
@@ -186,18 +171,20 @@ class TestWriteConsistency:
 class TestDeleteConsistency:
     """After delete(), Metastore entry is gone, RecordStore is soft-deleted."""
 
-    def test_delete_removes_from_metastore(
+    @pytest.mark.asyncio
+    async def test_delete_removes_from_metastore(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.sys_write("/del.txt", b"content")
+        nx.write("/del.txt", b"content")
         nx.sys_unlink("/del.txt")
 
-        assert nx.metadata.get("/del.txt") is None
+        assert nx._kernel.sys_stat("/del.txt", "root") is None
 
-    def test_delete_soft_deletes_in_record_store(
+    @pytest.mark.asyncio
+    async def test_delete_soft_deletes_in_record_store(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.sys_write("/del.txt", b"content")
+        nx.write("/del.txt", b"content")
         nx.sys_unlink("/del.txt")
 
         with record_store.session_factory() as session:
@@ -210,10 +197,11 @@ class TestDeleteConsistency:
             )
             assert fp.deleted_at is not None
 
-    def test_delete_audit_trail_exists(
+    @pytest.mark.asyncio
+    async def test_delete_audit_trail_exists(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.sys_write("/del.txt", b"content")
+        nx.write("/del.txt", b"content")
         nx.sys_unlink("/del.txt")
 
         with record_store.session_factory() as session:
@@ -232,19 +220,23 @@ class TestDeleteConsistency:
 class TestRenameConsistency:
     """After rename(), Metastore reflects new path, RecordStore has audit trail."""
 
-    def test_rename_updates_metastore_path(
+    @pytest.mark.asyncio
+    async def test_rename_updates_metastore_path(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.sys_write("/old.txt", b"content")
+        nx.write("/old.txt", b"content")
         nx.sys_rename("/old.txt", "/new.txt")
 
-        assert nx.metadata.get("/old.txt") is None
-        meta = nx.metadata.get("/new.txt")
+        assert nx._kernel.sys_stat("/old.txt", "root") is None
+        meta = nx._kernel.sys_stat("/new.txt", "root")
         assert meta is not None
-        assert meta.path == "/new.txt"
+        assert meta["path"] == "/new.txt"
 
-    def test_rename_audit_trail(self, nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
-        nx.sys_write("/old.txt", b"content")
+    @pytest.mark.asyncio
+    async def test_rename_audit_trail(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        nx.write("/old.txt", b"content")
         nx.sys_rename("/old.txt", "/new.txt")
 
         with record_store.session_factory() as session:
@@ -263,7 +255,8 @@ class TestRenameConsistency:
 class TestBatchWriteConsistency:
     """After write_batch(), all files exist in both stores."""
 
-    def test_batch_all_files_in_both_stores(
+    @pytest.mark.asyncio
+    async def test_batch_all_files_in_both_stores(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         files = [
@@ -276,9 +269,9 @@ class TestBatchWriteConsistency:
 
         # All files in Metastore
         for path, content in files:
-            meta = nx.metadata.get(path)
+            meta = nx._kernel.sys_stat(path, "root")
             assert meta is not None, f"{path} missing from Metastore"
-            assert meta.size == len(content)
+            assert meta["size"] == len(content)
 
         # All files in RecordStore
         with record_store.session_factory() as session:
@@ -293,7 +286,8 @@ class TestBatchWriteConsistency:
             for path, _ in files:
                 assert path in record_paths, f"{path} missing from RecordStore"
 
-    def test_batch_operation_log_entries(
+    @pytest.mark.asyncio
+    async def test_batch_operation_log_entries(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         files = [("/x.txt", b"x"), ("/y.txt", b"y")]

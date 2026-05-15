@@ -6,19 +6,52 @@ This module provides functionality for mounting external MCP servers
 Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 """
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
+from nexus.config import SSRFConfig
+from nexus.lib.events import emit_audit_event
+from nexus.lib.security.ssrf_transport import make_pinned_client_factory
+from nexus.lib.security.url_validator import SSRFBlocked, validate_outbound_url
 
 if TYPE_CHECKING:
+    from nexus.bricks.approvals.policy_gate import PolicyGate
     from nexus.contracts.types import OperationContext
-    from nexus.services.protocols.filesystem import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
+
 
 logger = logging.getLogger(__name__)
+
+
+def _host_port_from_url(url: str) -> str | None:
+    """Return ``host:port`` for an http/https URL, or None if unparseable.
+
+    Used as the ``subject`` for ``EGRESS_HOST`` approval requests so
+    operators can decide once per host (not per URL path). Defaults to
+    443 for https and 80 for http when the URL omits an explicit port.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+    host = parsed.hostname
+    if not host:
+        return None
+    if parsed.port:
+        port = parsed.port
+    elif parsed.scheme == "https":
+        port = 443
+    elif parsed.scheme == "http":
+        port = 80
+    else:
+        return None
+    return f"{host}:{port}"
 
 
 class MCPMountError(Exception):
@@ -46,12 +79,12 @@ class MCPMountManager:
         /skills/system/mcp-tools/
         ├── github/
         │   ├── mount.json              # Connection info for this mount
-        │   ├── SKILL.md                # Human-readable docs
+        │   ├── README.md                # Human-readable docs
         │   ├── search_repositories.json
         │   └── create_issue.json
         └── slack/
             ├── mount.json
-            ├── SKILL.md
+            ├── README.md
             └── send_message.json
 
     Example:
@@ -119,13 +152,41 @@ class MCPMountManager:
     # Mount configuration filename (per-folder)
     MOUNT_CONFIG_FILENAME = "mount.json"
 
-    def __init__(self, filesystem: "NexusFilesystem | None" = None):
+    def __init__(
+        self,
+        filesystem: "NexusFS | None" = None,
+        *,
+        ssrf_config: "SSRFConfig | None" = None,
+        policy_gate: "PolicyGate | None" = None,
+        zone_id: str | None = None,
+    ) -> None:
         """Initialize MCP mount manager.
 
         Args:
             filesystem: Optional filesystem instance (defaults to local FS)
+            ssrf_config: Optional SSRFConfig override. When provided, the
+                validator for SSE/HTTP mounts uses these operator settings
+                (``allow_private`` / ``extra_deny_cidrs``). When None, a
+                conservative default ``SSRFConfig()`` is used.
+            policy_gate: Optional PolicyGate for approval-queue routing
+                (Issue #3790, Task 18). When provided, an SSRF-blocked egress
+                attempt for an unlisted host is offered to the gate first;
+                if an operator approves the host the connect proceeds, else
+                the original ``SSRFBlocked`` is re-raised. When None, the
+                manager preserves the existing fail-closed behavior.
+            zone_id: Optional zone identifier for approval-queue
+                attribution (Issue #3790, F4). When set, SSRF-blocked
+                egress requests are filed against this zone; when ``None``
+                the manager fails closed instead of charging the request
+                to ROOT_ZONE_ID. Operators wire this from the daemon's
+                primary zone (or per-mount config when multi-zone is
+                supported in a future revision); see
+                :meth:`set_zone` for post-construction attachment.
         """
         self._filesystem = filesystem
+        self._ssrf_config_override = ssrf_config
+        self._policy_gate = policy_gate
+        self._zone_id = zone_id
 
         # Active mount configurations (keyed by name, may include tier info)
         self._mounts: dict[str, MCPMount] = {}
@@ -136,21 +197,35 @@ class MCPMountManager:
         # Active MCP client connections
         self._clients: dict[str, Any] = {}
 
-        # Load existing mount configurations (system tier only at init)
-        self._load_mounts_config()
+        # Mount configs loaded lazily on first async access (syscalls are async)
+        self._mounts_loaded = False
 
-    def _load_mounts_config(self) -> None:
+    def set_zone(self, zone_id: str | None) -> None:
+        """Attach (or detach) the daemon zone after construction.
+
+        F4 (Issue #3790): the approvals lifespan determines the daemon's
+        primary zone after MCP services are constructed, so callers may
+        attach the zone post-hoc. ``None`` triggers fail-closed routing
+        in :meth:`_ssrf_blocked_via_gate` (the gate is bypassed entirely
+        and the original ``SSRFBlocked`` is re-raised).
+        """
+        self._zone_id = zone_id
+
+    async def _load_mounts_config(self) -> None:
         """Load mount configurations from per-folder mount.json files.
 
         Each mount has its own folder with mount.json:
         /skills/system/mcp-tools/{mount_name}/mount.json
         """
+        if self._mounts_loaded:
+            return
+        self._mounts_loaded = True
         try:
-            self._load_mounts_from_folders()
+            await self._load_mounts_from_folders()
         except Exception as e:
-            logger.warning(f"Failed to load mount configurations: {e}")
+            logger.warning("Failed to load mount configurations: %s", e)
 
-    def _load_mounts_from_folders(self) -> bool:
+    async def _load_mounts_from_folders(self) -> bool:
         """Load mounts from per-folder mount.json files.
 
         Returns:
@@ -161,19 +236,21 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if base path exists
-                if not self._filesystem.sys_access(self.MCP_TOOLS_PATH):
+                if not self._filesystem.access(self.MCP_TOOLS_PATH):
                     return False
 
                 # List directories in MCP_TOOLS_PATH
-                items = self._filesystem.sys_readdir(self.MCP_TOOLS_PATH)
+                items = await asyncio.to_thread(self._filesystem.sys_readdir, self.MCP_TOOLS_PATH)
                 for item in items:
                     # Skip files at root level
                     item_path = f"{self.MCP_TOOLS_PATH}{item}"
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if self._filesystem.sys_access(mount_json_path):
-                            raw_content = self._filesystem.sys_read(mount_json_path)
+                        if self._filesystem.access(mount_json_path):
+                            raw_content = await asyncio.to_thread(
+                                self._filesystem.sys_read, mount_json_path
+                            )
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)
@@ -184,9 +261,9 @@ class MCPMountManager:
                             mount.mounted = False
                             self._mounts[mount.name] = mount
                             loaded_any = True
-                            logger.debug(f"Loaded mount config from {mount_json_path}")
+                            logger.debug("Loaded mount config from %s", mount_json_path)
                     except Exception as e:
-                        logger.warning(f"Failed to load mount from {mount_json_path}: {e}")
+                        logger.warning("Failed to load mount from %s: %s", mount_json_path, e)
             else:
                 # Local filesystem
                 base_path = Path(self.MCP_TOOLS_PATH.lstrip("/"))
@@ -203,25 +280,27 @@ class MCPMountManager:
                                 mount.mounted = False
                                 self._mounts[mount.name] = mount
                                 loaded_any = True
-                                logger.debug(f"Loaded mount config from {mount_json_file}")
+                                logger.debug("Loaded mount config from %s", mount_json_file)
                             except Exception as e:
-                                logger.warning(f"Failed to load mount from {mount_json_file}: {e}")
+                                logger.warning(
+                                    "Failed to load mount from %s: %s", mount_json_file, e
+                                )
 
         except Exception as e:
-            logger.warning(f"Error scanning for mount configs: {e}")
+            logger.warning("Error scanning for mount configs: %s", e)
 
         return loaded_any
 
-    def _save_mounts_config(self) -> None:
+    async def _save_mounts_config(self) -> None:
         """Save mount configurations to per-folder mount.json files.
 
         Each mount is saved to its own folder:
         /skills/system/mcp-tools/{mount_name}/mount.json
         """
         for mount in self._mounts.values():
-            self._save_mount_config(mount)
+            await self._save_mount_config(mount)
 
-    def _save_mount_config(self, mount: MCPMount) -> None:
+    async def _save_mount_config(self, mount: MCPMount) -> None:
         """Save a single mount's configuration to its folder.
 
         Args:
@@ -235,21 +314,21 @@ class MCPMountManager:
                 # Ensure mount directory exists
                 mount_dir = f"{self.MCP_TOOLS_PATH}{mount.name}/"
                 try:
-                    self._filesystem.sys_mkdir(mount_dir, parents=True)
+                    self._filesystem.mkdir(mount_dir, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount_dir, e)
 
-                self._filesystem.sys_write(mount_json_path, content.encode("utf-8"))
+                self._filesystem.write(mount_json_path, content.encode("utf-8"))
             else:
                 mount_path = Path(mount_json_path.lstrip("/"))
                 mount_path.parent.mkdir(parents=True, exist_ok=True)
                 mount_path.write_text(content)
 
-            logger.debug(f"Saved mount config: {mount.name}")
+            logger.debug("Saved mount config: %s", mount.name)
         except Exception as e:
-            logger.error(f"Failed to save mount config for {mount.name}: {e}")
+            logger.error("Failed to save mount config for %s: %s", mount.name, e)
 
     async def mount(self, mount_config: MCPMount) -> bool:
         """Mount an external MCP server.
@@ -293,12 +372,12 @@ class MCPMountManager:
 
             # Store configuration
             self._mounts[mount_config.name] = mount_config
-            self._save_mounts_config()
+            await self._save_mounts_config()
 
             # Sync tools from the server
             await self.sync_tools(mount_config.name)
 
-            logger.info(f"Mounted MCP server: {mount_config.name}")
+            logger.info("Mounted MCP server: %s", mount_config.name)
             return True
 
         except Exception as e:
@@ -372,6 +451,40 @@ class MCPMountManager:
         if not mount_config.url:
             raise MCPMountError("URL is required for SSE/HTTP transport")
 
+        ssrf_cfg = self._ssrf_config()
+        try:
+            validated = validate_outbound_url(
+                mount_config.url,
+                allow_private=ssrf_cfg.allow_private,
+                extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
+            )
+        except SSRFBlocked as exc:
+            self._emit_ssrf_audit(mount_config, exc)
+            logger.warning("SSRF blocked for MCP mount %r: %s", mount_config.name, exc)
+            if not await self._ssrf_blocked_via_gate(
+                mount_config, mount_config.url, "mcp_mount_connect"
+            ):
+                raise
+            # Operator approved the host via the approvals queue. Re-validate
+            # with private ranges relaxed so RFC 1918 / ULA hosts become
+            # reachable; metadata, loopback, and the operator-configured
+            # ``extra_deny_cidrs`` remain enforced. Operator approval covers
+            # "this host" only — it must not silently disable the operator's
+            # own deny list (e.g. internal service mesh CIDRs).
+            try:
+                validated = validate_outbound_url(
+                    mount_config.url,
+                    allow_private=True,
+                    extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
+                )
+            except SSRFBlocked:
+                logger.warning(
+                    "approvals-approved mount %r still failed SSRF re-validation; "
+                    "honoring the original block",
+                    mount_config.name,
+                )
+                raise exc from None
+
         # Start with custom headers from mount config
         headers: dict[str, str] = dict(mount_config.headers) if mount_config.headers else {}
 
@@ -382,13 +495,134 @@ class MCPMountManager:
             if api_key:
                 headers[header_name] = f"Bearer {api_key}"
 
-        # Create SSE client session
+        # Cast to Any: mcp's ``McpHttpClientFactory`` is a Protocol and the
+        # structural match against our Callable type is lost through mypy's
+        # strict arg-type check (defaults vs positional).
+        pinned_factory = cast(Any, make_pinned_client_factory(validated))
+
+        # Create SSE client session — underlying httpx.AsyncClient is built
+        # from the pinned factory so TCP connects go to the validated IPs
+        # and redirects are disabled (prevents DNS-rebinding / redirect-
+        # based SSRF escapes).
         async with (
-            sse_client(mount_config.url, headers=headers) as (read, write),
+            sse_client(
+                mount_config.url,
+                headers=headers,
+                httpx_client_factory=pinned_factory,
+            ) as (read, write),
             ClientSession(read, write) as session,
         ):
             await session.initialize()
             return session
+
+    def _ssrf_config(self) -> SSRFConfig:
+        """Return the effective SSRFConfig.
+
+        Uses the override passed into __init__ when available so operator
+        settings in ``NexusConfig.security.ssrf`` (``allow_private`` /
+        ``extra_deny_cidrs``) take effect at SSE/HTTP mount validation
+        time. Falls back to a conservative default ``SSRFConfig()`` when
+        the manager was constructed without an override.
+        """
+        if self._ssrf_config_override is not None:
+            return self._ssrf_config_override
+        return SSRFConfig()
+
+    async def _ssrf_blocked_via_gate(
+        self,
+        mount_config: MCPMount,
+        url: str,
+        operation: str,
+    ) -> bool:
+        """Consult the PolicyGate when SSRF would block this URL.
+
+        Issue #3790, Task 18: route unlisted-host egress through the
+        approval queue. Returns True iff an operator approved the host
+        within the gate's timeout, in which case the caller may proceed
+        as if SSRF had passed. Returns False on missing gate, denial,
+        timeout, or any unexpected gate error (graceful degradation —
+        the original ``SSRFBlocked`` is then re-raised by the caller).
+
+        F4 (#3790): the zone is the daemon's configured zone (set via
+        ``__init__`` or :meth:`set_zone`). When the manager has no zone
+        bound, the gate is bypassed and the original ``SSRFBlocked`` is
+        re-raised — this is fail-closed behavior. We do NOT silently
+        charge approvals to ROOT_ZONE_ID, because that would let any
+        operator with root-zone ``approvals:decide`` approve egress for
+        every other zone's traffic.
+        """
+        gate = self._policy_gate
+        if gate is None:
+            return False
+
+        host_port = _host_port_from_url(url)
+        if host_port is None:
+            # Cannot derive a meaningful subject — keep fail-closed.
+            return False
+
+        # F4 (#3790): require a bound zone. Without one we cannot scope
+        # the approval to a single operator-decide capability set, so
+        # routing the request through the queue would be a privilege
+        # escalation. Fail closed; the caller will re-raise SSRFBlocked.
+        if not self._zone_id:
+            logger.warning(
+                "MCPMountManager has no zone bound (mount=%r); "
+                "skipping approval-queue routing and honoring SSRF block",
+                mount_config.name,
+            )
+            return False
+
+        # Lazy imports keep ``mcp`` brick free of an eager top-level
+        # cross-brick import (boundary checker enforces this; see
+        # `.pre-commit-hooks/check_brick_imports.py`).
+        from nexus.bricks.approvals.models import ApprovalKind, Decision
+
+        zone_id = self._zone_id
+        # Mount-time admin operations have no agent token. Synthesize a
+        # stable token_id from the mount name so operators can correlate
+        # repeated requests for the same mount in the queue UI.
+        token_id = f"mcp_mount:{mount_config.name}" if mount_config.name else "mcp_mount"
+        try:
+            decision = await gate.check(
+                kind=ApprovalKind.EGRESS_HOST,
+                subject=host_port,
+                zone_id=zone_id,
+                token_id=token_id,
+                session_id=None,
+                agent_id=mount_config.name or None,
+                reason=operation,
+                metadata={
+                    "url": url,
+                    "mount_name": mount_config.name,
+                    "operation": operation,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "approvals gate raised for mount %r (%s); falling back to deny",
+                mount_config.name,
+                operation,
+                exc_info=True,
+            )
+            return False
+        return decision is Decision.APPROVED
+
+    def _emit_ssrf_audit(self, mount_config: MCPMount, exc: SSRFBlocked) -> None:
+        """Emit a security.ssrf_blocked event; never raises."""
+        try:
+            emit_audit_event(
+                "security.ssrf_blocked",
+                {
+                    "url": exc.url,
+                    "reason": exc.reason,
+                    "ip": exc.ip,
+                    "cidr": exc.cidr,
+                    "integration": "mcp",
+                    "mount_name": mount_config.name,
+                },
+            )
+        except Exception as audit_err:  # pragma: no cover — audit must never raise
+            logger.warning("Failed to emit SSRF audit event: %s", audit_err)
 
     async def unmount(self, name: str) -> bool:
         """Unmount an MCP server.
@@ -412,7 +646,7 @@ class MCPMountManager:
                 if hasattr(client, "close"):
                     await client.close()
             except Exception as e:
-                logger.warning(f"Error closing client for {name}: {e}")
+                logger.warning("Error closing client for %s: %s", name, e)
             finally:
                 del self._clients[name]
 
@@ -420,9 +654,9 @@ class MCPMountManager:
         mount = self._mounts[name]
         mount.mounted = False
 
-        self._save_mounts_config()
+        await self._save_mounts_config()
 
-        logger.info(f"Unmounted MCP server: {name}")
+        logger.info("Unmounted MCP server: %s", name)
         return True
 
     async def sync_tools(self, name: str) -> int:
@@ -464,19 +698,19 @@ class MCPMountManager:
                 tool_names.append(tool_def.name)
                 tool_defs.append(tool_def)
             except Exception as e:
-                logger.warning(f"Failed to store tool {tool.get('name')}: {e}")
+                logger.warning("Failed to store tool %s: %s", tool.get("name"), e)
 
-        # Store single SKILL.md for the mount
+        # Store single README.md for the mount
         if tool_defs:
-            await self._store_mount_skill_md(mount, tool_defs)
+            await self._store_mount_readme_md(mount, tool_defs)
 
         # Update mount state
         mount.last_sync = datetime.now(UTC)
         mount.tool_count = tool_count
         mount.tools = tool_names
-        self._save_mounts_config()
+        await self._save_mounts_config()
 
-        logger.info(f"Synced {tool_count} tools from {name}")
+        logger.info("Synced %d tools from %s", tool_count, name)
         return tool_count
 
     async def _list_tools_from_server(self, mount: MCPMount) -> list[dict[str, Any]]:
@@ -553,7 +787,7 @@ class MCPMountManager:
                     for tool in result.tools
                 ]
         except Exception as e:
-            logger.error(f"Failed to list tools via stdio: {e}")
+            logger.error("Failed to list tools via stdio: %s", e)
             raise
 
         return tools
@@ -578,6 +812,35 @@ class MCPMountManager:
         if not mount.url:
             raise MCPMountError("URL is required for SSE/HTTP transport")
 
+        ssrf_cfg = self._ssrf_config()
+        try:
+            validated = validate_outbound_url(
+                mount.url,
+                allow_private=ssrf_cfg.allow_private,
+                extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
+            )
+        except SSRFBlocked as exc:
+            self._emit_ssrf_audit(mount, exc)
+            logger.warning("SSRF blocked for MCP mount %r (list_tools): %s", mount.name, exc)
+            if not await self._ssrf_blocked_via_gate(mount, mount.url, "mcp_mount_list_tools"):
+                raise
+            # Preserve operator-configured ``extra_deny_cidrs`` on
+            # approval re-validation — see ``_create_sse_client`` for
+            # rationale.
+            try:
+                validated = validate_outbound_url(
+                    mount.url,
+                    allow_private=True,
+                    extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
+                )
+            except SSRFBlocked:
+                logger.warning(
+                    "approvals-approved mount %r still failed SSRF re-validation "
+                    "(list_tools); honoring the original block",
+                    mount.name,
+                )
+                raise exc from None
+
         # Start with custom headers from mount config
         headers: dict[str, str] = dict(mount.headers) if mount.headers else {}
 
@@ -588,11 +851,18 @@ class MCPMountManager:
             if api_key:
                 headers[header_name] = f"Bearer {api_key}"
 
+        # Cast to Any: see _create_sse_client for rationale.
+        pinned_factory = cast(Any, make_pinned_client_factory(validated))
+
         tools = []
 
         try:
             async with (
-                sse_client(mount.url, headers=headers) as (read, write),
+                sse_client(
+                    mount.url,
+                    headers=headers,
+                    httpx_client_factory=pinned_factory,
+                ) as (read, write),
                 ClientSession(read, write) as session,
             ):
                 await session.initialize()
@@ -606,7 +876,7 @@ class MCPMountManager:
                     for tool in result.tools
                 ]
         except Exception as e:
-            logger.error(f"Failed to list tools via SSE: {e}")
+            logger.error("Failed to list tools via SSE: %s", e)
             raise
 
         return tools
@@ -673,10 +943,10 @@ class MCPMountManager:
                 ]
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Klavis API HTTP error: {e}")
+            logger.error("Klavis API HTTP error: %s", e)
             raise MCPMountError(f"Klavis API error: {e}") from e
         except Exception as e:
-            logger.error(f"Failed to list tools via Klavis: {e}")
+            logger.error("Failed to list tools via Klavis: %s", e)
             raise
 
         return tools
@@ -746,10 +1016,10 @@ class MCPMountManager:
                 return call_result
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Klavis API HTTP error: {e}")
+            logger.error("Klavis API HTTP error: %s", e)
             raise MCPMountError(f"Klavis API error: {e}") from e
         except Exception as e:
-            logger.error(f"Failed to call tool via Klavis: {e}")
+            logger.error("Failed to call tool via Klavis: %s", e)
             raise MCPMountError(f"Klavis tool call failed: {e}") from e
 
     def _create_tool_definition(
@@ -811,14 +1081,14 @@ class MCPMountManager:
             # Ensure directory exists
             if mount.tools_path:
                 try:
-                    self._filesystem.sys_mkdir(mount.tools_path, parents=True)
+                    self._filesystem.mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
 
             # Write tool.json
-            self._filesystem.sys_write(tool_json_path, tool_json.encode("utf-8"))
+            self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
         else:
             # Local filesystem
             if mount.tools_path:
@@ -826,51 +1096,51 @@ class MCPMountManager:
                 tools_dir.mkdir(parents=True, exist_ok=True)
                 (tools_dir / f"{tool_def.name}.json").write_text(tool_json)
 
-        logger.debug(f"Stored tool definition: {tool_def.name}")
+        logger.debug("Stored tool definition: %s", tool_def.name)
         return tool_json_path
 
-    async def _store_mount_skill_md(
+    async def _store_mount_readme_md(
         self, mount: MCPMount, tool_defs: list[MCPToolDefinition]
     ) -> str:
-        """Store a single SKILL.md for the mount describing all tools.
+        """Store a single README.md for the mount describing all tools.
 
         Args:
             mount: Mount configuration
             tool_defs: List of tool definitions
 
         Returns:
-            Path to SKILL.md
+            Path to README.md
         """
-        skill_md_path = f"{mount.tools_path}SKILL.md"
-        skill_md = self._generate_mount_skill_md(mount, tool_defs)
+        readme_md_path = f"{mount.tools_path}README.md"
+        readme_md = self._generate_mount_readme_md(mount, tool_defs)
 
         if self._filesystem:
             if mount.tools_path:
                 try:
-                    self._filesystem.sys_mkdir(mount.tools_path, parents=True)
+                    self._filesystem.mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
-            self._filesystem.sys_write(skill_md_path, skill_md.encode("utf-8"))
+            self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
         else:
             if mount.tools_path:
                 tools_dir = Path(mount.tools_path.lstrip("/"))
                 tools_dir.mkdir(parents=True, exist_ok=True)
-                (tools_dir / "SKILL.md").write_text(skill_md)
+                (tools_dir / "README.md").write_text(readme_md)
 
-        logger.debug(f"Stored mount SKILL.md: {mount.name}")
-        return skill_md_path
+        logger.debug("Stored mount README.md: %s", mount.name)
+        return readme_md_path
 
-    def _generate_mount_skill_md(self, mount: MCPMount, tool_defs: list[MCPToolDefinition]) -> str:
-        """Generate SKILL.md content for a mount with all its tools.
+    def _generate_mount_readme_md(self, mount: MCPMount, tool_defs: list[MCPToolDefinition]) -> str:
+        """Generate README.md content for a mount with all its tools.
 
         Args:
             mount: Mount configuration
             tool_defs: List of tool definitions
 
         Returns:
-            SKILL.md content
+            README.md content
         """
         import yaml
 
@@ -974,7 +1244,7 @@ class MCPMountManager:
         except Exception as e:
             raise MCPMountError(f"Tool execution failed: {e}") from e
 
-    def discover_mounts(self, context: "OperationContext | None" = None) -> int:
+    async def discover_mounts(self, context: "OperationContext | None" = None) -> int:
         """Discover mounts from context-aware tier paths.
 
         Scans all available tiers for the given context and loads mount configurations.
@@ -1001,13 +1271,13 @@ class MCPMountManager:
             tier_paths.keys(), key=lambda t: self.TIER_PRIORITY.get(t, 0), reverse=True
         ):
             tier_path = tier_paths[tier]
-            count = self._discover_mounts_from_tier(tier, tier_path, seen_names)
+            count = await self._discover_mounts_from_tier(tier, tier_path, seen_names)
             discovered_count += count
 
-        logger.info(f"Discovered {discovered_count} mounts from {len(tier_paths)} tiers")
+        logger.info("Discovered %d mounts from %d tiers", discovered_count, len(tier_paths))
         return discovered_count
 
-    def _discover_mounts_from_tier(
+    async def _discover_mounts_from_tier(
         self, tier: str, tier_path: str, seen_names: dict[str, int]
     ) -> int:
         """Discover mounts from a single tier path.
@@ -1029,19 +1299,21 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if path exists
-                if not self._filesystem.sys_access(tier_path):
-                    logger.debug(f"MCP tier path does not exist: {tier_path}")
+                if not self._filesystem.access(tier_path):
+                    logger.debug("MCP tier path does not exist: %s", tier_path)
                     return 0
 
                 # List directories in tier_path
-                items = self._filesystem.sys_readdir(tier_path)
+                items = await asyncio.to_thread(self._filesystem.sys_readdir, tier_path)
                 for item in items:
                     item_path = f"{tier_path}{item}"
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if self._filesystem.sys_access(mount_json_path):
-                            raw_content = self._filesystem.sys_read(mount_json_path)
+                        if self._filesystem.access(mount_json_path):
+                            raw_content = await asyncio.to_thread(
+                                self._filesystem.sys_read, mount_json_path
+                            )
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)
@@ -1056,8 +1328,10 @@ class MCPMountManager:
                                 existing_priority = seen_names[mount.name]
                                 if tier_priority <= existing_priority:
                                     logger.debug(
-                                        f"Skipping mount '{mount.name}' from {tier} "
-                                        f"(already loaded from higher priority tier)"
+                                        "Skipping mount '%s' from %s "
+                                        "(already loaded from higher priority tier)",
+                                        mount.name,
+                                        tier,
                                     )
                                     continue
 
@@ -1068,17 +1342,20 @@ class MCPMountManager:
                             seen_names[mount.name] = tier_priority
                             count += 1
                             logger.debug(
-                                f"Discovered mount '{mount.name}' from {tier}: {mount_json_path}"
+                                "Discovered mount '%s' from %s: %s",
+                                mount.name,
+                                tier,
+                                mount_json_path,
                             )
 
                     except Exception as e:
-                        logger.warning(f"Failed to load mount from {mount_json_path}: {e}")
+                        logger.warning("Failed to load mount from %s: %s", mount_json_path, e)
 
             else:
                 # Local filesystem
                 base_path = Path(tier_path.lstrip("/"))
                 if not base_path.exists():
-                    logger.debug(f"MCP tier path does not exist: {tier_path}")
+                    logger.debug("MCP tier path does not exist: %s", tier_path)
                     return 0
 
                 for mount_dir in base_path.iterdir():
@@ -1095,8 +1372,10 @@ class MCPMountManager:
                                     existing_priority = seen_names[mount.name]
                                     if tier_priority <= existing_priority:
                                         logger.debug(
-                                            f"Skipping mount '{mount.name}' from {tier} "
-                                            f"(already loaded from higher priority tier)"
+                                            "Skipping mount '%s' from %s "
+                                            "(already loaded from higher priority tier)",
+                                            mount.name,
+                                            tier,
                                         )
                                         continue
 
@@ -1106,18 +1385,23 @@ class MCPMountManager:
                                 seen_names[mount.name] = tier_priority
                                 count += 1
                                 logger.debug(
-                                    f"Discovered mount '{mount.name}' from {tier}: {mount_json_file}"
+                                    "Discovered mount '%s' from %s: %s",
+                                    mount.name,
+                                    tier,
+                                    mount_json_file,
                                 )
 
                             except Exception as e:
-                                logger.warning(f"Failed to load mount from {mount_json_file}: {e}")
+                                logger.warning(
+                                    "Failed to load mount from %s: %s", mount_json_file, e
+                                )
 
         except Exception as e:
-            logger.warning(f"Error scanning MCP tier {tier} at {tier_path}: {e}")
+            logger.warning("Error scanning MCP tier %s at %s: %s", tier, tier_path, e)
 
         return count
 
-    def list_mounts(
+    async def list_mounts(
         self,
         include_unmounted: bool = True,
         tier: str | None = None,
@@ -1138,7 +1422,7 @@ class MCPMountManager:
         """
         # If context provided, re-discover mounts for that context
         if context:
-            self.discover_mounts(context)
+            await self.discover_mounts(context)
 
         # Filter by tier if specified
         if tier:
@@ -1153,7 +1437,7 @@ class MCPMountManager:
 
         return mounts
 
-    def get_mount(
+    async def get_mount(
         self,
         name: str,
         context: "OperationContext | None" = None,
@@ -1172,11 +1456,11 @@ class MCPMountManager:
         """
         # If context provided, re-discover mounts for that context
         if context:
-            self.discover_mounts(context)
+            await self.discover_mounts(context)
 
         return self._mounts.get(name)
 
-    def remove_mount(self, name: str) -> bool:
+    async def remove_mount(self, name: str) -> bool:
         """Remove a mount configuration.
 
         Args:
@@ -1192,12 +1476,12 @@ class MCPMountManager:
                 return False
 
             del self._mounts[name]
-            self._save_mounts_config()
+            await self._save_mounts_config()
             return True
 
         return False
 
-    def add_mount_config(self, mount_config: MCPMount) -> None:
+    async def add_mount_config(self, mount_config: MCPMount) -> None:
         """Add a mount configuration without connecting.
 
         Useful for pre-configuring mounts that will be connected later.
@@ -1210,6 +1494,6 @@ class MCPMountManager:
         mount_config.mounted = False
 
         self._mounts[mount_config.name] = mount_config
-        self._save_mounts_config()
+        await self._save_mounts_config()
 
-        logger.info(f"Added mount configuration: {mount_config.name}")
+        logger.info("Added mount configuration: %s", mount_config.name)

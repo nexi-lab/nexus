@@ -8,7 +8,6 @@ Verifies that:
 5. Non-compliant classes are correctly rejected
 6. DelegatingBackend satisfies ConnectorProtocol (Issue #2362)
 7. SearchableConnector conformance (Issue #2367)
-8. CachingConnectorContract and CacheConfigContract conformance (Issue #2362)
 """
 
 import hashlib
@@ -16,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from nexus.backends.backend import Backend
+from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from nexus.core.protocols.connector import (
@@ -26,7 +25,6 @@ from nexus.core.protocols.connector import (
     DirectoryListingProtocol,
     DirectoryOpsProtocol,
     OAuthCapableProtocol,
-    PassthroughProtocol,
     StreamingProtocol,
 )
 
@@ -50,38 +48,37 @@ class _MockBackend(Backend):
     def _hash(self, content: bytes) -> str:
         return hashlib.sha256(content).hexdigest()
 
-    def write_content(self, content: bytes, context: Any = None) -> WriteResult:
+    def write_content(
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
+    ) -> WriteResult:
         h = self._hash(content)
         if h in self._content:
             self._ref_counts[h] += 1
         else:
             self._content[h] = content
             self._ref_counts[h] = 1
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
-    def read_content(self, content_hash: str, context: Any = None) -> bytes:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return self._content[content_hash]
+    def read_content(self, content_id: str, context: Any = None) -> bytes:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return self._content[content_id]
 
-    def delete_content(self, content_hash: str, context: Any = None) -> None:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        self._ref_counts[content_hash] -= 1
-        if self._ref_counts[content_hash] <= 0:
-            del self._content[content_hash]
-            del self._ref_counts[content_hash]
+    def delete_content(self, content_id: str, context: Any = None) -> None:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        self._ref_counts[content_id] -= 1
+        if self._ref_counts[content_id] <= 0:
+            del self._content[content_id]
+            del self._ref_counts[content_id]
 
-    def content_exists(self, content_hash: str, context: Any = None) -> bool:
-        return content_hash in self._content
+    def content_exists(self, content_id: str, context: Any = None) -> bool:
+        return content_id in self._content
 
-    def get_content_size(self, content_hash: str, context: Any = None) -> int:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return len(self._content[content_hash])
-
-    def get_ref_count(self, content_hash: str, context: Any = None) -> int:
-        return self._ref_counts.get(content_hash, 0)
+    def get_content_size(self, content_id: str, context: Any = None) -> int:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return len(self._content[content_id])
 
     def mkdir(
         self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
@@ -110,22 +107,21 @@ class _PartialClass:
     def name(self) -> str:
         return "partial"
 
-    def write_content(self, content: bytes, context: Any = None) -> Any:
+    def write_content(
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
+    ) -> Any:
         return None
 
-    def read_content(self, content_hash: str, context: Any = None) -> Any:
+    def read_content(self, content_id: str, context: Any = None) -> Any:
         return None
 
-    def delete_content(self, content_hash: str, context: Any = None) -> Any:
+    def delete_content(self, content_id: str, context: Any = None) -> Any:
         return None
 
-    def content_exists(self, content_hash: str, context: Any = None) -> Any:
+    def content_exists(self, content_id: str, context: Any = None) -> Any:
         return None
 
-    def get_content_size(self, content_hash: str, context: Any = None) -> Any:
-        return None
-
-    def get_ref_count(self, content_hash: str, context: Any = None) -> Any:
+    def get_content_size(self, content_id: str, context: Any = None) -> Any:
         return None
 
 
@@ -199,19 +195,12 @@ class TestConcreteBackendConformance:
     """Verify concrete backends satisfy ConnectorProtocol via isinstance."""
 
     def test_local_backend(self, tmp_path: Any) -> None:
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
-        backend = LocalBackend(root_path=str(tmp_path / "data"))
+        backend = CASLocalBackend(root_path=str(tmp_path / "data"))
         assert isinstance(backend, ConnectorProtocol)
         assert isinstance(backend, StreamingProtocol)
         assert isinstance(backend, BatchContentProtocol)
-
-    def test_passthrough_backend(self, tmp_path: Any) -> None:
-        from nexus.backends.passthrough import PassthroughBackend
-
-        backend = PassthroughBackend(base_path=str(tmp_path / "pt"))
-        assert isinstance(backend, ConnectorProtocol)
-        assert isinstance(backend, PassthroughProtocol)
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +254,14 @@ class TestOAuthCapableProtocol:
                 self.user_email = "test@example.com"
                 self.provider = "google"
 
+            @property
+            def user_scoped(self) -> bool:
+                return True
+
+            @property
+            def has_token_manager(self) -> bool:
+                return True
+
         backend = FakeOAuthBackend()
         assert isinstance(backend, OAuthCapableProtocol)
 
@@ -292,7 +289,7 @@ class TestRegistryProtocolValidation:
     @pytest.fixture(autouse=True)
     def _clear_registry(self) -> Any:
         """Clear registry before and after each test."""
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         saved = dict(ConnectorRegistry._base._items)
         ConnectorRegistry.clear()
@@ -301,21 +298,21 @@ class TestRegistryProtocolValidation:
 
     def test_compliant_backend_registers(self) -> None:
         """A compliant Backend subclass registers successfully."""
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         ConnectorRegistry.register("test_ok", _MockBackend)
         assert ConnectorRegistry.is_registered("test_ok")
 
     def test_non_compliant_class_rejected(self) -> None:
         """A class missing ConnectorProtocol methods is rejected."""
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         with pytest.raises(ValueError, match="does not satisfy ConnectorProtocol"):
             ConnectorRegistry.register("test_bad", _IncompleteClass)  # type: ignore[arg-type]
 
     def test_rejection_lists_missing_members(self) -> None:
         """Error message lists the specific missing members."""
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         with pytest.raises(ValueError, match="write_content") as exc_info:
             ConnectorRegistry.register("test_bad2", _IncompleteClass)  # type: ignore[arg-type]
@@ -339,7 +336,7 @@ class TestProtocolMembersSync:
         """_CONNECTOR_PROTOCOL_MEMBERS matches ConnectorProtocol's actual members."""
         import inspect
 
-        from nexus.backends.registry import _CONNECTOR_PROTOCOL_MEMBERS
+        from nexus.backends.base.registry import _CONNECTOR_PROTOCOL_MEMBERS
 
         # Collect all public members defined in the protocol hierarchy
         protocol_members: set[str] = set()
@@ -372,21 +369,21 @@ class TestDelegatingBackendConformance:
     """
 
     def test_delegating_backend_satisfies_connector_protocol(self) -> None:
-        from nexus.backends.delegating import DelegatingBackend
+        from nexus.backends.storage.delegating import DelegatingBackend
 
         inner = _MockBackend()
         wrapper = DelegatingBackend(inner)
         assert isinstance(wrapper, ConnectorProtocol)
 
     def test_delegating_backend_satisfies_content_store_protocol(self) -> None:
-        from nexus.backends.delegating import DelegatingBackend
+        from nexus.backends.storage.delegating import DelegatingBackend
 
         inner = _MockBackend()
         wrapper = DelegatingBackend(inner)
         assert isinstance(wrapper, ContentStoreProtocol)
 
     def test_delegating_backend_satisfies_directory_ops_protocol(self) -> None:
-        from nexus.backends.delegating import DelegatingBackend
+        from nexus.backends.storage.delegating import DelegatingBackend
 
         inner = _MockBackend()
         wrapper = DelegatingBackend(inner)
@@ -439,47 +436,3 @@ class TestSearchableConnectorConformance:
 
         obj = _PartialSearchable()
         assert not isinstance(obj, SearchableConnector)
-
-
-# ---------------------------------------------------------------------------
-# Test: CachingConnectorContract and CacheConfigContract (Issue #2362, Decision 12A)
-# ---------------------------------------------------------------------------
-
-
-class TestCachingContractConformance:
-    """Verify CachingConnectorContract and CacheConfigContract protocols."""
-
-    def test_caching_backend_wrapper_satisfies_caching_connector_contract(self) -> None:
-        """CachingBackendWrapper satisfies the new CachingConnectorContract."""
-        from nexus.backends.caching_backend_wrapper import CachingBackendWrapper
-        from nexus.core.protocols.caching import CachingConnectorContract
-
-        inner = _MockBackend()
-        wrapper = CachingBackendWrapper(inner=inner)
-        assert isinstance(wrapper, CachingConnectorContract)
-
-    def test_plain_backend_not_caching_connector(self) -> None:
-        """Plain Backend without get_cache_stats/clear_cache is not CachingConnectorContract."""
-        from nexus.core.protocols.caching import CachingConnectorContract
-
-        backend = _MockBackend()
-        assert not isinstance(backend, CachingConnectorContract)
-
-    def test_cache_config_contract_satisfied(self) -> None:
-        """Object with session_factory/zone_id/l1_only satisfies CacheConfigContract."""
-        from nexus.core.protocols.caching import CacheConfigContract
-
-        class _MockCacheConfig:
-            session_factory = None
-            zone_id = "root"
-            l1_only = False
-
-        obj = _MockCacheConfig()
-        assert isinstance(obj, CacheConfigContract)
-
-    def test_cache_config_contract_rejected(self) -> None:
-        """Object missing cache config attributes fails CacheConfigContract."""
-        from nexus.core.protocols.caching import CacheConfigContract
-
-        backend = _MockBackend()
-        assert not isinstance(backend, CacheConfigContract)

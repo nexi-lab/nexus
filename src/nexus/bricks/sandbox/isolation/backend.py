@@ -12,7 +12,7 @@ import threading
 from collections.abc import Iterator
 from typing import Any, cast
 
-from nexus.backends.backend import Backend, HandlerStatusResponse
+from nexus.backends.base.backend import Backend, HandlerStatusResponse
 from nexus.bricks.sandbox.isolation._pool import IsolatedPool
 from nexus.bricks.sandbox.isolation.config import IsolationConfig
 from nexus.bricks.sandbox.isolation.errors import (
@@ -21,7 +21,7 @@ from nexus.bricks.sandbox.isolation.errors import (
     IsolationTimeoutError,
 )
 from nexus.contracts.exceptions import BackendError
-from nexus.core.object_store import WriteResult
+from nexus.contracts.types import WriteResult
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ class IsolatedBackend(Backend):
     """
 
     def __init__(self, config: IsolationConfig) -> None:
+        super().__init__()
         self._config = config
         self._pool = IsolatedPool(config)
         self._prop_lock = threading.Lock()
@@ -58,7 +59,10 @@ class IsolatedBackend(Backend):
 
     @property
     def user_scoped(self) -> bool:
-        return bool(self._cached_prop("user_scoped"))
+        try:
+            return bool(self._cached_prop("user_scoped"))
+        except IsolationError:
+            return False
 
     @property
     def is_connected(self) -> bool:
@@ -69,60 +73,53 @@ class IsolatedBackend(Backend):
         return bool(self._cached_prop("thread_safe"))
 
     @property
-    def supports_rename(self) -> bool:
-        return bool(self._cached_prop("supports_rename"))
-
-    @property
     def has_root_path(self) -> bool:
         return bool(self._cached_prop("has_root_path"))
 
     @property
     def has_token_manager(self) -> bool:
-        return bool(self._cached_prop("has_token_manager"))
+        try:
+            return bool(self._cached_prop("has_token_manager"))
+        except IsolationError:
+            return False
 
     @property
     def has_data_dir(self) -> bool:
         return bool(self._cached_prop("has_data_dir"))
 
-    @property
-    def is_passthrough(self) -> bool:
-        return bool(self._cached_prop("is_passthrough"))
-
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        return bool(self._cached_prop("supports_parallel_mmap_read"))
-
     # ── Capability Discovery (Issue #2069) ─────────────────────────────
 
     @property
-    def capabilities(self) -> frozenset[Any]:
+    def backend_features(self) -> frozenset[Any]:
         """Delegate to inner backend's capabilities (cached via _cached_prop)."""
-        result = self._cached_prop("capabilities")
+        result = self._cached_prop("backend_features")
         return result if isinstance(result, frozenset) else frozenset()
 
-    def has_capability(self, cap: object) -> bool:
+    def has_feature(self, cap: object) -> bool:
         """Check capability using cached frozenset."""
-        return cap in self.capabilities
+        return cap in self.backend_features
 
     # ── Content operations (CAS) ────────────────────────────────────────
 
-    def write_content(self, content: bytes, context: "Any | None" = None) -> WriteResult:
-        return cast(WriteResult, self._call("write_content", content, context=context))
+    def write_content(
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: "Any | None" = None
+    ) -> WriteResult:
+        return cast(
+            WriteResult,
+            self._call("write_content", content, content_id, offset=offset, context=context),
+        )
 
-    def read_content(self, content_hash: str, context: "Any | None" = None) -> bytes:
-        return cast(bytes, self._call("read_content", content_hash, context=context))
+    def read_content(self, content_id: str, context: "Any | None" = None) -> bytes:
+        return cast(bytes, self._call("read_content", content_id, context=context))
 
-    def delete_content(self, content_hash: str, context: "Any | None" = None) -> None:
-        self._call("delete_content", content_hash, context=context)
+    def delete_content(self, content_id: str, context: "Any | None" = None) -> None:
+        self._call("delete_content", content_id, context=context)
 
-    def content_exists(self, content_hash: str, context: "Any | None" = None) -> bool:
-        return cast(bool, self._call("content_exists", content_hash, context=context))
+    def content_exists(self, content_id: str, context: "Any | None" = None) -> bool:
+        return cast(bool, self._call("content_exists", content_id, context=context))
 
-    def get_content_size(self, content_hash: str, context: "Any | None" = None) -> int:
-        return cast(int, self._call("get_content_size", content_hash, context=context))
-
-    def get_ref_count(self, content_hash: str, context: "Any | None" = None) -> int:
-        return cast(int, self._call("get_ref_count", content_hash, context=context))
+    def get_content_size(self, content_id: str, context: "Any | None" = None) -> int:
+        return cast(int, self._call("get_content_size", content_id, context=context))
 
     # ── Directory operations ────────────────────────────────────────────
 
@@ -166,32 +163,30 @@ class IsolatedBackend(Backend):
 
     def stream_content(
         self,
-        content_hash: str,
+        content_id: str,
         chunk_size: int = 8192,
         context: "Any | None" = None,
     ) -> Iterator[bytes]:
         """Read full content via pool, then re-chunk locally."""
-        content = self.read_content(content_hash, context=context)
+        content = self.read_content(content_id, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
     def write_stream(
         self,
         chunks: Iterator[bytes],
+        content_id: str = "",
+        *,
         context: "Any | None" = None,
     ) -> WriteResult:
         """Collect chunks locally, then write via pool."""
         content = b"".join(chunks)
-        return self.write_content(content, context=context)
+        return self.write_content(content, content_id, context=context)
 
     # ── Connection lifecycle ────────────────────────────────────────────
 
-    def connect(self, context: "Any | None" = None) -> HandlerStatusResponse:
-        """Probe the worker's backend health.
-
-        The actual ``connect()`` is called lazily by ``worker_call`` on first
-        use, so this method just verifies that the pool can reach the backend.
-        """
+    def check_connection(self, context: "Any | None" = None) -> HandlerStatusResponse:
+        """Probe the worker's backend health."""
         try:
             result = self._pool.submit("check_connection", (), {"context": context})
             if isinstance(result, HandlerStatusResponse):
@@ -200,7 +195,8 @@ class IsolatedBackend(Backend):
         except IsolationError as exc:
             return HandlerStatusResponse(success=False, error_message=str(exc))
 
-    def disconnect(self, _context: "Any | None" = None) -> None:
+    def close(self) -> None:
+        """Shut down the isolation pool and release resources."""
         self._pool.shutdown()
 
     # ── Internal helpers ────────────────────────────────────────────────

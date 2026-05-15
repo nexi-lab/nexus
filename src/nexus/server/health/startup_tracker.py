@@ -26,9 +26,7 @@ class StartupPhase(StrEnum):
     REALTIME = "realtime"
     SEARCH = "search"
     SERVICES = "services"
-    BRICKS = "bricks"
     UPLOADS = "uploads"
-    IPC = "ipc"
     GRPC = "grpc"
 
 
@@ -41,6 +39,7 @@ _REQUIRED_FOR_READY: frozenset[StartupPhase] = frozenset(
         StartupPhase.FEATURES,
         StartupPhase.PERMISSIONS,
         StartupPhase.SERVICES,
+        StartupPhase.GRPC,
     }
 )
 

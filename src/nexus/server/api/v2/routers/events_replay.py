@@ -22,7 +22,8 @@ from fastapi.responses import StreamingResponse
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError
-from nexus.server.dependencies import get_auth_result, get_operation_context
+from nexus.server.dependencies import get_operation_context, require_auth
+from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +62,25 @@ def _get_replay_service(request: Request) -> Any:
 
     record_store = getattr(request.app.state, "record_store", None)
     if record_store is None:
-        raise HTTPException(status_code=503, detail="Database not configured")
+        session_factory = getattr(request.app.state, "session_factory", None)
+        if session_factory is None:
+            raise HTTPException(status_code=503, detail="Database not configured")
+        record_store = type(
+            "_SessionFactoryRecordStore", (), {"session_factory": session_factory}
+        )()
 
-    from nexus.services.event_subsystem.log.replay import EventReplayService
+    from nexus.services.event_log.replay import EventReplayService
 
-    service = EventReplayService(record_store)
+    service = EventReplayService(
+        record_store,
+        event_signal=getattr(request.app.state, "event_signal", None),
+    )
     request.app.state.replay_service = service
     return service
+
+
+def _get_zone_registry(request: Request) -> Any | None:
+    return getattr(request.app.state, "zone_registry", None)
 
 
 def _get_stream_config(request: Request) -> dict[str, Any]:  # noqa: ARG001
@@ -79,6 +92,19 @@ def _get_stream_config(request: Request) -> dict[str, Any]:  # noqa: ARG001
         "idle_timeout": float(os.getenv("NEXUS_SSE_IDLE_TIMEOUT", "300")),
         "keepalive_s": float(os.getenv("NEXUS_SSE_KEEPALIVE", "15")),
     }
+
+
+def _schedule_queue_put(request_loop: Any, queue: asyncio.Queue[Any], item: Any) -> None:
+    """Schedule a queue put on the request loop from a zone runner loop."""
+    if request_loop.is_closed():
+        return
+
+    def _put_nowait() -> None:
+        with contextlib.suppress(asyncio.QueueFull):
+            queue.put_nowait(item)
+
+    with contextlib.suppress(RuntimeError):
+        request_loop.call_soon_threadsafe(_put_nowait)
 
 
 # =============================================================================
@@ -99,7 +125,7 @@ async def replay_events(
     agent_id: str | None = Query(None, description="Filter by agent ID"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     cursor: str | None = Query(None, description="Cursor from previous response"),
-    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     """Query historical events with cursor-based pagination.
 
@@ -108,35 +134,42 @@ async def replay_events(
     """
     service = _get_replay_service(request)
 
-    # Default zone from auth
+    # Zone scoping: non-admin users are locked to their zone
+    is_admin = auth_result.get("is_admin", False)
+    auth_zone = auth_result.get("zone_id")
     effective_zone = zone_id
-    if effective_zone is None and _auth_result:
-        effective_zone = _auth_result.get("zone_id")
+    if not is_admin and auth_zone:
+        effective_zone = auth_zone  # force zone scope
+    elif effective_zone is None:
+        effective_zone = auth_zone
 
     # Parse event_types from comma-separated string
     parsed_types = None
     if event_types:
         parsed_types = [t.strip() for t in event_types.split(",") if t.strip()]
 
-    try:
-        result = service.replay(
-            zone_id=effective_zone,
-            since_revision=since_revision,
-            since_timestamp=since_timestamp,
-            event_types=parsed_types,
-            path_pattern=path_pattern,
-            agent_id=agent_id,
-            limit=limit,
-            cursor=cursor,
-        )
-        return {
-            "events": [ev.to_dict() for ev in result.events],
-            "next_cursor": result.next_cursor,
-            "has_more": result.has_more,
-        }
-    except Exception as e:
-        logger.error("Event replay query error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to replay events") from e
+    async def _replay() -> dict[str, Any]:
+        try:
+            result = service.replay(
+                zone_id=effective_zone,
+                since_revision=since_revision,
+                since_timestamp=since_timestamp,
+                event_types=parsed_types,
+                path_pattern=path_pattern,
+                agent_id=agent_id,
+                limit=limit,
+                cursor=cursor,
+            )
+            return {
+                "events": [ev.to_dict() for ev in result.events],
+                "next_cursor": result.next_cursor,
+                "has_more": result.has_more,
+            }
+        except Exception as e:
+            logger.error("Event replay query error: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to replay events") from e
+
+    return await run_zone_scoped(_get_zone_registry(request), effective_zone, _replay)
 
 
 # =============================================================================
@@ -155,7 +188,7 @@ async def stream_events(
     ),
     path_pattern: str | None = Query(None, description="Path glob pattern"),
     agent_id: str | None = Query(None, description="Filter by agent ID"),
-    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
 ) -> StreamingResponse:
     """Server-Sent Events stream of real-time events.
 
@@ -169,10 +202,12 @@ async def stream_events(
     service = _get_replay_service(request)
     config = _get_stream_config(request)
 
-    # Default zone from auth
+    # Zone scoping: non-admin users are locked to their zone
+    is_admin = auth_result.get("is_admin", False)
+    auth_zone = auth_result.get("zone_id")
     effective_zone = zone_id
-    if effective_zone is None and _auth_result:
-        effective_zone = _auth_result.get("zone_id")
+    if (not is_admin and auth_zone) or effective_zone is None:
+        effective_zone = auth_zone
     zone_key = effective_zone or ROOT_ZONE_ID
 
     # Check Last-Event-ID header for resume
@@ -193,40 +228,67 @@ async def stream_events(
         parsed_types = [t.strip() for t in event_types.split(",") if t.strip()]
 
     async def event_generator() -> AsyncIterator[str]:
-        """SSE event generator with keepalive pings."""
+        """SSE event generator with keepalive pings.
+
+        Uses an asyncio.Queue to decouple the event stream from keepalive
+        timing. A background task pumps events into the queue while the
+        main loop pulls with a timeout — on timeout, emit a keepalive ping.
+        """
         try:
             keepalive_interval = config["keepalive_s"]
             idle_timeout = config["idle_timeout"]
 
-            stream = service.stream(
-                zone_id=effective_zone,
-                since_revision=since_revision,
-                since_timestamp=since_timestamp,
-                event_types=parsed_types,
-                path_pattern=path_pattern,
-                agent_id=agent_id,
-                poll_interval=1.0,
-                idle_timeout=idle_timeout,
-            )
+            queue: asyncio.Queue[Any] = asyncio.Queue()
+            request_loop = asyncio.get_running_loop()
 
-            last_keepalive = asyncio.get_event_loop().time()
+            async def _pump_events() -> None:
+                """Background task: pump events from stream into queue."""
+                try:
+
+                    async def _stream() -> None:
+                        stream = service.stream(
+                            zone_id=effective_zone,
+                            since_revision=since_revision,
+                            since_timestamp=since_timestamp,
+                            event_types=parsed_types,
+                            path_pattern=path_pattern,
+                            agent_id=agent_id,
+                            poll_interval=1.0,
+                            idle_timeout=idle_timeout,
+                        )
+                        async for event in stream:
+                            _schedule_queue_put(request_loop, queue, event)
+
+                    await run_zone_scoped(_get_zone_registry(request), effective_zone, _stream)
+                finally:
+                    _schedule_queue_put(request_loop, queue, None)  # sentinel
+
+            pump_task = asyncio.create_task(_pump_events())
 
             # Yield retry field for client auto-reconnect
             yield "retry: 5000\n\n"
 
-            async for event in stream:
-                if await request.is_disconnected():
-                    break
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
 
-                event_data = json.dumps(event.to_dict())
-                seq = event.sequence_number or ""
-                yield f"id: {seq}\nevent: event\ndata: {event_data}\n\n"
-                last_keepalive = asyncio.get_event_loop().time()
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=keepalive_interval)
+                    except TimeoutError:
+                        yield ": keepalive\n\n"
+                        continue
 
-            # Check if we need a keepalive ping
-            now = asyncio.get_event_loop().time()
-            if now - last_keepalive >= keepalive_interval:
-                yield ": keepalive\n\n"
+                    if item is None:
+                        break  # stream ended
+
+                    event_data = json.dumps(item.to_dict())
+                    seq = item.sequence_number or ""
+                    yield f"id: {seq}\nevent: event\ndata: {event_data}\n\n"
+            finally:
+                pump_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pump_task
 
         finally:
             await _release_sse_slot(zone_key)
@@ -258,7 +320,7 @@ async def list_events(
     operation_type: str | None = Query(None, description="Filter by operation type"),
     limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
     cursor: str | None = Query(None, description="Cursor from previous response"),
-    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     """Query the operation log / event history (#2056, ported from v1).
 
@@ -270,47 +332,52 @@ async def list_events(
     """
     service = _get_replay_service(request)
 
-    # Default zone from auth
+    # Zone scoping: non-admin users are locked to their zone
+    is_admin = auth_result.get("is_admin", False)
+    auth_zone = auth_result.get("zone_id")
     effective_zone = zone_id
-    if effective_zone is None and _auth_result:
-        effective_zone = _auth_result.get("zone_id")
+    if (not is_admin and auth_zone) or effective_zone is None:
+        effective_zone = auth_zone
 
-    try:
-        result = service.list_v1(
-            zone_id=effective_zone,
-            agent_id=agent_id,
-            operation_type=operation_type,
-            path_prefix=path_prefix,
-            since=since,
-            until=until,
-            limit=limit,
-            cursor=cursor,
-        )
+    async def _list() -> dict[str, Any]:
+        try:
+            result = service.list_v1(
+                zone_id=effective_zone,
+                agent_id=agent_id,
+                operation_type=operation_type,
+                path_prefix=path_prefix,
+                since=since,
+                until=until,
+                limit=limit,
+                cursor=cursor,
+            )
 
-        events = [
-            {
-                "event_id": ev.event_id,
-                "type": ev.type,
-                "path": ev.path,
-                "new_path": ev.new_path,
-                "zone_id": ev.zone_id,
-                "agent_id": ev.agent_id,
-                "status": ev.status,
-                "delivered": ev.delivered,
-                "timestamp": ev.timestamp or None,
+            events = [
+                {
+                    "event_id": ev.event_id,
+                    "type": ev.type,
+                    "path": ev.path,
+                    "new_path": ev.new_path,
+                    "zone_id": ev.zone_id,
+                    "agent_id": ev.agent_id,
+                    "status": ev.status,
+                    "delivered": ev.delivered,
+                    "timestamp": ev.timestamp or None,
+                }
+                for ev in result.events
+            ]
+
+            return {
+                "events": events,
+                "next_cursor": result.next_cursor,
+                "has_more": result.has_more,
             }
-            for ev in result.events
-        ]
 
-        return {
-            "events": events,
-            "next_cursor": result.next_cursor,
-            "has_more": result.has_more,
-        }
+        except Exception as e:
+            logger.error("Event log query error: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to query events") from e
 
-    except Exception as e:
-        logger.error("Event log query error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to query events") from e
+    return await run_zone_scoped(_get_zone_registry(request), effective_zone, _list)
 
 
 # =============================================================================
@@ -331,7 +398,7 @@ async def watch_for_changes(
     request: Request,
     path: str = Query("/**/*", description="Path or glob pattern to watch"),
     timeout: float = Query(30.0, ge=0.1, le=300.0, description="Maximum time to wait in seconds"),
-    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     """Long-polling endpoint to wait for file system changes.
 
@@ -339,14 +406,16 @@ async def watch_for_changes(
     or ``{"changes": [], "timeout": true}`` if no change occurs.
     """
     nexus_fs = _get_nexus_fs(request)
-    context = None
-    if _auth_result:
-        context = get_operation_context(_auth_result)
+    context = get_operation_context(auth_result)
 
     try:
-        change = await nexus_fs.events_service.wait_for_changes(
-            path=path, timeout=timeout, _context=context
-        )
+
+        async def _work() -> Any:
+            return await asyncio.to_thread(
+                nexus_fs.sys_watch, path, timeout, recursive=False, context=context
+            )
+
+        change = await run_zone_scoped(_get_zone_registry(request), context.zone_id, _work)
         if change is None:
             return {"changes": [], "timeout": True}
         return {"changes": [change], "timeout": False}

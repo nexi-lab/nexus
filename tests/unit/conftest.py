@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.testkit.fixtures import record_store as record_store
+
 # ---------------------------------------------------------------------------
 # Unit-test suite target: ~3 minutes (180s). We warn if over, but do not
 # fail (hard limits cause flaky CI on busy runners). See tests/unit/README.md.
@@ -58,6 +60,10 @@ _fuse_mock.FUSE = MagicMock
 _fuse_mock.Operations = object
 _fuse_mock.FuseOSError = FuseOSError
 sys.modules["fuse"] = _fuse_mock
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Apply collection-time suite adjustments."""
 
 
 @pytest.fixture(autouse=True)
@@ -123,9 +129,8 @@ def isolated_db(tmp_path, monkeypatch):
     The database is automatically cleaned up after the test completes.
 
     Usage:
-        def test_something(isolated_db):
-            metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-            nx = NexusFS(metadata_store=metadata_store)
+        async def test_something(isolated_db, tmp_path):
+            nx = make_test_nexus(tmp_path, use_raft=True)
             # Test code here
             nx.close()
 
@@ -150,17 +155,3 @@ def isolated_db(tmp_path, monkeypatch):
 
         with suppress(Exception):  # Best effort cleanup
             db_path.unlink()
-
-
-@pytest.fixture
-def record_store():
-    """Shared RecordStoreABC fixture for unit tests.
-
-    Provides an in-memory SQLite-backed RecordStoreABC with all tables created.
-    Use for tests that need real SQL operations against the storage pillar.
-    """
-    from tests.helpers.in_memory_record_store import InMemoryRecordStore
-
-    store = InMemoryRecordStore()
-    yield store
-    store.close()

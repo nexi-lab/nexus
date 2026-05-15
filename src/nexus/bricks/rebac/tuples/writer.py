@@ -512,30 +512,8 @@ class TupleWriter:
                             subj_type, subj_id, obj_type, obj_id, tid
                         )
 
-                # L2 cache: bulk delete affected entries
-                if invalidation_keys:
-                    delete_conditions = []
-                    delete_params: list[str] = []
-                    for inv_key in invalidation_keys:
-                        subj_type, subj_id, _rel, obj_type, obj_id, tid = inv_key
-                        delete_conditions.append(
-                            "(zone_id = ? AND subject_type = ? AND subject_id = ? "
-                            "AND object_type = ? AND object_id = ?)"
-                        )
-                        delete_params.extend(
-                            [tid or ROOT_ZONE_ID, subj_type, subj_id, obj_type, obj_id]
-                        )
-
-                    chunk_size = 50
-                    for i in range(0, len(delete_conditions), chunk_size):
-                        chunk_conds = delete_conditions[i : i + chunk_size]
-                        chunk_params = delete_params[i * 5 : (i + chunk_size) * 5]
-
-                        if chunk_conds:
-                            delete_sql = "DELETE FROM rebac_check_cache WHERE " + " OR ".join(
-                                chunk_conds
-                            )
-                            cursor.execute(self._fix_sql(delete_sql), chunk_params)
+                # L2 SQL cache (rebac_check_cache) removed — skip bulk delete.
+                # L1 in-memory cache invalidation is handled above.
 
                 # Increment revision for all affected zones
                 if created_count > 0:
@@ -792,33 +770,59 @@ class TupleWriter:
         object_entity: Entity,
         zone_id: str | None,
     ) -> str | None:
-        """Check if a tuple already exists (idempotency). Returns tuple_id or None."""
+        """Check if a tuple already exists (idempotency). Returns tuple_id or None.
+
+        Zone-aware idempotency that still catches the auto-grant
+        duplicate scenario fixed in #3997: a post-mkdir hook writes the
+        tuple with ``zone_id="root"`` while the explicit ``rebac create``
+        omits the zone (``zone_id=None``); both shapes resolve to the
+        same row under ``idx_rebac_tuple_unique`` (zone-agnostic), so
+        treating ``None`` and ``"root"`` as equivalent here lets the
+        explicit call no-op instead of crashing on the unique-constraint
+        violation. Distinct named zones (``zone-a`` vs ``zone-b``) keep
+        their own idempotency contracts.
+        """
         cursor.execute(
             self._fix_sql(
                 """
-                SELECT tuple_id FROM rebac_tuples
+                SELECT tuple_id, zone_id FROM rebac_tuples
                 WHERE subject_type = ? AND subject_id = ?
-                AND (subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL))
+                AND COALESCE(subject_relation, '') = COALESCE(?, '')
                 AND relation = ?
                 AND object_type = ? AND object_id = ?
-                AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
                 """
             ),
             (
                 subject_entity.entity_type,
                 subject_entity.entity_id,
                 subject_relation,
-                subject_relation,
                 relation,
                 object_entity.entity_type,
                 object_entity.entity_id,
-                zone_id,
-                zone_id,
             ),
         )
-        existing = cursor.fetchone()
-        if existing:
-            return cast(str, existing[0] if isinstance(existing, tuple) else existing["tuple_id"])
+        rows = cursor.fetchall()
+
+        def _zone_of(row: Any) -> str | None:
+            if isinstance(row, tuple):
+                return cast("str | None", row[1])
+            value = row.get("zone_id") if hasattr(row, "get") else row["zone_id"]
+            return cast("str | None", value)
+
+        def _tid_of(row: Any) -> str:
+            if isinstance(row, tuple):
+                return cast(str, row[0])
+            return cast(str, row["tuple_id"])
+
+        # Treat ``None`` and ``"root"`` as the same zone (auto-grant vs
+        # explicit-create alias) — anything else must match exactly.
+        def _norm(z: str | None) -> str:
+            return "root" if z is None else z
+
+        target = _norm(zone_id)
+        for row in rows:
+            if _norm(_zone_of(row)) == target:
+                return _tid_of(row)
         return None
 
 

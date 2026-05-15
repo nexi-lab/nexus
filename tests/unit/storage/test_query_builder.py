@@ -23,11 +23,9 @@ class TestGetReadyWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/test/path",  # virtual_path
-                "backend1",  # backend_id
-                "/physical/path",  # physical_path
                 "file",  # file_type
                 1024,  # size_bytes
-                "hash123",  # content_hash
+                "hash123",  # content_id
                 "2024-01-01",  # created_at
                 "2024-01-02",  # updated_at
                 json.dumps({"state": "ready"}),  # status
@@ -65,7 +63,7 @@ class TestGetReadyWork:
         session.execute.assert_called_once()
         call_args = session.execute.call_args[0][0]
         assert "SELECT * FROM ready_work_items" in str(call_args)
-        assert "LIMIT 10" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_ready_work_null_status(self):
         """Test getting ready work with null status and priority."""
@@ -77,11 +75,9 @@ class TestGetReadyWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/test/path",  # virtual_path
-                "backend1",  # backend_id
-                "/physical/path",  # physical_path
                 "file",  # file_type
                 1024,  # size_bytes
-                "hash123",  # content_hash
+                "hash123",  # content_id
                 "2024-01-01",  # created_at
                 "2024-01-02",  # updated_at
                 None,  # status
@@ -126,11 +122,9 @@ class TestGetPendingWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/pending/path",  # virtual_path
-                "backend1",  # backend_id
-                "/physical/path",  # physical_path
                 "file",  # file_type
                 2048,  # size_bytes
-                "hash456",  # content_hash
+                "hash456",  # content_id
                 "2024-01-01",  # created_at
                 "2024-01-02",  # updated_at
                 json.dumps({"state": "pending"}),  # status
@@ -164,7 +158,7 @@ class TestGetPendingWork:
 
         # Verify
         call_args = session.execute.call_args[0][0]
-        assert "LIMIT 5" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_pending_work_error(self):
         """Test error handling in get_pending_work."""
@@ -192,11 +186,9 @@ class TestGetBlockedWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/blocked/path",  # virtual_path
-                "backend1",  # backend_id
-                "/physical/path",  # physical_path
                 "file",  # file_type
                 4096,  # size_bytes
-                "hash789",  # content_hash
+                "hash789",  # content_id
                 "2024-01-01",  # created_at
                 "2024-01-02",  # updated_at
                 json.dumps({"state": "blocked"}),  # status
@@ -231,7 +223,7 @@ class TestGetBlockedWork:
 
         # Verify
         call_args = session.execute.call_args[0][0]
-        assert "LIMIT 20" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_blocked_work_error(self):
         """Test error handling in get_blocked_work."""
@@ -259,7 +251,6 @@ class TestGetInProgressWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/progress/path",  # virtual_path
-                "backend1",  # backend_id
                 "file",  # file_type
                 8192,  # size_bytes
                 "2024-01-01",  # created_at
@@ -297,7 +288,7 @@ class TestGetInProgressWork:
 
         # Verify
         call_args = session.execute.call_args[0][0]
-        assert "LIMIT 15" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_in_progress_work_null_fields(self):
         """Test getting in-progress work with null fields."""
@@ -309,7 +300,6 @@ class TestGetInProgressWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/progress/path",  # virtual_path
-                "backend1",  # backend_id
                 "file",  # file_type
                 8192,  # size_bytes
                 "2024-01-01",  # created_at
@@ -357,7 +347,6 @@ class TestGetWorkByPriority:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/priority/path",  # virtual_path
-                "backend1",  # backend_id
                 "file",  # file_type
                 16384,  # size_bytes
                 "2024-01-01",  # created_at
@@ -395,7 +384,7 @@ class TestGetWorkByPriority:
 
         # Verify
         call_args = session.execute.call_args[0][0]
-        assert "LIMIT 100" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_work_by_priority_multiple_results(self):
         """Test getting multiple work items by priority."""
@@ -407,7 +396,6 @@ class TestGetWorkByPriority:
                 uuid.uuid4(),
                 uuid.uuid4(),
                 "/high/priority",
-                "backend1",
                 "file",
                 100,
                 "2024-01-01",
@@ -420,7 +408,6 @@ class TestGetWorkByPriority:
                 uuid.uuid4(),
                 uuid.uuid4(),
                 "/low/priority",
-                "backend1",
                 "file",
                 100,
                 "2024-01-01",

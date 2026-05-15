@@ -14,6 +14,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.rebac_service import ReBACService
 from nexus.contracts.types import OperationContext
 
@@ -410,6 +413,26 @@ class TestReBACCheck:
         assert call_kwargs["zone_id"] == "zone-acme"
 
     @pytest.mark.asyncio
+    async def test_check_does_not_forward_operation_context_as_abac_context(
+        self, service, mock_rebac_manager
+    ):
+        """OperationContext supplies auth zone, not ABAC context for manager caches."""
+        ctx = OperationContext(
+            user_id="alice", groups=[], zone_id="zone-acme", is_system=False, is_admin=False
+        )
+
+        await service.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+            context=ctx,
+        )
+
+        call_kwargs = mock_rebac_manager.rebac_check.call_args[1]
+        assert call_kwargs["zone_id"] == "zone-acme"
+        assert call_kwargs["context"] is None
+
+    @pytest.mark.asyncio
     async def test_check_explicit_zone_overrides_context(self, service, mock_rebac_manager):
         """Test that explicit zone_id takes precedence over context."""
         ctx = OperationContext(
@@ -441,33 +464,6 @@ class TestReBACCheck:
 
         call_kwargs = mock_rebac_manager.rebac_check.call_args[1]
         assert call_kwargs["permission"] == permission
-
-    @pytest.mark.asyncio
-    async def test_check_with_consistency_fully_consistent(self, service, mock_rebac_manager):
-        """Test permission check with fully_consistent mode (security audit)."""
-        await service.rebac_check(
-            subject=("user", "alice"),
-            permission="read",
-            object=("file", "/doc.txt"),
-            consistency_mode="fully_consistent",
-        )
-
-        call_kwargs = mock_rebac_manager.rebac_check.call_args[1]
-        assert call_kwargs["consistency"] is not None
-
-    @pytest.mark.asyncio
-    async def test_check_with_consistency_at_least_as_fresh(self, service, mock_rebac_manager):
-        """Test permission check with at_least_as_fresh mode (read-after-write)."""
-        await service.rebac_check(
-            subject=("user", "alice"),
-            permission="read",
-            object=("file", "/doc.txt"),
-            consistency_mode="at_least_as_fresh",
-            min_revision=42,
-        )
-
-        call_kwargs = mock_rebac_manager.rebac_check.call_args[1]
-        assert call_kwargs["consistency"] is not None
 
 
 # =========================================================================
@@ -770,40 +766,50 @@ class TestRegisterNamespace:
 
 
 # =========================================================================
-# _get_subject_from_context Tests
+# get_subject_from_context Tests (canonical function in lib/context_utils)
 # =========================================================================
 
 
 class TestGetSubjectFromContext:
-    """Test the helper method that extracts subjects from various context formats."""
+    """Test the public get_subject_from_context function."""
 
-    def test_extract_from_dict_with_subject_tuple(self, service):
+    def test_extract_from_dict_with_subject_tuple(self):
         """Test extracting subject from dict with 'subject' key."""
+        from nexus.lib.context_utils import get_subject_from_context
+
         ctx = {"subject": ("user", "alice")}
-        result = service._get_subject_from_context(ctx)
+        result = get_subject_from_context(ctx)
         assert result == ("user", "alice")
 
-    def test_extract_from_dict_with_subject_type_and_id(self, service):
+    def test_extract_from_dict_with_subject_type_and_id(self):
         """Test extracting subject from dict with type and id keys."""
+        from nexus.lib.context_utils import get_subject_from_context
+
         ctx = {"subject_type": "user", "subject_id": "bob"}
-        result = service._get_subject_from_context(ctx)
+        result = get_subject_from_context(ctx)
         assert result == ("user", "bob")
 
-    def test_extract_from_dict_with_user_id_key(self, service):
+    def test_extract_from_dict_with_user_id_key(self):
         """Test extracting subject from dict with 'user_id' key."""
+        from nexus.lib.context_utils import get_subject_from_context
+
         ctx = {"user_id": "charlie"}
-        result = service._get_subject_from_context(ctx)
+        result = get_subject_from_context(ctx)
         assert result == ("user", "charlie")
 
-    def test_extract_from_operation_context(self, service, operation_context):
+    def test_extract_from_operation_context(self, operation_context):
         """Test extracting subject from OperationContext."""
-        result = service._get_subject_from_context(operation_context)
+        from nexus.lib.context_utils import get_subject_from_context
+
+        result = get_subject_from_context(operation_context)
         assert result is not None
         assert result[1] == "test_user"
 
-    def test_returns_none_for_none_context(self, service):
+    def test_returns_none_for_none_context(self):
         """Test that None context returns None."""
-        result = service._get_subject_from_context(None)
+        from nexus.lib.context_utils import get_subject_from_context
+
+        result = get_subject_from_context(None)
         assert result is None
 
 

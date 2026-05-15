@@ -1,4 +1,4 @@
-"""Kubernetes-style health probe endpoints (#2168).
+"""Kubernetes-style health probe endpoints (#2168, #3063).
 
 Three lightweight probes for k8s ``livenessProbe``, ``readinessProbe``,
 and ``startupProbe`` configuration:
@@ -8,11 +8,15 @@ and ``startupProbe`` configuration:
 * ``GET /healthz/startup`` — 200 when all lifespan phases are done
 
 All probes are **zero-I/O, in-memory only** and exempt from rate limiting.
-On any unexpected exception the probe **fails open** (returns 200) so a
-transient bug cannot cascade into a pod kill-loop.
+
+Failure policy (Issue #3063):
+- Liveness: fails open (200) — avoids restart loops from transient probe bugs.
+- Readiness: fails closed (503) — a broken instance should not receive traffic.
+- Startup: fails closed (503) — Kubernetes should keep waiting/restarting.
 """
 
 import logging
+import os
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -38,10 +42,25 @@ def _check_raft_topology(request: Request) -> tuple[bool, str]:
         nx_fs = getattr(request.app.state, "nexus_fs", None)
         if nx_fs is None:
             return True, ""
-        zone_mgr = getattr(nx_fs, "_zone_mgr", None)
-        if zone_mgr is None:
+        # Phase H: federation readiness is observed through the
+        # DistributedCoordinator HAL trait via the
+        # ``nexus_runtime.federation_is_initialized`` module helper —
+        # the kernel itself no longer exposes a ``mount_reconciliation_done``
+        # PyO3 method (zone lifecycle is kernel-internal HAL state).
+        # Fails open when the helper is unavailable (slim builds) or
+        # federation is disabled by leaving NEXUS_PEERS unset.
+        kernel = getattr(nx_fs, "_kernel", None)
+        if kernel is None:
             return True, ""
-        if not zone_mgr.ensure_topology():
+        if not os.environ.get("NEXUS_PEERS"):
+            return True, ""
+        try:
+            import nexus_runtime as _nr
+
+            ready = bool(_nr.federation_is_initialized(kernel))
+        except Exception:
+            return True, ""
+        if not ready:
             return False, "Raft topology not ready"
         return True, ""
     except Exception:
@@ -96,7 +115,7 @@ async def readiness(request: Request) -> JSONResponse:
 
     Checks:
     1. Required startup phases completed (StartupTracker)
-    2. Raft topology initialised (if applicable)
+    2. Raft topology initialised and root zone is leader-writeable
     3. DB pool has at least one idle connection
     """
     try:
@@ -129,9 +148,12 @@ async def readiness(request: Request) -> JSONResponse:
         uptime = tracker.elapsed_seconds if tracker else 0.0
         return JSONResponse({"status": "ready", "uptime_seconds": round(uptime, 2)})
     except Exception:
-        # Fail open — an unexpected error should not kill the pod
-        logger.exception("Readiness probe failed open")
-        return JSONResponse({"status": "ready", "uptime_seconds": 0.0})
+        # Fail closed — a broken instance should not receive traffic (Issue #3063)
+        logger.exception("Readiness probe error — returning 503")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "reason": "unexpected_probe_error"},
+        )
 
 
 @router.get("/healthz/startup")
@@ -158,5 +180,9 @@ async def startup(request: Request) -> JSONResponse:
             },
         )
     except Exception:
-        logger.exception("Startup probe failed open")
-        return JSONResponse({"status": "started"})
+        # Fail closed — Kubernetes should keep waiting/restarting (Issue #3063)
+        logger.exception("Startup probe error — returning 503")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "reason": "unexpected_probe_error"},
+        )

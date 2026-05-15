@@ -1,0 +1,76 @@
+name: Nexus Bench
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "nexus-bench/**"
+      - "nexus-fuse/**"
+      - "packages/nexus-fs/**"
+      - "src/nexus/**"
+      - "rust/kernel/**"
+      - "rust/backends/**"
+      - "rust/transport/**"
+      - ".github/workflows/nexus-bench.yml"
+      - ".github/workflows/nexus-bench-real.yml"
+  push:
+    branches: [main, develop]
+    paths:
+      - "nexus-bench/**"
+      - "nexus-fuse/**"
+      - "packages/nexus-fs/**"
+      - "src/nexus/**"
+      - "rust/kernel/**"
+      - "rust/backends/**"
+      - "rust/transport/**"
+      - ".github/workflows/nexus-bench.yml"
+      - ".github/workflows/nexus-bench-real.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nexus-bench:
+    name: Validate trace harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test harness
+        run: cargo test --manifest-path nexus-bench/Cargo.toml
+
+      - name: Validate traces
+        run: cargo run --manifest-path nexus-bench/Cargo.toml -- validate --trace-dir nexus-bench/traces
+
+      - name: Replay smoke trace
+        run: |
+          mkdir -p /tmp/nexus-bench
+          cargo run --manifest-path nexus-bench/Cargo.toml -- replay \
+            --target noop \
+            --trace nexus-bench/traces/agent-cold-start.json \
+            --out-json /tmp/nexus-bench/agent-cold-start.json \
+            --out-md /tmp/nexus-bench/agent-cold-start.md
+
+      - name: Check deterministic smoke thresholds
+        run: |
+          cargo run --manifest-path nexus-bench/Cargo.toml -- diff \
+            --baseline nexus-bench/baselines/develop-5698d0026-noop.json \
+            --candidate /tmp/nexus-bench/agent-cold-start.json \
+            --threshold nexus-bench/thresholds/ci-noop.json \
+            --out-md /tmp/nexus-bench/diff.md
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nexus-bench-smoke
+          path: /tmp/nexus-bench/*

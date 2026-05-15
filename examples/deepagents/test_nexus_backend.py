@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nexus
 
 
-def test_basic_operations():
+async def test_basic_operations():
     """Test basic file operations through NexusBackend."""
 
     print("Testing NexusBackend basic operations...")
@@ -61,7 +61,7 @@ def test_basic_operations():
 
         # Test exists
         print("\n4. Testing exists operation...")
-        assert nx.sys_access(test_path), f"{test_path} should exist"
+        assert await nx.access(test_path), f"{test_path} should exist"
         print(f"   ✓ File exists: {test_path}")
 
         # Test versioning (edit simulation)
@@ -71,7 +71,9 @@ def test_basic_operations():
             nx.sys_write(test_path, new_content.encode("utf-8"))
             print(f"   ✓ Wrote version {i + 1}")
 
-        versions = nx.list_versions(test_path)
+        from nexus.lib.sync_bridge import run_sync
+
+        versions = run_sync(nx.version_service.list_versions(test_path))
         print(f"   ✓ File has {len(versions)} versions")
         assert len(versions) >= 4, f"Expected at least 4 versions, got {len(versions)}"
 

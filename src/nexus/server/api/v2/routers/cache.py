@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ async def warmup_cache(
     """Pre-populate caches for faster access."""
     from nexus.server.cache_warmer import CacheWarmer, WarmupConfig, get_file_access_tracker
 
-    zone_id = auth_result.get("zone_id", "root")
+    zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
 
     config = WarmupConfig(
         max_files=body.max_files,
@@ -113,11 +114,6 @@ async def get_cache_stats(
 
     cache_stats: dict[str, Any] = {}
 
-    if hasattr(nexus_fs, "backend") and hasattr(nexus_fs.backend, "content_cache"):
-        cc = nexus_fs.backend.content_cache
-        if cc and hasattr(cc, "get_stats"):
-            cache_stats["content_cache"] = cc.get_stats()
-
     rm = getattr(nexus_fs, "_rebac_manager", None)
     if rm is not None:
         pc = getattr(rm, "_permission_cache", None)
@@ -145,7 +141,7 @@ async def get_hot_files(
     """Get frequently accessed files."""
     from nexus.server.cache_warmer import get_file_access_tracker
 
-    zone_id = auth_result.get("zone_id", "root")
+    zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
     tracker = get_file_access_tracker()
     hot_files = tracker.get_hot_files(zone_id=zone_id, limit=limit)
 

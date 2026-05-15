@@ -18,6 +18,7 @@ from cachetools import TTLCache as _TTLCache
 from fuse import Operations
 
 from nexus.fuse.cache import FUSECacheManager
+from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
 from nexus.fuse.ops._events import FUSEEventDispatcher
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
@@ -29,7 +30,6 @@ from nexus.fuse.ops._shared import (
     get_zone_id,
     parse_virtual_path_for_fuse,
     read_range_from_backend,
-    resolve_io_profile,
     rust_available,
     try_rust,
 )
@@ -69,8 +69,8 @@ except ImportError:
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.namespace_manager import NamespaceManager
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
     from nexus.contracts.types import OperationContext
+    from nexus.core.nexus_fs import NexusFS
     from nexus.fuse.mount import MountMode
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ class NexusFUSEOperations(Operations):
 
     def __init__(
         self,
-        nexus_fs: "NexusFilesystemABC",
+        nexus_fs: "NexusFS",
         mode: "MountMode",
         cache_config: dict[str, Any] | None = None,
         context: "OperationContext | None" = None,
@@ -93,12 +93,31 @@ class NexusFUSEOperations(Operations):
         use_rust: bool = False,
         event_bus: Any | None = None,
         subscription_manager: Any | None = None,
+        lease_manager: Any | None = None,
+        mount_id: str | None = None,
+        file_cache: Any | None = None,
     ) -> None:
         self._context = context
         cache_config = cache_config or {}
 
-        # Initialize Rust client
+        # Initialize Rust client.
+        #
+        # Issue #4055 R4: scoped/agent mounts must not start the Rust daemon
+        # at all. The daemon's Unix socket is a single channel backed by the
+        # owner API key with no per-request OperationContext; any same-UID
+        # process that can reach the socket would bypass ReBAC. _rust_available
+        # already disables Rust delegation when a context is present, but
+        # that only covers the dispatch path — the daemon itself shouldn't
+        # exist. Force Python fallback before construction.
         rust_client = None
+        if use_rust and context is not None:
+            logger.info(
+                "[FUSE] use_rust requested but mount has scoped context "
+                "(%r); falling back to Python to avoid an owner-credential "
+                "Rust daemon.",
+                context,
+            )
+            use_rust = False
         if use_rust:
             try:
                 from nexus.fuse.rust_client import RustFUSEClient
@@ -113,6 +132,7 @@ class NexusFUSEOperations(Operations):
                         nexus_url=nexus_url, api_key=api_key, agent_id=agent_id
                     )
                     logger.info("[FUSE] Rust daemon ready")
+                    self._kickoff_cache_warm(rust_client)
                 else:
                     logger.warning(
                         "[FUSE] --use-rust requires REMOTE profile NexusFS. Falling back to Python."
@@ -123,13 +143,27 @@ class NexusFUSEOperations(Operations):
                 logger.warning("[FUSE] Falling back to Python client")
                 use_rust = False
 
-        # Initialize cache
-        cache = FUSECacheManager(
-            attr_cache_size=cache_config.get("attr_cache_size", 1024),
+        # Initialize cache with lease coordinator (Issue #3397)
+        dir_cache_ttl = cache_config.get("dir_cache_ttl", 5)
+        bare_cache = FUSECacheManager(
+            content_cache_bytes=cache_config.get("content_cache_bytes", 512 * 1024 * 1024),
+            parsed_cache_bytes=cache_config.get("parsed_cache_bytes", 64 * 1024 * 1024),
+            max_drain_bytes=cache_config.get("max_drain_bytes", 16 * 1024 * 1024),
             attr_cache_ttl=cache_config.get("attr_cache_ttl", 60),
-            content_cache_size=cache_config.get("content_cache_size", 10000),
-            parsed_cache_size=cache_config.get("parsed_cache_size", 50),
+            listing_cache_ttl=dir_cache_ttl,
+            index_ttl_overrides=cache_config.get("index_ttl_overrides"),
             enable_metrics=cache_config.get("enable_metrics", False),
+        )
+
+        # Wrap in lease coordinator for cross-mount cache coherence
+        holder_id = mount_id or "default-mount"
+        _zone_id = getattr(nexus_fs, "zone_id", None)
+        cache = FUSELeaseCoordinator(
+            cache=bare_cache,
+            lease_manager=lease_manager,
+            holder_id=holder_id,
+            file_cache=file_cache,
+            zone_id=_zone_id,
         )
 
         # Initialize L2 local disk cache (Issue #1072)
@@ -162,9 +196,6 @@ class NexusFUSEOperations(Operations):
             enable_events=enable_events,
             event_loop=event_loop,
         )
-
-        # Initialize readdir cache
-        dir_cache_ttl = cache_config.get("dir_cache_ttl", 5)
 
         # Build shared context
         self._ctx = FUSESharedContext(
@@ -243,6 +274,36 @@ class NexusFUSEOperations(Operations):
     def open_files(self, value: dict[int, dict[str, Any]]) -> None:
         self._ctx.open_files = value
 
+    def _kickoff_cache_warm(self, rust_client: Any) -> None:
+        """Kick off eager L1 cache hydration on the Rust daemon (Issue #4055).
+
+        Sends `cache_warm` with `wait=False` so the daemon spawns the
+        BFS+fetch+admit pipeline on a detached tokio task and returns
+        immediately. This means:
+          - The foreground RPC socket is held for ~ms, not for the entire
+            hydration window — early FUSE reads aren't blocked behind
+            warmup.
+          - There is exactly ONE Rust daemon and ONE foyer instance for
+            this mount, so no cross-process cache corruption risk that
+            an ephemeral-daemon design would introduce.
+
+        The actual hydration result is observable via the daemon's logs and
+        the `nexus_hydration_*` metrics, not via this RPC's return value.
+
+        Failures are logged and never propagate — a hydration RPC error
+        should never break the mount itself.
+        """
+        import threading
+
+        def _run() -> None:
+            try:
+                rust_client.cache_warm("/", wait=False)
+                logger.info("[FUSE] Cache hydration kicked off (wait=False)")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[FUSE] Cache hydration kickoff failed: %s", exc)
+
+        threading.Thread(target=_run, name="FUSEHydrate", daemon=True).start()
+
     @property
     def _files_lock(self) -> Any:
         return self._ctx.files_lock
@@ -300,16 +361,13 @@ class NexusFUSEOperations(Operations):
         return dir_cache_key(self._ctx, path)
 
     def _check_namespace_visible(self, path: str) -> None:
-        return check_namespace_visible(self._ctx, path)
+        return asyncio.run(check_namespace_visible(self._ctx, path))
 
     def _parse_virtual_path(self, path: str) -> tuple[str, str | None]:
         return parse_virtual_path_for_fuse(self._ctx, path)
 
     def _get_file_content(self, path: str, view_type: str | None, **kwargs: Any) -> bytes:
-        return get_file_content(self._ctx, path, view_type, **kwargs)
-
-    def _resolve_io_profile(self, path: str) -> str:
-        return resolve_io_profile(self._ctx, path)
+        return asyncio.run(get_file_content(self._ctx, path, view_type, **kwargs))
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the event loop for async event dispatching."""
@@ -322,58 +380,69 @@ class NexusFUSEOperations(Operations):
 
     @fuse_operation("GETATTR")
     def getattr(self, path: str, fh: int | None = None) -> dict[str, Any]:
-        return self._meta.getattr(path, fh)
+        return asyncio.run(self._meta.getattr(path, fh))
 
     @fuse_operation("READDIR")
     def readdir(self, path: str, fh: int | None = None) -> list[str]:
-        return self._meta.readdir(path, fh)
+        return asyncio.run(self._meta.readdir(path, fh))
 
     @fuse_operation("OPEN")
     def open(self, path: str, flags: int) -> int:
-        return self._io.open(path, flags)
+        return asyncio.run(self._io.open(path, flags))
 
     @fuse_operation("READ")
     def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
-        return self._io.read(path, size, offset, fh)
+        return asyncio.run(self._io.read(path, size, offset, fh))
 
     @fuse_operation("WRITE")
     def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
-        return self._io.write(path, data, offset, fh)
+        return asyncio.run(self._io.write(path, data, offset, fh))
 
     def release(self, path: str, fh: int) -> None:
         return self._io.release(path, fh)
 
+    def destroy(self, _path: str) -> None:
+        """FUSE unmount hook — tear down the readahead manager."""
+        readahead = self._ctx.readahead
+        if readahead is None:
+            return
+        try:
+            readahead.shutdown()
+        except Exception as e:  # pragma: no cover — best-effort
+            logger.warning(f"[FUSE-DESTROY] readahead shutdown failed: {e}")
+        self._ctx.readahead = None
+
     @fuse_operation("CREATE")
     def create(self, path: str, mode: int, fi: Any = None) -> int:
-        return self._mut.create(path, mode, fi)
+        return asyncio.run(self._mut.create(path, mode, fi))
 
     @fuse_operation("UNLINK")
     def unlink(self, path: str) -> None:
-        return self._mut.unlink(path)
+        return asyncio.run(self._mut.unlink(path))
 
     @fuse_operation("MKDIR")
     def mkdir(self, path: str, mode: int) -> None:
-        return self._mut.mkdir(path, mode)
+        return asyncio.run(self._mut.mkdir(path, mode))
 
     @fuse_operation("RMDIR")
     def rmdir(self, path: str) -> None:
-        return self._mut.rmdir(path)
+        return asyncio.run(self._mut.rmdir(path))
 
     @fuse_operation("RENAME")
     def rename(self, old: str, new: str) -> None:
-        return self._mut.rename(old, new)
+        return asyncio.run(self._mut.rename(old, new))
 
     @fuse_operation("CHMOD")
     def chmod(self, path: str, mode: int) -> None:
-        return self._attr.chmod(path, mode)
+        return asyncio.run(self._attr.chmod(path, mode))
 
     @fuse_operation("CHOWN")
     def chown(self, path: str, uid: int, gid: int) -> None:
-        return self._attr.chown(path, uid, gid)
+        return asyncio.run(self._attr.chown(path, uid, gid))
 
     @fuse_operation("TRUNCATE")
     def truncate(self, path: str, length: int, fh: int | None = None) -> None:
-        return self._attr.truncate(path, length, fh)
+        return asyncio.run(self._attr.truncate(path, length, fh))
 
     def utimens(self, path: str, times: tuple[float, float] | None = None) -> None:
         return self._attr.utimens(path, times)

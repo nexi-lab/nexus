@@ -1,4 +1,4 @@
-"""Auth brick service — core business logic (Decision #7).
+"""Auth service — core business logic (Decision #7).
 
 Extracts business logic from route handlers into a testable service.
 Route handlers become thin: validate input -> service.method() -> format response.

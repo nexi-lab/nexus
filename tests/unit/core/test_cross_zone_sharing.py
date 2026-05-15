@@ -11,12 +11,17 @@ Tests cover:
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from sqlalchemy import create_engine
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
+from nexus.bricks.rebac.consistency.zone_manager import ZoneIsolationError
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
 from nexus.storage.models import Base
+from tests.testkit.metadata import InMemoryNexusFS
 
 
 @pytest.fixture
@@ -35,9 +40,10 @@ def zone_aware_manager(engine):
     """
     manager = ReBACManager(
         engine=engine,
-        cache_ttl_seconds=0,  # Disable cache for predictable tests
+        cache_ttl_seconds=1,  # Disable cache for predictable tests
         max_depth=10,
         enforce_zone_isolation=True,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()
@@ -362,9 +368,10 @@ class TestCrossZoneRustPathFix:
 
         manager = EnhancedReBACManager(
             engine=engine,
-            cache_ttl_seconds=0,
+            cache_ttl_seconds=1,
             max_depth=10,
             enforce_zone_isolation=True,
+            namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
         )
         yield manager
         manager.close()
@@ -437,9 +444,10 @@ class TestCrossZonePermissionExpansion:
 
         manager = ReBACManager(
             engine=engine,
-            cache_ttl_seconds=0,
+            cache_ttl_seconds=1,
             max_depth=10,
             enforce_zone_isolation=True,
+            namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
         )
         manager.create_namespace(DEFAULT_FILE_NAMESPACE)
         yield manager

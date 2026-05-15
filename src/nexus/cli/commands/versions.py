@@ -4,14 +4,14 @@ CAS-backed version tracking for files and skills with full history.
 Every file write creates a new version, preserving all previous versions.
 """
 
+import asyncio
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import click
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -36,7 +36,7 @@ def version_group() -> None:
     Every file write creates a new version, preserving all previous versions.
 
     Examples:
-        nexus versions history /workspace/SKILL.md
+        nexus versions history /workspace/README.md
         nexus versions diff /workspace/data.txt --v1 1 --v2 3
         nexus versions get /workspace/file.txt --version 2
         nexus versions rollback /workspace/file.txt --version 1
@@ -48,16 +48,25 @@ def version_group() -> None:
 @click.argument("path")
 @click.option("--limit", type=int, default=None, help="Limit number of versions shown")
 @add_backend_options
-def version_history(path: str, limit: int | None, backend_config: BackendConfig) -> None:
+def version_history(
+    path: str, limit: int | None, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Show version history for a file.
 
     Displays all versions of a file with metadata.
 
     Example:
-        nexus version history /workspace/SKILL.md
+        nexus version history /workspace/README.md
         nexus version history /workspace/data.txt --limit 10
     """
+    import asyncio
 
+    asyncio.run(_async_version_history(path, limit, remote_url, remote_api_key))
+
+
+async def _async_version_history(
+    path: str, limit: int | None, remote_url: str | None, remote_api_key: str | None
+) -> None:
     def format_size(size: int) -> str:
         """Format size in human-readable format."""
         size_float = float(size)
@@ -68,12 +77,20 @@ def version_history(path: str, limit: int | None, backend_config: BackendConfig)
         return f"{size_float:.1f} PB"
 
     try:
-        nx = get_filesystem(backend_config)
-        _nx: Any = nx
-        versions = _nx.version_service.list_versions(path)
+        nx = await get_filesystem(remote_url, remote_api_key)
+        version_svc = nx.service("version_service")
+        if version_svc is None:
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Version service not available on this server"
+            )
+            nx.close()
+            return
+
+        result = version_svc.list_versions(path)
+        versions = (await result) if asyncio.iscoroutine(result) else result
 
         if not versions:
-            console.print(f"[yellow]No version history found for: {path}[/yellow]")
+            console.print(f"[nexus.warning]No version history found for: {path}[/nexus.warning]")
             nx.close()
             return
 
@@ -83,11 +100,11 @@ def version_history(path: str, limit: int | None, backend_config: BackendConfig)
 
         # Display table
         table = Table(title=f"Version History: {path}")
-        table.add_column("Version", style="cyan", justify="right")
-        table.add_column("Size", style="green")
+        table.add_column("Version", style="nexus.value", justify="right")
+        table.add_column("Size", style="nexus.success")
         table.add_column("Created At")
         table.add_column("Created By")
-        table.add_column("Source", style="yellow")
+        table.add_column("Source", style="nexus.warning")
         table.add_column("Change Reason")
 
         for v in versions:
@@ -103,7 +120,7 @@ def version_history(path: str, limit: int | None, backend_config: BackendConfig)
             )
 
         console.print(table)
-        console.print(f"\n[dim]Total versions: {len(versions)}[/dim]")
+        console.print(f"\n[nexus.muted]Total versions: {len(versions)}[/nexus.muted]")
 
         nx.close()
 
@@ -116,7 +133,9 @@ def version_history(path: str, limit: int | None, backend_config: BackendConfig)
 @click.option("--version", "-v", type=int, required=True, help="Version number to retrieve")
 @click.option("--output", "-o", help="Output file path (default: stdout)")
 @add_backend_options
-def version_get(path: str, version: int, output: str | None, backend_config: BackendConfig) -> None:
+def version_get(
+    path: str, version: int, output: str | None, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Get a specific version of a file.
 
     Retrieves content from a specific version.
@@ -125,22 +144,38 @@ def version_get(path: str, version: int, output: str | None, backend_config: Bac
         nexus version get /workspace/file.txt --version 2
         nexus version get /workspace/file.txt -v 1 -o old_version.txt
     """
+    import asyncio
+
+    asyncio.run(_async_version_get(path, version, output, remote_url, remote_api_key))
+
+
+async def _async_version_get(
+    path: str, version: int, output: str | None, remote_url: str | None, remote_api_key: str | None
+) -> None:
     try:
-        nx = get_filesystem(backend_config)
-        _nx: Any = nx
-        content = _nx.version_service.get_version(path, version)
+        nx = await get_filesystem(remote_url, remote_api_key)
+        version_svc = nx.service("version_service")
+        if version_svc is None:
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Version service not available on this server"
+            )
+            nx.close()
+            return
+
+        _r = version_svc.get_version(path, version)
+        content = (await _r) if asyncio.iscoroutine(_r) else _r
 
         if output:
             # Write to file
             Path(output).write_bytes(content)
-            console.print(f"[green]✓[/green] Wrote version {version} to: {output}")
+            console.print(f"[nexus.success]✓[/nexus.success] Wrote version {version} to: {output}")
         else:
             # Print to stdout
             try:
                 console.print(content.decode("utf-8"))
             except UnicodeDecodeError:
-                console.print("[yellow]Binary content (cannot display)[/yellow]")
-                console.print("[dim]Use --output to save to file[/dim]")
+                console.print("[nexus.warning]Binary content (cannot display)[/nexus.warning]")
+                console.print("[nexus.muted]Use --output to save to file[/nexus.muted]")
 
         nx.close()
 
@@ -156,7 +191,9 @@ def version_get(path: str, version: int, output: str | None, backend_config: Bac
     "--mode", type=click.Choice(["metadata", "content"]), default="content", help="Diff mode"
 )
 @add_backend_options
-def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: BackendConfig) -> None:
+def version_diff(
+    path: str, v1: int, v2: int, mode: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Compare two versions of a file.
 
     Shows differences between two versions.
@@ -165,7 +202,14 @@ def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: Backend
         nexus version diff /workspace/file.txt --v1 1 --v2 3
         nexus version diff /workspace/file.txt --v1 1 --v2 2 --mode metadata
     """
+    import asyncio
 
+    asyncio.run(_async_version_diff(path, v1, v2, mode, remote_url, remote_api_key))
+
+
+async def _async_version_diff(
+    path: str, v1: int, v2: int, mode: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     def format_size(size: int) -> str:
         """Format size in human-readable format."""
         size_float = float(abs(size))
@@ -176,22 +220,30 @@ def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: Backend
         return f"{size_float:.1f} PB"
 
     try:
-        nx = get_filesystem(backend_config)
-        _nx: Any = nx
-        diff = _nx.version_service.diff_versions(path, v1, v2, mode=mode)
+        nx = await get_filesystem(remote_url, remote_api_key)
+        version_svc = nx.service("version_service")
+        if version_svc is None:
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Version service not available on this server"
+            )
+            nx.close()
+            return
+
+        _r = version_svc.diff_versions(path, v1, v2, mode=mode)
+        diff = (await _r) if asyncio.iscoroutine(_r) else _r
 
         if mode == "metadata":
             # diff is a dict in metadata mode
             if not isinstance(diff, dict):
-                console.print("[red]Error: Expected metadata dict from diff[/red]")
+                console.print("[nexus.error]Error: Expected metadata dict from diff[/nexus.error]")
                 nx.close()
                 return
 
             # Display metadata diff as table
             table = Table(title=f"Metadata Diff: v{v1} vs v{v2}")
             table.add_column("Property")
-            table.add_column(f"Version {v1}", style="cyan")
-            table.add_column(f"Version {v2}", style="green")
+            table.add_column(f"Version {v1}", style="nexus.value")
+            table.add_column(f"Version {v2}", style="nexus.success")
 
             table.add_row(
                 "Size",
@@ -211,7 +263,9 @@ def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: Backend
             table.add_row(
                 "Content Changed",
                 "",
-                "[green]Yes[/green]" if diff.get("content_changed") else "[dim]No[/dim]",
+                "[nexus.success]Yes[/nexus.success]"
+                if diff.get("content_changed")
+                else "[nexus.muted]No[/nexus.muted]",
             )
 
             created_at_v1 = diff.get("created_at_v1")
@@ -238,7 +292,9 @@ def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: Backend
 @click.option("--version", "-v", type=int, required=True, help="Version to rollback to")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @add_backend_options
-def version_rollback(path: str, version: int, yes: bool, backend_config: BackendConfig) -> None:
+def version_rollback(
+    path: str, version: int, yes: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Rollback file to a previous version.
 
     Reverts file content to an older version.
@@ -247,21 +303,36 @@ def version_rollback(path: str, version: int, yes: bool, backend_config: Backend
         nexus version rollback /workspace/file.txt --version 2
         nexus version rollback /workspace/file.txt -v 1 --yes
     """
+    import asyncio
+
+    asyncio.run(_async_version_rollback(path, version, yes, remote_url, remote_api_key))
+
+
+async def _async_version_rollback(
+    path: str, version: int, yes: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
     try:
-        nx = get_filesystem(backend_config)
-        _nx: Any = nx
+        nx = await get_filesystem(remote_url, remote_api_key)
+        version_svc = nx.service("version_service")
+        if version_svc is None:
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Version service not available on this server"
+            )
+            nx.close()
+            return
 
         # Get current version for confirmation
         # Check if file exists
-        if not nx.sys_access(path):
-            console.print(f"[red]File not found: {path}[/red]")
+        if not nx.access(path):
+            console.print(f"[nexus.error]File not found: {path}[/nexus.error]")
             nx.close()
             return
 
         # Get version history to determine current version
-        versions = _nx.version_service.list_versions(path)
+        _r2 = version_svc.list_versions(path)
+        versions = (await _r2) if asyncio.iscoroutine(_r2) else _r2
         if not versions:
-            console.print(f"[yellow]No version history found for: {path}[/yellow]")
+            console.print(f"[nexus.warning]No version history found for: {path}[/nexus.warning]")
             nx.close()
             return
 
@@ -275,10 +346,12 @@ def version_rollback(path: str, version: int, yes: bool, backend_config: Backend
                 return
 
         # Perform rollback
-        _nx.version_service.rollback(path, version)
+        _r = version_svc.rollback(path, version)
+        if asyncio.iscoroutine(_r):
+            await _r
 
-        console.print(f"[green]✓[/green] Rolled back {path} to version {version}")
-        console.print(f"[dim]New version: {current_version + 1}[/dim]")
+        console.print(f"[nexus.success]✓[/nexus.success] Rolled back {path} to version {version}")
+        console.print(f"[nexus.muted]New version: {current_version + 1}[/nexus.muted]")
 
         nx.close()
 

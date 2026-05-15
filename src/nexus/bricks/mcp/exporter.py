@@ -12,10 +12,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.bricks.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
-
 if TYPE_CHECKING:
-    from nexus.services.protocols.filesystem import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
+
+from nexus.bricks.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
 
 logger = logging.getLogger(__name__)
 
@@ -305,90 +305,39 @@ NEXUS_TOOLS: list[dict[str, Any]] = [
         ],
         "related_tools": ["nexus_grep", "nexus_glob"],
     },
-    # Memory Tools
+    # Context Manifest Tools (Issue #2984)
     {
-        "name": "nexus_store_memory",
-        "description": "Store a memory for later retrieval using semantic search",
-        "category": "memory",
+        "name": "nexus_resolve_context",
+        "description": "Resolve a context manifest by executing all sources in parallel (deterministic pre-execution)",
+        "category": "context",
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {
+                "sources": {
                     "type": "string",
-                    "description": "Memory content to store",
+                    "description": "JSON array of context sources. Each source needs a 'type' field (file_glob, memory_query, workspace_snapshot, mcp_tool).",
                 },
-                "memory_type": {
+                "variables": {
                     "type": "string",
-                    "description": "Optional memory type/category",
-                },
-                "importance": {
-                    "type": "number",
-                    "description": "Importance score 0.0-1.0 (default: 0.5)",
-                    "default": 0.5,
+                    "description": "JSON object of template variable values for substitution (optional, default: '{}')",
                 },
             },
-            "required": ["content"],
-        },
-        "output_schema": {"type": "string", "description": "Success message or error"},
-        "when_to_use": "Use when you learn something important that should be remembered for future conversations. Store insights, decisions, user preferences, or key findings.",
-        "examples": [
-            {
-                "use_case": "Store a user preference",
-                "input": {
-                    "content": "User prefers Python over JavaScript",
-                    "memory_type": "preference",
-                    "importance": 0.8,
-                },
-            },
-            {
-                "use_case": "Store a project insight",
-                "input": {
-                    "content": "The authentication system uses JWT tokens",
-                    "memory_type": "project_knowledge",
-                    "importance": 0.7,
-                },
-            },
-        ],
-        "related_tools": ["nexus_query_memory"],
-    },
-    {
-        "name": "nexus_query_memory",
-        "description": "Query stored memories using semantic search",
-        "category": "memory",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query",
-                },
-                "memory_type": {
-                    "type": "string",
-                    "description": "Optional filter by memory type",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of results (default: 5)",
-                    "default": 5,
-                },
-            },
-            "required": ["query"],
+            "required": ["sources"],
         },
         "output_schema": {
             "type": "string",
-            "description": "JSON string with matching memories",
+            "description": "JSON with resolved source results, timestamps, and per-source status/data",
         },
-        "when_to_use": "Use when you need to recall previously stored information. Query memories to retrieve past decisions, user preferences, or project knowledge.",
+        "when_to_use": "Use before agent execution to pre-load context from multiple sources in parallel. Supports file globs, memory queries, workspace snapshots, and MCP tools. Implements the Stripe Minions deterministic pre-execution pattern.",
         "examples": [
             {
-                "use_case": "Recall user preferences",
+                "use_case": "Pre-load Python files and memory",
                 "input": {
-                    "query": "programming language preference",
-                    "memory_type": "preference",
+                    "sources": '[{"type": "file_glob", "pattern": "src/**/*.py", "max_files": 20}, {"type": "memory_query", "query": "previous implementation", "top_k": 5}]',
                 },
             },
         ],
-        "related_tools": ["nexus_store_memory"],
+        "related_tools": ["nexus_glob", "nexus_semantic_search", "nexus_query_memory"],
     },
     # Workflow Tools
     {
@@ -552,7 +501,7 @@ NEXUS_TOOLS: list[dict[str, Any]] = [
 class MCPToolExporter:
     """Export Nexus MCP tools to Skills format.
 
-    This exporter creates SKILL.md and tool.json files for each
+    This exporter creates README.md and tool.json files for each
     built-in Nexus MCP tool, making them discoverable through
     the skills system.
 
@@ -568,7 +517,7 @@ class MCPToolExporter:
     # Output path for exported tools
     OUTPUT_PATH = "/skills/system/mcp-tools/nexus/"
 
-    def __init__(self, filesystem: "NexusFilesystem | None" = None):
+    def __init__(self, filesystem: "NexusFS | None" = None):
         """Initialize exporter.
 
         Args:
@@ -658,7 +607,7 @@ class MCPToolExporter:
     async def _export_tool(self, tool_def: MCPToolDefinition, output_path: str) -> str:
         """Export a single tool to the filesystem.
 
-        Creates both tool.json and SKILL.md files.
+        Creates both tool.json and README.md files.
 
         Args:
             tool_def: Tool definition
@@ -669,43 +618,43 @@ class MCPToolExporter:
         """
         tool_dir = f"{output_path}{tool_def.name}/"
         tool_json_path = f"{tool_dir}tool.json"
-        skill_md_path = f"{tool_dir}SKILL.md"
+        readme_md_path = f"{tool_dir}README.md"
 
         # Create tool.json
         tool_json = json.dumps(tool_def.to_dict(), indent=2)
 
-        # Create SKILL.md
-        skill_md = self._generate_skill_md(tool_def)
+        # Create README.md
+        readme_md = self._generate_readme_md(tool_def)
 
         if self._filesystem:
             # Create directory
             try:
-                self._filesystem.sys_mkdir(tool_dir, parents=True)
+                self._filesystem.mkdir(tool_dir, parents=True)
             except FileExistsError:
                 pass
             except OSError as e:
                 logger.warning("Failed to create directory %s: %s", tool_dir, e)
 
             # Write files
-            self._filesystem.sys_write(tool_json_path, tool_json.encode("utf-8"))
-            self._filesystem.sys_write(skill_md_path, skill_md.encode("utf-8"))
+            self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
+            self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
         else:
             # Local filesystem
             tool_dir_path = Path(tool_dir.lstrip("/"))
             tool_dir_path.mkdir(parents=True, exist_ok=True)
             (tool_dir_path / "tool.json").write_text(tool_json)
-            (tool_dir_path / "SKILL.md").write_text(skill_md)
+            (tool_dir_path / "README.md").write_text(readme_md)
 
         return tool_dir
 
-    def _generate_skill_md(self, tool_def: MCPToolDefinition) -> str:
-        """Generate SKILL.md content for a tool.
+    def _generate_readme_md(self, tool_def: MCPToolDefinition) -> str:
+        """Generate README.md content for a tool.
 
         Args:
             tool_def: Tool definition
 
         Returns:
-            SKILL.md content
+            README.md content
         """
         import yaml
 

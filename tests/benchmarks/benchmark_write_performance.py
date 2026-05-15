@@ -16,8 +16,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.testkit.auth import TEST_CONTEXT
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -76,15 +76,16 @@ def benchmark_native_bash(tmp_dir: str, num_files: int = 50) -> dict:
     }
 
 
-def run_benchmark(enable_deferred: bool = False):
+async def run_benchmark(enable_deferred: bool = False):
     """Run write performance benchmark.
 
     Args:
         enable_deferred: If True, use deferred permission buffer for faster writes
     """
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.config import ParseConfig, PermissionConfig
+    from nexus.factory import create_nexus_fs
 
     mode = "DEFERRED" if enable_deferred else "SYNC"
     print("=" * 70)
@@ -96,19 +97,16 @@ def run_benchmark(enable_deferred: bool = False):
         storage_path.mkdir()
         db_path = Path(tmp_dir) / "nexus.db"
 
-        backend = LocalBackend(str(storage_path))
+        backend = CASLocalBackend(str(storage_path))
 
-        # Create NexusFS with permissions ENABLED
-        nx = NexusFS(
+        # Create NexusFS with permissions ENABLED via factory
+        nx = create_nexus_fs(
             backend=backend,
-            metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
+            metadata_store=str(db_path).replace(".db", "-raft"),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
-            is_admin=False,
-            zone_id="benchmark_zone",
-            enforce_permissions=True,
-            auto_parse=False,
-            enable_tiger_cache=False,  # SQLite doesn't support Tiger Cache
-            enable_deferred_permissions=enable_deferred,  # Issue #1071
+            permissions=PermissionConfig(enforce=True),
+            parsing=ParseConfig(auto_parse=False),
+            init_cred=TEST_CONTEXT,
         )
 
         # Create user context
@@ -143,7 +141,7 @@ def run_benchmark(enable_deferred: bool = False):
         for i in range(num_files):
             path = f"/bench/single/file_{i:04d}.txt"
             start = time.perf_counter()
-            nx.sys_write(path, content_1kb, context=ctx)
+            nx.write(path, content_1kb, context=ctx)
             elapsed = time.perf_counter() - start
             single_times.append(elapsed * 1000)  # Convert to ms
 
@@ -195,7 +193,7 @@ def run_benchmark(enable_deferred: bool = False):
         for i in range(num_files):
             path = f"/bench/single10k/file_{i:04d}.txt"
             start = time.perf_counter()
-            nx.sys_write(path, content_10kb, context=ctx)
+            nx.write(path, content_10kb, context=ctx)
             elapsed = time.perf_counter() - start
             single_times_10k.append(elapsed * 1000)
 

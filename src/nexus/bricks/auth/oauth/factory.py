@@ -75,7 +75,7 @@ class OAuthProviderFactory:
 
         if not oauth_yaml or not oauth_yaml.exists():
             current_file = Path(__file__)
-            configs_dir = current_file.parent.parent.parent.parent / "configs"
+            configs_dir = current_file.parent.parent.parent.parent.parent.parent / "configs"
             dev_path = configs_dir / "oauth.yaml"
             tried_paths.append(str(dev_path))
             if dev_path.exists():

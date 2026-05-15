@@ -1,0 +1,6 @@
+[
+  {"timestamp_ns":0,"op":"read","path":"/datasets/table.parquet","offset":0,"length":65536},
+  {"timestamp_ns":1000,"op":"read","path":"/datasets/table.parquet","offset":1048576,"length":65536},
+  {"timestamp_ns":2000,"op":"read","path":"/datasets/table.parquet","offset":2097152,"length":65536},
+  {"timestamp_ns":3000,"op":"read","path":"/datasets/table.parquet","offset":3145728,"length":65536}
+]

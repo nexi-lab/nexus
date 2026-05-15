@@ -18,18 +18,23 @@ Subcommands:
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_run
+from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    BackendConfig,
+    REMOTE_API_KEY_OPTION,
+    REMOTE_URL_OPTION,
     add_backend_options,
     console,
     get_filesystem,
     handle_error,
+    rpc_call,
 )
 from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
 
@@ -54,32 +59,36 @@ def zone() -> None:
 
 
 def _get_zone_manager(
-    node_id: int,
+    hostname: str,
     data_dir: str,
     bind_addr: str,
+    peers: list[str] | None = None,
 ) -> Any:
     """Create a ZoneManager from CLI options.
 
-    Imports lazily to avoid requiring PyO3 for non-federation commands.
+    R20.18.5: Python ZoneManager was deleted — federation is kernel-
+    internal now. CLI commands that relied on a direct-open ZoneManager
+    (create / join / mount / unmount) now raise a clear error; callers
+    should drive zone CRUD via the RPC path through a running server
+    process. Export/import flows (R20.17) will reach raft-backed zones
+    through the same RPC surface.
     """
-    from nexus.raft.zone_manager import ZoneManager
-
-    return ZoneManager(
-        node_id=node_id,
-        base_path=data_dir,
-        bind_addr=bind_addr,
+    del hostname, data_dir, bind_addr, peers
+    raise RuntimeError(
+        "Direct-open ZoneManager is no longer available — the Python "
+        "shim was deleted in R20.18.5. Drive zone CRUD through the "
+        "nexus RPC surface (a running nexus-server) instead."
     )
 
 
 @zone.command(name="create")
 @click.argument("zone_id", type=str)
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    default=1,
-    show_default=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -101,14 +110,23 @@ def _get_zone_manager(
     "--peers",
     type=str,
     default=None,
-    help="Comma-separated peer addresses (format: id@host:port)",
+    help="Comma-separated peer addresses (format: host:port)",
 )
+@click.option(
+    "--if-not-exists",
+    is_flag=True,
+    default=False,
+    help="Succeed silently if zone already exists",
+)
+@add_dry_run_option
 def create_zone_cmd(
     zone_id: str,
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
     peers: str | None,
+    if_not_exists: bool,
+    dry_run: bool,
 ) -> None:
     """Create a new Raft zone.
 
@@ -118,17 +136,41 @@ def create_zone_cmd(
     Examples:
         nexus zone create my-zone
 
-        nexus zone create shared-zone --peers 2@peer2:2126,3@peer3:2126
+        nexus zone create shared-zone --peers peer2:2126,peer3:2126
 
-        NEXUS_NODE_ID=2 nexus zone create shared-zone --peers 1@peer1:2126
+        nexus zone create my-zone --hostname nexus-1
+
+        nexus zone create my-zone --dry-run
+
+        nexus zone create my-zone --if-not-exists
     """
-    try:
-        peer_list = [p.strip() for p in peers.split(",")] if peers else []
-        mgr = _get_zone_manager(node_id, data_dir, bind)
-        store = mgr.create_zone(zone_id, peers=peer_list)
+    import socket
 
-        console.print(f"[green]Zone '{zone_id}' created[/green]")
-        console.print(f"  Node ID: {node_id}")
+    if hostname is None:
+        hostname = socket.gethostname()
+
+    try:
+        if dry_run:
+            preview = dry_run_preview(
+                "zone create", path=zone_id, details={"hostname": hostname, "peers": peers}
+            )
+            render_dry_run(preview)
+            return
+
+        peer_list = [p.strip() for p in peers.split(",")] if peers else []
+        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
+
+        try:
+            store = mgr.create_zone(zone_id, peers=peer_list)
+        except Exception as create_err:
+            if if_not_exists and "already exists" in str(create_err).lower():
+                console.print(f"[nexus.success]✓[/nexus.success] Zone already exists: {zone_id}")
+                mgr.shutdown()
+                return
+            raise
+
+        console.print(f"[nexus.success]Zone '{zone_id}' created[/nexus.success]")
+        console.print(f"  Hostname: {hostname}")
         console.print(f"  Data dir: {data_dir}/{zone_id}/")
         console.print(f"  Bind: {bind}")
         if peer_list:
@@ -143,11 +185,11 @@ def create_zone_cmd(
 @zone.command(name="join")
 @click.argument("zone_id", type=str)
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    required=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -169,11 +211,11 @@ def create_zone_cmd(
     "--peers",
     type=str,
     required=True,
-    help="Comma-separated existing peer addresses (format: id@host:port)",
+    help="Comma-separated existing peer addresses (format: host:port)",
 )
 def join_zone_cmd(
     zone_id: str,
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
     peers: str,
@@ -184,15 +226,20 @@ def join_zone_cmd(
     be notified via JoinZone RPC to add this node via ConfChange.
 
     Examples:
-        NEXUS_NODE_ID=3 nexus zone join shared-zone --peers 1@leader:2126,2@peer2:2126
+        nexus zone join shared-zone --peers leader:2126,peer2:2126
     """
+    import socket
+
+    if hostname is None:
+        hostname = socket.gethostname()
+
     try:
         peer_list = [p.strip() for p in peers.split(",")]
-        mgr = _get_zone_manager(node_id, data_dir, bind)
+        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
         store = mgr.join_zone(zone_id, peers=peer_list)
 
-        console.print(f"[green]Joined zone '{zone_id}'[/green]")
-        console.print(f"  Node ID: {node_id}")
+        console.print(f"[nexus.success]Joined zone '{zone_id}'[/nexus.success]")
+        console.print(f"  Hostname: {hostname}")
         console.print(f"  Peers: {', '.join(peer_list)}")
         console.print("  Waiting for leader to send snapshot...")
 
@@ -204,12 +251,11 @@ def join_zone_cmd(
 
 @zone.command(name="list")
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    default=1,
-    show_default=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -227,35 +273,72 @@ def join_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
+@add_output_options
 def list_zones_cmd(
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
 ) -> None:
     """List all local zones on this node.
 
     Examples:
         nexus zone list
-
+        nexus zone list --json
         nexus zone list --data-dir /var/lib/nexus/zones
     """
-    try:
-        mgr = _get_zone_manager(node_id, data_dir, bind)
-        zones = mgr.list_zones()
+    import socket
 
-        if not zones:
-            console.print("[dim]No zones found[/dim]")
+    if hostname is None:
+        hostname = socket.gethostname()
+
+    timing = CommandTiming()
+
+    try:
+        # When NEXUS_URL / --remote-url is set we dispatch through the running
+        # server — this avoids fighting for the redb lock when a node is live.
+        # Kernel-state is owned by the server process; CLI is a thin user-space
+        # tool that reads via RPC. Only fall back to direct ZoneManager open
+        # for maintenance scenarios (no server running).
+        if remote_url:
+            with timing.phase("server"):
+                rpc_data = rpc_call(remote_url, remote_api_key, "federation_list_zones")
+            zones = [z.get("zone_id", "") for z in rpc_data.get("zones", [])]
         else:
-            table = Table(title=f"Zones (node {node_id})")
-            table.add_column("Zone ID", style="cyan")
+            with timing.phase("server"):
+                mgr = _get_zone_manager(hostname, data_dir, bind)
+                zones = mgr.list_zones()
+                mgr.shutdown()
+
+        data = [{"zone_id": z} for z in sorted(zones)] if zones else []
+
+        def _print_human(entries: list[dict[str, Any]]) -> None:
+            if not entries:
+                console.print("[nexus.muted]No zones found[/nexus.muted]")
+                return
+            table = Table(title=f"Zones ({hostname})")
+            table.add_column("Zone ID", style="nexus.value")
             console.print()
-            for z in sorted(zones):
-                table.add_row(z)
+            for entry in entries:
+                table.add_row(entry["zone_id"])
             console.print(table)
 
-        mgr.shutdown()
+        render_output(
+            data=data, output_opts=output_opts, timing=timing, human_formatter=_print_human
+        )
     except Exception as e:
-        handle_error(e)
+        if output_opts.json_output:
+            from nexus.cli.exit_codes import ExitCode
+
+            render_error(
+                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
+            )
+        else:
+            handle_error(e)
 
 
 @zone.command(name="mount")
@@ -269,12 +352,11 @@ def list_zones_cmd(
     help="Zone containing the mount point",
 )
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    default=1,
-    show_default=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -292,13 +374,15 @@ def list_zones_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@add_dry_run_option
 def mount_zone_cmd(
     mount_path: str,
     target_zone: str,
     parent_zone: str,
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
+    dry_run: bool,
 ) -> None:
     """Mount a zone at a path (DT_MOUNT).
 
@@ -311,13 +395,29 @@ def mount_zone_cmd(
         nexus zone mount /shared team-zone
 
         nexus zone mount /projects/alice alice-zone --parent-zone root
+
+        nexus zone mount /shared team-zone --dry-run
     """
+    import socket
+
+    if hostname is None:
+        hostname = socket.gethostname()
+
     try:
-        mgr = _get_zone_manager(node_id, data_dir, bind)
+        if dry_run:
+            preview = dry_run_preview(
+                "zone mount",
+                path=mount_path,
+                details={"target_zone": target_zone, "parent_zone": parent_zone},
+            )
+            render_dry_run(preview)
+            return
+
+        mgr = _get_zone_manager(hostname, data_dir, bind)
         mgr.mount(parent_zone, mount_path, target_zone)
 
         console.print(
-            f"[green]Mounted zone '{target_zone}' at '{mount_path}' in zone '{parent_zone}'[/green]"
+            f"[nexus.success]Mounted zone '{target_zone}' at '{mount_path}' in zone '{parent_zone}'[/nexus.success]"
         )
 
         mgr.shutdown()
@@ -335,12 +435,11 @@ def mount_zone_cmd(
     help="Zone containing the mount point",
 )
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    default=1,
-    show_default=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -358,12 +457,14 @@ def mount_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@add_dry_run_option
 def unmount_zone_cmd(
     mount_path: str,
     parent_zone: str,
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
+    dry_run: bool,
 ) -> None:
     """Remove a mount point (DT_MOUNT).
 
@@ -371,12 +472,30 @@ def unmount_zone_cmd(
         nexus zone unmount /shared
 
         nexus zone unmount /projects/alice --parent-zone root
+
+        nexus zone unmount /shared --dry-run
     """
+    import socket
+
+    if hostname is None:
+        hostname = socket.gethostname()
+
     try:
-        mgr = _get_zone_manager(node_id, data_dir, bind)
+        if dry_run:
+            preview = dry_run_preview(
+                "zone unmount",
+                path=mount_path,
+                details={"parent_zone": parent_zone},
+            )
+            render_dry_run(preview)
+            return
+
+        mgr = _get_zone_manager(hostname, data_dir, bind)
         mgr.unmount(parent_zone, mount_path)
 
-        console.print(f"[green]Unmounted '{mount_path}' from zone '{parent_zone}'[/green]")
+        console.print(
+            f"[nexus.success]Unmounted '{mount_path}' from zone '{parent_zone}'[/nexus.success]"
+        )
 
         mgr.shutdown()
     except Exception as e:
@@ -429,6 +548,11 @@ def unmount_zone_cmd(
     default=6,
     help="Compression level 1-9 (default: 6)",
 )
+@click.option(
+    "--include-mounts/--no-mounts",
+    default=False,
+    help="Include mount configurations (secrets are redacted; default: no, Issue #4083)",
+)
 @add_backend_options
 def export_zone(
     zone_id: str,
@@ -440,7 +564,9 @@ def export_zone(
     path_prefix: str | None,
     after: str | None,
     compression: int,
-    backend_config: BackendConfig,
+    include_mounts: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Export zone data to a portable .nexus bundle.
 
@@ -458,9 +584,6 @@ def export_zone(
         nexus zone export acme-corp -o /backup/acme.nexus --after 2025-01-01T00:00:00
     """
     try:
-        from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
-        from nexus.core.nexus_fs import NexusFS
-
         # Parse after time if provided
         after_time = None
         if after:
@@ -469,22 +592,66 @@ def export_zone(
                 if after_time.tzinfo is None:
                     after_time = after_time.replace(tzinfo=UTC)
             except ValueError:
-                console.print(f"[red]Error:[/red] Invalid date format: {after}")
+                console.print(f"[nexus.error]Error:[/nexus.error] Invalid date format: {after}")
                 console.print("Use ISO format: 2025-01-01T00:00:00")
                 sys.exit(1)
-
-        # Get filesystem
-        nx = get_filesystem(backend_config)
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Zone export requires NexusFS instance")
-            nx.close()
-            sys.exit(1)
-
-        # Configure export options
+        # Normalise output path (absolute, no suffix munging — honor
+        # whatever the caller passed).
         output_path = Path(output)
-        if not str(output_path).endswith(".nexus"):
-            output_path = output_path.with_suffix(".nexus")
+        if not output_path.is_absolute():
+            output_path = output_path.resolve()
 
+        # Prefer the server-side RPC when a remote URL is available.
+        # Running the exporter locally requires direct access to the
+        # zone's redb file, which is already held open by the running
+        # server (docker + production). The RPC executes
+        # ZoneExportService on the server — same process that owns the
+        # metastore — and writes the bundle to a path the server can
+        # see. Docker E2E test shares `/tmp` between CLI + server
+        # containers; production deployments use a mounted backup
+        # volume.
+        from nexus.cli.config import resolve_connection
+        from nexus.cli.utils import rpc_call
+
+        resolved = resolve_connection(
+            remote_url=remote_url,
+            remote_api_key=remote_api_key,
+        )
+        console.print(f"[nexus.value]Exporting zone:[/nexus.value] {zone_id}")
+        console.print(f"[nexus.path]Output:[/nexus.path] {output_path}")
+        if resolved.is_remote:
+            data = rpc_call(
+                resolved.url,
+                resolved.api_key,
+                "federation_export_zone",
+                zone_id=zone_id,
+                output_path=str(output_path),
+                include_content=include_content,
+                include_permissions=include_permissions,
+                include_embeddings=include_embeddings,
+                include_deleted=include_deleted,
+                path_prefix=path_prefix,
+                include_mounts=include_mounts,
+            )
+            table = Table(title="Export Complete")
+            table.add_column("Metric", style="nexus.value")
+            table.add_column("Value", style="nexus.success")
+            table.add_row("Files exported", f"{data.get('file_count', 0):,}")
+            table.add_row("Total size", f"{data.get('total_size_bytes', 0):,} bytes")
+            table.add_row("Bundle ID", str(data.get("bundle_id", ""))[:8] + "...")
+            if include_mounts:
+                table.add_row("Mounts exported", f"{data.get('mount_count', 0):,}")
+            table.add_row("Output", str(output_path))
+            console.print(table)
+            return
+
+        # Local-only path: load a bare kernel (only safe when no server
+        # holds the redb open). Kept for offline snapshot workflows.
+        import asyncio as _asyncio
+
+        from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
+
+        nx: Any = _asyncio.run(get_filesystem(remote_url, remote_api_key))
         options = ZoneExportOptions(
             output_path=output_path,
             include_content=include_content,
@@ -492,13 +659,21 @@ def export_zone(
             include_embeddings=include_embeddings,
             include_deleted=include_deleted,
             path_prefix=path_prefix,
-            after_time=after_time,
+            after_time=after_time if after else None,
             compression_level=compression,
+            include_mounts=include_mounts,
         )
 
-        # Run export with progress
-        console.print(f"[cyan]Exporting zone:[/cyan] {zone_id}")
-        console.print(f"[cyan]Output:[/cyan] {output_path}")
+        # MountManager is built locally so the offline path can carry
+        # mount configs alongside file data (Issue #4083). Only required
+        # when --include-mounts is set; otherwise leave the service
+        # without one to preserve back-compat.
+        mount_manager = None
+        if include_mounts:
+            from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
+            from nexus.bricks.mount.mount_manager import MountManager
+
+            mount_manager = MountManager(MetastoreMountStore(nx))
 
         with Progress(
             SpinnerColumn(),
@@ -510,27 +685,23 @@ def export_zone(
             def update_progress(current: int, total: int) -> None:
                 progress.update(task, description=f"Exporting... ({current}/{total} files)")
 
-            service = ZoneExportService(nx)
+            service = ZoneExportService(cast(Any, nx), mount_manager=mount_manager)
             manifest = service.export_zone(zone_id, options, update_progress)
 
         nx.close()
-
-        # Show results
-        console.print()
         table = Table(title="Export Complete")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green")
-
+        table.add_column("Metric", style="nexus.value")
+        table.add_column("Value", style="nexus.success")
         table.add_row("Files exported", f"{manifest.file_count:,}")
         table.add_row("Total size", f"{manifest.total_size_bytes:,} bytes")
         table.add_row("Content blobs", f"{manifest.content_blob_count:,}")
         table.add_row("Permissions", f"{manifest.permission_count:,}")
         table.add_row("Bundle ID", manifest.bundle_id[:8] + "...")
+        if include_mounts:
+            table.add_row("Mounts exported", f"{manifest.mount_count:,}")
         table.add_row("Output", str(output_path))
-
         if output_path.exists():
             table.add_row("Bundle size", f"{output_path.stat().st_size:,} bytes")
-
         console.print(table)
 
     except Exception as e:
@@ -542,6 +713,8 @@ def export_zone(
 @click.option(
     "-t",
     "--target-zone",
+    "--zone-id",
+    "target_zone",
     default=None,
     help="Remap to different zone ID (default: preserve original)",
 )
@@ -572,6 +745,30 @@ def export_zone(
     multiple=True,
     help="Path prefix remapping (format: old=new), can be repeated",
 )
+@click.option(
+    "--mount-override",
+    multiple=True,
+    help=(
+        "Re-inject a redacted mount field (format: MOUNT_ID:FIELD=VALUE), "
+        "can be repeated. Required for any field the bundle redacted. "
+        "Issue #4083."
+    ),
+)
+@click.option(
+    "--mount-overrides-file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "JSON file with mount overrides. Shape: "
+        '{"<mount_id>": {"<field>": "<value>", ...}, ...}. '
+        "Merges under any --mount-override flags (file values win on conflict)."
+    ),
+)
+@click.option(
+    "--restore-mounts/--no-restore-mounts",
+    default=True,
+    help="Restore mounts from bundle (default: yes; bundle without mounts.jsonl is unaffected)",
+)
 @add_backend_options
 def import_zone(
     bundle_path: str,
@@ -581,7 +778,11 @@ def import_zone(
     dry_run: bool,
     import_permissions: bool,
     path_remap: tuple[str, ...],
-    backend_config: BackendConfig,
+    mount_override: tuple[str, ...],
+    mount_overrides_file: str | None,
+    restore_mounts: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Import zone data from a .nexus bundle.
 
@@ -602,25 +803,143 @@ def import_zone(
         nexus zone import /backup/acme.nexus --dry-run
     """
     try:
-        from nexus.bricks.portability import ConflictMode, ZoneImportOptions, ZoneImportService
-        from nexus.core.nexus_fs import NexusFS
-
         # Parse path remappings
         path_prefix_remap: dict[str, str] = {}
         for remap in path_remap:
             if "=" not in remap:
-                console.print(f"[red]Error:[/red] Invalid path remap format: {remap}")
+                console.print(
+                    f"[nexus.error]Error:[/nexus.error] Invalid path remap format: {remap}"
+                )
                 console.print("Use format: old=new (e.g., --path-remap /old/=/new/)")
                 sys.exit(1)
             old, new = remap.split("=", 1)
             path_prefix_remap[old] = new
 
-        # Get filesystem
-        nx = get_filesystem(backend_config)
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Zone import requires NexusFS instance")
-            nx.close()
-            sys.exit(1)
+        # Parse mount overrides — accumulate from --mount-override flags
+        # first, then merge --mount-overrides-file on top (file wins on
+        # collision). Per-flag format is MOUNT_ID:FIELD=VALUE so a single
+        # override targets one field; the file form is a structured JSON
+        # for multi-field overrides without one flag per field.
+        #
+        # SECURITY: --mount-override puts secret values in argv, which
+        # leaks them via shell history, ps aux, audit logs, and CLI
+        # telemetry before they reach the server. Warn loudly and
+        # recommend --mount-overrides-file (which can carry strict file
+        # permissions) for any real credential. The flag remains
+        # supported for tests, scripts, and short-lived rotation keys.
+        if mount_override:
+            console.print(
+                "[nexus.warning]Warning:[/nexus.warning] --mount-override puts "
+                "credentials in argv (visible in shell history, ps aux, audit "
+                "logs). For production secrets, prefer --mount-overrides-file "
+                "with restrictive file permissions (chmod 600)."
+            )
+        mount_overrides: dict[str, dict[str, str]] = {}
+        for override in mount_override:
+            try:
+                mid_field, value = override.split("=", 1)
+                mid, field = mid_field.split(":", 1)
+            except ValueError:
+                console.print(
+                    f"[nexus.error]Error:[/nexus.error] Invalid mount override format: {override}"
+                )
+                console.print("Use format: MOUNT_ID:FIELD=VALUE")
+                sys.exit(1)
+            mount_overrides.setdefault(mid, {})[field] = value
+        if mount_overrides_file:
+            import json as _json
+
+            try:
+                file_data = _json.loads(Path(mount_overrides_file).read_text())
+            except Exception as exc:
+                console.print(
+                    f"[nexus.error]Error:[/nexus.error] Cannot parse {mount_overrides_file}: {exc}"
+                )
+                sys.exit(1)
+            if not isinstance(file_data, dict):
+                console.print(
+                    f"[nexus.error]Error:[/nexus.error] "
+                    f"{mount_overrides_file} must be a JSON object "
+                    "(shape: {mount_id: {field: value}})"
+                )
+                sys.exit(1)
+            for mid, fields in file_data.items():
+                if not isinstance(fields, dict):
+                    console.print(
+                        f"[nexus.error]Error:[/nexus.error] "
+                        f"mount_overrides[{mid!r}] must be an object "
+                        "of field-name -> value"
+                    )
+                    sys.exit(1)
+                mount_overrides.setdefault(mid, {}).update(fields)
+
+        # Same remote-first routing as `nexus zone export` — lets a
+        # running server own the write path to its live metastore
+        # instead of the CLI trying to open the zone's redb in a
+        # separate process.
+        from nexus.cli.config import resolve_connection
+        from nexus.cli.utils import rpc_call
+
+        resolved = resolve_connection(
+            remote_url=remote_url,
+            remote_api_key=remote_api_key,
+        )
+        bundle_abs = str(Path(bundle_path).resolve())
+        console.print(f"[nexus.path]Importing from:[/nexus.path] {bundle_abs}")
+        if target_zone:
+            console.print(f"[nexus.value]Target zone:[/nexus.value] {target_zone}")
+        console.print(f"[nexus.value]Conflict mode:[/nexus.value] {conflict}")
+        if resolved.is_remote:
+            if dry_run:
+                console.print("[nexus.warning]DRY RUN not supported via RPC yet[/nexus.warning]")
+                sys.exit(2)
+            data = rpc_call(
+                resolved.url,
+                resolved.api_key,
+                "federation_import_zone",
+                bundle_path=bundle_abs,
+                target_zone=target_zone,
+                conflict=conflict,
+                preserve_timestamps=preserve_timestamps,
+                import_permissions=import_permissions,
+                path_prefix_remap=path_prefix_remap,
+                restore_mounts=restore_mounts,
+                mount_overrides=mount_overrides or None,
+            )
+            table = Table(title="Import Complete")
+            table.add_column("Metric", style="nexus.value")
+            table.add_column("Value", style="nexus.success")
+            table.add_row("Files created", f"{data.get('files_created', 0):,}")
+            table.add_row("Files updated", f"{data.get('files_updated', 0):,}")
+            table.add_row("Files skipped", f"{data.get('files_skipped', 0):,}")
+            table.add_row("Files failed", f"{data.get('files_failed', 0):,}")
+            table.add_row("Permissions imported", f"{data.get('permissions_imported', 0):,}")
+            console.print(table)
+
+            # Surface mount-restore errors over the wire. Without this,
+            # the CLI prints "Import Complete" even when mount restore
+            # silently failed for half the bundle (Issue #4083 review).
+            errors = data.get("errors") or []
+            warnings = data.get("warnings") or []
+            for w in warnings[:5]:
+                console.print(f"[nexus.warning]warning:[/nexus.warning] {w}")
+            non_info_errors = [e for e in errors if e.get("error_type") != "info"]
+            if non_info_errors:
+                console.print()
+                console.print("[nexus.error]Errors:[/nexus.error]")
+                for e in non_info_errors[:10]:
+                    console.print(f"  - {e.get('path', '?')}: {e.get('message', '')}")
+                if len(non_info_errors) > 10:
+                    console.print(f"  ... and {len(non_info_errors) - 10} more")
+                sys.exit(1)
+            return
+
+        # Local-only path kept for offline snapshot restore.
+        import asyncio as _asyncio
+
+        from nexus.bricks.portability import ConflictMode, ZoneImportOptions, ZoneImportService
+
+        nx: Any = _asyncio.run(get_filesystem(remote_url, remote_api_key))
 
         # Configure import options
         conflict_mode = ConflictMode(conflict)
@@ -632,15 +951,27 @@ def import_zone(
             dry_run=dry_run,
             import_permissions=import_permissions,
             path_prefix_remap=path_prefix_remap,
+            restore_mounts=restore_mounts,
+            mount_overrides=mount_overrides or None,
         )
 
+        # MountManager for offline restore (Issue #4083). Constructed
+        # only when the caller opted into mount restore so existing
+        # offline-snapshot workflows keep working unchanged.
+        mount_manager = None
+        if restore_mounts:
+            from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
+            from nexus.bricks.mount.mount_manager import MountManager
+
+            mount_manager = MountManager(MetastoreMountStore(nx))
+
         # Show import configuration
-        console.print(f"[cyan]Importing from:[/cyan] {bundle_path}")
+        console.print(f"[nexus.path]Importing from:[/nexus.path] {bundle_path}")
         if target_zone:
-            console.print(f"[cyan]Target zone:[/cyan] {target_zone}")
-        console.print(f"[cyan]Conflict mode:[/cyan] {conflict}")
+            console.print(f"[nexus.value]Target zone:[/nexus.value] {target_zone}")
+        console.print(f"[nexus.value]Conflict mode:[/nexus.value] {conflict}")
         if dry_run:
-            console.print("[yellow]DRY RUN - no changes will be made[/yellow]")
+            console.print("[nexus.warning]DRY RUN - no changes will be made[/nexus.warning]")
 
         # Run import with progress
         with Progress(
@@ -653,7 +984,7 @@ def import_zone(
             def update_progress(current: int, total: int, phase: str) -> None:
                 progress.update(task, description=f"Importing {phase}... ({current}/{total})")
 
-            service = ZoneImportService(nx)
+            service = ZoneImportService(cast(Any, nx), mount_manager=mount_manager)
             result = service.import_zone(options, update_progress)
 
         nx.close()
@@ -661,8 +992,8 @@ def import_zone(
         # Show results
         console.print()
         table = Table(title="Import Complete" if result.success else "Import Failed")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green" if result.success else "red")
+        table.add_column("Metric", style="nexus.value")
+        table.add_column("Value", style="nexus.success" if result.success else "nexus.error")
 
         table.add_row("Files created", f"{result.files_created:,}")
         table.add_row("Files updated", f"{result.files_updated:,}")
@@ -682,7 +1013,7 @@ def import_zone(
         # Show errors if any
         if result.errors:
             console.print()
-            console.print("[red]Errors:[/red]")
+            console.print("[nexus.error]Errors:[/nexus.error]")
             for error in result.errors[:10]:  # Show first 10 errors
                 console.print(f"  - {error.path}: {error.message}")
             if len(result.errors) > 10:
@@ -692,7 +1023,7 @@ def import_zone(
         # Show warnings if any
         if result.warnings:
             console.print()
-            console.print("[yellow]Warnings:[/yellow]")
+            console.print("[nexus.warning]Warnings:[/nexus.warning]")
             for warning in result.warnings[:5]:
                 console.print(f"  - {warning}")
             if len(result.warnings) > 5:
@@ -700,7 +1031,7 @@ def import_zone(
 
         if result.success:
             console.print()
-            console.print("[green]✓ Import completed successfully[/green]")
+            console.print("[nexus.success]✓ Import completed successfully[/nexus.success]")
 
     except Exception as e:
         handle_error(e)
@@ -720,8 +1051,8 @@ def inspect_bundle_cmd(bundle_path: str) -> None:
         info = inspect_bundle(bundle_path)
 
         table = Table(title=f"Bundle: {Path(bundle_path).name}")
-        table.add_column("Property", style="cyan")
-        table.add_column("Value", style="green")
+        table.add_column("Property", style="nexus.value")
+        table.add_column("Value", style="nexus.success")
 
         table.add_row("Bundle ID", info["bundle_id"][:8] + "...")
         table.add_row("Format Version", info["format_version"])
@@ -763,14 +1094,14 @@ def validate_bundle_cmd(bundle_path: str) -> None:
     try:
         from nexus.bricks.portability import validate_bundle
 
-        console.print(f"[cyan]Validating:[/cyan] {bundle_path}")
+        console.print(f"[nexus.path]Validating:[/nexus.path] {bundle_path}")
 
         is_valid, errors = validate_bundle(bundle_path)
 
         if is_valid:
-            console.print("[green]✓ Bundle is valid[/green]")
+            console.print("[nexus.success]✓ Bundle is valid[/nexus.success]")
         else:
-            console.print("[red]✗ Bundle validation failed:[/red]")
+            console.print("[nexus.error]✗ Bundle validation failed:[/nexus.error]")
             for error in errors:
                 console.print(f"  - {error}")
             sys.exit(1)

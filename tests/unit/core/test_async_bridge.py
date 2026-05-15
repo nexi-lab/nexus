@@ -5,11 +5,15 @@ These tests verify the async-to-sync bridge functionality for ReBAC operations.
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.async_bridge import (
     AsyncReBACBridge,
     get_async_rebac_bridge,
     shutdown_async_rebac_bridge,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class TestAsyncReBACBridge:
@@ -76,7 +80,7 @@ class TestAsyncReBACBridge:
         with pytest.raises(RuntimeError, match="not started"):
             bridge.rebac_check_bulk(
                 checks=[(("user", "alice"), "read", ("file", "/test.txt"))],
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
     def test_write_tuple_without_start_raises(self) -> None:

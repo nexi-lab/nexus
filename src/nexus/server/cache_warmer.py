@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.server.zone_execution import run_zone_scoped
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
@@ -422,6 +423,8 @@ class CacheWarmer:
         config: WarmupConfig | None = None,
         file_tracker: FileAccessTracker | None = None,
         local_disk_cache: "LocalDiskCache | None" = None,
+        *,
+        zone_registry: Any | None = None,
     ):
         """Initialize cache warmer.
 
@@ -435,6 +438,7 @@ class CacheWarmer:
         self._config = config or WarmupConfig()
         self._file_tracker = file_tracker
         self._local_disk_cache = local_disk_cache
+        self._zone_registry = zone_registry
 
         # Semaphore for parallel workers
         self._semaphore = asyncio.Semaphore(self._config.parallel_workers)
@@ -454,6 +458,27 @@ class CacheWarmer:
         return self._is_warming
 
     async def warmup_directory(
+        self,
+        path: str,
+        depth: int | None = None,
+        include_content: bool | None = None,
+        max_files: int | None = None,
+        zone_id: str = ROOT_ZONE_ID,
+        context: Any | None = None,
+    ) -> WarmupStats:
+        async def _warm() -> WarmupStats:
+            return await self._warmup_directory_on_current_loop(
+                path,
+                depth=depth,
+                include_content=include_content,
+                max_files=max_files,
+                zone_id=zone_id,
+                context=context,
+            )
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _warm)
+
+    async def _warmup_directory_on_current_loop(
         self,
         path: str,
         depth: int | None = None,
@@ -497,7 +522,9 @@ class CacheWarmer:
 
             # Get files using glob
             pattern = self._build_glob_pattern(path, depth)
-            files = self._nexus.glob(pattern, path="/", context=context)
+            search = self._nexus.service("search")
+            assert search is not None, "SearchService required for cache warmup"
+            files = search.glob(pattern, path="/", context=context)
             files = files[:max_files]
 
             logger.info(f"[WARMUP] Found {len(files)} files to warm")
@@ -531,6 +558,25 @@ class CacheWarmer:
             self._is_warming = False
 
     async def warmup_from_history(
+        self,
+        user: str | None = None,
+        hours: int = 24,
+        max_files: int | None = None,
+        zone_id: str = ROOT_ZONE_ID,
+        context: Any | None = None,
+    ) -> WarmupStats:
+        async def _warm() -> WarmupStats:
+            return await self._warmup_from_history_on_current_loop(
+                user=user,
+                hours=hours,
+                max_files=max_files,
+                zone_id=zone_id,
+                context=context,
+            )
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _warm)
+
+    async def _warmup_from_history_on_current_loop(
         self,
         user: str | None = None,
         hours: int = 24,
@@ -607,6 +653,21 @@ class CacheWarmer:
         zone_id: str = ROOT_ZONE_ID,
         paths: list[str] | None = None,
     ) -> WarmupStats:
+        async def _warm() -> WarmupStats:
+            return await self._warmup_permissions_on_current_loop(
+                user,
+                zone_id=zone_id,
+                paths=paths,
+            )
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _warm)
+
+    async def _warmup_permissions_on_current_loop(
+        self,
+        user: str,
+        zone_id: str = ROOT_ZONE_ID,
+        paths: list[str] | None = None,
+    ) -> WarmupStats:
         """Pre-cache permission graph for user.
 
         Args:
@@ -663,6 +724,23 @@ class CacheWarmer:
             self._is_warming = False
 
     async def warmup_paths(
+        self,
+        paths: list[str],
+        include_content: bool = False,
+        zone_id: str = ROOT_ZONE_ID,
+        context: Any | None = None,
+    ) -> WarmupStats:
+        async def _warm() -> WarmupStats:
+            return await self._warmup_paths_on_current_loop(
+                paths,
+                include_content=include_content,
+                zone_id=zone_id,
+                context=context,
+            )
+
+        return await run_zone_scoped(self._zone_registry, zone_id, _warm)
+
+    async def _warmup_paths_on_current_loop(
         self,
         paths: list[str],
         include_content: bool = False,
@@ -735,7 +813,7 @@ class CacheWarmer:
         async with self._semaphore:
             try:
                 # Check if file exists (warms exists cache)
-                exists = self._nexus.sys_access(path)
+                exists = self._nexus.access(path)
                 if not exists:
                     self._current_stats.skipped += 1
                     return
@@ -760,23 +838,23 @@ class CacheWarmer:
         async with self._semaphore:
             try:
                 # Read file content
-                content = self._nexus.sys_read(path, context=context)
+                content = await asyncio.to_thread(self._nexus.sys_read, path, context=context)
                 if content:
                     content_bytes = content if isinstance(content, bytes) else b""
                     self._current_stats.content_warmed += 1
                     self._current_stats.bytes_warmed += len(content_bytes)
 
-                    # Also warm L2 disk cache if available
-                    # In CAS storage, physical_path is the content hash
+                    # Also warm L2 disk cache if available.
+                    # ``physical_path`` was removed from FileMetadata; the
+                    # content hash for CAS-backed entries now lives in
+                    # ``content_id``, which is the canonical identifier the L2
+                    # cache keys on.
                     if self._local_disk_cache and isinstance(content, bytes):
                         metadata = self._nexus.metadata.get(path)
-                        if metadata and metadata.physical_path:
-                            # Extract hash from physical_path (format: "cas/{hash}")
-                            content_hash = metadata.physical_path
-                            if "/" in content_hash:
-                                content_hash = content_hash.split("/")[-1]
+                        if metadata and metadata.content_id:
+                            content_id = metadata.content_id
                             self._local_disk_cache.put(
-                                content_hash,
+                                content_id,
                                 content,
                                 zone_id=zone_id,
                             )
@@ -834,7 +912,7 @@ class CacheWarmer:
 
         try:
             # List root directory
-            root_entries = self._nexus.sys_readdir("/", recursive=False)
+            root_entries = await asyncio.to_thread(self._nexus.sys_readdir, "/", recursive=False)
             if isinstance(root_entries, list):
                 # Handle both list[str] and list[dict] return types
                 for entry in root_entries[:50]:
@@ -984,6 +1062,7 @@ async def warmup_on_mount(
     include_content: bool = False,
     max_files: int = 1000,
     zone_id: str = ROOT_ZONE_ID,
+    zone_registry: Any | None = None,
 ) -> WarmupStats:
     """Convenience function: Warm cache after FUSE mount.
 
@@ -998,7 +1077,7 @@ async def warmup_on_mount(
     Returns:
         WarmupStats
     """
-    warmer = CacheWarmer(nexus_fs)
+    warmer = CacheWarmer(nexus_fs, zone_registry=zone_registry)
     return await warmer.warmup_directory(
         path=mount_path,
         depth=depth,

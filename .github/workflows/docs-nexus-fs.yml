@@ -1,0 +1,60 @@
+name: "nexus-fs docs"
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "packages/nexus-fs/docs/**"
+      - "packages/nexus-fs/mkdocs.yml"
+      - "packages/nexus-fs/scripts/**"
+      - "src/nexus/fs/**"
+  pull_request:
+    paths:
+      - "packages/nexus-fs/docs/**"
+      - "packages/nexus-fs/mkdocs.yml"
+      - "packages/nexus-fs/scripts/**"
+      - "src/nexus/fs/**"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/nexus-fs
+
+env:
+  DISABLE_MKDOCS_2_WARNING: "true"
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
+jobs:
+  check:
+    name: Build & test docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for git-revision-date plugin
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: pip install -r requirements-docs.txt
+
+      - name: Build docs (strict)
+        run: mkdocs build --strict
+
+      - name: Spell check
+        run: typos docs/
+
+  link-check:
+    name: Check external links
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          args: "packages/nexus-fs/docs/ --exclude-loopback --no-progress"
+          fail: true

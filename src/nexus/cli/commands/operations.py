@@ -8,7 +8,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -51,7 +50,8 @@ def ops_diff(
     operation_1: str,
     operation_2: str,
     show_content: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Compare file state between two operation points.
 
@@ -62,12 +62,29 @@ def ops_diff(
         nexus ops diff /workspace/data.txt op_abc123 op_def456
         nexus ops diff /workspace/code.py op_abc123 op_def456 --show-content
     """
-    try:
-        nx = get_filesystem(backend_config)
+    import asyncio
 
-        time_travel = getattr(nx, "time_travel_service", None)
+    asyncio.run(
+        _async_ops_diff(path, operation_1, operation_2, show_content, remote_url, remote_api_key)
+    )
+
+
+async def _async_ops_diff(
+    path: str,
+    operation_1: str,
+    operation_2: str,
+    show_content: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+
+        time_travel = nx.service("time_travel")
         if time_travel is None:
-            console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Time-travel is only supported with local NexusFS"
+            )
             nx.close()
             return
 
@@ -75,38 +92,40 @@ def ops_diff(
         nx.close()
 
         # Display results
-        console.print(f"\n[bold cyan]Diff for {path}[/bold cyan]")
-        console.print(f"[dim]Operation 1:[/dim] {operation_1}")
-        console.print(f"[dim]Operation 2:[/dim] {operation_2}")
+        console.print(f"\n[bold nexus.value]Diff for {path}[/bold nexus.value]")
+        console.print(f"[nexus.muted]Operation 1:[/nexus.muted] {operation_1}")
+        console.print(f"[nexus.muted]Operation 2:[/nexus.muted] {operation_2}")
         console.print()
 
         state_1 = diff_result["operation_1"]
         state_2 = diff_result["operation_2"]
 
         if not state_1 and not state_2:
-            console.print("[yellow]File did not exist at either operation point[/yellow]")
+            console.print(
+                "[nexus.warning]File did not exist at either operation point[/nexus.warning]"
+            )
             return
 
         if not state_1:
-            console.print("[green]File was created[/green]")
+            console.print("[nexus.success]File was created[/nexus.success]")
             console.print(f"  Size: {state_2['metadata']['size']:,} bytes")
             console.print(f"  Operation: {state_2['operation_id'][:8]}")
             console.print(f"  Time: {state_2['operation_time']}")
         elif not state_2:
-            console.print("[red]File was deleted[/red]")
+            console.print("[nexus.error]File was deleted[/nexus.error]")
             console.print(f"  Previous size: {state_1['metadata']['size']:,} bytes")
             console.print(f"  Operation: {state_1['operation_id'][:8]}")
             console.print(f"  Time: {state_1['operation_time']}")
         else:
             # Both exist - show changes
             if diff_result["content_changed"]:
-                console.print("[yellow]File content changed[/yellow]")
+                console.print("[nexus.warning]File content changed[/nexus.warning]")
                 console.print(
                     f"  Size: {state_1['metadata']['size']:,} → {state_2['metadata']['size']:,} bytes"
                 )
                 console.print(f"  Size diff: {diff_result['size_diff']:+,} bytes")
             else:
-                console.print("[green]File content unchanged[/green]")
+                console.print("[nexus.success]File content unchanged[/nexus.success]")
 
             console.print()
             console.print("[bold]Operation 1:[/bold]")
@@ -144,16 +163,18 @@ def ops_diff(
                         if line.startswith("+++") or line.startswith("---"):
                             console.print(f"[bold]{line}[/bold]")
                         elif line.startswith("+"):
-                            console.print(f"[green]{line}[/green]")
+                            console.print(f"[nexus.success]{line}[/nexus.success]")
                         elif line.startswith("-"):
-                            console.print(f"[red]{line}[/red]")
+                            console.print(f"[nexus.error]{line}[/nexus.error]")
                         elif line.startswith("@@"):
-                            console.print(f"[cyan]{line}[/cyan]")
+                            console.print(f"[nexus.value]{line}[/nexus.value]")
                         else:
-                            console.print(f"[dim]{line}[/dim]")
+                            console.print(f"[nexus.muted]{line}[/nexus.muted]")
 
                 except UnicodeDecodeError:
-                    console.print("[yellow]Binary file - content diff not available[/yellow]")
+                    console.print(
+                        "[nexus.warning]Binary file - content diff not available[/nexus.warning]"
+                    )
 
     except Exception as e:
         handle_error(e)
@@ -174,7 +195,8 @@ def ops_log(
     path: str | None,
     status: str | None,
     limit: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show operation log with optional filters.
 
@@ -186,38 +208,69 @@ def ops_log(
         nexus ops log --type write --path /workspace/data.txt
         nexus ops log --status failure
     """
-    try:
-        nx = get_filesystem(backend_config)
+    import asyncio
 
-        ops_service = getattr(nx, "operations_service", None)
+    asyncio.run(
+        _async_ops_log(agent, zone, op_type, path, status, limit, remote_url, remote_api_key)
+    )
+
+
+async def _async_ops_log(
+    agent: str | None,
+    zone: str | None,
+    op_type: str | None,
+    path: str | None,
+    status: str | None,
+    limit: int,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+
+        ops_service = nx.service("operations")
         if ops_service is None:
             raise click.ClickException("Operation log requires a local NexusFS instance")
+
+        # Support prefix matching: --path /demo/ matches all paths under /demo/
+        # Use path_pattern (SQL LIKE with * → %) when path ends with /
+        # or contains *, otherwise exact match.
+        _path = path
+        _path_pattern = None
+        if path and (path.endswith("/") or "*" in path):
+            _path = None
+            _path_pattern = path.rstrip("/") + "/*" if path.endswith("/") else path
 
         operations = ops_service.list_operations(
             zone_id=zone,
             agent_id=agent,
             operation_type=op_type,
-            path=path,
+            path=_path,
+            path_pattern=_path_pattern,
             status=status,
             limit=limit,
         )
 
         if not operations:
-            console.print("[yellow]No operations found[/yellow]")
+            console.print("[nexus.warning]No operations found[/nexus.warning]")
             nx.close()
             return
 
         # Display table
         table = Table(title="Operation Log")
-        table.add_column("Time", style="cyan")
-        table.add_column("Type", style="yellow")
-        table.add_column("Path", style="green")
-        table.add_column("Agent", style="blue")
+        table.add_column("Time", style="nexus.value")
+        table.add_column("Type", style="nexus.warning")
+        table.add_column("Path", style="nexus.success")
+        table.add_column("Agent", style="nexus.reference")
         table.add_column("Status")
-        table.add_column("Op ID", style="dim")
+        table.add_column("Op ID", style="nexus.muted")
 
         for op in operations:
-            status_display = "[green]✓[/green]" if op["status"] == "success" else "[red]✗[/red]"
+            status_display = (
+                "[nexus.success]✓[/nexus.success]"
+                if op["status"] == "success"
+                else "[nexus.error]✗[/nexus.error]"
+            )
             created_at = op["created_at"].strftime("%Y-%m-%d %H:%M:%S")
 
             # Truncate operation ID for display
@@ -238,7 +291,7 @@ def ops_log(
             )
 
         console.print(table)
-        console.print(f"\n[dim]Showing {len(operations)} operations[/dim]")
+        console.print(f"\n[nexus.muted]Showing {len(operations)} operations[/nexus.muted]")
 
         nx.close()
 
@@ -246,11 +299,77 @@ def ops_log(
         handle_error(e)
 
 
+@ops_group.command(name="replay")
+@click.option("--limit", "-n", type=int, default=10, help="Number of records to show")
+@click.option("--entity-urn", type=str, default=None, help="Filter by entity URN")
+@click.option("--from-sequence", type=int, default=0, help="Start from sequence number")
+@add_backend_options
+@click.pass_context
+def ops_replay(
+    ctx: click.Context,
+    limit: int,
+    entity_urn: str | None,
+    from_sequence: int,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Replay MCL records.
+
+    Shows metadata change log entries from the operation log, ordered
+    by sequence number. Useful for debugging and auditing.
+
+    Examples:
+        nexus ops replay --limit 5
+        nexus ops replay --entity-urn urn:nexus:file:default:abc123
+    """
+    from nexus.cli.api_client import get_api_client_from_options
+
+    profile_name = (ctx.obj or {}).get("profile")
+    client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
+
+    params: dict[str, str | int] = {
+        "from_sequence": from_sequence,
+        "limit": limit,
+    }
+    if entity_urn:
+        params["entity_urn"] = entity_urn
+
+    try:
+        result = client.get("/api/v2/ops/replay", params=params)
+    except Exception as e:
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+        raise SystemExit(1) from e
+
+    records = result.get("records", [])
+    if not records:
+        console.print("[nexus.warning]No MCL records found[/nexus.warning]")
+        return
+
+    console.print(f"[bold]MCL Records (from seq {from_sequence}):[/bold]")
+    console.print()
+
+    for r in records:
+        seq = r.get("sequence_number", "?")
+        urn = r.get("entity_urn", "?")
+        aspect = r.get("aspect_name", "?")
+        change = r.get("change_type", "?")
+        ts = r.get("timestamp", "?")
+        console.print(f"  #{seq:>6}  {change:>12}  {aspect:20s}  {urn}")
+        console.print(f"          {ts}")
+        console.print()
+
+    if result.get("has_more"):
+        next_cursor = result.get("next_cursor", "?")
+        console.print(
+            f"[nexus.muted]More records available. Use --from-sequence {next_cursor}[/nexus.muted]"
+        )
+
+
 @click.command(name="undo")
 @click.option("--agent", "-a", help="Filter by agent ID (undo last operation by this agent)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @add_backend_options
-def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
+def undo(agent: str | None, yes: bool, remote_url: str | None, remote_api_key: str | None) -> None:
     """Undo the last successful operation.
 
     Reverts the most recent filesystem operation.
@@ -260,10 +379,18 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
         nexus undo --agent my-agent
         nexus undo --yes
     """
-    try:
-        nx = get_filesystem(backend_config)
+    import asyncio
 
-        ops_service = getattr(nx, "operations_service", None)
+    asyncio.run(_async_undo(agent, yes, remote_url, remote_api_key))
+
+
+async def _async_undo(
+    agent: str | None, yes: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+
+        ops_service = nx.service("operations")
         if ops_service is None:
             raise click.ClickException("Undo requires a local NexusFS instance")
 
@@ -273,7 +400,7 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
         )
 
         if not last_op:
-            console.print("[yellow]No operations to undo[/yellow]")
+            console.print("[nexus.warning]No operations to undo[/nexus.warning]")
             nx.close()
             return
 
@@ -299,9 +426,11 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
         if result["success"]:
             console.print(f"  {result['message']}")
         else:
-            console.print(f"  [yellow]Warning: {result['message']}[/yellow]")
+            console.print(f"  [nexus.warning]Warning: {result['message']}[/nexus.warning]")
 
-        console.print(f"\n[green]✓[/green] Undid operation: {last_op['operation_type']}")
+        console.print(
+            f"\n[nexus.success]✓[/nexus.success] Undid operation: {last_op['operation_type']}"
+        )
 
         nx.close()
 

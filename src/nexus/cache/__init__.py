@@ -28,11 +28,6 @@ Note:
         from nexus.cache.dragonfly import DragonflyCacheStore
 """
 
-from nexus.backends.caching_backend_wrapper import (
-    CacheStrategy,
-    CacheWrapperConfig,
-    CachingBackendWrapper,
-)
 from nexus.cache.base import (
     EmbeddingCacheProtocol,
     PermissionCacheProtocol,
@@ -41,7 +36,11 @@ from nexus.cache.base import (
 )
 from nexus.cache.brick import CacheBrick
 from nexus.cache.factory import CacheFactory
+from nexus.cache.file_store import FileKey, MemoryFileCache
+from nexus.cache.index_store import IndexKey, MemoryIndexCache
 from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.cache.invalidation import FilePathInvalidation, ParentListingInvalidation
+from nexus.cache.policy import index_ttl_for_backend, negative_ttl_for_backend
 from nexus.cache.settings import CacheSettings
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
@@ -51,15 +50,19 @@ __all__ = [
     # Factory + config (deprecated — use CacheBrick instead)
     "CacheFactory",
     "CacheSettings",
-    # CachingBackendWrapper — transparent caching decorator for any Backend (#1392)
-    "CachingBackendWrapper",
-    "CacheStrategy",
-    "CacheWrapperConfig",
     # Consumer-facing protocols (what you program against)
     "EmbeddingCacheProtocol",
+    "FileKey",
+    "FilePathInvalidation",
+    "IndexKey",
     "PermissionCacheProtocol",
+    "MemoryFileCache",
+    "MemoryIndexCache",
+    "ParentListingInvalidation",
     "ResourceMapCacheProtocol",
     "TigerCacheProtocol",
+    "index_ttl_for_backend",
+    "negative_ttl_for_backend",
     # Fourth Pillar ABC — canonical home is nexus.contracts.cache_store (Issue #2055)
     "CacheStoreABC",
     "NullCacheStore",

@@ -67,13 +67,13 @@ def mock_metadata_store():
         "path": "/test.txt",
         "size": 1024,
         "version": 1,
-        "etag": "abc123",
+        "content_id": "abc123",
         "created_at": "2026-01-01T00:00:00",
     }
     mock.list_versions.return_value = [
         {
             "version": 1,
-            "etag": "abc123",
+            "content_id": "abc123",
             "size": 1024,
             "created_at": "2026-01-01T00:00:00",
             "created_by": "test_user",
@@ -117,7 +117,6 @@ def mock_router():
         MagicMock configured for path routing operations
     """
     mock = MagicMock()
-    mock.resolve_backend.return_value = MagicMock()
     mock.get_mount_point.return_value = "/mnt/test"
     return mock
 

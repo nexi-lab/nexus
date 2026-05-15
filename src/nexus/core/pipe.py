@@ -4,31 +4,28 @@ Implements the Kernel messaging tier from KERNEL-ARCHITECTURE.md §6:
 
     | Tier       | Linux Analogue   | Nexus                              | Latency |
     |------------|------------------|------------------------------------|---------|
-    | **Kernel** | kfifo ring buffer| Nexus Native Pipe (DT_PIPE)        | ~5μs    |
+    | **Kernel** | kfifo ring buffer| Nexus Native Pipe (DT_PIPE)        | ~0.5μs  |
 
-This file contains the kernel-internal ring buffer (kfifo equivalent).
-For VFS-visible named pipes (mkfifo/fs/pipe.c equivalent), see
-system_services/pipe_manager.py (moved from core/ per Issue #2366).
+This file defines the PipeBackend protocol and exception classes for DT_PIPE.
+The actual data plane lives in the Rust kernel IPC registry
+(DashMap<String, RingBufferCore>) inside ``nexus_runtime``. The mkfifo /
+``fs/pipe.c`` equivalent (named-pipe creation, lookup, destroy) is also
+owned by the Rust kernel — there is no Python ``PipeManager`` anymore.
 
-    pipe.py         = kfifo     (include/linux/kfifo.h + lib/kfifo.c)
-    system_services/pipe_manager.py = fs/pipe.c (VFS named pipe, system service tier)
+    pipe.py = Python-side protocol + exceptions
+    rust/kernel/src/ipc/pipe.rs = Rust kernel pipe registry (data plane)
 
 Storage model (KERNEL-ARCHITECTURE.md line 228):
     - Pipe **inode** (FileMetadata, entry_type=DT_PIPE) → MetastoreABC
-    - Pipe **data** (bytes in ring buffer) → process heap (not in any pillar)
+    - Pipe **data** (bytes in ring buffer) → Rust kernel IPC registry (not in any pillar)
 
-Design: SPSC (single-producer, single-consumer) message-oriented deque with
-byte-capacity tracking. No explicit lock — CPython deque.append/popleft are
-GIL-atomic for SPSC. asyncio.Event pairs provide blocking semantics.
-
-Phase 1 = Python (this file). Phase 2 = Rust lock-free SPSC via nexus_fast (Task #806).
-
-See: federation-memo.md §7j, ISSUE-A2A-PHASE2-VFS-IPC.md
+See: federation-memo.md §7j
 """
 
-import asyncio
+from __future__ import annotations
+
 import logging
-from collections import deque
+from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -57,223 +54,44 @@ class PipeNotFoundError(PipeError):
     """No pipe registered at the given path."""
 
 
+class PipeExistsError(PipeError):
+    """A pipe already exists at the given path."""
+
+
 # ---------------------------------------------------------------------------
-# RingBuffer — kfifo equivalent (kernel-internal, no VFS)
+# PipeBackend protocol — pluggable transport tier
 # ---------------------------------------------------------------------------
 
 
-class RingBuffer:
-    """SPSC message-oriented ring buffer for kernel IPC.
+@runtime_checkable
+class PipeBackend(Protocol):
+    """Protocol for pipe data transport backends.
 
-    Analogous to Linux kfifo: a kernel-internal FIFO with no filesystem
-    visibility. Any kernel code or in-process service can instantiate one
-    directly for fast async signaling.
+    Pluggable transport tier for DT_PIPE (KERNEL-ARCHITECTURE.md §4.2).
+    PipeManager stores ``dict[str, PipeBackend]`` — all backends share
+    this interface so PipeManager is transport-agnostic.
 
-    For VFS-visible named pipes (mkfifo equivalent), use PipeManager
-    from system_services/pipe_manager.py.
+    **Concurrency contract**: All PipeBackend methods are **SPSC** (single-producer,
+    single-consumer) with no internal synchronization. The asyncio event loop provides
+    implicit serialization for coroutines, but this is a *usage property*, NOT a buffer
+    guarantee. Multi-threaded callers MUST use PipeManager.pipe_write/pipe_read (which
+    add per-pipe asyncio.Lock for MPMC safety).
 
-    Design choices:
-      - Message-oriented (deque of discrete bytes), not byte-stream.
-        All real usage is discrete JSON messages (A2A tasks, agent commands).
-      - No explicit lock. SPSC contract + CPython GIL makes deque
-        append/popleft atomic. asyncio.Event pairs for blocking.
-      - Byte-capacity tracking (not message count) for backpressure.
-        A single A2A message is 500-2000 bytes; capacity in bytes is
-        more meaningful than message count.
-
-    Performance: ~5μs per operation (Python Phase 1).
-    Phase 2 target: ~0.5μs via Rust lock-free SPSC (Task #806).
+    Implementations:
+        Rust kernel IPC registry              — in-process SPSC ring buffer (~0.5μs)
+        Rust ``SharedMemoryPipeBackend``      — cross-process mmap'd ring buffer (~1–5μs)
     """
 
-    __slots__ = (
-        "_capacity",
-        "_buf",
-        "_size",
-        "_closed",
-        "_not_empty",
-        "_not_full",
-    )
-
-    def __init__(self, capacity: int = 65_536) -> None:
-        """Create a ring buffer with the given byte capacity.
-
-        Args:
-            capacity: Maximum total bytes across all buffered messages.
-                      Default 64KB. Must be > 0.
-        """
-        if capacity <= 0:
-            raise ValueError(f"capacity must be > 0, got {capacity}")
-        self._capacity = capacity
-        self._buf: deque[bytes] = deque()
-        self._size: int = 0
-        self._closed: bool = False
-        self._not_empty = asyncio.Event()
-        self._not_full = asyncio.Event()
-        self._not_full.set()  # initially not full
-
-    async def write(self, data: bytes, *, blocking: bool = True) -> int:
-        """Write a message to the buffer.
-
-        Args:
-            data: Message bytes. Empty bytes (b"") are silently ignored.
-            blocking: If True, wait until space is available.
-                      If False, raise PipeFullError immediately.
-
-        Returns:
-            Number of bytes written.
-
-        Raises:
-            PipeClosedError: Buffer is closed.
-            PipeFullError: Non-blocking and buffer is full.
-            ValueError: Message larger than total capacity.
-        """
-        if self._closed:
-            raise PipeClosedError("write to closed pipe")
-
-        if not data:
-            return 0
-
-        msg_len = len(data)
-        if msg_len > self._capacity:
-            raise ValueError(f"message size {msg_len} exceeds buffer capacity {self._capacity}")
-
-        while self._size + msg_len > self._capacity:
-            if not blocking:
-                raise PipeFullError(f"buffer full ({self._size}/{self._capacity} bytes)")
-            self._not_full.clear()
-            # Wait for space or close
-            await self._not_full.wait()
-            if self._closed:
-                raise PipeClosedError("write to closed pipe")
-
-        self._buf.append(data)
-        self._size += msg_len
-        self._not_empty.set()
-
-        if self._size >= self._capacity:
-            self._not_full.clear()
-
-        return msg_len
-
-    async def read(self, *, blocking: bool = True) -> bytes:
-        """Read the next message from the buffer.
-
-        Args:
-            blocking: If True, wait until a message is available.
-                      If False, raise PipeEmptyError immediately.
-
-        Returns:
-            The next message bytes.
-
-        Raises:
-            PipeClosedError: Buffer is closed AND empty.
-            PipeEmptyError: Non-blocking and buffer is empty.
-        """
-        while not self._buf:
-            if self._closed:
-                raise PipeClosedError("read from closed empty pipe")
-            if not blocking:
-                raise PipeEmptyError("buffer empty")
-            self._not_empty.clear()
-            await self._not_empty.wait()
-
-        msg = self._buf.popleft()
-        self._size -= len(msg)
-        self._not_full.set()
-
-        if not self._buf:
-            self._not_empty.clear()
-
-        return msg
-
-    def write_nowait(self, data: bytes) -> int:
-        """Synchronous non-blocking write. Raises PipeFullError if full.
-
-        Same logic as write(blocking=False) but callable from sync code.
-        Used by PipeManager.pipe_write_nowait() for sync producers.
-        """
-        if self._closed:
-            raise PipeClosedError("write to closed pipe")
-        if not data:
-            return 0
-        msg_len = len(data)
-        if msg_len > self._capacity:
-            raise ValueError(f"message size {msg_len} exceeds buffer capacity {self._capacity}")
-        if self._size + msg_len > self._capacity:
-            raise PipeFullError(f"buffer full ({self._size}/{self._capacity} bytes)")
-        self._buf.append(data)
-        self._size += msg_len
-        self._not_empty.set()
-        if self._size >= self._capacity:
-            self._not_full.clear()
-        return msg_len
-
-    def read_nowait(self) -> bytes:
-        """Synchronous non-blocking read. Raises PipeEmptyError if empty.
-
-        Same logic as read(blocking=False) but callable from sync code.
-        Used by PipeManager.pipe_read() under lock for MPMC safety.
-        """
-        if not self._buf:
-            if self._closed:
-                raise PipeClosedError("read from closed empty pipe")
-            raise PipeEmptyError("buffer empty")
-        msg = self._buf.popleft()
-        self._size -= len(msg)
-        self._not_full.set()
-        if not self._buf:
-            self._not_empty.clear()
-        return msg
-
-    async def wait_writable(self) -> None:
-        """Wait until buffer has space or is closed.
-
-        Public interface to internal Event state. Used by PipeManager
-        for lock→try→unlock→wait→retry pattern (avoids exposing _not_full).
-        """
-        while self._size >= self._capacity and not self._closed:
-            self._not_full.clear()
-            await self._not_full.wait()
-
-    async def wait_readable(self) -> None:
-        """Wait until buffer has data or is closed.
-
-        Public interface to internal Event state. Used by PipeManager
-        for lock→try→unlock→wait→retry pattern (avoids exposing _not_empty).
-        """
-        while not self._buf and not self._closed:
-            self._not_empty.clear()
-            await self._not_empty.wait()
-
-    def peek(self) -> bytes | None:
-        """Non-consuming peek at the next message. Returns None if empty."""
-        return self._buf[0] if self._buf else None
-
-    def peek_all(self) -> list[bytes]:
-        """Non-consuming view of all buffered messages (for observability)."""
-        return list(self._buf)
-
-    def close(self) -> None:
-        """Close the buffer. Wakes all blocked readers/writers.
-
-        After close:
-          - write() raises PipeClosedError
-          - read() drains remaining messages, then raises PipeClosedError
-        """
-        self._closed = True
-        self._not_empty.set()  # wake blocked readers
-        self._not_full.set()  # wake blocked writers
+    async def write(self, data: bytes, *, blocking: bool = True) -> int: ...
+    async def read(self, *, blocking: bool = True) -> bytes: ...
+    def write_nowait(self, data: bytes) -> int: ...
+    def read_nowait(self) -> bytes: ...
+    async def wait_writable(self) -> None: ...
+    async def wait_readable(self) -> None: ...
+    def close(self) -> None: ...
 
     @property
-    def closed(self) -> bool:
-        return self._closed
+    def closed(self) -> bool: ...
 
     @property
-    def stats(self) -> dict:
-        """Buffer statistics for observability."""
-        return {
-            "size": self._size,
-            "capacity": self._capacity,
-            "msg_count": len(self._buf),
-            "closed": self._closed,
-        }
+    def stats(self) -> dict: ...

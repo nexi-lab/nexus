@@ -1,13 +1,14 @@
-"""Workspace and memory registration service."""
+"""Workspace service domain -- SYSTEM tier.
 
-from nexus.services.workspace.workspace_registry import (
-    MemoryConfig as MemoryConfig,
-)
-from nexus.services.workspace.workspace_registry import (
-    WorkspaceConfig as WorkspaceConfig,
-)
-from nexus.services.workspace.workspace_registry import (
-    WorkspaceRegistry as WorkspaceRegistry,
-)
+Canonical location for workspace management services.
+"""
 
-__all__ = ["MemoryConfig", "WorkspaceConfig", "WorkspaceRegistry"]
+from nexus.services.workspace.context_branch import ContextBranchService
+from nexus.services.workspace.workspace_manager import WorkspaceManager
+from nexus.services.workspace.workspace_rpc_service import WorkspaceRPCService
+
+__all__ = [
+    "ContextBranchService",
+    "WorkspaceManager",
+    "WorkspaceRPCService",
+]

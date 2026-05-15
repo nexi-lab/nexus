@@ -6,7 +6,7 @@ an in-memory registry for fast-path O(1) lookups.
 
 Architecture:
     - TransactionRegistry: in-memory fast-path (zero cost when no txns active)
-    - CASBlobStore.hold_reference(): prevents GC of pre-modification content
+    - CASAddressingEngine.hold_reference(): prevents GC of pre-modification content
     - DB: TransactionSnapshotModel + SnapshotEntryModel for durability
     - Conflict detection: MVCC at commit time via hash comparison
 
@@ -29,7 +29,8 @@ from nexus.bricks.snapshot.errors import (
     TransactionNotFoundError,
 )
 from nexus.bricks.snapshot.registry import TransactionRegistry
-from nexus.services.protocols.snapshot import (
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.protocols.snapshot import (
     ConflictInfo,
     SnapshotEntry,
     TransactionInfo,
@@ -96,7 +97,7 @@ class TransactionalSnapshotService:
 
         Args:
             record_store: RecordStoreABC for DB persistence.
-            cas_store: CASBlobStore for hold_reference/release.
+            cas_store: CASAddressingEngine for hold_reference/release.
             metadata_store: MetastoreABC for reading current file state.
             metadata_factory: Callable to construct FileMetadata-like objects
                 (injected by factory.py to avoid importing nexus.contracts.metadata).
@@ -104,6 +105,7 @@ class TransactionalSnapshotService:
         self._session_factory = record_store.session_factory
         self._cas_store = cas_store
         self._metadata_store = metadata_store
+        self._kernel = metadata_store
         self._metadata_factory = metadata_factory
         self._registry = TransactionRegistry()
 
@@ -169,6 +171,30 @@ class TransactionalSnapshotService:
             new_hash=None,
         )
 
+    def validate_path_available(self, transaction_id: str, path: str) -> None:
+        """Check that *path* can be tracked by *transaction_id*.
+
+        Call this **before** performing the filesystem mutation so that a
+        conflict is detected before the write/delete occurs.
+
+        Raises:
+            TransactionConflictError: if *path* is owned by another transaction.
+        """
+        if not self._registry.has_active_transactions():
+            return
+        existing_txn = self._registry.get_transaction_for_path(path)
+        if existing_txn is not None and existing_txn != transaction_id:
+            raise TransactionConflictError(
+                conflicts=[
+                    ConflictInfo(
+                        path=path,
+                        expected_hash=None,
+                        current_hash=None,
+                        reason=f"Path already tracked by transaction {existing_txn}",
+                    )
+                ]
+            )
+
     def _track_operation(
         self,
         transaction_id: str,
@@ -180,7 +206,7 @@ class TransactionalSnapshotService:
     ) -> None:
         """Internal: track a filesystem operation within a transaction."""
         # Hold CAS reference to prevent GC of original content
-        if original_hash is not None:
+        if original_hash is not None and hasattr(self._cas_store, "hold_reference"):
             held = self._cas_store.hold_reference(original_hash)
             if not held:
                 logger.warning(
@@ -193,15 +219,19 @@ class TransactionalSnapshotService:
         # Register path in memory registry
         tracked = self._registry.track_path(transaction_id, path)
         if not tracked:
-            logger.warning(
-                "Path %s already tracked by different transaction (txn=%s)",
-                path,
-                transaction_id,
-            )
             # Release the hold we just acquired since we can't track
-            if original_hash is not None:
+            if original_hash is not None and hasattr(self._cas_store, "release"):
                 self._cas_store.release(original_hash)
-            return
+            raise TransactionConflictError(
+                conflicts=[
+                    ConflictInfo(
+                        path=path,
+                        expected_hash=original_hash,
+                        current_hash=new_hash,
+                        reason=f"Path already tracked by a different transaction (txn={transaction_id})",
+                    )
+                ]
+            )
 
         # Persist entry to DB
         metadata_json = json.dumps(original_metadata) if original_metadata else None
@@ -220,15 +250,7 @@ class TransactionalSnapshotService:
                 path,
                 transaction_id,
             )
-            # Release CAS hold to prevent ref_count leak (CRITICAL-2 fix)
-            if original_hash is not None:
-                try:
-                    self._cas_store.release(original_hash)
-                except Exception:
-                    logger.warning(
-                        "Failed to release CAS hold after persist failure: hash=%s",
-                        original_hash,
-                    )
+            # CAS blob cleanup deferred to reachability GC — no release needed.
             raise
 
     def _persist_entry(
@@ -337,12 +359,12 @@ class TransactionalSnapshotService:
         if txn_model.status != "active":
             raise TransactionNotActiveError(transaction_id, txn_model.status)
 
-        # Conflict detection: compare new_hash vs current metadata etag
+        # Conflict detection: compare new_hash vs current metadata content_id
         conflicts: list[ConflictInfo] = []
         for entry in entries:
             if entry.new_hash is not None:
-                current_meta = self._metadata_store.get(entry.path)
-                current_hash = current_meta.etag if current_meta else None
+                current_stat = self._kernel.sys_stat(entry.path, ROOT_ZONE_ID)
+                current_hash = current_stat["content_id"] if current_stat else None
                 if current_hash != entry.new_hash:
                     conflicts.append(
                         ConflictInfo(
@@ -402,10 +424,8 @@ class TransactionalSnapshotService:
         meta_dict = json.loads(metadata_json)
         return self._metadata_factory(
             path=path,
-            backend_name=meta_dict.get("backend_name", "local"),
-            physical_path=original_hash,
             size=meta_dict.get("size", 0),
-            etag=original_hash,
+            content_id=original_hash,
             created_at=datetime.fromisoformat(meta_dict["created_at"])
             if meta_dict.get("created_at")
             else datetime.now(UTC),
@@ -413,7 +433,7 @@ class TransactionalSnapshotService:
             if meta_dict.get("modified_at")
             else datetime.now(UTC),
             version=meta_dict.get("version", 1),
-            zone_id=meta_dict.get("zone_id", "root"),
+            zone_id=meta_dict.get("zone_id", ROOT_ZONE_ID),
             owner_id=meta_dict.get("owner_id"),
         )
 
@@ -436,20 +456,55 @@ class TransactionalSnapshotService:
         if txn_model.status != "active":
             raise TransactionNotActiveError(transaction_id, txn_model.status)
 
+        # System context for admin cleanup operations (rollback deletes).
+        from nexus.contracts.types import OperationContext
+
+        _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+
         # Process entries in reverse order (LIFO)
         for entry in reversed(entries):
             try:
                 if entry.original_hash is not None and entry.original_metadata is not None:
-                    # Restore file to pre-transaction state
+                    # Restore file to pre-transaction state (full metadata available)
                     restored = self._restore_metadata_from_snapshot(
                         entry.path, entry.original_hash, entry.original_metadata
                     )
-                    self._metadata_store.put(restored)
+                    self._kernel.sys_setattr(
+                        entry.path,
+                        0,  # UPDATE existing entry
+                        content_id=restored.content_id,
+                        size=restored.size,
+                        version=restored.version,
+                        modified_at_ms=int(restored.modified_at.timestamp() * 1000)
+                        if restored.modified_at
+                        else None,
+                        created_at_ms=int(restored.created_at.timestamp() * 1000)
+                        if restored.created_at
+                        else None,
+                    )
                     logger.debug("Restored file: path=%s hash=%s", entry.path, entry.original_hash)
+                elif entry.original_hash is not None and entry.original_metadata is None:
+                    # Restore with minimal metadata (original_metadata was not captured)
+                    if self._metadata_factory is not None:
+                        current_stat = self._kernel.sys_stat(entry.path, ROOT_ZONE_ID)
+                        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+                        self._kernel.sys_setattr(
+                            entry.path,
+                            0,  # UPDATE existing entry
+                            content_id=entry.original_hash,
+                            size=current_stat.get("size", 0) if current_stat else 0,
+                            version=current_stat.get("version", 1) if current_stat else 1,
+                            modified_at_ms=now_ms,
+                        )
+                        logger.debug(
+                            "Restored file (minimal): path=%s hash=%s",
+                            entry.path,
+                            entry.original_hash,
+                        )
                 elif entry.operation == "write" and entry.original_hash is None:
                     # New file created during transaction — delete it
                     try:
-                        self._metadata_store.delete(entry.path)
+                        self._kernel.sys_unlink(entry.path, context=_sys_ctx)
                         if entry.new_hash:
                             self._cas_store.release(entry.new_hash)
                     except Exception:
@@ -457,10 +512,27 @@ class TransactionalSnapshotService:
                 elif entry.operation == "delete" and entry.original_hash is not None:
                     # File was deleted — restore from snapshot
                     if entry.original_metadata:
-                        restored = self._restore_metadata_from_snapshot(
-                            entry.path, entry.original_hash, entry.original_metadata
+                        meta_dict = json.loads(entry.original_metadata)
+                        _created = (
+                            datetime.fromisoformat(meta_dict["created_at"])
+                            if meta_dict.get("created_at")
+                            else datetime.now(UTC)
                         )
-                        self._metadata_store.put(restored)
+                        _modified = (
+                            datetime.fromisoformat(meta_dict["modified_at"])
+                            if meta_dict.get("modified_at")
+                            else datetime.now(UTC)
+                        )
+                        self._kernel.sys_setattr(
+                            entry.path,
+                            0,  # DT_REG upsert (re-create deleted entry)
+                            content_id=entry.original_hash,
+                            size=meta_dict.get("size", 0),
+                            version=meta_dict.get("version", 1),
+                            zone_id=meta_dict.get("zone_id", ROOT_ZONE_ID),
+                            modified_at_ms=int(_modified.timestamp() * 1000),
+                            created_at_ms=int(_created.timestamp() * 1000),
+                        )
                         logger.debug(
                             "Restored deleted file: path=%s hash=%s",
                             entry.path,

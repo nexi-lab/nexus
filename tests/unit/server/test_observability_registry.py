@@ -337,7 +337,7 @@ class TestCreateRegistry:
     """Tests for create_registry() wiring (Issue #2072)."""
 
     def test_registers_all_providers(self) -> None:
-        """create_registry() should register 5 observability providers."""
+        """create_registry() should register 6 observability providers."""
         from nexus.server.lifespan.observability import create_registry
 
         registry = create_registry()
@@ -347,7 +347,8 @@ class TestCreateRegistry:
         assert "sentry" in names
         assert "pyroscope" in names
         assert "prometheus" in names
-        assert len(names) == 5
+        assert "activity" in names
+        assert len(names) == 6
 
     def test_registration_order_matches_dependency_order(self) -> None:
         from nexus.server.lifespan.observability import create_registry

@@ -1,0 +1,522 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+from sqlalchemy.exc import ProgrammingError
+
+from nexus.bricks.search.mutation_events import SearchMutationEvent, SearchMutationOp
+from nexus.bricks.search.mutation_resolver import MutationResolver
+from nexus.contracts.constants import ROOT_ZONE_ID
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _SessionCtx:
+    def __init__(self, rows):
+        self._rows = rows
+        self.statements = []
+        self.params = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def execute(self, _stmt, _params):
+        self.statements.append(getattr(_stmt, "text", str(_stmt)))
+        self.params.append(_params)
+        return _Result(self._rows.pop(0))
+
+
+class _ErrorSessionCtx(_SessionCtx):
+    def __init__(self, responses):
+        super().__init__([])
+        self._responses = list(responses)
+
+    async def execute(self, _stmt, _params):
+        self.statements.append(getattr(_stmt, "text", str(_stmt)))
+        self.params.append(_params)
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return _Result(response)
+
+
+class _SequentialSessionFactory:
+    def __init__(self, sessions):
+        self._sessions = list(sessions)
+
+    def __call__(self):
+        return self._sessions.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_resolver_batches_path_lookup_and_reuses_cache() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = ["alpha", "beta"]
+    session_factory = lambda: _SessionCtx(  # noqa: E731
+        [
+            [("root", "/docs/a.txt", "pid-a"), ("root", "/docs/b.txt", "pid-b")],
+        ]
+    )
+
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    events = [
+        SearchMutationEvent(
+            event_id="evt-1",
+            operation_id="op-1",
+            op=SearchMutationOp.UPSERT,
+            path="/zone/root/docs/a.txt",
+            zone_id=ROOT_ZONE_ID,
+            timestamp=SimpleNamespace(tzinfo=None),
+            sequence_number=1,
+        ),
+        SearchMutationEvent(
+            event_id="evt-2",
+            operation_id="op-2",
+            op=SearchMutationOp.UPSERT,
+            path="/zone/root/docs/b.txt",
+            zone_id=ROOT_ZONE_ID,
+            timestamp=SimpleNamespace(tzinfo=None),
+            sequence_number=2,
+        ),
+    ]
+
+    resolved = await resolver.resolve_batch(events)
+    assert [item.path_id for item in resolved] == ["pid-a", "pid-b"]
+    assert file_reader.read_text.await_count == 2
+
+    resolved_again = await resolver.resolve_batch(events)
+    assert [item.path_id for item in resolved_again] == ["pid-a", "pid-b"]
+    assert file_reader.read_text.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_resolver_keeps_zone_isolation_for_duplicate_virtual_paths() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = [OSError("missing"), OSError("missing")]
+    rows = [
+        [("root", "/docs/readme.md", "pid-root"), ("other", "/docs/readme.md", "pid-other")],
+        [
+            ("root", "/docs/readme.md", "root content"),
+            ("other", "/docs/readme.md", "other content"),
+        ],
+    ]
+    session_factory = lambda: _SessionCtx(rows)  # noqa: E731
+
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    events = [
+        SearchMutationEvent(
+            event_id="evt-root",
+            operation_id="op-root",
+            op=SearchMutationOp.UPSERT,
+            path="/zone/root/docs/readme.md",
+            zone_id=ROOT_ZONE_ID,
+            timestamp=SimpleNamespace(tzinfo=None),
+            sequence_number=1,
+        ),
+        SearchMutationEvent(
+            event_id="evt-other",
+            operation_id="op-other",
+            op=SearchMutationOp.UPSERT,
+            path="/zone/other/docs/readme.md",
+            zone_id="other",
+            timestamp=SimpleNamespace(tzinfo=None),
+            sequence_number=2,
+        ),
+    ]
+
+    resolved = await resolver.resolve_batch(events)
+    assert [(item.zone_id, item.path_id, item.content) for item in resolved] == [
+        ("root", "pid-root", "root content"),
+        ("other", "pid-other", "other content"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolver_uses_values_lookup_batches_instead_of_or_chains() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = ["alpha", "beta"]
+    session = _SessionCtx(
+        [
+            [("root", "/docs/a.txt", "pid-a")],
+            [],
+            [("root", "/docs/b.txt", "pid-b")],
+            [],
+        ]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=lambda: session,
+        lookup_batch_size=1,
+    )
+    events = [
+        SearchMutationEvent(
+            event_id="evt-1",
+            operation_id="op-1",
+            op=SearchMutationOp.UPSERT,
+            path="/zone/root/docs/a.txt",
+            zone_id=ROOT_ZONE_ID,
+            timestamp=SimpleNamespace(tzinfo=None),
+            sequence_number=1,
+        ),
+        SearchMutationEvent(
+            event_id="evt-2",
+            operation_id="op-2",
+            op=SearchMutationOp.UPSERT,
+            path="/zone/root/docs/b.txt",
+            zone_id=ROOT_ZONE_ID,
+            timestamp=SimpleNamespace(tzinfo=None),
+            sequence_number=2,
+        ),
+    ]
+
+    resolved = await resolver.resolve_batch(events)
+
+    assert [item.path_id for item in resolved] == ["pid-a", "pid-b"]
+    assert len(session.statements) == 4
+    assert all("WITH lookup(" in stmt for stmt in session.statements)
+    assert all(" OR " not in stmt for stmt in session.statements)
+
+
+@pytest.mark.asyncio
+async def test_resolver_ignores_missing_content_cache_table() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = [OSError("missing")]
+    missing_table = ProgrammingError(
+        "SELECT ... FROM content_cache",
+        {},
+        Exception('relation "content_cache" does not exist'),
+    )
+    session_factory = _SequentialSessionFactory(
+        [
+            _SessionCtx([[("root", "/docs/a.txt", "pid-a")]]),
+            _ErrorSessionCtx([missing_table]),
+        ]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    events = [
+        SearchMutationEvent(
+            event_id="evt-1",
+            operation_id="op-1",
+            op=SearchMutationOp.UPSERT,
+            path="/zone/root/docs/a.txt",
+            zone_id=ROOT_ZONE_ID,
+            timestamp=SimpleNamespace(tzinfo=None),
+            sequence_number=1,
+        )
+    ]
+
+    resolved = await resolver.resolve_batch(events)
+
+    assert len(resolved) == 1
+    assert resolved[0].content is None
+
+
+@pytest.mark.asyncio
+async def test_resolver_preserves_first_content_cache_candidate() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = [OSError("missing"), OSError("missing")]
+    session_factory = _SequentialSessionFactory(
+        [
+            _SessionCtx(
+                [
+                    [
+                        ("tenant", "/docs/readme.md", "pid-canonical"),
+                        ("tenant", "/docs/readme.md", "pid-scoped"),
+                    ]
+                ]
+            ),
+            _SessionCtx(
+                [
+                    [
+                        ("tenant", "/docs/readme.md", "canonical content"),
+                        ("tenant", "/docs/readme.md", "scoped content"),
+                    ]
+                ]
+            ),
+        ]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-tenant",
+        operation_id="op-tenant",
+        op=SearchMutationOp.UPSERT,
+        path="/zone/tenant/docs/readme.md",
+        zone_id="tenant",
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+
+    assert resolved[0].path_id == "pid-canonical"
+    assert resolved[0].content == "canonical content"
+
+
+def test_lookup_values_cast_lookup_rank_for_asyncpg() -> None:
+    resolver = MutationResolver(file_reader=None, async_session_factory=None)
+
+    values_sql, params = resolver._build_lookup_values(
+        [
+            ("root", "/docs/readme.md", "/docs/readme.md", 0),
+            ("root", "/zone/root/docs/readme.md", "/docs/readme.md", 1),
+        ]
+    )
+
+    assert "CAST(:lookup_rank_0 AS INTEGER)" in values_sql
+    assert "CAST(:lookup_rank_1 AS INTEGER)" in values_sql
+    assert params["lookup_rank_0"] == 0
+    assert params["lookup_rank_1"] == 1
+
+
+@pytest.mark.asyncio
+async def test_resolver_includes_scoped_candidate_for_unscoped_event_paths() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.return_value = "hello"
+    session = _SessionCtx(
+        [
+            [("tenant", "/shared-readonly-test/readme.txt", "pid-readme")],
+        ]
+    )
+
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=lambda: session,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-tenant",
+        operation_id="op-tenant",
+        op=SearchMutationOp.UPSERT,
+        path="/shared-readonly-test/readme.txt",
+        zone_id="tenant",
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+
+    assert resolved[0].path_id == "pid-readme"
+    assert resolved[0].path_id_resolved is True
+    assert "/zone/tenant/shared-readonly-test/readme.txt" in session.params[0].values()
+
+
+@pytest.mark.asyncio
+async def test_resolver_marks_unresolved_path_id_fallback() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.return_value = "hello"
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=lambda: _SessionCtx([[]]),
+    )
+    event = SearchMutationEvent(
+        event_id="evt-missing",
+        operation_id="op-missing",
+        op=SearchMutationOp.UPSERT,
+        path="/missing.txt",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+
+    assert resolved[0].path_id == "/missing.txt"
+    assert resolved[0].path_id_resolved is False
+
+
+@pytest.mark.asyncio
+async def test_resolver_includes_soft_deleted_rows_for_delete_events() -> None:
+    """DELETE events arrive after the soft-delete write — resolver must still
+    find the path_id so chunk_store.delete_document_chunks can drop the row.
+
+    Issue #3951 follow-up: previously the SQL filtered ``WHERE deleted_at IS
+    NULL`` for every lookup, silently dropping rows whose soft-delete had
+    already landed. The DELETE event then produced ``path_id_resolved=False``
+    and ``_chunk_store.delete_document_chunks`` was gated off, leaving stale
+    chunks in the index.
+    """
+    session = _SessionCtx([[("root", "/docs/gone.md", "pid-gone")]])
+    resolver = MutationResolver(
+        file_reader=None,
+        async_session_factory=_SequentialSessionFactory([session]),
+    )
+    event = SearchMutationEvent(
+        event_id="evt-del",
+        operation_id="op-del",
+        op=SearchMutationOp.DELETE,
+        path="/docs/gone.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+
+    assert resolved[0].path_id == "pid-gone"
+    assert resolved[0].path_id_resolved is True
+    # The lookup SQL must drop the WHERE deleted_at IS NULL filter so
+    # soft-deleted rows remain visible to the resolver. (The CASE WHEN
+    # expression in ORDER BY may still reference deleted_at to prefer
+    # live rows when both exist, which is fine.)
+    assert "WHERE fp.deleted_at IS NULL" not in session.statements[0]
+
+
+@pytest.mark.asyncio
+async def test_resolver_strips_null_bytes_from_content() -> None:
+    """NUL (0x00) bytes must be scrubbed before they reach any downstream
+    consumer (bm25, fts, embedding, txtai, naive-fallback). Postgres TEXT
+    rejects them with SQLSTATE 22021 and would otherwise leave the asyncpg
+    session in PendingRollbackError until worker recycle (Issue #3989).
+    """
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = ["alpha\x00beta\x00gamma"]
+
+    session_factory = lambda: _SessionCtx(  # noqa: E731
+        [[("root", "/blob.bin", "pid-blob")]]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-nul",
+        operation_id="op-nul",
+        op=SearchMutationOp.UPSERT,
+        path="/zone/root/blob.bin",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+    assert resolved[0].content is not None
+    assert "\x00" not in resolved[0].content
+    assert resolved[0].content == "alphabetagamma"
+
+
+@pytest.mark.asyncio
+async def test_resolver_marks_truly_empty_file_as_resolved() -> None:
+    """Codex review R10 #1 (high): when ``file_reader.read_text``
+    returns an empty string (real truncated file), the resolver MUST
+    record ``content_resolved=True`` AND ``content=""`` so consumers
+    can safely treat it as a delete-shaped operation. The pre-R10
+    body's ``if content:`` truthy filter dropped empty strings,
+    making them indistinguishable from read failures."""
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = [""]
+    session_factory = lambda: _SessionCtx(  # noqa: E731
+        [[("root", "/empty.md", "pid-empty")]]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-empty",
+        operation_id="op-empty",
+        op=SearchMutationOp.UPSERT,
+        path="/zone/root/empty.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+    assert resolved[0].content == ""
+    assert resolved[0].content_resolved is True, (
+        "Real empty file MUST be reported as resolved so consumers can "
+        "treat it as a truncation/delete instead of a transient skip"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolver_marks_unread_upsert_as_unresolved() -> None:
+    """Codex review R10 #1 (high): when read_text raises (file
+    missing on disk, FUSE error, etc.) AND content_cache lookup is
+    empty (or fails), the resolver MUST report
+    ``content_resolved=False`` so consumers raise instead of silently
+    skipping. Without this signal the consumer can't tell a transient
+    read failure from a truly-empty file."""
+    file_reader = AsyncMock()
+    # All read_text calls raise (scoped path AND virtual_path).
+    file_reader.read_text.side_effect = [OSError("read failed"), OSError("read failed")]
+    # ``_lookup_path_ids`` runs first, then ``_lookup_content`` runs
+    # ``_lookup_content_cache`` for events whose read_content failed.
+    # Use distinct sessions for each call so the two queries don't
+    # collide on a shared row buffer.
+    sessions = [
+        _SessionCtx([[("root", "/missing.md", "pid-missing")]]),  # path-id lookup
+        _SessionCtx([[]]),  # content-cache lookup → empty
+    ]
+    session_factory = _SequentialSessionFactory(sessions)
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-unread",
+        operation_id="op-unread",
+        op=SearchMutationOp.UPSERT,
+        path="/zone/root/missing.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+    assert resolved[0].content is None
+    assert resolved[0].content_resolved is False, (
+        "Read failure + content_cache miss MUST be reported as "
+        "unresolved so consumers raise instead of silently skipping"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolver_marks_delete_event_as_resolved() -> None:
+    """Codex review R10 #1: DELETE events don't need content; they
+    must always be reported as resolved so consumers can prune
+    without being blocked on absent content."""
+    file_reader = AsyncMock()
+    session_factory = lambda: _SessionCtx(  # noqa: E731
+        [[("root", "/gone.md", "pid-gone")]]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-del",
+        operation_id="op-del",
+        op=SearchMutationOp.DELETE,
+        path="/zone/root/gone.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+    assert resolved[0].event.op == SearchMutationOp.DELETE
+    assert resolved[0].content_resolved is True
+    assert resolved[0].content is None
+    # No file_reader.read_text call should happen for DELETE.
+    file_reader.read_text.assert_not_called()

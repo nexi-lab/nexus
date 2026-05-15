@@ -8,20 +8,15 @@ so bricks, services, and backends can depend on it without pulling in the
 ReBAC brick.
 
 Backward-compat shims:
-    - ``nexus.bricks.rebac.types`` re-exports consistency/graph types
+    - ``nexus.bricks.rebac.types`` re-exports graph types
     - ``nexus.bricks.rebac.domain`` re-exports Entity, WILDCARD_SUBJECT
     - ``nexus.bricks.rebac.cross_zone`` re-exports CROSS_ZONE_ALLOWED_RELATIONS
 """
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
 
 __all__ = [
-    # Consistency (from rebac.types)
-    "ConsistencyLevel",
-    "ConsistencyMode",
-    "ConsistencyRequirement",
     "WriteResult",
     "CheckResult",
     "TraversalStats",
@@ -33,94 +28,6 @@ __all__ = [
     # Cross-zone (from rebac.cross_zone)
     "CROSS_ZONE_ALLOWED_RELATIONS",
 ]
-
-# ============================================================================
-# Consistency Levels and Version Tokens (from rebac.types)
-# ============================================================================
-
-
-class ConsistencyLevel(Enum):
-    """Consistency levels for permission checks.
-
-    Controls cache behavior and staleness guarantees:
-    - EVENTUAL: Use cache (up to 5min staleness), fastest
-    - BOUNDED: Max 1s staleness
-    - STRONG: Bypass cache, fresh read, slowest but most accurate
-
-    Note: For new code, prefer ConsistencyMode with ConsistencyRequirement
-    which aligns with SpiceDB/Zanzibar naming conventions.
-    """
-
-    EVENTUAL = "eventual"  # Use cache (5min staleness)
-    BOUNDED = "bounded"  # Max 1s staleness
-    STRONG = "strong"  # Bypass cache, fresh read
-
-
-class ConsistencyMode(Enum):
-    """Per-request consistency modes aligned with SpiceDB/Zanzibar (Issue #1081).
-
-    Provides fine-grained control over cache behavior on a per-request basis,
-    following industry best practices from Google Zanzibar and SpiceDB.
-
-    Modes:
-    - MINIMIZE_LATENCY: Use cache for fastest response (~99% of requests)
-    - AT_LEAST_AS_FRESH: Cache must be >= min_revision (read-after-write)
-    - FULLY_CONSISTENT: Bypass cache entirely (security audits, <1% of requests)
-
-    See:
-    - https://authzed.com/docs/spicedb/concepts/consistency
-    - https://www.usenix.org/system/files/atc19-pang.pdf (Zanzibar paper)
-    """
-
-    MINIMIZE_LATENCY = "minimize_latency"  # Default: use cache, fastest
-    AT_LEAST_AS_FRESH = "at_least_as_fresh"  # Cache if revision >= min_revision
-    FULLY_CONSISTENT = "fully_consistent"  # Bypass cache, slowest but freshest
-
-
-@dataclass(slots=True)
-class ConsistencyRequirement:
-    """Per-request consistency requirement (Issue #1081).
-
-    Combines a consistency mode with optional parameters like min_revision.
-    This follows the SpiceDB/Zanzibar pattern for per-request consistency control.
-
-    Examples:
-        # Default: maximize cache usage (99% of requests)
-        ConsistencyRequirement()
-
-        # Read-after-write: ensure we see a recent write
-        ConsistencyRequirement(
-            mode=ConsistencyMode.AT_LEAST_AS_FRESH,
-            min_revision=write_result.revision
-        )
-
-        # Security audit: bypass all caches
-        ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
-
-    Attributes:
-        mode: The consistency mode to use
-        min_revision: Required for AT_LEAST_AS_FRESH - minimum acceptable revision
-    """
-
-    mode: ConsistencyMode = ConsistencyMode.MINIMIZE_LATENCY
-    min_revision: int | None = None
-
-    def __post_init__(self) -> None:
-        """Validate consistency requirement."""
-        if self.mode == ConsistencyMode.AT_LEAST_AS_FRESH and self.min_revision is None:
-            raise ValueError(
-                "min_revision is required for AT_LEAST_AS_FRESH mode. "
-                "Pass the revision from a previous write operation."
-            )
-
-    def to_legacy_level(self) -> ConsistencyLevel:
-        """Convert to legacy ConsistencyLevel for backward compatibility."""
-        if self.mode == ConsistencyMode.FULLY_CONSISTENT:
-            return ConsistencyLevel.STRONG
-        elif self.mode == ConsistencyMode.AT_LEAST_AS_FRESH:
-            return ConsistencyLevel.BOUNDED
-        else:
-            return ConsistencyLevel.EVENTUAL
 
 
 @dataclass(slots=True)

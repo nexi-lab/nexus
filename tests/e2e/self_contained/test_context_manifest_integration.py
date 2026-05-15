@@ -10,8 +10,6 @@ Uses tmp_path for filesystem and in-memory stubs for executors.
 """
 
 import json
-import types
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +24,6 @@ from nexus.bricks.context_manifest.models import (
     WorkspaceSnapshotSource,
 )
 from nexus.bricks.context_manifest.resolver import ManifestResolver
-from nexus.contracts.agent_types import AgentRecord, AgentState
 
 # ---------------------------------------------------------------------------
 # Stub executors
@@ -197,76 +194,7 @@ class TestTimingMetrics:
 
 
 # ===========================================================================
-# Test 5: AgentRecord manifest round-trip
-# ===========================================================================
-
-
-class TestAgentRecordManifestRoundTrip:
-    def test_serialize_and_deserialize_manifest(self) -> None:
-        """AgentRecord stores manifest as tuple of dicts, round-trips correctly."""
-        from pydantic import TypeAdapter
-
-        from nexus.bricks.context_manifest.models import ContextSource
-
-        # Create sources via Pydantic models
-        sources = [
-            FileGlobSource(pattern="src/**/*.py", max_files=20),
-            MemoryQuerySource(query="relevant to {{task.description}}", top_k=5),
-        ]
-
-        # Serialize to dicts (what AgentRecord stores)
-        manifest_data = tuple(s.model_dump() for s in sources)
-
-        # Store on AgentRecord
-        record = AgentRecord(
-            agent_id="a1",
-            owner_id="u1",
-            zone_id="z1",
-            name="test-agent",
-            state=AgentState.UNKNOWN,
-            generation=0,
-            last_heartbeat=None,
-            metadata=types.MappingProxyType({}),
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
-            context_manifest=manifest_data,
-        )
-
-        # Verify stored data
-        assert len(record.context_manifest) == 2
-        assert record.context_manifest[0]["type"] == "file_glob"
-        assert record.context_manifest[1]["type"] == "memory_query"
-
-        # Deserialize back to Pydantic models
-        adapter = TypeAdapter(ContextSource)
-        restored = [adapter.validate_python(d) for d in record.context_manifest]
-
-        assert isinstance(restored[0], FileGlobSource)
-        assert restored[0].pattern == "src/**/*.py"
-        assert restored[0].max_files == 20
-        assert isinstance(restored[1], MemoryQuerySource)
-        assert restored[1].query == "relevant to {{task.description}}"
-        assert restored[1].top_k == 5
-
-    def test_default_empty_manifest(self) -> None:
-        """AgentRecord with no manifest defaults to empty tuple."""
-        record = AgentRecord(
-            agent_id="a1",
-            owner_id="u1",
-            zone_id="z1",
-            name="test-agent",
-            state=AgentState.UNKNOWN,
-            generation=0,
-            last_heartbeat=None,
-            metadata=types.MappingProxyType({}),
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
-        )
-        assert record.context_manifest == ()
-
-
-# ===========================================================================
-# Test 6: FileGlobExecutor e2e (Issue #1427)
+# Test 5: FileGlobExecutor e2e (Issue #1427)
 # ===========================================================================
 
 

@@ -48,7 +48,7 @@ def create_memory_tools(nx, agent_id: str):
     Create memory tools that let Claude store and recall information.
 
     Args:
-        nx: NexusFilesystem instance
+        nx: NexusFS instance
         agent_id: Agent identifier for scoping memory
 
     Returns:

@@ -19,13 +19,11 @@ class UserProvisionerProtocol(Protocol):
     - Create default directories
     - Generate API key
     - Create default agents
-    - Import starter skills
-
     Concrete implementation wraps NexusFS.provision_user() and is
     wired by factory.py / server lifespan.
     """
 
-    def provision_user(
+    async def provision_user(
         self,
         *,
         user_id: str,
@@ -34,7 +32,7 @@ class UserProvisionerProtocol(Protocol):
         zone_id: str | None = None,
         create_api_key: bool = True,
         create_agents: bool = True,
-        import_skills: bool = True,
+        import_skills: bool = False,
     ) -> dict[str, Any]:
         """Provision resources for a new user.
 
@@ -45,7 +43,7 @@ class UserProvisionerProtocol(Protocol):
             zone_id: Override zone ID (default: derived from email).
             create_api_key: Whether to generate an API key.
             create_agents: Whether to create default agents.
-            import_skills: Whether to import starter skills.
+            import_skills: Deprecated, no-op (skills system removed).
 
         Returns:
             Dict with at least ``zone_id`` key and any created resource IDs.

@@ -31,6 +31,7 @@ Usage:
             logger.error(f"System error: {e}", exc_info=True)
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -174,6 +175,46 @@ class BackendError(NexusError):
         super().__init__(message, path)
 
 
+class MissingDependencyError(BackendError):
+    """One or more runtime dependencies for a connector are missing.
+
+    Raised by ``BackendFactory.create()`` when a connector's
+    ``RUNTIME_DEPS`` cannot be satisfied in the current environment.  Each
+    entry in ``missing`` is a ``(dep, human_reason)`` pair — the reason
+    string already contains the install hint.
+
+    This is an **expected** error: the user has an actionable path
+    forward (install the hint, switch profiles, etc.), so it is logged at
+    INFO level without stack traces.
+
+    Attributes:
+        backend: connector name that failed to mount
+        missing: list of (RuntimeDep, reason) pairs for every unmet dep
+
+    Note:
+        The ``missing`` list is typed as ``list[tuple[Any, str]]`` rather
+        than ``list[tuple[RuntimeDep, str]]`` so this module can stay
+        stdlib-only (see module docstring). Callers in
+        ``nexus.backends.base.runtime_deps`` pass ``RuntimeDep`` instances.
+    """
+
+    is_expected = True  # User-correctable — install the dep
+    status_code = 424
+    error_type = "Failed Dependency"
+
+    def __init__(
+        self,
+        backend: str,
+        missing: list[tuple[Any, str]],
+    ) -> None:
+        self.missing = missing
+        count = len(missing)
+        lines = [f"missing {count} runtime dep(s)"]
+        for _, reason in missing:
+            lines.append(f"  - {reason}")
+        super().__init__("\n".join(lines), backend=backend)
+
+
 class DatabaseError(BackendError):
     """Database operation failed. Wraps SQLAlchemy errors at storage boundary.
 
@@ -291,6 +332,26 @@ class RemoteTimeoutError(RemoteFilesystemError):
     """Timeout while communicating with remote server."""
 
     pass
+
+
+class RemoteCapabilityUnsupportedError(RemoteFilesystemError):
+    """Remote server declared that a filesystem capability is unsupported."""
+
+    is_expected = True
+    status_code = 501
+    error_type = "Not Implemented"
+
+    def __init__(self, capability: str, path: str | None = None):
+        self.capability = capability
+        self.path = path
+        details = {"capability": capability}
+        if path is not None:
+            details["path"] = path
+        message = f"Remote mount does not declare {capability}"
+        if path:
+            message = f"{message}: {path}"
+        super().__init__(message, status_code=self.status_code, details=details)
+        self.is_expected = True
 
 
 class ConfigurationError(NexusError):
@@ -422,31 +483,32 @@ class ConflictError(NexusError):
 
     Examples:
         >>> try:
-        ...     nx.sys_write(path, content, if_match=old_etag)
+        ...     nx.write(path, content)
         ... except ConflictError as e:
-        ...     print(f"Conflict: expected {e.expected_etag}, got {e.current_etag}")
+        ...     print(f"Conflict: expected {e.expected_content_id}, got {e.current_content_id}")
         ...     # Retry with fresh read
-        ...     result = nx.sys_read(path, return_metadata=True)
-        ...     nx.sys_write(path, content, if_match=result['etag'])
+        ...     result = nx.read(path, return_metadata=True)
+        ...     nx.write(path, result['content'])
     """
 
     is_expected = True  # Normal condition in concurrent systems
     status_code = 409
     error_type = "Conflict"
 
-    def __init__(self, path: str, expected_etag: str, current_etag: str):
+    def __init__(self, path: str, expected_content_id: str, current_content_id: str):
         """Initialize conflict error.
 
         Args:
             path: Virtual file path that had the conflict
-            expected_etag: The etag value that was expected (from if_match)
-            current_etag: The actual current etag value in the database
+            expected_content_id: The content_id (if_match) value that was expected
+            current_content_id: The actual current content_id value in the database
         """
-        self.expected_etag = expected_etag
-        self.current_etag = current_etag
+        self.expected_content_id = expected_content_id
+        self.current_content_id = current_content_id
         message = (
             f"Conflict detected - file was modified by another agent. "
-            f"Expected etag '{expected_etag[:16]}...', but current etag is '{current_etag[:16]}...'"
+            f"Expected content_id '{expected_content_id[:16]}...', "
+            f"but current content_id is '{current_content_id[:16]}...'"
         )
         super().__init__(message, path)
 
@@ -459,7 +521,7 @@ class LockTimeout(NexusError):
 
     Examples:
         >>> try:
-        ...     async with nx.locked("/shared/config.json", timeout=5.0):
+        ...     with nx.locked("/shared/config.json", timeout=5.0):
         ...         # do work
         ... except LockTimeout:
         ...     print("Resource is busy, try again later")
@@ -520,13 +582,39 @@ class AuthenticationError(NexusError):
     Examples:
         >>> raise AuthenticationError("No OAuth credential found for google:user@example.com")
         >>> raise AuthenticationError("Failed to refresh token: refresh_token revoked")
+        >>> raise AuthenticationError(
+        ...     "Token expired",
+        ...     provider="google",
+        ...     user_email="user@example.com",
+        ...     auth_url="https://accounts.google.com/o/oauth2/auth?...",
+        ... )
     """
 
     is_expected = True  # User auth issue (invalid/expired credentials)
     status_code = 401
     error_type = "Unauthorized"
 
-    def __init__(self, message: str, path: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        path: str | None = None,
+        *,
+        provider: str | None = None,
+        user_email: str | None = None,
+        auth_url: str | None = None,
+        recovery_hint: Mapping[str, str | list[str]] | None = None,
+    ):
+        self.provider = provider
+        self.user_email = user_email
+        self.auth_url = auth_url
+        # ``recovery_hint`` lets raisers ship a machine-actionable re-auth
+        # target — e.g., ``{"endpoint": "/v2/connectors/auth/init",
+        # "method": "POST", "connector": "gdrive", "provider":
+        # "google-drive"}`` — so clients can drive the next step without
+        # guessing.  ``auth_url`` remains for callers that want a ready
+        # clickable URL; a raiser is free to set one or the other (or
+        # both).
+        self.recovery_hint = recovery_hint
         super().__init__(message, path)
 
 
@@ -567,6 +655,89 @@ class CredentialError(NexusError):
         self.code = code
         self.credential_id = credential_id
         super().__init__(message)
+
+
+class NexusURIError(InvalidPathError):
+    """Invalid URI format for nexus.mount().
+
+    This is an expected error — the user provided a malformed or unsupported
+    mount URI (e.g., missing scheme, unknown scheme, empty authority).
+
+    Examples:
+        >>> raise NexusURIError("bucket-name", "Missing scheme. Did you mean 's3://bucket-name'?")
+        >>> raise NexusURIError("xyz://foo", "Unsupported scheme: xyz://")
+    """
+
+    is_expected = True
+    status_code = 400
+    error_type = "Bad Request"
+
+    def __init__(self, uri: str, message: str | None = None):
+        self.uri = uri
+        msg = message or f"Invalid URI: {uri}"
+        super().__init__(path=uri, message=msg)
+
+
+class CloudCredentialError(NexusError):
+    """Missing or invalid credentials for a cloud storage backend.
+
+    This is an expected error — the user needs to configure credentials
+    for the cloud backend (AWS, GCP, etc.).
+
+    Distinct from CredentialError which is for JWS/internal credential operations.
+
+    Examples:
+        >>> raise CloudCredentialError("s3", "AWS credentials not found. Run `aws configure` or set AWS_ACCESS_KEY_ID")
+        >>> raise CloudCredentialError("gcs", "GCP ADC not found. Run `gcloud auth application-default login`")
+    """
+
+    is_expected = True
+    status_code = 401
+    error_type = "Unauthorized"
+
+    def __init__(self, backend: str, message: str | None = None):
+        self.backend = backend
+        msg = message or f"Credentials not found for {backend}. Run `nexus doctor` for details"
+        super().__init__(msg)
+
+
+class BackendNotFoundError(BackendError):
+    """Cloud resource (bucket, container, project) not found.
+
+    This is an expected error — the user referenced a cloud resource
+    that doesn't exist or isn't accessible.
+
+    Examples:
+        >>> raise BackendNotFoundError("my-buket", "s3", "Bucket 'my-buket' not found")
+    """
+
+    is_expected = True
+    status_code = 404
+    error_type = "Not Found"
+
+    def __init__(self, resource: str, backend: str | None = None, message: str | None = None):
+        self.resource = resource
+        msg = message or f"Backend resource not found: {resource}"
+        super().__init__(msg, backend=backend)
+
+
+class BackendPermissionError(NexusPermissionError):
+    """IAM-level permission denied by cloud provider.
+
+    This is an expected error — the cloud provider's IAM rejected the
+    operation. Distinct from ReBAC permission errors (PermissionDeniedError).
+
+    Examples:
+        >>> raise BackendPermissionError("/s3/bucket/file.txt", "Access denied by AWS IAM")
+    """
+
+    is_expected = True
+    status_code = 403
+    error_type = "Forbidden"
+
+    def __init__(self, path: str, message: str | None = None):
+        msg = message or "Access denied by backend IAM"
+        super().__init__(path=path, message=msg)
 
 
 class ZoneTerminatingError(NexusError):
@@ -845,3 +1016,34 @@ class NamespaceMergeConflictError(NamespaceForkError):
             f"{len(conflicting_paths)} path(s) changed in both fork and parent: {paths_str}"
         )
         super().__init__(msg, fork_id=fork_id)
+
+
+# --- Federation Exceptions (Issue #3786) ---
+
+
+class ZoneReadOnlyError(NexusError):
+    """Raised when a write is attempted on a read-only federated zone."""
+
+    is_expected = True
+    status_code = 403
+    error_type = "Forbidden"
+
+
+class ZoneUnavailableError(NexusError):
+    """Raised when a remote zone's hub transport is unavailable mid-session."""
+
+    is_expected = False
+
+
+class HandshakeAuthError(NexusError):
+    """Raised when hub rejects the bearer token during federation handshake (401)."""
+
+    is_expected = True
+    status_code = 401
+    error_type = "Unauthorized"
+
+
+class HandshakeConnectionError(NexusError):
+    """Raised when the hub is unreachable during federation handshake."""
+
+    is_expected = False

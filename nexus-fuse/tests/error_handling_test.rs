@@ -6,7 +6,10 @@
 
 use mockito::Server;
 use nexus_fuse::client::NexusClient;
+use nexus_fuse::daemon::{Daemon, DaemonConfig};
 use nexus_fuse::error::NexusClientError;
+use nexus_fuse::fs::NexusFs;
+use std::path::PathBuf;
 
 #[test]
 fn test_404_maps_to_not_found() {
@@ -67,7 +70,10 @@ fn test_500_maps_to_eio() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(matches!(err, NexusClientError::ServerError { status: 500, .. }));
+    assert!(matches!(
+        err,
+        NexusClientError::ServerError { status: 500, .. }
+    ));
     assert_eq!(err.to_errno(), libc::EIO);
     assert!(err.is_transient());
 }
@@ -88,7 +94,10 @@ fn test_503_maps_to_server_error() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(matches!(err, NexusClientError::ServerError { status: 503, .. }));
+    assert!(matches!(
+        err,
+        NexusClientError::ServerError { status: 503, .. }
+    ));
     assert_eq!(err.to_errno(), libc::EIO);
     assert!(err.is_transient());
 }
@@ -106,10 +115,11 @@ fn test_connection_refused_is_transient() {
 }
 
 #[test]
-fn test_rpc_not_found_in_body() {
+fn test_rpc_file_not_found_code_maps_to_enoent() {
     let mut server = Server::new();
 
-    // Server returns 200 but the RPC body indicates "not found"
+    // Server returns RPC error with code -32000 (RPCErrorCode.FILE_NOT_FOUND).
+    // This is the server's canonical "file not found" signal and must map to ENOENT.
     let _m = server
         .mock("POST", "/api/nfs/read")
         .with_status(200)
@@ -122,7 +132,7 @@ fn test_rpc_not_found_in_body() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.is_not_found());
+    assert!(err.is_not_found(), "RPC code -32000 must map to NotFound");
     assert_eq!(err.to_errno(), libc::ENOENT);
 }
 
@@ -134,13 +144,14 @@ fn test_successful_stat() {
         .mock("POST", "/api/nfs/stat")
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"size":42,"is_directory":false,"etag":"abc","modified_at":"2024-01-01T00:00:00Z"}}"#)
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"size":42,"gen":7,"is_directory":false,"etag":"abc","modified_at":"2024-01-01T00:00:00Z"}}"#)
         .create();
 
     let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
     let meta = client.stat("/test.txt").unwrap();
 
     assert_eq!(meta.size, 42);
+    assert_eq!(meta.gen, 7);
     assert!(!meta.is_directory);
     assert_eq!(meta.etag, Some("abc".to_string()));
 }
@@ -317,6 +328,164 @@ fn test_whoami_unauthorized() {
 }
 
 #[test]
+fn test_capabilities_endpoint_parses_explicit_write_false() {
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("GET", "/api/vfs/initialize")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "server_name":"nexus",
+                "server_version":"0.10.0",
+                "protocol_version":"0.1.0",
+                "capabilities":{
+                    "posix":{
+                        "read":true,
+                        "readdir":true,
+                        "stat":true,
+                        "write":false,
+                        "unlink":false,
+                        "mkdir":false,
+                        "rmdir":false,
+                        "rename":false,
+                        "glob":false
+                    },
+                    "commands":{
+                        "grep":{"supported":false,"filetype":{"allow":[],"deny":[]}},
+                        "glob":{"supported":false,"filetype":{"allow":[],"deny":[]}}
+                    },
+                    "workspace":{"snapshot":false,"restore":false,"watch":false},
+                    "backends":{},
+                    "extensions":[]
+                }
+            }"#,
+        )
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let response = client.capabilities().unwrap().unwrap();
+
+    assert_eq!(response.capabilities.posix.write, Some(false));
+    assert_eq!(response.capabilities.posix.read, Some(true));
+    assert_eq!(
+        response
+            .capabilities
+            .capability_for_path("/workspace/file.txt", "write"),
+        Some(false)
+    );
+}
+
+#[test]
+fn test_capabilities_endpoint_preserves_missing_posix_keys_as_unknown() {
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("GET", "/api/vfs/initialize")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "server_name":"nexus",
+                "server_version":"0.10.0",
+                "protocol_version":"0.1.0",
+                "capabilities":{
+                    "posix":{"read":true},
+                    "backends":{
+                        "/readonly":{"posix":{"read":true,"unlink":false}}
+                    }
+                }
+            }"#,
+        )
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let response = client.capabilities().unwrap().unwrap();
+
+    assert_eq!(
+        response
+            .capabilities
+            .capability_for_path("/readonly/file.txt", "unlink"),
+        Some(false)
+    );
+    assert_eq!(
+        response
+            .capabilities
+            .capability_for_path("/readonly/file.txt", "write"),
+        None
+    );
+    assert_eq!(
+        response
+            .capabilities
+            .capability_for_path("/workspace/file.txt", "write"),
+        None
+    );
+}
+
+#[test]
+fn test_capabilities_endpoint_404_preserves_legacy_behavior() {
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("GET", "/api/vfs/initialize")
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body("Not Found")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+
+    assert!(client.capabilities().unwrap().is_none());
+}
+
+#[test]
+fn test_fuse_mount_startup_propagates_capabilities_server_errors() {
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("GET", "/api/vfs/initialize")
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body("boom")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = NexusFs::try_new(client, None, None);
+
+    assert!(matches!(
+        result,
+        Err(NexusClientError::ServerError { status: 500, .. })
+    ));
+}
+
+#[test]
+fn test_daemon_startup_propagates_capabilities_server_errors() {
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("GET", "/api/vfs/initialize")
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body("boom")
+        .create();
+
+    let config = DaemonConfig {
+        socket_path: PathBuf::from("/tmp/nexus-fuse-capabilities-test.sock"),
+        nexus_url: server.url(),
+        api_key: "test-key".to_string(),
+        agent_id: None,
+        file_cache: None,
+    };
+    let result = Daemon::new(config);
+
+    assert!(matches!(
+        result,
+        Err(NexusClientError::ServerError { status: 500, .. })
+    ));
+}
+
+#[test]
 fn test_list_directory() {
     let mut server = Server::new();
 
@@ -334,4 +503,286 @@ fn test_list_directory() {
     assert_eq!(entries[0].name, "hello.txt");
     assert_eq!(entries[0].entry_type, "file");
     assert_eq!(entries[0].size, 5);
+}
+
+#[test]
+fn test_rpc_non_32000_code_with_not_found_message_is_not_enoent() {
+    let mut server = Server::new();
+
+    // RPC errors are classified by error code, not message text.
+    // Code -1 is NOT -32000 (FILE_NOT_FOUND), so even though the message
+    // says "Not Found", this must map to InvalidResponse, not NotFound.
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"Not Found: /missing"}}"#,
+        )
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/test");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(!err.is_not_found(), "RPC errors should not map to NotFound");
+    assert_eq!(err.to_errno(), libc::EPROTO);
+    assert!(!err.is_transient());
+}
+
+#[test]
+fn test_rpc_error_permission_denied_maps_to_invalid_response() {
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"Permission denied"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/test");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(!err.is_not_found());
+    assert_eq!(err.to_errno(), libc::EPROTO);
+    assert!(!err.is_transient());
+}
+
+#[test]
+fn test_http_404_maps_to_not_found() {
+    let mut server = Server::new();
+
+    // HTTP 404 should map to NotFound/ENOENT (alongside RPC code -32000).
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body("Not Found")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/test");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_not_found(), "HTTP 404 should map to NotFound");
+    assert_eq!(err.to_errno(), libc::ENOENT);
+    assert!(!err.is_transient());
+}
+
+/// #4056 R3: HTTP 401 (unauthenticated / bad credentials) must map
+/// to AccessDenied / EACCES so the FUSE caller surfaces "permission
+/// denied" instead of generic I/O failure.
+#[test]
+fn test_http_401_maps_to_access_denied() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body("unauthorized")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::AccessDenied(_)));
+    assert_eq!(err.to_errno(), libc::EACCES);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+    assert!(!err.is_not_found());
+}
+
+/// #4056 R3: HTTP 403 (policy denied) → PermissionDenied / EPERM.
+#[test]
+fn test_http_403_maps_to_permission_denied() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body("forbidden by rebac")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::PermissionDenied(_)));
+    assert_eq!(err.to_errno(), libc::EPERM);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+}
+
+/// #4056 R3: RPC -32003 ACCESS_DENIED (server contract code) →
+/// AccessDenied / EACCES.
+#[test]
+fn test_rpc_access_denied_code_maps_to_eaccess() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"access denied"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::AccessDenied(_)));
+    assert_eq!(err.to_errno(), libc::EACCES);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+}
+
+/// #4056 R3: RPC -32004 PERMISSION_ERROR → PermissionDenied / EPERM.
+#[test]
+fn test_rpc_permission_error_code_maps_to_eperm() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"permission denied"}}"#,
+        )
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::PermissionDenied(_)));
+    assert_eq!(err.to_errno(), libc::EPERM);
+    assert!(err.is_permission_denied());
+    assert!(!err.is_transient());
+}
+
+/// The /api/nfs/read endpoint has its own JSON-RPC error parser
+/// (separate from rpc_call). Verify -32004 also routes correctly
+/// through the read path.
+#[test]
+fn test_read_path_rpc_permission_error_code_maps_to_eperm() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/read")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32004,"message":"no permission to read"}}"#,
+        )
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let err = client.read("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::PermissionDenied(_)));
+    assert_eq!(err.to_errno(), libc::EPERM);
+}
+
+/// #4056 R4: -32001 FILE_EXISTS → AlreadyExists → EEXIST.
+#[test]
+fn test_rpc_file_exists_code_maps_to_eexist() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/mkdir")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"exists"}}"#)
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let err = client.mkdir("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::AlreadyExists(_)));
+    assert_eq!(err.to_errno(), libc::EEXIST);
+}
+
+/// #4056 R4: -32002 INVALID_PATH → InvalidPath → EINVAL.
+#[test]
+fn test_rpc_invalid_path_code_maps_to_einval() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32002,"message":"bad path"}}"#)
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::InvalidPath(_)));
+    assert_eq!(err.to_errno(), libc::EINVAL);
+}
+
+/// #4056 R4: -32005 VALIDATION_ERROR → ValidationError → EINVAL.
+#[test]
+fn test_rpc_validation_error_code_maps_to_einval() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"bad input"}}"#)
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::ValidationError(_)));
+    assert_eq!(err.to_errno(), libc::EINVAL);
+}
+
+/// #4056 R4: -32006 CONFLICT → Conflict → EAGAIN (transient).
+#[test]
+fn test_rpc_conflict_code_maps_to_eagain_and_is_transient() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32006,"message":"gen conflict"}}"#)
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let err = client.stat("/x").unwrap_err();
+    assert!(matches!(err, NexusClientError::Conflict(_)));
+    assert_eq!(err.to_errno(), libc::EAGAIN);
+    assert!(err.is_transient(), "Conflict should be retry-able");
+}
+
+/// #4056 R4: exists_result must surface AccessDenied instead of folding
+/// it into Ok(false). Previously every error became "doesn't exist",
+/// masking auth failures as missing paths in daemon and FUSE.
+#[test]
+fn test_exists_result_surfaces_access_denied() {
+    let mut server = Server::new();
+    let _m = server
+        .mock("POST", "/api/nfs/exists")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body("unauthorized")
+        .create();
+    let client = NexusClient::new(&server.url(), "k", None).unwrap();
+    let result = client.exists_result("/x");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(matches!(err, NexusClientError::AccessDenied(_)));
+    assert_eq!(err.to_errno(), libc::EACCES);
+    // Best-effort variant still returns false (documented behavior).
+    assert!(!client.exists("/x"));
+}
+
+#[test]
+fn test_rpc_internal_error_not_misclassified() {
+    let mut server = Server::new();
+
+    // Internal errors with "not found" substring must NOT become ENOENT
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"Key not found in distributed hash table"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/test");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        !err.is_not_found(),
+        "Internal errors must not be misclassified as NotFound"
+    );
 }

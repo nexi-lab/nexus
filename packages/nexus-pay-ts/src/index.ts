@@ -1,9 +1,9 @@
 /**
- * @nexus/pay — TypeScript SDK for Nexus Pay agent payments.
+ * @nexus-ai-fs/pay — TypeScript SDK for Nexus Pay agent payments.
  *
  * @example
  * ```typescript
- * import { NexusPay } from '@nexus/pay';
+ * import { NexusPay } from '@nexus-ai-fs/pay';
  *
  * const pay = new NexusPay({ apiKey: 'nx_live_myagent' });
  * const balance = await pay.getBalance();
@@ -16,16 +16,19 @@
 // Client
 export { NexusPay } from "./client.js";
 
-// Errors
+// Errors (pay-specific + re-exported from @nexus-ai-fs/api-client)
 export {
   NexusPayError,
-  AuthenticationError,
   InsufficientCreditsError,
   BudgetExceededError,
   WalletNotFoundError,
   ReservationError,
+  AuthenticationError,
   RateLimitError,
 } from "./errors.js";
+
+// Shared base error (for instanceof checks)
+export { NexusApiError } from "@nexus-ai-fs/api-client";
 
 // Types
 export type {

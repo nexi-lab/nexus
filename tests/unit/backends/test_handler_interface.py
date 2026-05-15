@@ -11,8 +11,8 @@ Tests the new handler interface methods added to the Backend base class:
 
 import pytest
 
-from nexus.backends.backend import HandlerStatusResponse
-from nexus.backends.local import LocalBackend
+from nexus.backends.base.backend import HandlerStatusResponse
+from nexus.backends.storage.cas_local import CASLocalBackend
 
 
 class TestHandlerStatusResponse:
@@ -82,7 +82,7 @@ class TestBackendHandlerInterface:
     @pytest.fixture
     def local_backend(self, tmp_path):
         """Create a local backend for testing."""
-        return LocalBackend(root_path=tmp_path / "backend")
+        return CASLocalBackend(root_path=tmp_path / "backend")
 
     def test_is_connected_default(self, local_backend):
         """Test that is_connected defaults to True for stateless backends."""
@@ -91,19 +91,6 @@ class TestBackendHandlerInterface:
     def test_thread_safe_default(self, local_backend):
         """Test that thread_safe defaults to True."""
         assert local_backend.thread_safe is True
-
-    def test_connect_returns_success(self, local_backend):
-        """Test that connect() returns success for stateless backends."""
-        result = local_backend.connect()
-
-        assert isinstance(result, HandlerStatusResponse)
-        assert result.success is True
-        assert result.details.get("backend") == "local"
-
-    def test_disconnect_is_noop(self, local_backend):
-        """Test that disconnect() is a no-op for stateless backends."""
-        # Should not raise any exception
-        local_backend.disconnect()
 
     def test_check_connection_success(self, local_backend):
         """Test that check_connection() returns success for healthy backend."""
@@ -161,17 +148,13 @@ class TestBackendHandlerInterfaceInheritance:
     """Test that handler interface is properly inherited."""
 
     def test_local_backend_inherits_interface(self, tmp_path):
-        """Test that LocalBackend properly inherits handler interface."""
-        backend = LocalBackend(root_path=tmp_path / "backend")
+        """Test that CASLocalBackend properly inherits handler interface."""
+        backend = CASLocalBackend(root_path=tmp_path / "backend")
 
         # Should have all handler interface methods
         assert hasattr(backend, "is_connected")
         assert hasattr(backend, "thread_safe")
-        assert hasattr(backend, "connect")
-        assert hasattr(backend, "disconnect")
         assert hasattr(backend, "check_connection")
 
         # Methods should be callable
-        assert callable(backend.connect)
-        assert callable(backend.disconnect)
         assert callable(backend.check_connection)

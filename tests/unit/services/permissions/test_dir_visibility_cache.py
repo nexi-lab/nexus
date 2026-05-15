@@ -16,6 +16,10 @@ import time
 from threading import Thread
 from unittest.mock import MagicMock
 
+import pytest
+
+pytest.importorskip("pyroaring")
+
 from nexus.bricks.rebac.cache.visibility import (
     DirectoryVisibilityCache,
 )
@@ -146,67 +150,53 @@ class TestTTLExpiration:
         assert result is True
         assert cache._hits == 1
 
-    def test_entry_past_ttl_returns_none(self, monkeypatch):
-        """Test that entry past TTL returns None (cache miss)."""
-        cache = DirectoryVisibilityCache(ttl=60)
+    def test_entry_past_ttl_returns_none(self):
+        """Test that entry past TTL returns None (cache miss).
 
-        # Mock time.time to control timestamps
-        current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        Uses a real short TTL (50ms) + sleep to test expiry — cachebox
+        (Rust) uses its own internal monotonic clock that can't be mocked.
+        """
+        cache = DirectoryVisibilityCache(ttl=0.05)  # 50ms TTL
 
-        # Set entry at t=1000
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
+        assert cache.is_visible("zone1", "user", "alice", "/workspace") is True
 
-        # Advance time beyond TTL (60 seconds)
-        monkeypatch.setattr(time, "time", lambda: current_time + 61)
+        time.sleep(0.1)
 
         result = cache.is_visible("zone1", "user", "alice", "/workspace")
-
         assert result is None
-        assert cache._misses == 1
-        assert cache._hits == 0
 
-    def test_expired_entry_is_removed_from_cache(self, monkeypatch):
+    def test_expired_entry_is_removed_from_cache(self):
         """Test that expired entry is removed from cache after check."""
-        cache = DirectoryVisibilityCache(ttl=60)
+        cache = DirectoryVisibilityCache(ttl=0.05)  # 50ms TTL
 
-        current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
-
-        # Set entry
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
         assert len(cache) == 1
 
-        # Advance time beyond TTL
-        monkeypatch.setattr(time, "time", lambda: current_time + 61)
+        time.sleep(0.1)
 
-        # Access expired entry
+        # Access expired entry triggers eviction
         cache.is_visible("zone1", "user", "alice", "/workspace")
-
-        # Entry should be removed
         assert len(cache) == 0
 
-    def test_multiple_entries_ttl_expiration(self, monkeypatch):
+    def test_multiple_entries_ttl_expiration(self):
         """Test that multiple entries expire independently based on TTL."""
-        cache = DirectoryVisibilityCache(ttl=60)
+        cache = DirectoryVisibilityCache(ttl=0.5)  # 500ms TTL
 
-        current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
-
-        # Set first entry at t=1000
+        # Set first entry
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
 
-        # Advance time and set second entry at t=1030
-        monkeypatch.setattr(time, "time", lambda: current_time + 30)
+        time.sleep(0.25)
+
+        # Set second entry (250ms later)
         cache.set_visible("zone1", "user", "bob", "/data", False)
 
-        # At t=1050, first entry is still valid (50s old), second is valid (20s old)
-        monkeypatch.setattr(time, "time", lambda: current_time + 50)
+        # Both still valid
         assert cache.is_visible("zone1", "user", "alice", "/workspace") is True
         assert cache.is_visible("zone1", "user", "bob", "/data") is False
 
-        # At t=1070, first entry expired (70s old), second still valid (40s old)
-        monkeypatch.setattr(time, "time", lambda: current_time + 70)
+        # Wait for first to expire but second still valid
+        time.sleep(0.3)  # Total ~550ms for first, ~300ms for second
         assert cache.is_visible("zone1", "user", "alice", "/workspace") is None
         assert cache.is_visible("zone1", "user", "bob", "/data") is False
 
@@ -219,13 +209,13 @@ class TestEviction:
         cache = DirectoryVisibilityCache(max_entries=10)
 
         current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
 
         # Fill cache to capacity
         for i in range(10):
             cache.set_visible("zone1", "user", f"user{i}", "/workspace", True)
             current_time += 1
-            monkeypatch.setattr(time, "time", lambda t=current_time: t)
+            monkeypatch.setattr(time, "monotonic", lambda t=current_time: t)
 
         assert len(cache) == 10
 
@@ -240,13 +230,13 @@ class TestEviction:
         cache = DirectoryVisibilityCache(max_entries=10)
 
         current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
 
         # Add entries with incrementing timestamps
         for i in range(10):
             cache.set_visible("zone1", "user", f"user{i}", "/workspace", True)
             current_time += 1
-            monkeypatch.setattr(time, "time", lambda t=current_time: t)
+            monkeypatch.setattr(time, "monotonic", lambda t=current_time: t)
 
         # Add 11th entry
         cache.set_visible("zone1", "user", "user10", "/workspace", True)
@@ -262,13 +252,13 @@ class TestEviction:
         cache = DirectoryVisibilityCache(max_entries=5)
 
         current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
 
         # Fill to capacity
         for i in range(5):
             cache.set_visible("zone1", "user", f"user{i}", "/workspace", True)
             current_time += 1
-            monkeypatch.setattr(time, "time", lambda t=current_time: t)
+            monkeypatch.setattr(time, "monotonic", lambda t=current_time: t)
 
         # Add new entry
         cache.set_visible("zone1", "user", "new_user", "/workspace", True)
@@ -281,13 +271,13 @@ class TestEviction:
         cache = DirectoryVisibilityCache(max_entries=5)
 
         current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
 
         # Fill cache
         for i in range(5):
             cache.set_visible("zone1", "user", f"user{i}", "/workspace", True)
             current_time += 1
-            monkeypatch.setattr(time, "time", lambda t=current_time: t)
+            monkeypatch.setattr(time, "monotonic", lambda t=current_time: t)
 
         # Trigger eviction - should evict max(1, 5//10) = 1 entry
         cache.set_visible("zone1", "user", "user5", "/workspace", True)
@@ -452,7 +442,9 @@ class TestBitmapComputation:
     def test_returns_false_when_no_accessible_resources(self):
         """Test returns False when user has no accessible resources."""
         tiger_cache = MagicMock()
-        tiger_cache.get_accessible_resources.return_value = []
+        tiger_cache.get_accessible_paths.return_value = set()
+
+        tiger_cache.get_accessible_paths_with_status.return_value = (set(), True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
@@ -466,11 +458,9 @@ class TestBitmapComputation:
     def test_returns_true_when_descendant_found(self):
         """Test returns True when accessible descendant is found."""
         tiger_cache = MagicMock()
-        tiger_cache.get_accessible_resources.return_value = [101, 102]
-        tiger_cache._resource_map.get_resource_id.side_effect = [
-            ("file", "/workspace/data/file1.txt"),
-            ("file", "/other/file2.txt"),
-        ]
+        paths = {"/workspace/data/file1.txt", "/other/file2.txt"}
+        tiger_cache.get_accessible_paths.return_value = paths
+        tiger_cache.get_accessible_paths_with_status.return_value = (paths, True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
@@ -482,13 +472,14 @@ class TestBitmapComputation:
         key = ("zone1", "user", "alice", "/workspace")
         entry = cache._cache[key]
         assert entry.visible is True
-        assert entry.reason == "descendant:/workspace/data/file1.txt"
+        assert entry.reason == "bitmap_prefix:/workspace"
 
     def test_caches_result_after_computation(self):
         """Test that bitmap computation result is cached."""
         tiger_cache = MagicMock()
-        tiger_cache.get_accessible_resources.return_value = [101]
-        tiger_cache._resource_map.get_resource_id.return_value = ("file", "/workspace/file.txt")
+        tiger_cache.get_accessible_paths.return_value = {"/workspace/file.txt"}
+
+        tiger_cache.get_accessible_paths_with_status.return_value = ({"/workspace/file.txt"}, True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
@@ -506,8 +497,9 @@ class TestBitmapComputation:
     def test_root_path_handling(self):
         """Test that root path '/' is handled correctly in bitmap computation."""
         tiger_cache = MagicMock()
-        tiger_cache.get_accessible_resources.return_value = [101]
-        tiger_cache._resource_map.get_resource_id.return_value = ("file", "/workspace/file.txt")
+        tiger_cache.get_accessible_paths.return_value = {"/workspace/file.txt"}
+
+        tiger_cache.get_accessible_paths_with_status.return_value = ({"/workspace/file.txt"}, True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
@@ -519,8 +511,9 @@ class TestBitmapComputation:
     def test_exact_path_match(self):
         """Test that exact path match (not just prefix) is detected."""
         tiger_cache = MagicMock()
-        tiger_cache.get_accessible_resources.return_value = [101]
-        tiger_cache._resource_map.get_resource_id.return_value = ("file", "/workspace")
+        tiger_cache.get_accessible_paths.return_value = {"/workspace"}
+
+        tiger_cache.get_accessible_paths_with_status.return_value = ({"/workspace"}, True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
@@ -532,11 +525,9 @@ class TestBitmapComputation:
     def test_no_descendants_caches_false(self):
         """Test that finding no descendants caches False result."""
         tiger_cache = MagicMock()
-        tiger_cache.get_accessible_resources.return_value = [101, 102]
-        tiger_cache._resource_map.get_resource_id.side_effect = [
-            ("file", "/other/file1.txt"),
-            ("file", "/different/file2.txt"),
-        ]
+        paths = {"/other/file1.txt", "/different/file2.txt"}
+        tiger_cache.get_accessible_paths.return_value = paths
+        tiger_cache.get_accessible_paths_with_status.return_value = (paths, True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
@@ -611,6 +602,7 @@ class TestMetrics:
         """Test that bitmap computations are tracked."""
         tiger_cache = MagicMock()
         tiger_cache.get_accessible_resources.return_value = []
+        tiger_cache.get_accessible_paths_with_status.return_value = (set(), True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 

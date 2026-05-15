@@ -1,7 +1,6 @@
 """Reusable session context manager for services using SQLAlchemy.
 
-Extracts the repeated _get_session() pattern from AgentRegistry and other
-services. Any service that needs session-per-operation semantics can inherit
+Extracts the repeated _get_session() pattern from services. Any service that needs session-per-operation semantics can inherit
 from SessionMixin and set self._session_factory.
 
 Issue #1355: Created for AgentKeyService, available for future services.

@@ -23,7 +23,6 @@ class BenchMockBackend:
 
     def __init__(self) -> None:
         self._store: dict[str, bytes] = {}
-        self._refs: dict[str, int] = {}
         self._dirs: set[str] = {"/"}
 
     @property
@@ -31,15 +30,11 @@ class BenchMockBackend:
         return "bench_mock"
 
     @property
-    def user_scoped(self) -> bool:
-        return False
-
-    @property
     def thread_safe(self) -> bool:
         return True
 
     def connect(self, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         return HandlerStatusResponse(success=True)
 
@@ -47,47 +42,32 @@ class BenchMockBackend:
         pass
 
     def check_connection(self, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         return HandlerStatusResponse(success=True)
 
-    def write_content(self, content: bytes, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
+    def write_content(
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
+    ) -> Any:  # noqa: ARG002
+        from nexus.core.object_store import WriteResult
 
         h = hashlib.sha256(content).hexdigest()
         self._store[h] = content
-        self._refs[h] = self._refs.get(h, 0) + 1
-        return HandlerResponse.ok(data=h, backend_name=self.name)
+        return WriteResult(content_id=h, size=len(content))
 
-    def read_content(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
+    def read_content(self, content_id: str, context: Any = None) -> bytes:  # noqa: ARG002
+        if content_id not in self._store:
+            raise FileNotFoundError(f"CAS blob {content_id} not found")
+        return self._store[content_id]
 
-        if content_hash not in self._store:
-            return HandlerResponse.not_found(path=content_hash, backend_name=self.name)
-        return HandlerResponse.ok(data=self._store[content_hash], backend_name=self.name)
+    def delete_content(self, content_id: str, context: Any = None) -> None:  # noqa: ARG002
+        self._store.pop(content_id, None)
 
-    def delete_content(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
+    def content_exists(self, content_id: str, context: Any = None) -> bool:  # noqa: ARG002
+        return content_id in self._store
 
-        self._store.pop(content_hash, None)
-        self._refs.pop(content_hash, None)
-        return HandlerResponse.ok(data=None, backend_name=self.name)
-
-    def content_exists(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=content_hash in self._store, backend_name=self.name)
-
-    def get_content_size(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
-        size = len(self._store.get(content_hash, b""))
-        return HandlerResponse.ok(data=size, backend_name=self.name)
-
-    def get_ref_count(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=self._refs.get(content_hash, 0), backend_name=self.name)
+    def get_content_size(self, content_id: str, context: Any = None) -> int:  # noqa: ARG002
+        return len(self._store.get(content_id, b""))
 
     def mkdir(
         self,
@@ -95,22 +75,14 @@ class BenchMockBackend:
         parents: bool = False,  # noqa: ARG002
         exist_ok: bool = False,  # noqa: ARG002
         context: Any = None,  # noqa: ARG002
-    ) -> Any:
-        from nexus.lib.response import HandlerResponse
-
+    ) -> None:
         self._dirs.add(path)
-        return HandlerResponse.ok(data=None, backend_name=self.name)
 
-    def rmdir(self, path: str, recursive: bool = False, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
+    def rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:  # noqa: ARG002
         self._dirs.discard(path)
-        return HandlerResponse.ok(data=None, backend_name=self.name)
 
-    def is_directory(self, path: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=path in self._dirs, backend_name=self.name)
+    def is_directory(self, path: str, context: Any = None) -> bool:  # noqa: ARG002
+        return path in self._dirs
 
     def list_dir(self, path: str, context: Any = None) -> list[str]:  # noqa: ARG002
         return []
@@ -159,15 +131,14 @@ def main() -> None:
 
     # ── Direct baseline ──────────────────────────────────────────────
     direct = BenchMockBackend()
-    direct.connect()
     wr = direct.write_content(data_1kb)
-    content_hash = wr.data
+    content_id = wr.data
 
     print("=== Direct (no isolation) ===")
     n = 1000
     bench("write_content (1KB)", lambda: direct.write_content(data_1kb), n)
-    bench("read_content (1KB)", lambda: direct.read_content(content_hash), n)
-    bench("content_exists", lambda: direct.content_exists(content_hash), n)
+    bench("read_content (1KB)", lambda: direct.read_content(content_id), n)
+    bench("content_exists", lambda: direct.content_exists(content_id), n)
     bench("list_dir", lambda: direct.list_dir("/"), n)
     print()
 
@@ -191,7 +162,7 @@ def main() -> None:
     bench("read_content (1KB)", lambda: iso_proc.read_content(iso_hash), n_iso)
     bench("content_exists", lambda: iso_proc.content_exists(iso_hash), n_iso)
     bench("list_dir", lambda: iso_proc._pool.submit("list_dir", ("/",), {}), n_iso)
-    iso_proc.disconnect()
+    iso_proc.close()
     print()
 
     # ── InterpreterPoolExecutor (3.14+ only) ─────────────────────────
@@ -212,7 +183,7 @@ def main() -> None:
         bench("read_content (1KB)", lambda: iso_interp.read_content(interp_hash), n_iso)
         bench("content_exists", lambda: iso_interp.content_exists(interp_hash), n_iso)
         bench("list_dir", lambda: iso_interp._pool.submit("list_dir", ("/",), {}), n_iso)
-        iso_interp.disconnect()
+        iso_interp.close()
     else:
         print("=== InterpreterPoolExecutor ===")
         print("  (skipped — requires Python 3.14+)")

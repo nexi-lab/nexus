@@ -1,0 +1,41 @@
+[package]
+name = "nexus-cluster"
+version = "0.1.0"
+edition = "2021"
+description = "Nexus cluster-profile runtime — pure Rust binary for Raft + IPC + federation"
+authors = ["Nexus Team"]
+publish = false
+
+[[bin]]
+name = "nexusd-cluster"
+path = "src/main.rs"
+
+[dependencies]
+# raft owns federation orchestration (ZoneManager, bootstrap_tls, etc.).
+# Only the grpc feature — skipping pyo3 saves ~3 MB on the stripped
+# binary, and this crate has no Python boundary.
+raft = { workspace = true, default-features = false, features = ["grpc"] }
+# Workspace contracts (ROOT_ZONE_ID, etc.)
+contracts = { workspace = true }
+# Kernel + the slimmest possible backends slice.  Cluster binary mounts
+# host-fs via PathLocalBackend at boot; nothing else compiled in.
+# `default-features = false` drops every other driver and the connector
+# HTTP stack so the binary stays at the sudowork target size.
+kernel = { workspace = true }
+backends = { workspace = true, default-features = false, features = ["driver-path-local"] }
+# VFS gRPC server — pure Rust content I/O on a separate port.
+# No python feature — cluster binary has zero PyO3.
+transport = { workspace = true }
+# Auth provider for VFS gRPC (NoAuth — mTLS is the boundary).
+services = { workspace = true }
+
+tonic = { workspace = true }
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+gethostname = "1.1"
+
+# C3 will add a workspace [profile.release.package."nexus-cluster"]
+# entry for size optimization (LTO, panic=abort, strip).

@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.bricks.pay.credits import CreditsService
-from nexus.services.protocols.scheduler import AgentRequest
+from nexus.contracts.protocols.scheduler import AgentRequest
 from nexus.services.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     BOOST_COST_PER_TIER,

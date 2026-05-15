@@ -9,9 +9,11 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from sqlalchemy import create_engine
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.storage.models import Base
 from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -169,6 +171,28 @@ class TestDelete:
         assert store.load_view("user", "alice", "zone-b") is None
 
 
+class TestMissingTableRecovery:
+    """Tests for SQLite connection replacement and lazy table recovery."""
+
+    def test_load_view_recovers_missing_table_as_cache_miss(self, engine, store):
+        """If SQLite loses the table after init, load_view recreates it and misses."""
+        with engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE persistent_namespace_views")
+
+        assert store.load_view("user", "alice", None) is None
+
+    def test_save_view_recovers_missing_table_and_persists(self, engine, store):
+        """If SQLite loses the table after init, save_view recreates it before insert."""
+        with engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE persistent_namespace_views")
+
+        store.save_view("user", "alice", None, ["/workspace"], "hash_recovered12", 1)
+
+        view = store.load_view("user", "alice", None)
+        assert view is not None
+        assert view.mount_paths == ("/workspace",)
+
+
 # ---------------------------------------------------------------------------
 # Zone Isolation
 # ---------------------------------------------------------------------------
@@ -268,10 +292,17 @@ class TestAgentReconnection:
 
     def test_reconnection_flow(self, engine, store):
         """Full flow: build namespace → clear L2 → restore from L3."""
+        from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
         from nexus.bricks.rebac.manager import EnhancedReBACManager
         from nexus.bricks.rebac.namespace_manager import MountEntry, NamespaceManager
 
-        rebac = EnhancedReBACManager(engine=engine, cache_ttl_seconds=300, max_depth=10)
+        rebac = EnhancedReBACManager(
+            engine=engine,
+            cache_ttl_seconds=300,
+            max_depth=10,
+            version_store=MetastoreVersionStore(InMemoryNexusFS()),
+            namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+        )
         try:
             # Grant files
             rebac.rebac_write(

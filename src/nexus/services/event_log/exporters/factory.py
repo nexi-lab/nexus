@@ -10,7 +10,9 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.services.event_log.exporter_protocol import EventStreamExporterProtocol
+    from nexus.services.event_log.exporter_protocol import (
+        EventStreamExporterProtocol,
+    )
     from nexus.services.event_log.exporters.config import EventStreamConfig
 
 logger = logging.getLogger(__name__)
@@ -27,11 +29,15 @@ def create_exporter(config: EventStreamConfig) -> EventStreamExporterProtocol | 
     if config.exporter == "kafka":
         kafka_config = config.kafka
         if kafka_config is None:
-            from nexus.services.event_log.exporters.config import KafkaExporterConfig
+            from nexus.services.event_log.exporters.config import (
+                KafkaExporterConfig,
+            )
 
             kafka_config = KafkaExporterConfig()
         try:
-            from nexus.services.event_log.exporters.kafka_exporter import KafkaExporter
+            from nexus.services.event_log.exporters.kafka_exporter import (
+                KafkaExporter,
+            )
 
             return KafkaExporter(kafka_config)
         except ImportError:
@@ -41,11 +47,15 @@ def create_exporter(config: EventStreamConfig) -> EventStreamExporterProtocol | 
     if config.exporter == "nats":
         nats_config = config.nats
         if nats_config is None:
-            from nexus.services.event_log.exporters.config import NatsExporterConfig
+            from nexus.services.event_log.exporters.config import (
+                NatsExporterConfig,
+            )
 
             nats_config = NatsExporterConfig()
         try:
-            from nexus.services.event_log.exporters.nats_exporter import NatsExporter
+            from nexus.services.event_log.exporters.nats_exporter import (
+                NatsExporter,
+            )
 
             return NatsExporter(nats_config)
         except ImportError:
@@ -55,11 +65,15 @@ def create_exporter(config: EventStreamConfig) -> EventStreamExporterProtocol | 
     if config.exporter == "pubsub":
         pubsub_config = config.pubsub
         if pubsub_config is None:
-            from nexus.services.event_log.exporters.config import PubSubExporterConfig
+            from nexus.services.event_log.exporters.config import (
+                PubSubExporterConfig,
+            )
 
             pubsub_config = PubSubExporterConfig()
         try:
-            from nexus.services.event_log.exporters.pubsub_exporter import PubSubExporter
+            from nexus.services.event_log.exporters.pubsub_exporter import (
+                PubSubExporter,
+            )
 
             return PubSubExporter(pubsub_config)
         except ImportError:

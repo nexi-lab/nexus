@@ -26,18 +26,19 @@ EXCEPTIONS = [
     "src/nexus/core/nexus_fs_skills.py",  # 874 lines - Phase 2 refactoring
     "src/nexus/rebac/manager.py",  # 5,288 lines - flattened from rebac_manager + enhanced (#1385)
     "src/nexus/bricks/rebac/manager.py",  # 4,856 lines - actively decomposing (#2179 Steps 2.4-2.6)
-    "src/nexus/services/permissions/rebac_manager.py",  # 4,400 lines - backward compat shim
-    "src/nexus/services/permissions/rebac_manager_enhanced.py",  # backward compat shim
-    "src/nexus/services/permissions/tiger_cache.py",  # 2,896 lines - Leopard-style directory grants
-    "src/nexus/services/permissions/nexus_fs_rebac.py",  # 2,192 lines - NexusFS mixin
-    "src/nexus/services/rebac_service.py",  # 2,400 lines - sync + async methods for ReBAC delegation
     "src/nexus/services/search_service.py",  # 2,290 lines - Issue #954 trigram index additions
-    "src/nexus/services/search/search_service.py",  # 2,001 lines - Issue #2188 DI param added
+    "src/nexus/bricks/search/search_service.py",  # 2,215 lines - moved from services/search/ + semantic mixin inlined
+    "scripts/codegen_kernel_abi.py",  # ~2,300 lines - codegen templates for generated_pyo3.rs (#1868)
     "src/nexus/remote/client.py",  # 5,000 lines - Phase 4 splitting
     "src/nexus/remote/async_client.py",  # 2,500 lines - Phase 4 splitting
+    "src/nexus/bricks/rebac/cache/tiger/bitmap_cache.py",  # 2,103 lines - Issue #3192 BloomFilter + batch_get additions
     "src/nexus/storage/models/__init__.py",  # 3,400 lines - Phase 4 splitting (partially done)
     "src/nexus/server/fastapi_server.py",  # 2,133 lines - Phase 4 splitting
     "src/nexus/services/memory/memory_api.py",  # 3,012 lines - moved from core/, split tracked
+    "src/nexus/bricks/search/daemon.py",  # ~2,300 lines - Issue #3698 additions; split tracked as follow-up
+    "src/nexus/bricks/mcp/server.py",  # 2,157 lines - was 2,136 pre-#3731; auth helpers extracted to auth_bridge.py
+    "src/nexus/bricks/auth/postgres_profile_store.py",  # 2,009 lines - #3818 read-path additions; split tracked as follow-up
+    "src/nexus/server/api/v2/routers/async_files.py",  # 2,006 lines - asyncio.to_thread wrappers for #4069; split tracked as follow-up
 ]
 
 
@@ -82,12 +83,17 @@ def main() -> int:
     for file_path_str in sys.argv[1:]:
         file_path = Path(file_path_str)
 
-        # Only check Python files
-        if file_path.suffix != ".py":
+        # Only check Python and TypeScript files
+        if file_path.suffix not in (".py", ".ts", ".tsx"):
             continue
 
         # Skip test files (tests can be longer)
-        if "tests/" in str(file_path) or "test_" in file_path.name:
+        if (
+            "tests/" in str(file_path)
+            or "test_" in file_path.name
+            or file_path.name.endswith(".test.ts")
+            or file_path.name.endswith(".test.tsx")
+        ):
             continue
 
         passes, line_count = check_file_size(file_path)
@@ -102,7 +108,7 @@ def main() -> int:
         for file_path, line_count in failed_files:
             print(f"  {file_path}: {line_count} lines (exceeds by {line_count - MAX_LINES})")
 
-        print(f"\n📏 Standard: Python files should not exceed {MAX_LINES} lines")
+        print(f"\n📏 Standard: Source files should not exceed {MAX_LINES} lines")
         print("💡 Tip: Break large files into smaller, focused modules")
         print("\nIf this is a legacy file being refactored:")
         print("  1. Add it to EXCEPTIONS in .pre-commit-hooks/check_file_size.py")

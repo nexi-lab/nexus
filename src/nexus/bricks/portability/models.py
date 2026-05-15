@@ -47,13 +47,13 @@ from typing import Any, Self
 # Constants
 # =============================================================================
 
-BUNDLE_FORMAT_VERSION = "1.0.0"
+BUNDLE_FORMAT_VERSION = "3.0.0"
 BUNDLE_EXTENSION = ".nexus"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_COMPRESSION_LEVEL = 6
 DEFAULT_HASH_ALGORITHM = "sha256"
-MANIFEST_SCHEMA_URL = "https://nexus.io/schemas/manifest-v1.json"
-MANIFEST_SCHEMA_PATH = Path(__file__).parent / "schemas" / "manifest-v1.json"
+MANIFEST_SCHEMA_URL = "https://nexus.io/schemas/manifest-v3.json"
+MANIFEST_SCHEMA_PATH = Path(__file__).parent / "schemas" / "manifest-v3.json"
 
 
 class ConflictMode(StrEnum):
@@ -71,6 +71,35 @@ class ContentMode(StrEnum):
     INCLUDE = "include"  # Import content blobs
     REFERENCE = "reference"  # Only import references (content must exist)
     SKIP = "skip"  # Skip content entirely (metadata only)
+
+
+class ArchiveKind(StrEnum):
+    """Type of archive bundle (v2+)."""
+
+    FULL = "full"  # Complete zone snapshot
+    AUDIT = "audit"  # Audit-window event slice
+
+
+@dataclass
+class PlaceholderRef:
+    """Reference to a credential placeholder that must be re-injected on restore (v2+).
+
+    Attributes:
+        name: Placeholder name (e.g., "HUB_TOKEN_eng")
+        field: Dotted field path where the credential lives (e.g., "federations.eng.auth_token")
+    """
+
+    name: str
+    field: str
+
+    def to_dict(self) -> dict[str, str]:
+        """Convert to dictionary for JSON serialization."""
+        return {"name": self.name, "field": self.field}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, str]) -> "PlaceholderRef":
+        """Create from dictionary."""
+        return cls(name=data["name"], field=data["field"])
 
 
 # =============================================================================
@@ -317,6 +346,14 @@ class ZoneExportOptions:
     # Security
     encryption_key: bytes | None = None
 
+    # Mounts (Issue #4083)
+    include_mounts: bool = False  # opt-in mount config export
+
+    # Signing (v2+)
+    sign: bool = True
+    strip_credentials: bool = True
+    signing_key_path: Path | None = None  # default ~/.nexus/archive_signing_key
+
     def __post_init__(self) -> None:
         """Validate options after initialization."""
         if isinstance(self.output_path, str):
@@ -341,6 +378,7 @@ class ZoneExportOptions:
             "include_api_keys": self.include_api_keys,
             "include_deleted": self.include_deleted,
             "include_versions": self.include_versions,
+            "include_mounts": self.include_mounts,
             "path_prefix": self.path_prefix,
             "after_time": self.after_time.isoformat() if self.after_time else None,
             "before_time": self.before_time.isoformat() if self.before_time else None,
@@ -407,6 +445,16 @@ class ZoneImportOptions:
     batch_size: int = 1000
     max_concurrent_writes: int = 10
 
+    # Placeholder injection (v2+)
+    require_no_placeholders: bool = True
+    injections: dict[str, str] = field(default_factory=dict)
+    rebuild_embeddings: bool = False
+    force: bool = False
+
+    # Mount portability (Issue #4083)
+    restore_mounts: bool = True
+    mount_overrides: dict[str, dict[str, str]] | None = None
+
     def __post_init__(self) -> None:
         """Validate options after initialization."""
         if isinstance(self.bundle_path, str):
@@ -455,7 +503,10 @@ class ZoneImportOptions:
         return self.user_id_remap.get(user_id, user_id)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization (excludes sensitive data)."""
+        """Convert to dictionary for JSON serialization.
+
+        Sensitive data is excluded or redacted: decryption_key is omitted; mount_overrides
+        values are replaced with "***" (structure preserved for debugging)."""
         return {
             "bundle_path": str(self.bundle_path),
             "target_zone_id": self.target_zone_id,
@@ -470,6 +521,12 @@ class ZoneImportOptions:
             "import_api_keys": self.import_api_keys,
             "batch_size": self.batch_size,
             "max_concurrent_writes": self.max_concurrent_writes,
+            "restore_mounts": self.restore_mounts,
+            "mount_overrides": (
+                {mid: dict.fromkeys(fields, "***") for mid, fields in self.mount_overrides.items()}
+                if self.mount_overrides
+                else None
+            ),
             # Note: decryption_key intentionally excluded for security
         }
 
@@ -546,6 +603,19 @@ class ExportManifest:
     # Extensible metadata
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # v2 additions (all optional with defaults so v1 bundles still load)
+    archive_kind: ArchiveKind = ArchiveKind.FULL
+    activity_window_from: datetime | None = None
+    activity_window_to: datetime | None = None
+    embedding_model: str | None = None
+    embedding_dim: int | None = None
+    signer_pubkey_b64: str | None = None
+    placeholders: list[PlaceholderRef] = field(default_factory=list)
+    min_nexus_version: str = "0.0.0"
+
+    # v3 additions (Issue #4083)
+    mount_count: int = 0
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization.
 
@@ -554,7 +624,7 @@ class ExportManifest:
         """
         return {
             # Schema reference for validation
-            "$schema": "https://nexus.io/schemas/manifest-v1.json",
+            "$schema": MANIFEST_SCHEMA_URL,
             # Format versioning
             "format_version": self.format_version,
             "nexus_version": self.nexus_version,
@@ -570,6 +640,7 @@ class ExportManifest:
                 "content_blob_count": self.content_blob_count,
                 "permission_count": self.permission_count,
                 "embedding_count": self.embedding_count,
+                "mount_count": self.mount_count,  # v3
             },
             # Options used
             "options": {
@@ -594,6 +665,19 @@ class ExportManifest:
             else None,
             # Extensible metadata
             "metadata": self.metadata,
+            # v2 fields
+            "archive_kind": self.archive_kind.value,
+            "activity_window_from": (
+                self.activity_window_from.isoformat() if self.activity_window_from else None
+            ),
+            "activity_window_to": (
+                self.activity_window_to.isoformat() if self.activity_window_to else None
+            ),
+            "embedding_model": self.embedding_model,
+            "embedding_dim": self.embedding_dim,
+            "signer_pubkey_b64": self.signer_pubkey_b64,
+            "placeholders": [p.to_dict() for p in self.placeholders],
+            "min_nexus_version": self.min_nexus_version,
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -644,6 +728,15 @@ class ExportManifest:
         checksums_data = data.get("checksums", {})
         checksums = BundleChecksums.from_dict(checksums_data)
 
+        # Parse v2 timestamps
+        activity_window_from = data.get("activity_window_from")
+        if isinstance(activity_window_from, str):
+            activity_window_from = datetime.fromisoformat(activity_window_from)
+
+        activity_window_to = data.get("activity_window_to")
+        if isinstance(activity_window_to, str):
+            activity_window_to = datetime.fromisoformat(activity_window_to)
+
         return cls(
             format_version=data.get("format_version", BUNDLE_FORMAT_VERSION),
             nexus_version=data.get("nexus_version", ""),
@@ -667,6 +760,17 @@ class ExportManifest:
             encryption_method=encryption.get("method"),
             encrypted_dek=encryption.get("encrypted_dek"),
             metadata=data.get("metadata", {}),
+            # v2 fields (all default-safe for v1 bundles)
+            archive_kind=ArchiveKind(data.get("archive_kind", ArchiveKind.FULL.value)),
+            activity_window_from=activity_window_from,
+            activity_window_to=activity_window_to,
+            embedding_model=data.get("embedding_model"),
+            embedding_dim=data.get("embedding_dim"),
+            signer_pubkey_b64=data.get("signer_pubkey_b64"),
+            placeholders=[PlaceholderRef.from_dict(p) for p in data.get("placeholders", [])],
+            min_nexus_version=data.get("min_nexus_version", "0.0.0"),
+            # v3 fields (default-safe for v1/v2 bundles)
+            mount_count=stats.get("mount_count", 0),
         )
 
     @classmethod
@@ -964,7 +1068,7 @@ class FileRecord:
         physical_path: Physical storage path
         file_type: MIME type or file extension
         size_bytes: File size
-        content_hash: SHA-256 hash of content
+        content_id: SHA-256 hash of content
         created_at: Creation timestamp
         updated_at: Last modification timestamp
         deleted_at: Soft deletion timestamp (if deleted)
@@ -980,7 +1084,7 @@ class FileRecord:
     physical_path: str
     file_type: str | None = None
     size_bytes: int = 0
-    content_hash: str | None = None
+    content_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     deleted_at: datetime | None = None
@@ -998,7 +1102,7 @@ class FileRecord:
             "physical_path": self.physical_path,
             "file_type": self.file_type,
             "size_bytes": self.size_bytes,
-            "content_hash": self.content_hash,
+            "content_id": self.content_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
@@ -1028,7 +1132,7 @@ class FileRecord:
             physical_path=data["physical_path"],
             file_type=data.get("file_type"),
             size_bytes=data.get("size_bytes", 0),
-            content_hash=data.get("content_hash"),
+            content_id=data.get("content_id"),
             created_at=parse_dt(data.get("created_at")),
             updated_at=parse_dt(data.get("updated_at")),
             deleted_at=parse_dt(data.get("deleted_at")),
@@ -1115,4 +1219,72 @@ BUNDLE_PATHS = {
     "api_keys": "permissions/api_keys.jsonl.enc",
     "embeddings": "embeddings/vectors.parquet",
     "content": "content/cas",
+    "mounts": "mounts.jsonl",
 }
+
+
+# =============================================================================
+# Mount portability (Issue #4083)
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class MountRecord:
+    """One line of mounts.jsonl. Mirrors MountManager's persisted shape with
+    secrets replaced by ${MOUNT_<id>_<FIELD>} placeholders on export."""
+
+    mount_id: str
+    mount_point: str
+    backend_type: str
+    backend_config: dict[str, Any]
+    owner_user_id: str | None = None
+    zone_id: str | None = None
+    description: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSONL serialization."""
+        return {
+            "mount_id": self.mount_id,
+            "mount_point": self.mount_point,
+            "backend_type": self.backend_type,
+            "backend_config": self.backend_config,
+            "owner_user_id": self.owner_user_id,
+            "zone_id": self.zone_id,
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        """Create from dictionary."""
+        return cls(
+            mount_id=data["mount_id"],
+            mount_point=data["mount_point"],
+            backend_type=data["backend_type"],
+            backend_config=data["backend_config"],
+            owner_user_id=data.get("owner_user_id"),
+            zone_id=data.get("zone_id"),
+            description=data.get("description"),
+        )
+
+
+class SensitiveFieldNotDeclaredError(ValueError):
+    """Export-time. Backend has CONNECTION_ARGS keys whose names match the
+    secret-shape heuristic but aren't marked secret=True."""
+
+    def __init__(self, backend_type: str, fields: list[str]) -> None:
+        self.backend_type = backend_type
+        self.fields = list(fields)
+        super().__init__(
+            f"Backend {backend_type!r} has secret-shaped fields not marked secret=True: "
+            f"{self.fields}. Mark them secret=True in CONNECTION_ARGS or rename them."
+        )
+
+
+class MissingCredentialsError(ValueError):
+    """Import-time. Bundle has redacted mount fields with no override supplied.
+    Reports every gap in one error so operators see the full set at once."""
+
+    def __init__(self, missing: dict[str, list[str]]) -> None:
+        self.missing = {k: list(v) for k, v in missing.items()}
+        lines = [f"  {mid}: {fields}" for mid, fields in sorted(self.missing.items())]
+        super().__init__("Mount imports require credential overrides for:\n" + "\n".join(lines))

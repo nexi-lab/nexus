@@ -4,18 +4,31 @@ This module implements a Model Context Protocol (MCP) server that exposes
 Nexus functionality to AI agents and tools using the fastmcp framework.
 """
 
+from __future__ import annotations
+
+import asyncio
 import contextlib
 import contextvars
+import inspect
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import LRUCache
 from fastmcp import Context, FastMCP
 
+from nexus.bricks.mcp.auth_bridge import op_context_to_auth_dict as _op_context_to_auth_dict
+from nexus.bricks.mcp.auth_bridge import (
+    resolve_mcp_operation_context as _resolve_mcp_operation_context,
+)
 from nexus.bricks.mcp.formatters import format_response
 from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.lib.pagination import build_paginated_list_response
+
+if TYPE_CHECKING:
+    from nexus.bricks.approvals.policy_gate import PolicyGate
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -73,23 +86,44 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
     _request_api_key.reset(token)
 
 
-def create_mcp_server(
-    nx: NexusFilesystemABC | None = None,
+def register_policy_gate_dependency(app: Any, gate: PolicyGate) -> None:
+    """Attach PolicyGate to app.state so middlewares can call gate.check()."""
+    app.state.policy_gate = gate
+
+
+async def create_mcp_server(
+    nx: NexusFS | None = None,
     name: str = "nexus",
     remote_url: str | None = None,
     api_key: str | None = None,
     tool_namespace_middleware: Any | None = None,
+    manifest_resolver: Any | None = None,
+    permission_enforcer: Any | None = None,
+    auth_provider: Any | None = None,
 ) -> FastMCP:
     """Create an MCP server for Nexus operations.
 
     Args:
-        nx: NexusFilesystemABC instance (if None, will auto-connect)
+        nx: NexusFS instance (if None, will auto-connect)
         name: Server name (default: "nexus")
         remote_url: Remote Nexus URL for connecting to remote server
         api_key: Optional API key for remote server authentication (default)
         tool_namespace_middleware: Optional ToolNamespaceMiddleware for per-tool
             namespace filtering. When provided, discovery tools filter results
             to only show tools visible to the current subject.
+        manifest_resolver: Optional callable for context manifest resolution
+            (Issue #2984). When provided, enables the ``nexus_resolve_context``
+            tool. Expected signature: ``(sources_json: str, variables_json: str)
+            -> dict`` returning resolution results. Built by the factory via
+            ``build_manifest_resolve_fn()``.
+        permission_enforcer: Optional PermissionEnforcer for file-level ReBAC
+            filtering on MCP search results (#3731). When provided, MCP
+            ``nexus_grep`` and ``nexus_glob`` apply the same
+            ``_apply_rebac_filter`` that the HTTP endpoints use.
+        auth_provider: Optional auth provider for resolving per-request API
+            keys to subject identity (#3731). Used by
+            ``_resolve_mcp_operation_context`` to build an authoritative
+            ``OperationContext`` from ``_request_api_key``.
 
     Returns:
         FastMCP server instance
@@ -131,22 +165,44 @@ def create_mcp_server(
         if remote_url:
             import nexus as _nexus
 
-            nx = _nexus.connect(config={"mode": "remote", "url": remote_url, "api_key": api_key})
+            nx = _nexus.connect(config={"profile": "remote", "url": remote_url, "api_key": api_key})
         else:
             import importlib as _il
 
             connect = _il.import_module("nexus").connect
             nx = connect()
 
+    # Auto-detect manifest resolver from NexusFS if not explicitly provided.
+    # Uses importlib to avoid a static cross-brick import chain that
+    # import-linter would flag (mcp -> factory -> context_manifest).
+    if manifest_resolver is None and nx is not None:
+        _raw_resolver = getattr(nx, "manifest_resolver", None)
+        if _raw_resolver is not None:
+            try:
+                import importlib as _il_manifest
+
+                _adapter_mod = _il_manifest.import_module("nexus.factory.manifest_adapter")
+                manifest_resolver = _adapter_mod.build_manifest_resolve_fn(_raw_resolver, nx)
+            except Exception:
+                pass  # Graceful degradation — tool returns "unavailable"
+
+    # NOTE: permission_enforcer and auth_provider are intentionally NOT
+    # auto-resolved from NexusFS services. A NexusFS with enforce=False
+    # may still register a PermissionEnforcer service that denies all
+    # requests (no grants → empty permit list). Callers that need ReBAC
+    # must pass permission_enforcer explicitly. The HTTP server does
+    # this via app.state.permission_enforcer; the CLI MCP command
+    # should thread it when auth is configured (#3731).
+
     # Store default connection and config for per-request API key support
     assert nx is not None  # guaranteed by the if-block above
-    _default_nx: NexusFilesystemABC = nx
+    _default_nx: NexusFS = nx
     _remote_url = remote_url
 
     # Connection pool for per-request API keys (bounded LRU, cached by API key)
-    _connection_cache: LRUCache[str, NexusFilesystemABC] = LRUCache(maxsize=256)
+    _connection_cache: LRUCache[str, NexusFS] = LRUCache(maxsize=256)
 
-    def _get_nexus_instance(ctx: Context | None = None) -> NexusFilesystemABC:
+    def _get_nexus_instance(_ctx: Context | None = None) -> NexusFS:
         """Get Nexus instance for current request using context API key.
 
         This function checks if infrastructure has set a per-request API key
@@ -157,23 +213,18 @@ def create_mcp_server(
             ctx: Optional FastMCP Context object (if available from tool)
 
         Returns:
-            NexusFilesystemABC instance (default or per-request based on context)
+            NexusFS instance (default or per-request based on context)
 
         Note:
             Per-request API keys are only supported when remote_url is configured.
             For local connections, the default connection is always used.
         """
-        # Try to get API key from FastMCP context state first (if Context is available)
-        request_api_key = None
-        if ctx and hasattr(ctx, "get_state"):
-            try:
-                request_api_key = ctx.get_state("api_key")
-            except Exception as e:
-                logger.debug("Failed to get API key from context state: %s", e)
 
-        # Fallback to context variable (set by Starlette middleware)
-        if not request_api_key:
-            request_api_key = _request_api_key.get()
+        # Get API key from context variable (set by Starlette middleware or
+        # APIKeyExtractionMiddleware). Context.get_state() is async in fastmcp
+        # 3.x and cannot be called from sync tool functions, so we rely solely
+        # on the sync contextvars path.
+        request_api_key: str | None = _request_api_key.get()
 
         # If no API key in context, use default connection
         if not request_api_key:
@@ -187,17 +238,30 @@ def create_mcp_server(
         if request_api_key in _connection_cache:
             return _connection_cache[request_api_key]
 
-        # Create new remote connection with API key from context
+        # Create new remote connection with API key from context.
+        # nexus.connect() is async, so run it via a background thread
+        # to avoid blocking the current event loop.
+        import concurrent.futures
+
         import nexus as _nexus
 
-        new_nx = _nexus.connect(
-            config={"mode": "remote", "url": _remote_url, "api_key": request_api_key}
-        )
+        def _connect_sync() -> NexusFS:
+            return _nexus.connect(
+                config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            new_nx = pool.submit(_connect_sync).result()
+
         _connection_cache[request_api_key] = new_nx
         return new_nx
 
     # Create FastMCP server
     mcp = FastMCP(name)
+
+    from nexus.bricks.mcp.hub_admin_tool import register_hub_admin_tool
+
+    register_hub_admin_tool(mcp, _get_nexus_instance)
 
     # Add health check endpoint for HTTP transports
     # This is added here so it's available when the server is created via create_mcp_server()
@@ -244,8 +308,10 @@ def create_mcp_server(
             # Store in FastMCP's context state so tools can access it via Context.get_state()
             if api_key and context.fastmcp_context:
                 try:
-                    context.fastmcp_context.set_state("api_key", api_key)
-                    # Also set in context variable for backward compatibility
+                    _result = cast(Any, context.fastmcp_context.set_state)("api_key", api_key)
+                    if inspect.isawaitable(_result):
+                        await _result
+                    # Also set in context variable (sync path for tool functions)
                     _request_api_key.set(api_key)
                 except Exception:
                     # If set_state fails, continue anyway
@@ -256,7 +322,27 @@ def create_mcp_server(
     # Add the middleware to FastMCP
     mcp.add_middleware(APIKeyExtractionMiddleware())
 
-    # Add tool namespace middleware if provided (Issue #1272)
+    # Add tool namespace middleware if provided (Issue #1272). The factory
+    # may pass a zero-arg callable that builds the middleware on demand —
+    # this defers the fastmcp/beartype import until an MCP server is
+    # actually started, keeping ``nexus.connect()`` lightweight.
+    # Preserves the prior guarded-boot failure policy: on ImportError the
+    # optional middleware is skipped with a WARNING rather than failing
+    # MCP server creation outright.
+    if (
+        tool_namespace_middleware is not None
+        and not hasattr(tool_namespace_middleware, "on_call_tool")
+        and callable(tool_namespace_middleware)
+    ):
+        try:
+            tool_namespace_middleware = tool_namespace_middleware()
+        except ImportError as _e:
+            logger.warning(
+                "ToolNamespaceMiddleware unavailable (deferred import failed: %s); "
+                "MCP server starting without per-tool ReBAC filtering",
+                _e,
+            )
+            tool_namespace_middleware = None
     if tool_namespace_middleware is not None:
         mcp.add_middleware(tool_namespace_middleware)
 
@@ -276,6 +362,156 @@ def create_mcp_server(
         return result
 
     # =========================================================================
+    # Markdown structure helpers (Issue #3718)
+    # =========================================================================
+
+    def _md_get_content_id(nx_instance: NexusFS, path: str) -> str:
+        """Get the authoritative file content_id from the metastore primary row."""
+        meta = getattr(nx_instance, "metadata", None)
+        if meta is None:
+            return ""
+        try:
+            file_meta = meta.get(path)
+            return file_meta.content_id if file_meta and file_meta.content_id else ""
+        except Exception:
+            return ""
+
+    def _md_section_read(
+        nx_instance: NexusFS,
+        path: str,
+        content: bytes,
+        section: str,
+        block_type: str | None = None,
+    ) -> str | None:
+        """Attempt a partial markdown read using the structural index.
+
+        Returns section content as string, or None to fall back to full read.
+        Uses the service registry to access the md_structure hook (no
+        cross-brick imports).
+        """
+        hook = nx_instance.service("md_structure") if hasattr(nx_instance, "service") else None
+        if hook is None or not hasattr(hook, "read_section"):
+            return None
+
+        content_id = _md_get_content_id(nx_instance, path)
+        return hook.read_section(path, content, content_id, section, block_type)
+
+    def _md_get_structure_listing(
+        nx_instance: NexusFS,
+        path: str,
+        content: bytes | None = None,
+        content_id: str = "",
+    ) -> list[dict[str, Any]] | None:
+        """Get the structure listing for a markdown file.
+
+        Passes content + hash so the hook can lazily rebuild the index
+        for files that were never indexed (pre-existing or cache miss).
+        """
+        hook = nx_instance.service("md_structure") if hasattr(nx_instance, "service") else None
+        if hook is None or not hasattr(hook, "get_structure_listing"):
+            return None
+
+        return hook.get_structure_listing(path, content=content, content_id=content_id)
+
+    # =========================================================================
+    # HUB ADMIN TOOLS
+    # =========================================================================
+
+    async def _call_hub_admin_rpc(
+        nx_instance: Any,
+        method: str,
+        params: dict[str, Any],
+    ) -> str:
+        call_rpc = getattr(nx_instance, "_nexus_remote_call_rpc", None)
+        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
+        if not getattr(op_context, "is_admin", False):
+            request_key = _request_api_key.get()
+            if not request_key or call_rpc is None:
+                return tool_error(
+                    "permission_denied",
+                    "Admin privileges required for hub administration",
+                )
+
+        if call_rpc is None:
+            return tool_error(
+                "unavailable",
+                "Hub admin tools require a remote hub backend",
+            )
+
+        try:
+            result = call_rpc(method, params)
+        except Exception as exc:
+            from nexus.contracts.exceptions import NexusPermissionError
+
+            if isinstance(exc, NexusPermissionError):
+                return tool_error("permission_denied", str(exc))
+            raise
+        if inspect.isawaitable(result):
+            result = await result
+        return json.dumps(result)
+
+    @mcp.tool()
+    @handle_tool_errors("listing hub tokens")
+    async def nexus_hub_token_list(
+        show_revoked: bool = False,
+        ctx: Context | None = None,
+    ) -> str:
+        """List hub API tokens. Requires a global admin token."""
+        nx_instance = _get_nexus_instance(ctx)
+        return await _call_hub_admin_rpc(
+            nx_instance,
+            "hub_admin_token_list",
+            {"show_revoked": show_revoked},
+        )
+
+    @mcp.tool()
+    @handle_tool_errors("creating hub token")
+    async def nexus_hub_token_create(
+        name: str,
+        zones: str | None = None,
+        zones_glob: str | None = None,
+        admin: bool = False,
+        expires: str | None = None,
+        user_id: str | None = None,
+        ctx: Context | None = None,
+    ) -> str:
+        """Create a hub API token and return its one-time secret. Requires admin."""
+        nx_instance = _get_nexus_instance(ctx)
+        return await _call_hub_admin_rpc(
+            nx_instance,
+            "hub_admin_token_create",
+            {
+                "name": name,
+                "zones": zones,
+                "zones_glob": zones_glob,
+                "admin": admin,
+                "expires": expires,
+                "user_id": user_id,
+            },
+        )
+
+    @mcp.tool()
+    @handle_tool_errors("revoking hub token")
+    async def nexus_hub_token_revoke(
+        identifier: str,
+        ctx: Context | None = None,
+    ) -> str:
+        """Revoke a hub API token by id, id prefix, or name. Requires admin."""
+        nx_instance = _get_nexus_instance(ctx)
+        return await _call_hub_admin_rpc(
+            nx_instance,
+            "hub_admin_token_revoke",
+            {"identifier": identifier},
+        )
+
+    @mcp.tool()
+    @handle_tool_errors("reading hub status")
+    async def nexus_hub_status(ctx: Context | None = None) -> str:
+        """Read hub status. Requires admin."""
+        nx_instance = _get_nexus_instance(ctx)
+        return await _call_hub_admin_rpc(nx_instance, "hub_admin_status", {})
+
+    # =========================================================================
     # FILE OPERATIONS TOOLS
     # =========================================================================
 
@@ -288,21 +524,93 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("reading file")
-    def nexus_read_file(path: str, ctx: Context | None = None) -> str:
+    async def nexus_read_file(
+        path: str,
+        section: str | None = None,
+        block_type: str | None = None,
+        ctx: Context | None = None,
+    ) -> str:
         """Read file content from Nexus filesystem.
+
+        For markdown files (.md), supports partial reads by section and block type
+        to reduce context window usage (Issue #3718).
 
         Args:
             path: File path to read (e.g., "/workspace/data.txt")
+            section: (Markdown only) Read a specific section by heading text.
+                Case-insensitive, supports substring matching.
+                Special values:
+                  - ``"*"`` — list document structure (headings, token estimates, block types) without content
+                  - ``"frontmatter"`` — read only the YAML frontmatter block
+                Example: section="Authentication" reads only that section.
+            block_type: (Markdown only) Filter by block type within a section.
+                Requires ``section`` to be set. Values: "code", "table".
+                Example: section="Auth", block_type="code" returns only code blocks.
             ctx: FastMCP Context (automatically injected, optional for backward compatibility)
 
         Returns:
-            File content as string
+            File content as string (full file, or section/block subset for markdown)
         """
         nx_instance = _get_nexus_instance(ctx)
-        content = nx_instance.sys_read(path)
-        if isinstance(content, bytes):
-            return content.decode("utf-8", errors="replace")
-        return str(content)
+        content = await asyncio.to_thread(nx_instance.sys_read, path)
+        content_bytes = content if isinstance(content, bytes) else str(content).encode("utf-8")
+
+        # Partial read for markdown files when section is requested.
+        if section and path.endswith(".md"):
+            result = _md_section_read(nx_instance, path, content_bytes, section, block_type)
+            if result is not None:
+                return result
+            # Any explicit section selector that returned None — don't leak full doc.
+            if section == "frontmatter":
+                return tool_error("not_found", f"No frontmatter found in {path}")
+            if section == "*":
+                return tool_error("not_found", f"No markdown structure available for {path}")
+            return tool_error(
+                "not_found",
+                f"Section '{section}' not found in {path}. "
+                f"Use section='*' to list available sections.",
+            )
+
+        return content_bytes.decode("utf-8", errors="replace")
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    @handle_tool_errors("reading markdown structure")
+    async def nexus_md_structure(path: str, ctx: Context | None = None) -> str:
+        """List the structure of a markdown file without loading its content.
+
+        Returns headings, section token estimates, and block types — enabling
+        targeted reads via ``nexus_read_file(path, section=...)`` to minimize
+        context window usage.
+
+        Args:
+            path: Path to a markdown file (e.g., "/workspace/docs/arch.md")
+            ctx: FastMCP Context (automatically injected)
+
+        Returns:
+            JSON structure listing with sections, depths, token estimates,
+            and block types present in each section.
+        """
+        nx_instance = _get_nexus_instance(ctx)
+        # Permission gate + content fetch for lazy index rebuild.
+        try:
+            raw = await asyncio.to_thread(nx_instance.sys_read, path)
+        except Exception as e:
+            return tool_error("access_denied", f"Cannot access {path}: {e}")
+        content = raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
+        content_id = _md_get_content_id(nx_instance, path)
+        listing = _md_get_structure_listing(
+            nx_instance, path, content=content, content_id=content_id
+        )
+        if listing is None:
+            return tool_error("not_found", f"No markdown structure available for {path}")
+        return json.dumps(listing, indent=2)
 
     @mcp.tool(
         annotations={
@@ -313,7 +621,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("writing file")
-    def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
+    async def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
         """Write content to a file in Nexus filesystem.
 
         Args:
@@ -326,7 +634,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-        nx_instance.sys_write(path, content_bytes)
+        nx_instance.write(path, content_bytes)
         return f"Successfully wrote {len(content_bytes)} bytes to {path}"
 
     @mcp.tool(
@@ -358,7 +666,7 @@ def create_mcp_server(
             edits: List of {"old_str": "text to find", "new_str": "replacement"}
             fuzzy_threshold: Similarity threshold for fuzzy matching (0.0-1.0, default: 0.85)
             preview: If True, return preview without writing (default: False)
-            if_match: Optional etag for optimistic concurrency control
+            if_match: Optional content_id for optimistic concurrency control
             ctx: FastMCP Context (automatically injected, optional for backward compatibility)
 
         Returns:
@@ -371,7 +679,7 @@ def create_mcp_server(
             )
         """
         nx_instance = _get_nexus_instance(ctx)
-        result = nx_instance.edit(
+        result = cast(Any, nx_instance).edit(
             path,
             edits,
             fuzzy_threshold=fuzzy_threshold,
@@ -389,7 +697,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("deleting file")
-    def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
+    async def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
         """Delete a file from Nexus filesystem.
 
         Args:
@@ -399,7 +707,7 @@ def create_mcp_server(
             Success message or error
         """
         nx_instance = _get_nexus_instance(ctx)
-        nx_instance.sys_unlink(path)
+        await asyncio.to_thread(nx_instance.sys_unlink, path)
         return f"Successfully deleted {path}"
 
     @mcp.tool(
@@ -411,7 +719,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("listing files")
-    def nexus_list_files(
+    async def nexus_list_files(
         path: str = "/",
         recursive: bool = False,
         details: bool = True,
@@ -441,7 +749,7 @@ def create_mcp_server(
               - size: Size in bytes (0 for directories)
               - is_directory: Boolean indicating if this is a directory
               - modified_at: Last modification timestamp
-              - etag: Content hash
+              - content_id: Content hash
               - mime_type: MIME type
             - has_more: Whether more files are available
             - next_offset: Offset for next page (null if no more results)
@@ -458,7 +766,9 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            all_files = nx_instance.sys_readdir(path, recursive=recursive, details=details)
+            all_files = await asyncio.to_thread(
+                nx_instance.sys_readdir, path, recursive=recursive, details=details
+            )
         except FileNotFoundError:
             return tool_error(
                 "not_found",
@@ -491,7 +801,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("getting file info")
-    def nexus_file_info(path: str, ctx: Context | None = None) -> str:
+    async def nexus_file_info(path: str, ctx: Context | None = None) -> str:
         """Get detailed information about a file.
 
         Args:
@@ -501,13 +811,13 @@ def create_mcp_server(
             JSON string with file metadata
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not nx_instance.sys_access(path):
+        if not nx_instance.access(path):
             return tool_error(
                 "not_found",
                 f"File not found at '{path}'. Use nexus_list_files to check available files.",
             )
 
-        is_dir = nx_instance.sys_is_directory(path)
+        is_dir = nx_instance.is_directory(path)
         info_dict: dict[str, Any] = {
             "path": path,
             "exists": True,
@@ -517,7 +827,7 @@ def create_mcp_server(
         # Try to get size if it's a file
         if not is_dir:
             try:
-                content = nx_instance.sys_read(path)
+                content = await asyncio.to_thread(nx_instance.sys_read, path)
                 if isinstance(content, bytes):
                     info_dict["size"] = len(content)
             except Exception as e:
@@ -538,7 +848,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("creating directory")
-    def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
+    async def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
         """Create a directory in Nexus filesystem.
 
         Args:
@@ -549,7 +859,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.sys_mkdir(path)
+            nx_instance.mkdir(path)
         except FileExistsError:
             return f"Directory already exists at '{path}'."
         return f"Successfully created directory {path}"
@@ -563,7 +873,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("removing directory")
-    def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
+    async def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
         """Remove a directory from Nexus filesystem.
 
         Args:
@@ -575,7 +885,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.sys_rmdir(path, recursive=recursive)
+            nx_instance.rmdir(path, recursive=recursive)
         except OSError as e:
             if "not empty" in str(e).lower():
                 return tool_error(
@@ -596,7 +906,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("renaming file")
-    def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
+    async def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
         """Rename or move a file or directory in Nexus filesystem.
 
         Args:
@@ -608,7 +918,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.sys_rename(old_path, new_path)
+            await asyncio.to_thread(nx_instance.sys_rename, old_path, new_path)
         except FileExistsError:
             return tool_error(
                 "invalid_input",
@@ -635,6 +945,7 @@ def create_mcp_server(
         limit: int = 100,
         offset: int = 0,
         response_format: str = "json",
+        files: list[str] | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Search files using glob pattern with pagination.
@@ -645,6 +956,9 @@ def create_mcp_server(
             limit: Maximum number of results to return (default: 100)
             offset: Number of results to skip (default: 0)
             response_format: Output format - "json" or "markdown" (default: "json")
+            files: Optional stateless narrowing working set (#3701). When
+                provided, the glob pattern is matched against this list
+                instead of walking the tree under ``path``.
 
         Returns:
             Formatted string with paginated search results containing:
@@ -658,30 +972,93 @@ def create_mcp_server(
         Example:
             To find all Python files: nexus_glob("**/*.py", "/workspace")
             With pagination: nexus_glob("**/*.py", "/workspace", limit=50, offset=0)
+            Narrowed: nexus_glob("**/*.py", files=["/src/a.py", "/src/b.py"])
         """
-        nx_instance = _get_nexus_instance(ctx)
-        all_matches = nx_instance.glob(pattern, path)
-        total = len(all_matches)
+        from nexus.core.path_utils import split_zone_from_internal_path
+        from nexus.lib.rebac_filter import (
+            apply_rebac_filter,
+            rebac_denial_stats,
+        )
+
+        nx_instance: Any = _get_nexus_instance(ctx)
+        _search = nx_instance.service("search")
+        if _search is None:
+            raise ValueError("SearchService not available — glob requires the search brick")
+        # Codex review #3 finding #1: build an explicit OperationContext
+        # from the connection's authenticated whoami identity so ReBAC
+        # filtering sees the real (subject_id, zone_id, is_admin) rather
+        # than the ambient identity of whatever default connection the
+        # MCP server was booted with. ``_resolve_mcp_operation_context``
+        # fails closed if the identity can't be resolved.
+        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
+        # #3731 R2: if a per-request key was set but identity resolution
+        # failed (fail-closed → None), reject the request rather than
+        # executing with an anonymous/ambient context.
+        if op_context is None and _request_api_key.get():
+            return tool_error(
+                "unauthorized",
+                "Per-request API key could not be verified; search denied.",
+            )
+        auth_result = _op_context_to_auth_dict(op_context)
+        zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
+
+        all_matches = _search.glob(pattern, path, files=files, context=op_context)
+
+        # #3731: Apply file-level ReBAC filtering (second layer,
+        # same as HTTP _do_glob_operation).
+        pre_filter_count = len(all_matches)
+        filtered_paths, filter_ms = apply_rebac_filter(
+            all_matches,
+            permission_enforcer,
+            auth_result,
+            zone_id,
+            path_extractor=lambda p: p,
+        )
+        post_filter_count = len(filtered_paths)
+        total = post_filter_count
 
         # Apply pagination
-        paginated_matches = all_matches[offset : offset + limit]
-        has_more = (offset + limit) < total
+        paginated_matches = filtered_paths[offset : offset + limit]
+
+        # #3731: Zone unscoping — convert internal zone-prefixed paths
+        # to user-facing paths and build parallel zone list for
+        # round-trip disambiguation (mirrors HTTP _do_glob_operation).
+        item_zones: list[str | None] = []
+        unscoped_items: list[str] = []
+        for p in paginated_matches:
+            zone, unscoped = split_zone_from_internal_path(p)
+            unscoped_items.append(unscoped)
+            item_zones.append(zone)
+        paginated_matches = unscoped_items
 
         # Issue #538: Log truncation when results exceed limit
-        if has_more or offset > 0:
+        if (offset + limit) < total or offset > 0:
             logger.info(
                 f"[GLOB] Truncated {total} -> {len(paginated_matches)} results "
                 f"(offset={offset}, limit={limit})"
             )
 
-        result = {
-            "total": total,
-            "count": len(paginated_matches),
-            "offset": offset,
-            "items": paginated_matches,
-            "has_more": has_more,
-            "next_offset": offset + limit if has_more else None,
+        # #3731: Include permission stats + zone disambiguation in
+        # response (parity with HTTP).
+        # #3731: Detect multi-zone ambiguity (parity with HTTP
+        # _do_glob_operation).
+        _keys = list(zip(paginated_matches, item_zones, strict=False))
+        glob_multi_zone_ambiguous = len(set(_keys)) < len(_keys)
+
+        extras: dict[str, Any] = {
+            **rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
+            "item_zones": item_zones,
         }
+        if glob_multi_zone_ambiguous:
+            extras["multi_zone_ambiguous"] = True
+
+        result = build_paginated_list_response(
+            items=paginated_matches,
+            total=total,
+            offset=offset,
+            limit=limit,
+            extras=extras,
+        )
 
         return format_response(result, response_format)
 
@@ -694,13 +1071,18 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("searching file contents (grep)")
-    def nexus_grep(
+    async def nexus_grep(
         pattern: str,
         path: str = "/",
         ignore_case: bool = False,
         limit: int = 100,
         offset: int = 0,
         response_format: str = "json",
+        files: list[str] | None = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
+        block_type: str | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Search file contents using regex pattern with pagination.
@@ -712,43 +1094,160 @@ def create_mcp_server(
             limit: Maximum number of results to return (default: 100)
             offset: Number of results to skip (default: 0)
             response_format: Output format - "json" or "markdown" (default: "json")
+            files: Optional stateless narrowing working set (#3701). When
+                provided, grep searches only these files instead of walking
+                the tree. Agents should pass the file list from a previous
+                search/grep to drill down into its results.
+            before_context: Number of lines to include before each match
+                (#3701 follow-up). Use for displaying code context around
+                hits — equivalent to ``grep -B N``.
+            after_context: Number of lines to include after each match
+                (#3701 follow-up). Equivalent to ``grep -A N``.
+            invert_match: Return non-matching lines instead of matches
+                (#3701 follow-up). Equivalent to ``grep -v`` / ``--invert-match``.
+            block_type: Restrict matches to a specific markdown block type
+                (#3720). Only matches inside blocks of this type are
+                returned. Valid values: ``"code"``, ``"table"``,
+                ``"frontmatter"``, ``"paragraph"``, ``"blockquote"``,
+                ``"list"``, ``"heading"``. Non-markdown files pass
+                through unfiltered. Omit for default full-file search.
 
         Returns:
             Formatted string with paginated search results containing:
             - total: Total number of matches found
             - count: Number of matches in this page
             - offset: Current offset
-            - items: List of matches (file paths, line numbers, content)
+            - items: List of matches (file paths, line numbers, content, and
+              before_context/after_context arrays when requested)
             - has_more: Whether more results are available
             - next_offset: Offset for next page (if has_more is true)
 
         Example:
             To get first 50 matches: nexus_grep("TODO", "/workspace", limit=50)
             To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
+            Narrowed: nexus_grep("TODO", files=["/src/a.py", "/src/b.py"])
+            With context lines: nexus_grep("error", before_context=2, after_context=2)
+            Non-matching lines: nexus_grep("debug", invert_match=True)
         """
-        nx_instance = _get_nexus_instance(ctx)
-        all_results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
-        total = len(all_results)
+        from nexus.core.path_utils import split_zone_from_internal_path
+        from nexus.lib.rebac_filter import (
+            apply_rebac_filter,
+            compute_rebac_fetch_limit,
+            rebac_denial_stats,
+        )
 
-        # Apply pagination
-        paginated_results = all_results[offset : offset + limit]
-        has_more = (offset + limit) < total
+        nx_instance: Any = _get_nexus_instance(ctx)
+        _search = nx_instance.service("search")
+        if _search is None:
+            raise ValueError("SearchService not available — grep requires the search brick")
+        # Codex review #3 finding #1: build an explicit OperationContext
+        # (see ``_resolve_mcp_operation_context`` for the fail-closed
+        # semantics). Previously grep ran without any context so ReBAC
+        # filtering fell back to the ambient connection identity.
+        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
+        # #3731 R2: reject if per-request key present but auth failed.
+        if op_context is None and _request_api_key.get():
+            return tool_error(
+                "unauthorized",
+                "Per-request API key could not be verified; search denied.",
+            )
+
+        # #3731: Build auth_result dict from OperationContext for
+        # _apply_rebac_filter. Falls back to anonymous if no context.
+        auth_result = _op_context_to_auth_dict(op_context)
+        zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
+
+        # Sentinel fetch + ReBAC over-fetch (#3731).
+        window_size = limit + offset
+        sentinel_window = window_size + 1
+        fetch_limit = compute_rebac_fetch_limit(
+            sentinel_window, has_enforcer=permission_enforcer is not None
+        )
+        grep_kwargs: dict[str, Any] = {
+            "ignore_case": ignore_case,
+            "max_results": max(fetch_limit, 1),
+            "files": files,
+            "context": op_context,
+        }
+        # Only forward the context/invert flags when set so older servers
+        # without the #3701 fields still accept the request.
+        if before_context:
+            grep_kwargs["before_context"] = before_context
+        if after_context:
+            grep_kwargs["after_context"] = after_context
+        if invert_match:
+            grep_kwargs["invert_match"] = True
+        if block_type is not None:
+            grep_kwargs["block_type"] = block_type
+
+        # SearchService.grep() is async in local mode but the
+        # RemoteServiceProxy returns a sync result. Handle both.
+        _grep_result = _search.grep(pattern, path, **grep_kwargs)
+        if inspect.isawaitable(_grep_result):
+            _grep_result = await _grep_result
+        all_results = _grep_result
+
+        # #3731: Apply file-level ReBAC filtering (second layer,
+        # same as HTTP _do_grep_operation).
+        pre_filter_count = len(all_results)
+        filtered_results, filter_ms = apply_rebac_filter(
+            all_results,
+            permission_enforcer,
+            auth_result,
+            zone_id,
+            path_extractor=lambda r: r.get("file", ""),
+        )
+        post_filter_count = len(filtered_results)
+
+        # Sentinel-based has_more (post-ReBAC).
+        has_more = post_filter_count > window_size
+        total = post_filter_count
+
+        # Apply pagination.
+        paginated_results = filtered_results[offset : offset + limit]
+
+        # #3731: Zone unscoping — convert internal zone-prefixed paths
+        # to user-facing paths and annotate with zone_id for round-trip
+        # disambiguation (mirrors HTTP _do_grep_operation).
+        annotated: list[dict[str, Any]] = []
+        for r in paginated_results:
+            out = dict(r)
+            raw_file = r.get("file", "")
+            zone, unscoped = split_zone_from_internal_path(raw_file)
+            out["file"] = unscoped
+            if zone is not None:
+                out["zone_id"] = zone
+            annotated.append(out)
+        paginated_results = annotated
 
         # Issue #538: Log truncation when results exceed limit
         if has_more or offset > 0:
             logger.info(
-                f"[GREP] Truncated {total} -> {len(paginated_results)} results "
-                f"(offset={offset}, limit={limit})"
+                f"[GREP] Truncated ({'+' if has_more else ''}{total}) -> "
+                f"{len(paginated_results)} results (offset={offset}, limit={limit})"
             )
 
-        result = {
-            "total": total,
-            "count": len(paginated_results),
-            "offset": offset,
-            "items": paginated_results,
-            "has_more": has_more,
-            "next_offset": offset + limit if has_more else None,
+        # #3731: Detect multi-zone ambiguity (parity with HTTP
+        # _do_grep_operation). Two distinct raw paths that collapse to
+        # the same (file, zone_id) tuple degrade round-trip safety.
+        _keys = [(it["file"], it.get("zone_id")) for it in paginated_results]
+        multi_zone_ambiguous = len(set(_keys)) < len(_keys)
+
+        # #3731: Include permission stats in response (parity with HTTP).
+        extras: dict[str, Any] = {
+            **rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
         }
+        if multi_zone_ambiguous:
+            extras["multi_zone_ambiguous"] = True
+
+        result = build_paginated_list_response(
+            items=paginated_results,
+            total=total,
+            offset=offset,
+            limit=limit,
+            has_more=has_more,
+            extras=extras,
+        )
 
         return format_response(result, response_format)
 
@@ -760,8 +1259,11 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_semantic_search(
+    @handle_tool_errors("semantic search")
+    async def nexus_semantic_search(
         query: str,
+        path: str = "/",
+        search_mode: str = "semantic",
         limit: int = 10,
         offset: int = 0,
         response_format: str = "json",
@@ -771,6 +1273,10 @@ def create_mcp_server(
 
         Args:
             query: Natural language search query
+            path: Directory path to scope the search (default: "/" searches everywhere)
+            search_mode: Search mode - "semantic" (default, embedding-based),
+                "keyword" (BM25/text, faster), or "hybrid" (both pipelines,
+                higher quality but more expensive)
             limit: Maximum number of results to return (default: 10)
             offset: Number of results to skip (default: 0)
             response_format: Output format - "json" or "markdown" (default: "json")
@@ -785,23 +1291,54 @@ def create_mcp_server(
             - next_offset: Offset for next page (if has_more is true)
 
         Example:
+            Scoped search: nexus_semantic_search("auth logic", path="/workspace/src")
+            Hybrid mode: nexus_semantic_search("token refresh", search_mode="hybrid")
             First page: nexus_semantic_search("machine learning algorithms", limit=10)
             Next page: nexus_semantic_search("machine learning algorithms", limit=10, offset=10)
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "semantic_search"):
+
+        # Resolve SearchService via the kernel service registry (Issue #3778).
+        # NexusFS does not expose ``semantic_search`` as a direct attribute —
+        # the method lives on SearchService, reached through ``nx.service("search")``.
+        search_service: Any = None
+        try:
+            svc_fn = getattr(nx_instance, "service", None)
+            if svc_fn is not None:
+                search_service = svc_fn("search")
+        except Exception:
+            search_service = None
+
+        if search_service is None or not hasattr(search_service, "semantic_search"):
             return tool_error(
                 "unavailable",
-                "Semantic search not available (requires NexusFS with semantic search initialized).",
+                "Semantic search not available (search brick not loaded).",
+            )
+
+        # R4 review: pass an authenticated OperationContext so SearchService
+        # can enforce ReBAC permission filtering on semantic results. Without
+        # it, broad SANDBOX degraded queries would return cross-zone hits to
+        # any MCP caller. Fail closed if identity can't be resolved while a
+        # per-request API key was set (#3731 pattern used in glob/grep).
+        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
+        if op_context is None and _request_api_key.get():
+            return tool_error(
+                "unauthorized",
+                "Per-request API key could not be verified; semantic search denied.",
             )
 
         try:
-            from nexus.lib.sync_bridge import run_sync
-
+            # Over-fetch to allow has_more detection without a second round-trip
             fetch_limit = offset + limit * 2
-            all_results = run_sync(nx_instance.semantic_search(query, path="/", limit=fetch_limit))
+            all_results = await search_service.semantic_search(
+                query=query,
+                path=path,
+                search_mode=search_mode,
+                limit=fetch_limit,
+                context=op_context,
+            )
         except Exception as e:
-            if "not initialized" in str(e).lower():
+            if "not initialized" in str(e).lower() or "not available" in str(e).lower():
                 return tool_error("unavailable", "Semantic search not available (not initialized).")
             return tool_error("internal", f"Error in semantic search: {e}", str(e))
 
@@ -809,7 +1346,22 @@ def create_mcp_server(
         paginated_results = all_results[offset : offset + limit]
         has_more = (offset + limit) < total
 
-        result = {
+        # Issue #3778: surface the SANDBOX BM25S-fallback flag at the envelope
+        # level so clients can display a "degraded" indicator without having
+        # to scan every item. Two sources:
+        #   1. Per-item stamp (``semantic_degraded`` on a result dict) — works
+        #      when fallback returned at least one hit.
+        #   2. Per-request contextvar (LAST_SEMANTIC_DEGRADED) set inside the
+        #      SearchService fallback — works even when fallback returned
+        #      zero results, so an outage is still distinguishable from a
+        #      genuine no-hit query (R2 review).
+        from nexus.contracts.search_types import LAST_SEMANTIC_DEGRADED
+
+        degraded = LAST_SEMANTIC_DEGRADED.get() or any(
+            isinstance(r, dict) and r.get("semantic_degraded") is True for r in paginated_results
+        )
+
+        result: dict[str, Any] = {
             "total": total,
             "count": len(paginated_results),
             "offset": offset,
@@ -817,95 +1369,70 @@ def create_mcp_server(
             "has_more": has_more,
             "next_offset": offset + limit if has_more else None,
         }
+        if degraded:
+            result["semantic_degraded"] = True
 
         return format_response(result, response_format)
 
     # =========================================================================
-    # MEMORY TOOLS
+    # CONTEXT MANIFEST TOOLS (Issue #2984)
     # =========================================================================
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": False,  # Each store creates a new memory entry
-            "openWorldHint": True,
-        }
-    )
-    def nexus_store_memory(
-        content: str,
-        memory_type: str | None = None,
-        importance: float = 0.5,
-        ctx: Context | None = None,
-    ) -> str:
-        """Store a memory in Nexus memory system.
-
-        Args:
-            content: Memory content to store
-            memory_type: Optional memory type/category
-            importance: Importance score 0.0-1.0 (default: 0.5)
-
-        Returns:
-            Success message or error
-        """
-        nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "memory"):
-            return tool_error("unavailable", "Memory system not available (requires NexusFS).")
-
-        try:
-            nx_instance.memory.store(
-                content,
-                scope="user",
-                memory_type=memory_type,
-                importance=importance,
-            )
-            if hasattr(nx_instance.memory, "session"):
-                nx_instance.memory.session.commit()
-            return f"Successfully stored memory: {content[:80]}..."
-        except Exception as e:
-            if hasattr(nx_instance.memory, "session"):
-                try:
-                    nx_instance.memory.session.rollback()
-                except Exception as rb_err:
-                    logger.debug("Failed to rollback memory session: %s", rb_err)
-            return tool_error("internal", f"Error storing memory: {e}", str(e))
 
     @mcp.tool(
         annotations={
             "readOnlyHint": True,
             "destructiveHint": False,
             "idempotentHint": True,
-            "openWorldHint": True,
+            "openWorldHint": False,
         }
     )
-    @handle_tool_errors("querying memory")
-    def nexus_query_memory(
-        query: str,
-        memory_type: str | None = None,
-        limit: int = 5,
-        ctx: Context | None = None,
+    @handle_tool_errors("resolving context manifest")
+    def nexus_resolve_context(
+        sources: str,
+        variables: str = "{}",
+        response_format: str = "json",
+        ctx: Context | None = None,  # noqa: ARG001
     ) -> str:
-        """Query memories using semantic search.
+        """Resolve a context manifest by executing all sources in parallel.
+
+        Implements the Stripe Minions "deterministic pre-execution" pattern:
+        all sources are resolved in parallel before the agent starts reasoning.
+        Supports 4 source types: file_glob, memory_query, workspace_snapshot,
+        mcp_tool.
 
         Args:
-            query: Search query
-            memory_type: Optional filter by memory type
-            limit: Maximum number of results (default: 5)
+            sources: JSON string containing an array of context source
+                definitions. Each source must have a "type" field.
+            variables: JSON string containing template variable values
+                for substitution (default: "{}"). Supported variables:
+                agent.id, agent.owner_id, agent.zone_id, workspace.root,
+                task.description, task.id, workspace.id.
+            response_format: Output format - "json" or "markdown" (default: "json")
 
         Returns:
-            JSON string with matching memories
+            Formatted string with resolution results containing:
+            - resolved_at: ISO-8601 timestamp
+            - total_ms: Total resolution time in milliseconds
+            - source_count: Number of sources resolved
+            - sources: Array of per-source results with status, data, elapsed_ms
         """
-        nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "memory"):
-            return tool_error("unavailable", "Memory system not available (requires NexusFS).")
+        # manifest_resolver is a callable built by the factory — no cross-brick
+        # imports needed. It handles validation, memory wiring, and resolution.
+        if manifest_resolver is None:
+            return tool_error(
+                "unavailable",
+                "Context manifest resolver not available.",
+            )
 
-        memories = nx_instance.memory.search(
-            query,
-            scope="user",
-            memory_type=memory_type,
-            limit=limit,
-        )
-        return json.dumps(memories, indent=2)
+        try:
+            result = manifest_resolver(sources, variables)
+        except Exception as e:
+            return tool_error("internal", f"Error resolving context manifest: {e}", str(e))
+
+        if isinstance(result, str) and result.startswith("Error:"):
+            return result
+
+        return format_response(result, response_format)
 
     # =========================================================================
     # WORKFLOW TOOLS
@@ -1010,8 +1537,7 @@ def create_mcp_server(
             sandbox_available = True
         elif hasattr(_default_nx, "_ensure_sandbox_manager"):
             _default_nx._ensure_sandbox_manager()
-            mgr = getattr(_default_nx, "_sandbox_manager", None)
-            if mgr is not None and getattr(mgr, "providers", None):
+            if getattr(_default_nx, "sandbox_available", False):
                 sandbox_available = True
     except Exception:
         sandbox_available = False
@@ -1032,7 +1558,7 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.sandbox_run(
+            result = nx_instance.service("sandbox_rpc").sandbox_run(
                 sandbox_id=sandbox_id, language="python", code=code, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1050,7 +1576,7 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.sandbox_run(
+            result = nx_instance.service("sandbox_rpc").sandbox_run(
                 sandbox_id=sandbox_id, language="bash", code=command, timeout=300
             )
             return _format_sandbox_result(result)
@@ -1070,7 +1596,9 @@ def create_mcp_server(
                 JSON string with sandbox_id and metadata
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.sandbox_create(name=name, ttl_minutes=ttl_minutes)
+            result = nx_instance.service("sandbox_rpc").sandbox_create(
+                name=name, ttl_minutes=ttl_minutes
+            )
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1082,7 +1610,7 @@ def create_mcp_server(
                 JSON string with list of sandboxes
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            result = nx_instance.sandbox_list()
+            result = nx_instance.service("sandbox_rpc").sandbox_list()
             return json.dumps(result, indent=2)
 
         @mcp.tool()
@@ -1097,7 +1625,7 @@ def create_mcp_server(
                 Success message or error
             """
             nx_instance: Any = _get_nexus_instance(ctx)
-            nx_instance.sandbox_stop(sandbox_id)
+            nx_instance.service("sandbox_rpc").sandbox_stop(sandbox_id)
             return f"Successfully stopped sandbox {sandbox_id}"
 
     # =========================================================================
@@ -1105,7 +1633,7 @@ def create_mcp_server(
     # =========================================================================
 
     @mcp.resource("nexus://files/{path}")
-    def get_file_resource(path: str, ctx: Context | None = None) -> str:
+    async def get_file_resource(path: str, ctx: Context | None = None) -> str:
         """Browse files as MCP resources.
 
         Args:
@@ -1116,7 +1644,7 @@ def create_mcp_server(
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            content = nx_instance.sys_read(path)
+            content = await asyncio.to_thread(nx_instance.sys_read, path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)
@@ -1151,8 +1679,6 @@ def create_mcp_server(
         ToolInfo("nexus_glob", "Find files matching a glob pattern", "nexus"),
         ToolInfo("nexus_grep", "Search file contents with regex", "nexus"),
         ToolInfo("nexus_semantic_search", "Search files by semantic similarity", "nexus"),
-        ToolInfo("nexus_store_memory", "Store information in memory", "nexus"),
-        ToolInfo("nexus_query_memory", "Query stored memories", "nexus"),
         ToolInfo("nexus_list_workflows", "List available workflows", "nexus"),
         ToolInfo("nexus_execute_workflow", "Execute a workflow", "nexus"),
     ]
@@ -1342,24 +1868,14 @@ def create_mcp_server(
     # =========================================================================
 
     def _get_branch_service(ctx: Context | None = None):  # type: ignore[no-untyped-def]
-        """Get ContextBranchService from NexusFS services."""
+        """Get ContextBranchService via ServiceRegistry (Issue #1771)."""
         nx_instance = _get_nexus_instance(ctx)
-        svc = getattr(
-            getattr(nx_instance, "_system_services", None), "context_branch_service", None
-        )
-        if not svc:
-            return None
-        return svc
+        return nx_instance.service("context_branch") if nx_instance else None
 
     def _get_namespace_fork_service(ctx: Context | None = None) -> Any:
-        """Get AgentNamespaceForkService from NexusFS services."""
+        """Get AgentNamespaceForkService via ServiceRegistry (Issue #1771)."""
         nx_instance = _get_nexus_instance(ctx)
-        svc = getattr(
-            getattr(nx_instance, "_system_services", None), "namespace_fork_service", None
-        )
-        if not svc:
-            return None
-        return svc
+        return nx_instance.service("namespace_fork") if nx_instance else None
 
     @mcp.tool(
         annotations={
@@ -1744,7 +2260,6 @@ Use the nexus_read_file tool to read the content first.
 1. Use nexus_semantic_search to find relevant files
 2. Read the most relevant files using nexus_read_file
 3. Summarize the findings
-4. Store key insights in memory using nexus_store_memory
 
 Start by running the semantic search.
 """
@@ -1754,6 +2269,13 @@ Start by running the semantic search.
 
 def main() -> None:
     """Main entry point for running MCP server from command line."""
+    import asyncio
+
+    asyncio.run(_async_main())
+
+
+async def _async_main() -> None:
+    """Async implementation of main entry point."""
 
     # Get configuration from environment
     import importlib as _il
@@ -1774,14 +2296,29 @@ def main() -> None:
     if not remote_url:
         nx = connect()
 
-    mcp = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
+    mcp = await create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
 
-    # Add API key middleware for HTTP transports
-    # Note: We add it to the underlying Starlette app, not FastMCP's middleware system
-    # because FastMCP's middleware works with MCP messages, not HTTP requests
+    # Middleware chain for HTTP transports (#3779).
+    # Order (outermost to innermost, applied via Starlette's reverse-registration):
+    #   1. RateLimit — enforce per-token quotas before work is done
+    #   2. AuditLog  — wrap every request with structured logging
+    #   3. APIKey    — set `_request_api_key` contextvar for tool handlers
     if transport in ["http", "sse"]:
         try:
+            from nexus.bricks.mcp.metrics import install_metrics_route
+
+            install_metrics_route(mcp)
+        except Exception as e:
+            import logging
+
+            logger_ = logging.getLogger(__name__)
+            logger_.warning("Failed to add MCP metrics route: %s", e)
+
+        try:
             from starlette.middleware.base import BaseHTTPMiddleware
+
+            from nexus.bricks.mcp.middleware_audit import MCPAuditLogMiddleware
+            from nexus.bricks.mcp.middleware_ratelimit import install_rate_limit
 
             class APIKeyMiddleware(BaseHTTPMiddleware):
                 """Extract API key from HTTP headers and set in context."""
@@ -1798,17 +2335,19 @@ def main() -> None:
                         if token:
                             reset_request_api_key(token)
 
-            # Add middleware to the underlying Starlette app
-            # FastMCP's http_app is a method that returns the Starlette application
             if hasattr(mcp, "http_app"):
                 app = mcp.http_app()
+                # Innermost first: APIKey sets contextvar before tool dispatch.
                 app.add_middleware(APIKeyMiddleware)
-        except (ImportError, Exception) as e:
-            # If middleware addition fails, log but don't crash
+                # Middle: audit sees the final response status.
+                app.add_middleware(MCPAuditLogMiddleware)
+                # Outermost: rate-limit short-circuits before any work.
+                install_rate_limit(app)
+        except Exception as e:
             import logging
 
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to add API key middleware: {e}")
+            logger_ = logging.getLogger(__name__)
+            logger_.warning("Failed to add MCP HTTP middleware: %s", e)
 
     # Run with selected transport
     if transport == "stdio":

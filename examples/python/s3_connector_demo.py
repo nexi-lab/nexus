@@ -3,7 +3,7 @@
 Nexus S3 Connector Backend Demo (Python SDK)
 
 Demonstrates S3 connector backend with direct path mapping:
-- Mounting external S3 bucket with s3_connector backend type
+- Mounting external S3 bucket with path_s3 backend type
 - Writing files to actual paths (not CAS hashes)
 - Reading files from S3 at real paths
 - Directory operations on S3
@@ -25,12 +25,12 @@ Usage:
     export NEXUS_API_KEY=your-api-key
     export S3_BUCKET_NAME=your-bucket-name
     export AWS_REGION=us-east-1
-    python examples/python/s3_connector_demo.py
+    python examples/python/path_s3_demo.py
 
     # Local (no server):
     export S3_BUCKET_NAME=your-bucket-name
     export AWS_REGION=us-east-1
-    python examples/python/s3_connector_demo.py --local
+    python examples/python/path_s3_demo.py --local
 """
 
 import argparse
@@ -107,7 +107,7 @@ def verify_s3_files(bucket_name: str, prefix: str) -> None:
         print_error(f"Failed to verify S3 files: {e}")
 
 
-def demo_with_server():
+async def demo_with_server():
     """Run demo with Nexus server."""
     from nexus.sdk import connect
 
@@ -156,11 +156,11 @@ def demo_with_server():
     try:
         mount_id = nx.add_mount(
             mount_point=mount_point,
-            backend_type="s3_connector",
+            backend_type="path_s3",
             backend_config=mount_config,
         )
         print_success(f"Mounted S3 connector at {mount_point}")
-        print_info("  Backend type: s3_connector")
+        print_info("  Backend type: path_s3")
         print_info(f"  Bucket: s3://{bucket_name}")
         print_info(f"  Region: {region_name}")
         print_info(f"  Prefix: {prefix}/")
@@ -181,7 +181,7 @@ def demo_with_server():
     )
     print_success(f"Wrote: {mount_point}/data.json")
 
-    nx.sys_mkdir(f"{mount_point}/subdir", parents=True)
+    nx.mkdir(f"{mount_point}/subdir", parents=True)
     print_success(f"Created: {mount_point}/subdir")
 
     nx.sys_write(f"{mount_point}/subdir/nested.txt", b"File in subdirectory")
@@ -226,16 +226,16 @@ def demo_with_server():
     nx.rm(f"{mount_point}/hello.txt")
     nx.rm(f"{mount_point}/data.json")
     nx.rm(f"{mount_point}/subdir/nested.txt")
-    nx.sys_rmdir(f"{mount_point}/subdir")
+    await nx.sys_rmdir(f"{mount_point}/subdir")
     print_success("Cleaned up test files")
 
     nx.remove_mount(mount_point)
     print_success(f"Unmounted {mount_point}")
 
 
-def demo_local():
+async def demo_local():
     """Run demo locally (no server)."""
-    from nexus.backends.s3_connector import S3ConnectorBackend
+    from nexus.backends.storage.path_s3 import PathS3Backend
     from nexus.sdk import connect
 
     print_section("Running Local Demo (No Server)")
@@ -259,7 +259,7 @@ def demo_local():
         # Create and add S3 connector backend
         print_section("1. Creating S3 Connector Backend")
 
-        s3_backend = S3ConnectorBackend(
+        s3_backend = PathS3Backend(
             bucket_name=bucket_name, region_name=region_name, prefix="nexus-demo"
         )
         print_success("Created S3 connector backend")
@@ -280,11 +280,11 @@ def demo_local():
 
         nx.sys_write(
             "/workspace/s3/data.json",
-            json.dumps({"local": True, "backend": "s3_connector"}).encode(),
+            json.dumps({"local": True, "backend": "path_s3"}).encode(),
         )
         print_success("Wrote: /workspace/s3/data.json")
 
-        nx.sys_mkdir("/workspace/s3/subdir", parents=True)
+        nx.mkdir("/workspace/s3/subdir", parents=True)
         nx.sys_write("/workspace/s3/subdir/test.txt", b"Test file")
         print_success("Wrote: /workspace/s3/subdir/test.txt")
 
@@ -323,7 +323,7 @@ def demo_local():
         nx.rm("/workspace/s3/hello.txt")
         nx.rm("/workspace/s3/data.json")
         nx.rm("/workspace/s3/subdir/test.txt")
-        nx.sys_rmdir("/workspace/s3/subdir")
+        await nx.sys_rmdir("/workspace/s3/subdir")
         print_success("Cleaned up test files")
 
         print_info("\nS3 bucket cleanup (optional):")

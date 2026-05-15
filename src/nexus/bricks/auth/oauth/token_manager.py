@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from nexus.contracts.cache_store import CacheStoreABC
 
 from nexus.bricks.auth.oauth.crypto import OAuthCrypto
+from nexus.bricks.auth.oauth.token_resolver import ResolvedToken
 from nexus.bricks.auth.oauth.types import OAuthCredential, OAuthError
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AuthenticationError
@@ -123,16 +124,9 @@ class TokenManager:
         else:
             raise ValueError("One of db_path, db_url, or session_factory must be provided")
 
-        # Pass record_store to OAuthCrypto for shared pool (Issue #1597)
-        _crypto_rs = getattr(self, "_record_store", None)
-        if _crypto_rs is None and session_factory is not None:
-            from types import SimpleNamespace
-
-            _crypto_rs = SimpleNamespace(session_factory=session_factory)
-        self.crypto = OAuthCrypto(
-            encryption_key=encryption_key,
-            record_store=_crypto_rs,
-        )
+        # OAuthCrypto: use explicit key or fall back to random (no settings_store here;
+        # callers that need persistent keys should pass encryption_key).
+        self.crypto = OAuthCrypto(encryption_key=encryption_key)
         self.providers: dict[str, Any] = {}
         self._audit_logger = audit_logger
         self._rotation_store = TokenRotationStore()
@@ -144,6 +138,13 @@ class TokenManager:
         # Per-credential asyncio lock prevents concurrent refresh races.
         # Capped at _MAX_REFRESH_LOCKS entries; oldest evicted on overflow (Issue #2281).
         self._refresh_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
+
+        # Per-key metadata stash for resolve(): populated inside
+        # get_valid_token()'s locked section. Keyed by (provider, user_email,
+        # zone_id) so different credentials never cross-contaminate.
+        self._resolved_metadata: dict[
+            tuple[str, str, str], tuple[datetime | None, tuple[str, ...] | None]
+        ] = {}
 
     def _get_refresh_lock(self, key: tuple[str, str, str]) -> asyncio.Lock:
         """Get or create a per-credential lock with LRU eviction (Issue #2281).
@@ -319,6 +320,8 @@ class TokenManager:
                 return cached_raw.decode()
 
         # Per-credential lock prevents concurrent refresh races (Issue #2281).
+        # _last_resolved stash: resolve() reads metadata from the same locked
+        # section that produced the access token, avoiding a second DB round-trip.
         lock_key = (provider, user_email, zone_id)
         lock = self._get_refresh_lock(lock_key)
         try:
@@ -335,11 +338,15 @@ class TokenManager:
                     return cached_raw.decode()
 
             with self.SessionLocal() as session:
-                stmt = select(OAuthCredentialModel).where(
-                    OAuthCredentialModel.provider == provider,
-                    OAuthCredentialModel.user_email == user_email,
-                    OAuthCredentialModel.zone_id == zone_id,
-                    OAuthCredentialModel.revoked == 0,
+                stmt = (
+                    select(OAuthCredentialModel)
+                    .where(
+                        OAuthCredentialModel.provider == provider,
+                        OAuthCredentialModel.user_email == user_email,
+                        OAuthCredentialModel.zone_id == zone_id,
+                        OAuthCredentialModel.revoked == 0,
+                    )
+                    .order_by(OAuthCredentialModel.created_at.desc())
                 )
                 model = session.execute(stmt).scalar_one_or_none()
 
@@ -355,17 +362,10 @@ class TokenManager:
                 if credential.is_expired() and credential.refresh_token:
                     # Rate limit: skip if refreshed recently
                     if self._is_refresh_rate_limited(model):
-                        logger.debug(
-                            f"Refresh rate limited for {provider}:{user_email}, "
-                            f"returning current token"
+                        raise AuthenticationError(
+                            f"Token expired for {provider}:{user_email} and "
+                            f"refresh is rate-limited (cooldown {_REFRESH_COOLDOWN_SECONDS}s)"
                         )
-                        if self._cache_store is not None:
-                            await self._cache_store.set(
-                                cache_key_str,
-                                credential.access_token.encode(),
-                                ttl=self._cache_ttl,
-                            )
-                        return credential.access_token
 
                     logger.info(f"Token expired for {provider}:{user_email}, refreshing...")
 
@@ -392,6 +392,8 @@ class TokenManager:
 
                         model.encrypted_access_token = encrypted_access_token
                         model.expires_at = new_credential.expires_at
+                        if new_credential.scopes is not None:
+                            model.scopes = json.dumps(list(new_credential.scopes))
                         model.last_refreshed_at = datetime.now(UTC)
                         model.updated_at = datetime.now(UTC)
 
@@ -516,9 +518,57 @@ class TokenManager:
                         ip_address=ip_address,
                     )
 
+            if credential.is_expired():
+                raise AuthenticationError(
+                    f"Token expired for {provider}:{user_email} and no refresh token available"
+                )
+
+            self._resolved_metadata[(provider, user_email, zone_id)] = (
+                credential.expires_at,
+                credential.scopes,
+            )
             return credential.access_token
         finally:
             lock.release()
+
+    async def resolve(
+        self,
+        provider: str,
+        user_email: str,
+        *,
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> ResolvedToken:
+        """Resolve a valid access token via the ``TokenResolver`` seam.
+
+        Reads metadata from a per-key stash populated inside
+        ``get_valid_token()``'s locked section. On a fresh worker backed
+        by an external cache (Dragonfly/Redis), the stash may be empty
+        because ``get_valid_token()`` returned from a cache hit without
+        touching the DB. In that case we fall back to ``get_credential()``
+        for the metadata — one extra read, but only on the first call per
+        credential per worker lifetime.
+        """
+        if zone_id is None:
+            zone_id = ROOT_ZONE_ID
+        access_token = await self.get_valid_token(provider, user_email, zone_id=zone_id)
+        key = (provider, user_email, zone_id)
+        metadata = self._resolved_metadata.get(key)
+        if metadata is not None:
+            expires_at, scopes = metadata
+        else:
+            credential = await self.get_credential(provider, user_email, zone_id=zone_id)
+            if credential is not None:
+                expires_at = credential.expires_at
+                scopes = credential.scopes
+                self._resolved_metadata[key] = (expires_at, scopes)
+            else:
+                expires_at = None
+                scopes = None
+        return ResolvedToken(
+            access_token=access_token,
+            expires_at=expires_at,
+            scopes=scopes or (),
+        )
 
     def detect_reuse(self, token_family_id: str, refresh_token_hash: str) -> bool:
         """Check if a refresh token hash exists in the rotation history.
@@ -559,11 +609,15 @@ class TokenManager:
     ) -> OAuthCredential | None:
         """Get credential (decrypted) without automatic refresh."""
         with self.SessionLocal() as session:
-            stmt = select(OAuthCredentialModel).where(
-                OAuthCredentialModel.provider == provider,
-                OAuthCredentialModel.user_email == user_email,
-                OAuthCredentialModel.zone_id == zone_id,
-                OAuthCredentialModel.revoked == 0,
+            stmt = (
+                select(OAuthCredentialModel)
+                .where(
+                    OAuthCredentialModel.provider == provider,
+                    OAuthCredentialModel.user_email == user_email,
+                    OAuthCredentialModel.zone_id == zone_id,
+                    OAuthCredentialModel.revoked == 0,
+                )
+                .order_by(OAuthCredentialModel.created_at.desc())
             )
             model = session.execute(stmt).scalar_one_or_none()
 
@@ -640,7 +694,11 @@ class TokenManager:
             elif user_email is not None:
                 stmt = stmt.where(OAuthCredentialModel.user_email == user_email)
 
-            models = session.execute(stmt).scalars().all()
+            models = (
+                session.execute(stmt.order_by(OAuthCredentialModel.created_at.desc()))
+                .scalars()
+                .all()
+            )
 
             return [
                 {

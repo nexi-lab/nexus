@@ -1,0 +1,4 @@
+{
+  "OPENAI_API_KEY": "sk-codex-real-api-key-example",
+  "auth_mode": "apikey"
+}

@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+FROM python:3.14-slim
+
+ENV PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fuse3 libfuse3-dev libfuse-dev fuse gcc build-essential \
+    ca-certificates curl git protobuf-compiler && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}" \
+    CARGO_TARGET_DIR=/app/target \
+    CARGO_BUILD_JOBS=2 \
+    CARGO_NET_RETRY=10 \
+    CARGO_HTTP_TIMEOUT=120 \
+    PROTOC=/usr/bin/protoc
+
+WORKDIR /app
+COPY . /app
+
+RUN "$PROTOC" --version
+
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/app/target \
+    pip install --no-cache-dir maturin && \
+    if [ "$(uname -m)" = "aarch64" ]; then \
+        export SIMSIMD_TARGET_SVE=0 \
+               SIMSIMD_TARGET_SVE2=0 \
+               SIMSIMD_TARGET_SVE_BF16=0 \
+               SIMSIMD_TARGET_SVE_F16=0 \
+               SIMSIMD_TARGET_SVE_I8=0; \
+    fi && \
+    maturin build --release --out /tmp/nexus-dist -m rust/nexus-cdylib/Cargo.toml && \
+    pip install --no-cache-dir /tmp/nexus-dist/nexus_runtime-*.whl
+
+RUN pip install --no-cache-dir -e ".[dev]" fusepy 2>/dev/null || \
+    pip install --no-cache-dir -e . fusepy
+
+CMD ["python", "-m", "tests.e2e.self_contained.test_fuse_docker_e2e"]

@@ -8,8 +8,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Import OAuthConfig - required for OAuth configuration
-# Canonical path: nexus.bricks.auth.oauth.config (#2281)
-from nexus.bricks.auth.oauth.config import OAuthConfig
+# Canonical path: nexus.contracts.oauth_types (#3230, moved from bricks.auth.oauth.config)
+from nexus.contracts.oauth_types import OAuthConfig
 
 
 class DockerImageTemplate(BaseModel):
@@ -58,10 +58,9 @@ class FeaturesConfig(BaseModel):
     Issue #1389: Expanded from 6 hard-coded flags to per-brick overrides.
     """
 
-    # System services
+    # Services
     eventlog: bool | None = Field(default=None, description="Enable event log service")
     namespace: bool | None = Field(default=None, description="Enable namespace manager")
-    agent_registry: bool | None = Field(default=None, description="Enable agent registry")
     permissions: bool | None = Field(default=None, description="Enable permission enforcement")
     scheduler: bool | None = Field(default=None, description="Enable task scheduler")
 
@@ -73,16 +72,23 @@ class FeaturesConfig(BaseModel):
 
     # Feature bricks
     search: bool | None = Field(default=None, description="Enable search brick")
+    semantic_search: bool | None = Field(
+        default=None,
+        description="Enable semantic search initialization/config wiring",
+    )
     pay: bool | None = Field(default=None, description="Enable payment brick")
     llm: bool | None = Field(default=None, description="Enable LLM brick")
     skills: bool | None = Field(default=None, description="Enable skills brick")
     sandbox: bool | None = Field(default=None, description="Enable sandbox brick")
     workflows: bool | None = Field(default=None, description="Enable workflow brick")
-    a2a: bool | None = Field(default=None, description="Enable A2A protocol brick")
     discovery: bool | None = Field(default=None, description="Enable agent discovery")
     mcp: bool | None = Field(default=None, description="Enable MCP server brick")
     memory: bool | None = Field(default=None, description="Enable agent memory")
     federation: bool | None = Field(default=None, description="Enable federation brick")
+
+    # Deprecated — accepted but ignored to avoid startup failures on upgrade.
+    # The A2A brick was removed in #2979; MCP covers the use case.
+    a2a: bool | None = Field(default=None, description="Deprecated: A2A brick removed in #2979")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -92,11 +98,74 @@ class FeaturesConfig(BaseModel):
         Returns:
             Dict of brick_name -> enabled for fields that are explicitly set.
         """
+        _skip = {"semantic_search", "a2a"}
         overrides: dict[str, bool] = {}
         for field_name, value in self:
+            if field_name in _skip:
+                continue
             if value is not None:
                 overrides[field_name] = value
         return overrides
+
+
+class SSRFConfig(BaseModel):
+    """SSRF validator configuration (Issue #3792).
+
+    Knobs here are minimal by design — metadata and loopback are always
+    blocked. ``allow_private`` is the opt-in for dev / self-hosted hub
+    deployments that reach internal services by design.
+    """
+
+    allow_private: bool = Field(
+        default=False,
+        description=(
+            "Allow RFC1918 / ULA private ranges through the SSRF validator. "
+            "Metadata and loopback remain blocked. Set True for dev or "
+            "self-hosted hub deployments that must reach internal services."
+        ),
+    )
+    extra_deny_cidrs: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Operator-supplied CIDRs to block in addition to the built-in "
+            "ranges (e.g. internal service-mesh subnets)."
+        ),
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("extra_deny_cidrs", mode="before")
+    @classmethod
+    def _coerce_sequence(cls, v: Any) -> tuple[str, ...]:
+        if v is None:
+            return ()
+        if isinstance(v, str):
+            return (v,)
+        return tuple(v)
+
+    @field_validator("extra_deny_cidrs")
+    @classmethod
+    def _validate_cidrs(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        import ipaddress
+
+        for cidr in v:
+            try:
+                ipaddress.ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"Invalid CIDR in extra_deny_cidrs: {cidr!r}") from exc
+        return v
+
+
+class SecurityConfig(BaseModel):
+    """Top-level security settings.
+
+    Grows as additional security subsections land (e.g. rate limiting,
+    content policy). SSRF is the first subsection (Issue #3792).
+    """
+
+    ssrf: SSRFConfig = Field(default_factory=SSRFConfig)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class NexusConfig(BaseModel):
@@ -120,16 +189,10 @@ class NexusConfig(BaseModel):
         ),
     )
 
-    # Deployment mode
-    mode: str = Field(
-        default="standalone",
-        description="Deployment mode: standalone (single-node redb), remote (thin HTTP client), or federation (ZoneManager + Raft)",
-    )
-
     # Backend selection
     backend: str = Field(
-        default="local",
-        description="Storage backend: 'local' for local filesystem, 'gcs' for Google Cloud Storage",
+        default="path_local",
+        description="Storage backend: 'path_local' for local filesystem, 'local' for CAS, 'gcs' for Google Cloud Storage",
     )
 
     # Local backend settings
@@ -166,6 +229,14 @@ class NexusConfig(BaseModel):
         default=None,
         description="Path for the SQLAlchemy record store (SQLite). None = no record store (bare kernel).",
     )
+    database_url: str | None = Field(
+        default=None,
+        description=(
+            "Full database URL for the SQLAlchemy record store "
+            "(e.g. 'postgresql://user:pass@host/db' or 'sqlite:///path/to/db.sqlite'). "
+            "Ignored when record_store_path is set."
+        ),
+    )
 
     # In-memory metadata caching settings
     cache_path_size: int = Field(default=512, description="Max entries for path metadata cache")
@@ -184,7 +255,7 @@ class NexusConfig(BaseModel):
     # Custom namespace configurations
     namespaces: list[dict[str, Any]] | None = Field(
         default=None,
-        description="Custom namespace configurations (list of dicts with name, readonly, admin_only, requires_zone)",
+        description="Custom namespace configurations (list of dicts with name, requires_zone)",
     )
 
     auto_parse: bool = Field(
@@ -193,7 +264,7 @@ class NexusConfig(BaseModel):
     )
 
     # Parse provider configurations (v0.8.0)
-    # Supports multiple providers: unstructured, llamaparse, markitdown
+    # Supports multiple providers: unstructured, llamaparse, pdf-inspector
     # Priority determines selection order (higher = preferred)
     # API keys can be set via environment variables or in config
     parse_providers: list[dict[str, Any]] | None = Field(
@@ -201,7 +272,7 @@ class NexusConfig(BaseModel):
         description=(
             "Parse provider configurations. Each dict can contain: "
             "name (required), enabled, priority, api_key, api_url, supported_formats. "
-            "Providers: unstructured (API), llamaparse (API), markitdown (local fallback)"
+            "Providers: unstructured (API), llamaparse (API), pdf-inspector (local PDF, default)"
         ),
     )
 
@@ -213,12 +284,12 @@ class NexusConfig(BaseModel):
         description="Enable permission enforcement on file operations (P0-6: default True for security)",
     )
 
-    # Admin bypass setting (P0-4)
-    # Default: True for better developer experience - admin keys bypass permission checks
-    # Set to False explicitly for stricter production security
+    # Admin bypass setting (P0-4, Issue #3063)
+    # Default: False for secure-by-default production deployments.
+    # Set to True explicitly in dev/test configs that need admin bypass.
     allow_admin_bypass: bool = Field(
-        default=True,
-        description="Allow admin keys to bypass permission checks (default True for dev experience)",
+        default=False,
+        description="Allow admin keys to bypass permission checks (default False for security)",
     )
 
     # Zone isolation setting (P0-2)
@@ -249,7 +320,18 @@ class NexusConfig(BaseModel):
     # Multi-backend storage configuration (v0.9.0)
     backends: list[dict[str, Any]] | None = Field(
         default=None,
-        description="Multiple backend mount configurations (type, mount_point, config, priority, readonly)",
+        description="Multiple backend mount configurations (type, mount_point, config, priority)",
+    )
+
+    # Cold tiering configuration (v0.9.15, Issue #3406)
+    tiering: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Volume cold tiering: upload sealed CAS volumes to S3/GCS. "
+            "Keys: enabled, quiet_period, min_volume_size, cloud_backend (s3|gcs), "
+            "cloud_bucket, upload_rate_limit, local_cache_size, "
+            "burst_read_threshold, burst_read_window"
+        ),
     )
 
     # OAuth provider configuration
@@ -264,6 +346,12 @@ class NexusConfig(BaseModel):
         description="Feature flags for optional functionality (semantic search, LLM read, etc.)",
     )
 
+    # Security settings (Issue #3792)
+    security: SecurityConfig = Field(
+        default_factory=SecurityConfig,
+        description="Security settings (SSRF, etc. — Issue #3792)",
+    )
+
     # Resiliency configuration (Issue #1366)
     resiliency: dict[str, Any] | None = Field(
         default=None,
@@ -272,7 +360,7 @@ class NexusConfig(BaseModel):
 
     # Remote mode settings
     url: str | None = Field(
-        default=None, description="Nexus server URL (required for mode='remote')"
+        default=None, description="Nexus server URL (required for profile='remote')"
     )
     api_key: str | None = Field(default=None, description="API key for authentication")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
@@ -345,30 +433,27 @@ class NexusConfig(BaseModel):
     def validate_profile(cls, v: str) -> str:
         """Validate deployment profile.
 
-        Valid profiles: minimal, embedded, lite, full, cloud, remote, auto
+        Valid profiles: cluster, embedded, lite, sandbox, full, cloud, remote, auto
         """
-        allowed = ["minimal", "embedded", "lite", "full", "cloud", "remote", "auto"]
+        allowed = [
+            "cluster",
+            "embedded",
+            "lite",
+            "sandbox",
+            "full",
+            "cloud",
+            "remote",
+            "auto",
+        ]
         if v not in allowed:
             raise ValueError(f"profile must be one of {allowed}, got '{v}'")
-        return v
-
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str) -> str:
-        """Validate deployment mode.
-
-        Valid modes: standalone, remote, federation
-        """
-        allowed = ["standalone", "remote", "federation"]
-        if v not in allowed:
-            raise ValueError(f"mode must be one of {allowed}, got '{v}'")
         return v
 
     @field_validator("backend")
     @classmethod
     def validate_backend(cls, v: str) -> str:
         """Validate backend type."""
-        allowed = ["local", "gcs", "gcs_connector", "s3_connector", "gdrive_connector"]
+        allowed = ["local", "path_local", "cas_gcs", "path_gcs", "path_s3", "gdrive_connector"]
         if v not in allowed:
             raise ValueError(f"backend must be one of {allowed}, got {v}")
         return v
@@ -388,18 +473,75 @@ class NexusConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_url_for_remote(self) -> "NexusConfig":
-        """Validate URL is required for remote mode."""
-        if self.mode == "remote" and not self.url:
+        """Validate URL is required for remote profile."""
+        if self.profile == "remote" and not self.url:
             env_url = os.getenv("NEXUS_URL")
             if env_url:
                 self.url = env_url
             else:
-                raise ValueError("url is required for mode='remote'")
+                raise ValueError("url is required for profile='remote'")
         return self
 
     model_config = ConfigDict(
         frozen=False,  # Allow modifications after creation
     )
+
+
+def _apply_sandbox_defaults(cfg: "NexusConfig") -> "NexusConfig":
+    """Apply SANDBOX profile defaults (Issue #3778).
+
+    When profile=sandbox, fill in fields the user did NOT explicitly set
+    with lightweight values (local backend, SQLite paths under
+    ~/.nexus/sandbox/, small cache, no vector search).
+
+    "Explicitly set" = present in `cfg.model_fields_set`. User values
+    always win, even if their value happens to equal a non-sandbox default.
+
+    This runs after env/YAML merge so user overrides are visible via
+    `model_fields_set`.
+    """
+    from pathlib import Path as _Path
+    from typing import Any as _Any
+
+    if cfg.profile != "sandbox":
+        return cfg
+
+    user_set = cfg.model_fields_set
+    updates: dict[str, _Any] = {}
+
+    if "backend" not in user_set:
+        # Direct filesystem (no CAS hash-store overhead). Edits/read/write
+        # operate on real files at `data_dir` — matches SANDBOX's
+        # "lightweight single-process" intent. "local" in this codebase
+        # means CAS, which is not what sandbox needs.
+        updates["backend"] = "path_local"
+
+    if "data_dir" not in user_set:
+        updates["data_dir"] = str(_Path.home() / ".nexus" / "sandbox")
+    data_dir = updates.get("data_dir", cfg.data_dir)
+
+    db_path = f"{data_dir}/nexus.db"
+    if "db_path" not in user_set:
+        updates["db_path"] = db_path
+    if "metastore_path" not in user_set:
+        updates["metastore_path"] = db_path
+    if "record_store_path" not in user_set:
+        updates["record_store_path"] = db_path
+
+    if "cache_size_mb" not in user_set:
+        updates["cache_size_mb"] = 64
+
+    # Codex review R3 (high): SANDBOX vec is now ON by default (PR
+    # #4022) — the [sandbox] extra bundles sqlite-vec + fastembed so
+    # offline embeddings work out of the box. Leaving the schema
+    # default (True) means ``connect(config={"profile":"sandbox"})``
+    # exercises the hybrid path. Users can still opt out via
+    # ``enable_vector_search=False`` (config dict or env).
+    # No override here: the schema default (True) is now what we want.
+
+    if not updates:
+        return cfg
+    return cfg.model_copy(update=updates)
 
 
 def load_config(
@@ -422,9 +564,16 @@ def load_config(
         FileNotFoundError: If specified config file doesn't exist
         ValueError: If configuration is invalid
     """
-    # Passthrough if already a NexusConfig
+    # Codex review R5 #3 (medium): NexusConfig instances must go
+    # through ``_apply_sandbox_defaults`` too — dict/YAML inputs do,
+    # so a passthrough here would silently leave SANDBOX-typed
+    # ``NexusConfig(profile="sandbox")`` callers with no
+    # ``db_path``/``record_store_path`` and the local sqlite-vec
+    # backend would skip wiring (no DB path resolved). Source-
+    # agnosticism is the whole point of having a single ``connect()``
+    # entry point. The defaulter is no-op for non-sandbox profiles.
     if isinstance(config, NexusConfig):
-        return config
+        return _apply_sandbox_defaults(config)
 
     # Load from dict
     if isinstance(config, dict):
@@ -439,19 +588,23 @@ def load_config(
 
 
 def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
-    """Load configuration from dictionary."""
-    # Merge with environment variables
-    merged = _load_from_environment()
-    merged_dict = merged.model_dump()
+    """Load configuration from dictionary.
+
+    Preserves provenance (Issue #3778, R1 review): only explicitly supplied
+    keys from env or the input dict are passed to NexusConfig, so
+    `model_fields_set` reflects user intent and SANDBOX defaults apply only
+    to fields the user did NOT set.
+    """
+    # Environment-sourced overrides (no model_dump round-trip — preserves
+    # per-field provenance so _apply_sandbox_defaults can see what was set).
+    merged_dict = _build_env_overrides()
     merged_dict.update(config_dict)
 
     # Convert oauth dict to OAuthConfig if present
     if "oauth" in merged_dict and isinstance(merged_dict["oauth"], dict):
-        from nexus.bricks.auth.oauth.config import OAuthConfig as OAuthConfigType
+        merged_dict["oauth"] = OAuthConfig(**merged_dict["oauth"])
 
-        merged_dict["oauth"] = OAuthConfigType(**merged_dict["oauth"])
-
-    return NexusConfig(**merged_dict)
+    return _apply_sandbox_defaults(NexusConfig(**merged_dict))
 
 
 def _load_from_file(path: Path) -> NexusConfig:
@@ -468,14 +621,18 @@ def _load_from_file(path: Path) -> NexusConfig:
     return _load_from_dict(config_dict)
 
 
-def _load_from_environment() -> NexusConfig:
-    """Load configuration from environment variables."""
+def _build_env_overrides() -> dict[str, Any]:
+    """Return a dict of only the config fields explicitly set via env vars.
+
+    Unlike `_load_from_environment()`, this does NOT construct a NexusConfig
+    or apply defaults — so the caller can preserve per-field provenance
+    (`model_fields_set`) when layering additional sources on top (Issue #3778).
+    """
     env_config: dict[str, Any] = {}
 
     # Map environment variables to config fields
     env_mapping = {
         "NEXUS_PROFILE": "profile",
-        "NEXUS_MODE": "mode",
         "NEXUS_BACKEND": "backend",
         "NEXUS_DATA_DIR": "data_dir",
         "NEXUS_GCS_BUCKET_NAME": "gcs_bucket_name",
@@ -487,6 +644,7 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_DB_PATH": "db_path",
         "NEXUS_METASTORE_PATH": "metastore_path",
         "NEXUS_RECORD_STORE_PATH": "record_store_path",
+        "NEXUS_DATABASE_URL": "database_url",
         "NEXUS_CACHE_PATH_SIZE": "cache_path_size",
         "NEXUS_CACHE_LIST_SIZE": "cache_list_size",
         "NEXUS_CACHE_KV_SIZE": "cache_kv_size",
@@ -593,18 +751,23 @@ def _load_from_environment() -> NexusConfig:
             }
         )
 
-    # Always add MarkItDown as fallback (no API key needed)
-    parse_providers.append(
-        {
-            "name": "markitdown",
-            "priority": 10,
-        }
-    )
+    # pdf-inspector: fast local PDF parser (Rust + PyO3), no API key needed
+    try:
+        import pdf_inspector  # noqa: F401
+
+        parse_providers.append({"name": "pdf-inspector", "priority": 20})
+    except ImportError:
+        pass
 
     if parse_providers:
         env_config["parse_providers"] = parse_providers
 
-    return NexusConfig(**env_config)
+    return env_config
+
+
+def _load_from_environment() -> NexusConfig:
+    """Load configuration from environment variables."""
+    return _apply_sandbox_defaults(NexusConfig(**_build_env_overrides()))
 
 
 def _auto_discover() -> NexusConfig:

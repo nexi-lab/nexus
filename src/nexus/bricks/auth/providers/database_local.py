@@ -6,7 +6,7 @@ Supports registration, login, password management, and profile updates.
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import bcrypt as bcrypt_lib
@@ -70,7 +70,7 @@ class DatabaseLocalAuth(LocalAuth):
         with self.session_factory() as session, session.begin():
             validate_user_uniqueness(session, email=email, username=username)
 
-            password_bytes = password.encode("utf-8")
+            password_bytes = self._bcrypt_password_bytes(password)
             salt = bcrypt_lib.gensalt(rounds=12)
             password_hash = bcrypt_lib.hashpw(password_bytes, salt).decode("utf-8")
 
@@ -87,8 +87,8 @@ class DatabaseLocalAuth(LocalAuth):
                 is_active=1,
                 email_verified=0,
                 user_metadata=metadata,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                updated_at=datetime.now(UTC).replace(tzinfo=None),
             )
 
             session.add(user)
@@ -140,7 +140,7 @@ class DatabaseLocalAuth(LocalAuth):
                 logger.debug("Login failed: no password set (%s)", identifier)
                 return None
 
-            password_bytes = password.encode("utf-8")
+            password_bytes = self._bcrypt_password_bytes(password)
             stored_hash = user.password_hash.encode("utf-8")
             if not bcrypt_lib.checkpw(password_bytes, stored_hash):
                 logger.debug("Login failed: invalid password (%s)", identifier)
@@ -148,7 +148,7 @@ class DatabaseLocalAuth(LocalAuth):
 
             _verify_user_login_eligibility(user)
 
-            user.last_login_at = datetime.utcnow()
+            user.last_login_at = datetime.now(UTC).replace(tzinfo=None)
             session.add(user)
             session.commit()
 
@@ -204,12 +204,12 @@ class DatabaseLocalAuth(LocalAuth):
             if not bcrypt_lib.checkpw(password_bytes, stored_hash):
                 raise ValueError("Incorrect current password")
 
-            new_password_bytes = new_password.encode("utf-8")
+            new_password_bytes = self._bcrypt_password_bytes(new_password)
             salt = bcrypt_lib.gensalt(rounds=12)
             new_password_hash = bcrypt_lib.hashpw(new_password_bytes, salt).decode("utf-8")
 
             user.password_hash = new_password_hash
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(UTC).replace(tzinfo=None)
             session.add(user)
 
             logger.info("Password changed for user: %s", user_id)
@@ -239,7 +239,7 @@ class DatabaseLocalAuth(LocalAuth):
 
                 user.user_metadata = json.dumps(metadata)
 
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(UTC).replace(tzinfo=None)
             session.add(user)
             session.flush()
             session.expunge(user)
@@ -348,7 +348,7 @@ class DatabaseLocalAuth(LocalAuth):
                 raise ValueError(f"User not found: {user_id}")
 
             user.email_verified = 1
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(UTC).replace(tzinfo=None)
             session.add(user)
 
         logger.info("Email verified for user: %s", user_id)

@@ -1,0 +1,230 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nexus-fs"
+version = "0.4.9"
+description = "Unified filesystem abstraction for cloud storage — mount S3, GCS, and local storage with two lines of Python"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.14"
+authors = [
+    { name = "Nexi Lab Team" },
+]
+keywords = ["filesystem", "s3", "gcs", "cloud", "storage", "vfs", "ai", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Filesystems",
+    "Typing :: Typed",
+]
+
+# IMPORTANT: nexus-fs and nexus-ai-fs both install into the `nexus` namespace
+# and MUST NOT be installed in the same environment. nexus-ai-fs is the full
+# monorepo package; nexus-fs is the slim standalone subset. A future release
+# will formalize the dependency direction (nexus-ai-fs depends on nexus-fs).
+
+# ~12 base dependencies — slim contract: kernel + lib + auth bricks + search primitives.
+# nexus-runtime is the Rust kernel wheel; required for sys_*, metastore, and rust_compat
+# accelerators. Slim does NOT mean "no Rust" — it means "no server / raft / factory".
+dependencies = [
+    "pydantic[email]>=2.13.4",
+    "click>=8.3.3",
+    "rich>=15.0.0",
+    "orjson>=3.11.9",
+    "blake3>=1.0.8",
+    "anyio>=4.13.0",
+    "aiofiles>=25.1.0",
+    "pyyaml>=6.0.3",
+    "platformdirs>=4.9.6",
+    "cryptography>=48.0.0",
+    "httpx>=0.28.1",
+    # nexus.core imports nexus.lib.io_metrics for read/write/cache counters.
+    "prometheus-client>=0.25.0",
+    # Rust kernel (PyKernel + Rust-accelerated primitives). Required at runtime;
+    # NexusFS.sys_* and metastore both go through nexus_runtime.PyKernel.
+    "nexus-runtime>=0.10,<0.11",
+    # cachetools is imported at module-level by slim-shipped bricks/auth/oauth/pending.py
+    # and by the X connector transport; move to base so plain pip install nexus-fs works.
+    "cachetools>=7.1.1",
+]
+
+[project.optional-dependencies]
+s3 = ["boto3>=1.43.6"]
+gcs = ["google-cloud-storage>=3.10.1"]
+gdrive = [
+    "google-api-python-client>=2.196.0",
+    "google-auth-oauthlib>=1.4.0",
+    "sqlalchemy>=2.0.49",
+]
+gmail = [
+    "google-api-python-client>=2.196.0",
+    "google-auth-oauthlib>=1.4.0",
+    "sqlalchemy>=2.0.49",
+]
+gcalendar = [
+    "google-api-python-client>=2.196.0",
+    "google-auth-oauthlib>=1.4.0",
+    "sqlalchemy>=2.0.49",
+]
+slack = ["slack-sdk>=3.41.0", "sqlalchemy>=2.0.49"]
+anthropic = ["anthropic>=0.100.0"]
+openai = ["openai>=2.36.0"]
+x = ["requests-oauthlib>=2.0.0", "sqlalchemy>=2.0.49"]
+edit = ["rapidfuzz>=3.14.5"]
+fsspec = ["fsspec>=2026.4.0"]
+tui = ["textual>=8.2.5"]
+all = [
+    "nexus-fs[s3,gcs,gdrive,gmail,gcalendar,slack,anthropic,openai,x,fsspec,tui,edit]",
+]
+dev = [
+    "nexus-fs[all]",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "pytest-examples>=0.0.18",
+    "pytest-textual-snapshot>=1.1.0",
+    "moto[s3]>=5.2.0",
+    "ruff>=0.15.12",
+    "mypy>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/nexi-lab/nexus"
+Documentation = "https://nexi-lab.github.io/nexus/latest/"
+Repository = "https://github.com/nexi-lab/nexus"
+Issues = "https://github.com/nexi-lab/nexus/issues"
+
+[project.entry-points."fsspec.specs"]
+nexus = "nexus.fs._fsspec:NexusFileSystem"
+
+[project.scripts]
+nexus-fs = "nexus.fs._cli:main"
+
+[tool.hatch.build.targets.wheel]
+# Slim package: only include the core/contracts/backends/lib/storage/fs layers.
+# Excludes bricks/, server/, factory/, raft/, cli/ (those live in nexus-ai-fs).
+packages = ["../../src/nexus"]
+include = [
+    "nexus/__init__.py",
+    "nexus/py.typed",
+    "nexus/_kernel_api_groups.py",
+    "nexus/fs/**",
+    "nexus/core/**",
+    "nexus/contracts/**",
+    "nexus/backends/**",
+    "nexus/extensions/**",
+    "nexus/lib/**",
+    "nexus/storage/**",
+    "nexus/utils/__init__.py",
+    "nexus/utils/edit_engine.py",
+    "nexus/config.py",
+]
+exclude = [
+    # Full-runtime subpackages that don't belong on slim
+    "**/bricks/**",
+    "**/server/**",
+    "**/factory/**",
+    "**/raft/**",
+    # Top-level nexus/cli only — keep nexus/backends/connectors/cli
+    # so dynamic CLI YAML connector loading still works on slim.
+    "**/nexus/cli/**",
+    "**/fuse/**",
+    "**/remote/**",
+    "**/services/**",
+    "**/grpc/**",
+    "**/security/**",
+    "**/cache/**",
+    "**/daemon/**",
+    "**/migrations/**",
+    "**/network/**",
+    "**/plugins/**",
+    "**/proxy/**",
+    "**/sdk/**",
+    "**/task_manager/**",
+    "**/tasks/**",
+    "**/tools/**",
+    "**/validation/**",
+    # Top-level modules that belong to the full runtime
+    # _kernel_api_groups.py is included (listed in include above) — needed to
+    # suppress the validation-disabled warning at import time.
+    "**/auth_config.py",
+    "**/sync.py",
+    # utils/ keep only __init__.py and edit_engine.py
+    "**/utils/timing.py",
+    # nexus/config/ directory (keep only config.py as a sibling)
+    "**/nexus/config/**",
+    # The shared extensions.json index references full-runtime modules
+    # (e.g. brick factories) that are excluded above. Slim falls back to
+    # entry-points + filesystem scan, which only see what actually ships.
+    "**/nexus/extensions/_index/**",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Carve specific bricks subtrees back into the slim wheel.
+# The broad `**/bricks/**` exclude above keeps server/raft/sync/etc. off slim,
+# but the auth bricks (oauth/factory/profile/credential_pool/classifiers) and
+# the search primitives (glob_helpers/trigram_fast) are needed by connectors
+# that ship in the slim wheel. force-include overrides exclude for these paths.
+#
+# bricks/auth: only the sub-paths that connectors actually import are carved in.
+# Excluded server-only files:
+#   - unified_service.py (top-level import of nexus.security.secret_file)
+#   - stores/__init__.py (eagerly imports SQLAlchemyUserLookup / sqlalchemy.orm)
+#   - postgres_profile_store.py, postgres_migrate.py (server-only SQLAlchemy)
+#   - providers/ subtree (database_key.py, oidc.py import sqlalchemy at top level)
+#   - cache.py (imports cachetools, not a slim dep; not imported by connectors)
+#   - consumer_metrics.py (not imported by connectors)
+"../../src/nexus/bricks/__init__.py" = "nexus/bricks/__init__.py"
+# Ship a slim stub instead of the full search/__init__.py — the real one eagerly
+# imports chunking/search_service/etc. which are excluded from the slim wheel.
+"slim_stubs/bricks_search_init.py" = "nexus/bricks/search/__init__.py"
+"../../src/nexus/bricks/search/primitives" = "nexus/bricks/search/primitives"
+"../../src/nexus/bricks/auth/__init__.py" = "nexus/bricks/auth/__init__.py"
+"../../src/nexus/bricks/auth/types.py" = "nexus/bricks/auth/types.py"
+"../../src/nexus/bricks/auth/protocol.py" = "nexus/bricks/auth/protocol.py"
+"../../src/nexus/bricks/auth/constants.py" = "nexus/bricks/auth/constants.py"
+"../../src/nexus/bricks/auth/profile.py" = "nexus/bricks/auth/profile.py"
+"../../src/nexus/bricks/auth/credential_backend.py" = "nexus/bricks/auth/credential_backend.py"
+"../../src/nexus/bricks/auth/credential_pool.py" = "nexus/bricks/auth/credential_pool.py"
+# auth/oauth: enumerate files individually to exclude the tests/ subdir
+# (force-include of a directory brings everything recursively — no sub-exclude).
+"../../src/nexus/bricks/auth/oauth/__init__.py" = "nexus/bricks/auth/oauth/__init__.py"
+"../../src/nexus/bricks/auth/oauth/base_provider.py" = "nexus/bricks/auth/oauth/base_provider.py"
+"../../src/nexus/bricks/auth/oauth/config.py" = "nexus/bricks/auth/oauth/config.py"
+"../../src/nexus/bricks/auth/oauth/credential_service.py" = "nexus/bricks/auth/oauth/credential_service.py"
+"../../src/nexus/bricks/auth/oauth/crypto.py" = "nexus/bricks/auth/oauth/crypto.py"
+"../../src/nexus/bricks/auth/oauth/factory.py" = "nexus/bricks/auth/oauth/factory.py"
+"../../src/nexus/bricks/auth/oauth/pending.py" = "nexus/bricks/auth/oauth/pending.py"
+"../../src/nexus/bricks/auth/oauth/protocol.py" = "nexus/bricks/auth/oauth/protocol.py"
+# token_manager.py ships in slim: connectors call _init_oauth() at instantiation
+# time which imports TokenManager via importlib. sqlalchemy>=2.0.49 is added to each
+# OAuth connector extra (gdrive, gmail, gcalendar, slack, x) so it is present
+# whenever a connector is installed.
+"../../src/nexus/bricks/auth/oauth/token_manager.py" = "nexus/bricks/auth/oauth/token_manager.py"
+"../../src/nexus/bricks/auth/oauth/token_resolver.py" = "nexus/bricks/auth/oauth/token_resolver.py"
+"../../src/nexus/bricks/auth/oauth/types.py" = "nexus/bricks/auth/oauth/types.py"
+# user_auth.py excluded: top-level sqlalchemy + nexus.bricks.auth.providers.local imports;
+# both chains are server-runtime only and not available in the slim wheel.
+"../../src/nexus/bricks/auth/oauth/providers" = "nexus/bricks/auth/oauth/providers"
+"../../src/nexus/bricks/auth/classifiers" = "nexus/bricks/auth/classifiers"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["../../tests/unit/fs"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.14"
+warn_return_any = true
+warn_unused_configs = true

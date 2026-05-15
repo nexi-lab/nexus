@@ -14,36 +14,34 @@ class TestMemoryModelValidate:
     def test_valid_memory(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(content_hash="a" * 64, scope="agent", visibility="private", state="active")
+        m = MemoryModel(content_id="a" * 64, scope="agent", visibility="private", state="active")
         m.validate()  # should not raise
 
     def test_missing_content_hash(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(content_hash="", scope="agent", visibility="private", state="active")
-        with pytest.raises(Exception, match="content_hash is required"):
+        m = MemoryModel(content_id="", scope="agent", visibility="private", state="active")
+        with pytest.raises(Exception, match="content_id is required"):
             m.validate()
 
     def test_invalid_scope(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(
-            content_hash="a" * 64, scope="invalid", visibility="private", state="active"
-        )
+        m = MemoryModel(content_id="a" * 64, scope="invalid", visibility="private", state="active")
         with pytest.raises(Exception, match="scope must be one of"):
             m.validate()
 
     def test_invalid_visibility(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(content_hash="a" * 64, scope="agent", visibility="invalid", state="active")
+        m = MemoryModel(content_id="a" * 64, scope="agent", visibility="invalid", state="active")
         with pytest.raises(Exception, match="visibility must be one of"):
             m.validate()
 
     def test_invalid_state(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(content_hash="a" * 64, scope="agent", visibility="private", state="xyz")
+        m = MemoryModel(content_id="a" * 64, scope="agent", visibility="private", state="xyz")
         with pytest.raises(Exception, match="state must be one of"):
             m.validate()
 
@@ -51,7 +49,7 @@ class TestMemoryModelValidate:
         from nexus.storage.models.memory import MemoryModel
 
         m = MemoryModel(
-            content_hash="a" * 64,
+            content_id="a" * 64,
             scope="agent",
             visibility="private",
             state="active",
@@ -64,7 +62,7 @@ class TestMemoryModelValidate:
         from nexus.storage.models.memory import MemoryModel
 
         m = MemoryModel(
-            content_hash="a" * 64,
+            content_id="a" * 64,
             scope="agent",
             visibility="private",
             state="active",
@@ -104,7 +102,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             revoked_at=None,
             expires_at=None,
             max_access_count=None,
@@ -118,7 +115,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             revoked_at=datetime.now(UTC),
         )
         assert link.is_valid() is False
@@ -129,7 +125,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             expires_at=datetime.now(UTC) - timedelta(hours=1),
         )
         assert link.is_valid() is False
@@ -140,7 +135,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             max_access_count=5,
             access_count=5,
         )
@@ -152,7 +146,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             max_access_count=5,
             access_count=4,
         )
@@ -254,67 +247,6 @@ class TestOAuthCredentialModel:
             cred.validate()
 
 
-class TestUserSessionModelIsExpired:
-    """Tests for UserSessionModel.is_expired()."""
-
-    def test_persistent_session(self) -> None:
-        from nexus.storage.models.infrastructure import UserSessionModel
-
-        s = UserSessionModel(user_id="u1", expires_at=None)
-        assert s.is_expired() is False
-
-    def test_unexpired_session(self) -> None:
-        from nexus.storage.models.infrastructure import UserSessionModel
-
-        s = UserSessionModel(user_id="u1", expires_at=datetime.now(UTC) + timedelta(hours=1))
-        assert s.is_expired() is False
-
-    def test_expired_session(self) -> None:
-        from nexus.storage.models.infrastructure import UserSessionModel
-
-        s = UserSessionModel(user_id="u1", expires_at=datetime.now(UTC) - timedelta(hours=1))
-        assert s.is_expired() is True
-
-
-class TestSyncJobModelToDict:
-    """Tests for SyncJobModel.to_dict()."""
-
-    def test_to_dict_minimal(self) -> None:
-        from nexus.storage.models.sync import SyncJobModel
-
-        job = SyncJobModel(
-            id="j1",
-            mount_point="/mnt/test",
-            status="completed",
-            progress_pct=100,
-            created_at=datetime(2025, 1, 1, tzinfo=UTC),
-        )
-        d = job.to_dict()
-        assert d["id"] == "j1"
-        assert d["status"] == "completed"
-        assert d["progress_pct"] == 100
-        assert d["progress_detail"] is None
-        assert d["result"] is None
-
-    def test_to_dict_with_json_fields(self) -> None:
-        from nexus.storage.models.sync import SyncJobModel
-
-        job = SyncJobModel(
-            id="j2",
-            mount_point="/mnt/test",
-            status="running",
-            progress_pct=50,
-            progress_detail='{"files_scanned": 50}',
-            sync_params='{"path": "/inbox"}',
-            result='{"files_created": 10}',
-            created_at=datetime(2025, 1, 1, tzinfo=UTC),
-        )
-        d = job.to_dict()
-        assert d["progress_detail"] == {"files_scanned": 50}
-        assert d["sync_params"] == {"path": "/inbox"}
-        assert d["result"] == {"files_created": 10}
-
-
 class TestSubscriptionModelMethods:
     """Tests for SubscriptionModel helper methods."""
 
@@ -412,107 +344,6 @@ class TestZoneModelParsedSettings:
         assert settings is not None
 
 
-class TestTrajectoryModelValidate:
-    """Tests for TrajectoryModel.validate()."""
-
-    def test_valid_trajectory(self) -> None:
-        from nexus.storage.models.ace import TrajectoryModel
-
-        t = TrajectoryModel(
-            user_id="u1",
-            task_description="Test task",
-            trace_hash="a" * 64,
-            status="success",
-        )
-        t.validate()
-
-    def test_missing_user_id(self) -> None:
-        from nexus.storage.models.ace import TrajectoryModel
-
-        t = TrajectoryModel(
-            user_id="",
-            task_description="Test",
-            trace_hash="a" * 64,
-            status="success",
-        )
-        with pytest.raises(Exception, match="user_id is required"):
-            t.validate()
-
-    def test_invalid_status(self) -> None:
-        from nexus.storage.models.ace import TrajectoryModel
-
-        t = TrajectoryModel(
-            user_id="u1",
-            task_description="Test",
-            trace_hash="a" * 64,
-            status="invalid",
-        )
-        with pytest.raises(Exception, match="status must be one of"):
-            t.validate()
-
-    def test_invalid_success_score(self) -> None:
-        from nexus.storage.models.ace import TrajectoryModel
-
-        t = TrajectoryModel(
-            user_id="u1",
-            task_description="Test",
-            trace_hash="a" * 64,
-            status="success",
-            success_score=2.0,
-        )
-        with pytest.raises(Exception, match="success_score must be between"):
-            t.validate()
-
-
-class TestPlaybookModelValidate:
-    """Tests for PlaybookModel.validate()."""
-
-    def test_valid_playbook(self) -> None:
-        from nexus.storage.models.ace import PlaybookModel
-
-        p = PlaybookModel(
-            user_id="u1",
-            name="Test",
-            content_hash="a" * 64,
-            scope="agent",
-            visibility="private",
-            success_rate=0.5,
-            usage_count=0,
-        )
-        p.validate()
-
-    def test_invalid_scope(self) -> None:
-        from nexus.storage.models.ace import PlaybookModel
-
-        p = PlaybookModel(
-            user_id="u1",
-            name="Test",
-            content_hash="a" * 64,
-            scope="bad",
-            visibility="private",
-            success_rate=0.5,
-            usage_count=0,
-        )
-        with pytest.raises(Exception, match="scope must be one of"):
-            p.validate()
-
-    def test_invalid_version(self) -> None:
-        from nexus.storage.models.ace import PlaybookModel
-
-        p = PlaybookModel(
-            user_id="u1",
-            name="Test",
-            content_hash="a" * 64,
-            scope="agent",
-            visibility="private",
-            success_rate=0.5,
-            usage_count=0,
-            version=0,
-        )
-        with pytest.raises(Exception, match="version must be >= 1"):
-            p.validate()
-
-
 class TestDirectoryEntryModelValidate:
     """Tests for DirectoryEntryModel.validate()."""
 
@@ -544,41 +375,6 @@ class TestDirectoryEntryModelValidate:
             e.validate()
 
 
-class TestContentChunkModelValidate:
-    """Tests for ContentChunkModel.validate()."""
-
-    def test_valid_chunk(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(
-            content_hash="a" * 64,
-            size_bytes=100,
-            storage_path="/data/chunks/a",
-        )
-        c.validate()
-
-    def test_invalid_hash_length(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(content_hash="abc", size_bytes=100, storage_path="/data/chunks/a")
-        with pytest.raises(Exception, match="content_hash must be 64 characters"):
-            c.validate()
-
-    def test_invalid_hash_chars(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(content_hash="z" * 64, size_bytes=100, storage_path="/data/chunks/a")
-        with pytest.raises(Exception, match="hexadecimal"):
-            c.validate()
-
-    def test_negative_size(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(content_hash="a" * 64, size_bytes=-1, storage_path="/data/chunks/a")
-        with pytest.raises(Exception, match="size_bytes cannot be negative"):
-            c.validate()
-
-
 class TestEntityRegistryModelValidate:
     """Tests for EntityRegistryModel.validate()."""
 
@@ -605,42 +401,6 @@ class TestEntityRegistryModelValidate:
             e.validate()
 
 
-class TestMountConfigModelValidate:
-    """Tests for MountConfigModel.validate()."""
-
-    def test_valid_config(self) -> None:
-        from nexus.storage.models.infrastructure import MountConfigModel
-
-        m = MountConfigModel(
-            mount_point="/mnt/test",
-            backend_type="local",
-            backend_config="{}",
-        )
-        m.validate()
-
-    def test_invalid_mount_point(self) -> None:
-        from nexus.storage.models.infrastructure import MountConfigModel
-
-        m = MountConfigModel(
-            mount_point="mnt/test",
-            backend_type="local",
-            backend_config="{}",
-        )
-        with pytest.raises(Exception, match="mount_point must start with '/'"):
-            m.validate()
-
-    def test_invalid_json(self) -> None:
-        from nexus.storage.models.infrastructure import MountConfigModel
-
-        m = MountConfigModel(
-            mount_point="/mnt/test",
-            backend_type="local",
-            backend_config="not json",
-        )
-        with pytest.raises(Exception, match="backend_config must be valid JSON"):
-            m.validate()
-
-
 class TestWorkflowModelValidate:
     """Tests for WorkflowModel.validate()."""
 
@@ -656,23 +416,6 @@ class TestWorkflowModelValidate:
         w = WorkflowModel(name="", definition="yaml", definition_hash="a" * 64)
         with pytest.raises(Exception, match="name is required"):
             w.validate()
-
-
-class TestBackendChangeLogValidate:
-    """Tests for BackendChangeLogModel.validate()."""
-
-    def test_valid_log(self) -> None:
-        from nexus.storage.models.sync import BackendChangeLogModel
-
-        log = BackendChangeLogModel(path="/test.txt", backend_name="gcs")
-        log.validate()
-
-    def test_negative_size(self) -> None:
-        from nexus.storage.models.sync import BackendChangeLogModel
-
-        log = BackendChangeLogModel(path="/test.txt", backend_name="gcs", size_bytes=-1)
-        with pytest.raises(Exception, match="size_bytes cannot be negative"):
-            log.validate()
 
 
 class TestSandboxMetadataValidate:

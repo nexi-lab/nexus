@@ -8,7 +8,7 @@ Starts a real Nexus server with permissions enabled and validates:
 5. Performance: 20-op batch vs 20 individual requests
 6. Stat metadata correctness
 
-Requires: Rust Raft extension (maturin develop -m rust/nexus_raft/Cargo.toml)
+Requires: Rust Raft extension (maturin develop -m rust/raft/Cargo.toml)
 """
 
 import time
@@ -16,16 +16,16 @@ import time
 import httpx
 import pytest
 
-# Skip all tests if Raft metastore isn't available (requires Rust build)
+# Skip if the kernel-backed metastore module isn't available (requires Rust build)
 try:
-    from nexus.storage.raft_metadata_store import RaftMetadataStore  # noqa: F401
+    import nexus_runtime  # noqa: F401
 
-    _has_raft = True
+    _has_kernel = True
 except (ImportError, OSError):
-    _has_raft = False
+    _has_kernel = False
 
 pytestmark = pytest.mark.skipif(
-    not _has_raft, reason="Raft metastore not available (build with maturin)"
+    not _has_kernel, reason="Kernel runtime not available (build with maturin)"
 )
 
 

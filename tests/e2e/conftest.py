@@ -4,7 +4,7 @@ Provides fixtures for:
 - isolated_db: Isolated SQLite database for each test
 - metadata_store: Raft metadata store (from integration tests)
 - record_store: In-memory SQLAlchemy record store (from integration tests)
-- nexus_server: Actual nexus serve process running on a free port
+- nexus_server: Actual nexusd process running on a free port
 - test_app: httpx client for making real HTTP requests
 - nexus_fs: Direct NexusFS instance (no server)
 
@@ -28,7 +28,6 @@ import pytest
 
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Conditionally ignore MCP tests if fastmcp is not installed
@@ -110,12 +109,12 @@ def isolated_db(tmp_path, monkeypatch):
 
 @pytest.fixture(scope="function")
 def nexus_server(isolated_db, tmp_path):
-    """Start actual nexus serve process for true e2e testing.
+    """Start actual nexusd process for true e2e testing.
 
     This fixture:
     1. Creates storage directory and database
     2. Finds a free port
-    3. Starts `nexus serve` as subprocess
+    3. Starts ``nexusd`` as subprocess
     4. Waits for server to be ready
     5. Yields server info (port, base_url)
     6. Kills server process on cleanup
@@ -154,8 +153,8 @@ def nexus_server(isolated_db, tmp_path):
         env["NEXUS_DRAGONFLY_COORDINATION_URL"] = dragonfly_url
         env["NEXUS_ALLOW_SINGLE_DRAGONFLY"] = "true"
 
-    # Start nexus serve process
-    # Using python -c to invoke the CLI entry point from source
+    # Start nexusd process
+    # Using python -c to invoke the daemon entry point from source
     # --data-dir sets both storage path and database location
     # Uses FastAPI async server (default) for full API support including Graph API
     process = subprocess.Popen(
@@ -163,8 +162,8 @@ def nexus_server(isolated_db, tmp_path):
             sys.executable,
             "-c",
             (
-                f"from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                f"from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}'])"
             ),
         ],
@@ -243,7 +242,7 @@ def test_app(nexus_server):
 
 # Keep the old fixture for backward compatibility during transition
 @pytest.fixture(scope="function")
-def nexus_fs(isolated_db, tmp_path):
+async def nexus_fs(isolated_db, tmp_path):
     """Create a NexusFS instance for testing (direct, no server).
 
     This is useful for tests that need direct access to NexusFS
@@ -251,13 +250,13 @@ def nexus_fs(isolated_db, tmp_path):
     """
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
 
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_path))
+    backend = CASLocalBackend(root_path=str(storage_path))
 
-    metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
+    metadata_store = str(isolated_db).replace(".db", "")
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for tests
     nx = create_nexus_fs(
         backend=backend,
@@ -297,7 +296,7 @@ def metadata_store(tmp_path):
     Returns:
         RaftMetadataStore: Raft-backed metadata store (SC mode)
     """
-    store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
+    store = str(tmp_path / "raft-metadata")
     yield store
     # Cleanup handled by tmp_path
 

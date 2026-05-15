@@ -2,7 +2,7 @@
 
 Issue #1287: Extract NexusFS Domain Services from God Object.
 Issue #1391: Builder pattern — frozen config dataclasses as SSOT for defaults.
-Issue #2034: Slim KernelServices — 3-tier split (Kernel / System / Brick).
+Issue #2034: Unified services dict (formerly 3-tier split).
 
 These frozen dataclasses group related constructor parameters so that
 the kernel receives a single config object instead of 50 keyword args.
@@ -14,26 +14,15 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 
 Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
 
-    KernelServices  — Tier 0: boot-fatal, always present
-    SystemServices  — Tier 1: degraded-mode on failure, always started
-    BrickServices   — Tier 2: optional, silent on failure, hot-swappable
+    ServiceRegistry — Tier 1+2: all services accessed via nx.service("name")
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.constants import DEFAULT_NATS_URL
-
-if TYPE_CHECKING:
-    from nexus.bricks.workflows.protocol import WorkflowProtocol
-    from nexus.contracts.write_observer import WriteObserverProtocol
-    from nexus.core.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
-    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
-    from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
-    from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
@@ -42,10 +31,9 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CacheConfig:
-    """In-memory LRU cache and content cache configuration.
+    """In-memory LRU cache configuration.
 
-    Configures sizes for the kernel's internal path/list/kv/exists caches
-    and the optional content cache for faster reads.
+    Configures sizes for the kernel's internal path/list/kv/exists caches.
     NOT related to the CacheStore pillar (Dragonfly/ephemeral KV+PubSub).
     """
 
@@ -54,8 +42,6 @@ class CacheConfig:
     kv_size: int = 256
     exists_size: int = 1024
     ttl_seconds: int | None = 300
-    enable_content_cache: bool = True
-    content_cache_size_mb: int = 256
 
 
 @dataclass(frozen=True)
@@ -86,7 +72,6 @@ class DistributedConfig:
 
     coordination_url: str | None = None
     enable_events: bool = True
-    enable_locks: bool = True
     enable_workflows: bool = True
     event_bus_backend: str = "redis"
     nats_url: str = DEFAULT_NATS_URL
@@ -106,11 +91,33 @@ class ParseConfig:
     """File parsing configuration.
 
     Controls auto-parse on write and provider configurations for
-    document parsing (unstructured, llamaparse, markitdown).
+    document parsing (unstructured, llamaparse, pdf-inspector).
     """
 
     auto_parse: bool = True
     providers: tuple[dict[str, Any], ...] | None = None
+
+
+@dataclass(frozen=True)
+class TieringConfig:
+    """Volume-level cold tiering configuration (Issue #3406).
+
+    Controls automatic upload of sealed CAS volumes to cloud storage
+    (S3/GCS) and range-read retrieval for tiered content.
+    """
+
+    enabled: bool = False
+    quiet_period_seconds: float = 3600.0  # 1 hour
+    min_volume_size_bytes: int = 100 * 1024 * 1024  # 100 MB
+    cloud_backend: str = "gcs"  # "gcs" or "s3"
+    cloud_bucket: str = ""
+    upload_rate_limit_bytes: int = 25 * 1024 * 1024  # 25 MB/s
+    sweep_interval_seconds: float = 60.0  # how often to check for tierable volumes
+    # LRU local cache for recently-accessed tiered volumes
+    local_cache_size_bytes: int = 10 * 1024 * 1024 * 1024  # 10 GB
+    # Burst re-download: reads within window triggers full volume cache
+    burst_read_threshold: int = 5  # reads within burst_window to trigger
+    burst_read_window_seconds: float = 60.0  # time window for burst detection
 
 
 @dataclass(frozen=True)
@@ -136,254 +143,6 @@ class IPCConfig:
     # Retry configuration
     max_retries: int = 3
     retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0)
-
-
-# ---------------------------------------------------------------------------
-# KernelServices — Tier 0: Storage Pillar validation
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class KernelServices:
-    """Tier 0 (KERNEL) — Storage Pillar handles only.
-
-    Per NEXUS-LEGO-ARCHITECTURE §2 and Liedtke's microkernel test, only
-    VFS routing and Metastore belong in the kernel.  Both are injected as
-    constructor arguments; this container simply carries the router handle.
-
-    All former kernel services (ReBAC, permissions, workspace, write-sync)
-    have been moved to ``SystemServices`` (Issue #2193) where they are
-    classified as *critical* (BootError on failure) or *degradable*
-    (WARNING + None on failure).
-
-    Frozen — all wiring must happen at construction time in factory.py.
-    Use ``dataclasses.replace()`` to create modified copies if needed.
-    """
-
-    # VFS routing — the only kernel-level mechanism
-    router: Any = None
-
-
-# ---------------------------------------------------------------------------
-# SystemServices — Tier 1: degraded-mode on failure
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class SystemServices:
-    """Tier 1 (SYSTEM) — critical + degradable services.
-
-    Contains two severity classes (Issue #2193):
-
-    **Critical** (BootError on failure):
-        rebac_manager, audit_store, entity_registry, permission_enforcer,
-        write_observer — the "Trusted Computing Base outside the kernel"
-        per microkernel terminology (seL4/MINIX 3 pattern).
-
-    **Degradable** (WARNING + None on failure):
-        dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
-        workspace_registry, mount_manager, workspace_manager, and all
-        remaining system services (agent registry, namespace, observability,
-        resiliency, lifecycle management).
-
-    Created by ``nexus.factory._boot_system_services()``.
-
-    Issue #2034: Extracted from the monolithic KernelServices.
-    Issue #2193: Absorbed former Tier 0 services per Liedtke's test.
-    """
-
-    # =================================================================
-    # Former-kernel CRITICAL services (BootError on failure)
-    # =================================================================
-
-    # ReBAC permission subsystem — critical (Issue #2133: typed with Protocols)
-    rebac_manager: ReBACManagerProtocol | None = None
-    audit_store: Any = None
-    entity_registry: EntityRegistryProtocol | None = None
-    permission_enforcer: PermissionEnforcerProtocol | None = None
-
-    # Write sync — critical
-    write_observer: WriteObserverProtocol | None = None
-
-    # =================================================================
-    # Former-kernel DEGRADABLE services (WARNING + None on failure)
-    # =================================================================
-
-    # ReBAC caching / hierarchy — degradable
-    dir_visibility_cache: Any = None
-    hierarchy_manager: Any = None
-    deferred_permission_buffer: Any = None
-
-    # Workspace subsystem — degradable
-    workspace_registry: Any = None
-    mount_manager: Any = None
-    workspace_manager: WorkspaceManagerProtocol | None = None
-
-    # =================================================================
-    # Original system services (all degradable)
-    # =================================================================
-
-    # Agent identity (Issue #1502)
-    agent_registry: Any = None
-    async_agent_registry: Any = None
-
-    # Namespace visibility (Issue #1502)
-    namespace_manager: NamespaceManagerProtocol | None = None
-    async_namespace_manager: Any = None
-
-    # Workspace branching (Issue #1315)
-    context_branch_service: Any = None
-
-    # Brick lifecycle (Issue #1704)
-    brick_lifecycle_manager: Any = None
-
-    # Event delivery (Issue #1241)
-    delivery_worker: Any = None
-
-    # Query observability (Issue #1301)
-    observability_subsystem: Any = None
-
-    # Resiliency policies (Issue #1366)
-    resiliency_manager: Any = None
-
-    # Agent eviction under resource pressure (Issue #2170)
-    eviction_manager: Any = None
-
-    # Brick reconciler — drift detection and self-healing (Issue #2060)
-    brick_reconciler: Any = None
-
-    # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
-    zone_lifecycle: Any = None
-
-    # DT_PIPE manager — VFS named-pipe IPC (Issue #809)
-    pipe_manager: Any = None
-
-    # EventLog — append-only WAL for filesystem events (Issue #2195)
-    event_log: Any = None
-
-    # Scheduler — task scheduling service (Issue #2195, #2360)
-    scheduler_service: Any = None
-
-
-# ---------------------------------------------------------------------------
-# BrickServices — Tier 2: optional, silent on failure
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class BrickServices:
-    """Tier 2 (BRICK) — optional, removable, silent on failure.
-
-    Contains feature bricks that can fail independently without affecting
-    the kernel or system services. The system continues without them.
-
-    Created by ``nexus.factory._boot_brick_services()``.
-
-    Issue #2034: Extracted from the monolithic KernelServices.
-    """
-
-    # Infrastructure bricks
-    event_bus: Any = None
-    lock_manager: Any = None
-    workflow_engine: WorkflowProtocol | None = None
-    rebac_circuit_breaker: Any = None
-
-    # Feature bricks
-    wallet_provisioner: Any = None  # PAY brick
-    chunked_upload_service: Any = None  # UPLOADS brick
-    manifest_resolver: Any = None  # MANIFEST brick
-    tool_namespace_middleware: Any = None  # MCP brick
-    api_key_creator: Any = None  # AUTH brick (Issue #1519, 3A)
-    snapshot_service: Any = None  # SNAPSHOT brick (Issue #1752)
-    task_queue_service: Any = None  # TASK_QUEUE brick (Issue #655)
-
-    # --- Cache Brick (Issue #1524) ---
-    cache_brick: Any = None  # CacheBrick — owns all cache domain services
-
-    # --- IPC Brick (Issue #1727, LEGO §8) ---
-    ipc_storage_driver: Any = None  # KernelVFSAdapter (async bridge to NexusFS)
-    ipc_provisioner: Any = None  # AgentProvisioner
-
-    # --- Sandbox Brick (Issue #1307) ---
-    agent_event_log: Any = None  # AgentEventLog (sandbox lifecycle audit)
-
-    # --- Skills Brick (Issue #2035) ---
-    skill_service: Any = None  # SkillService (protocol-based)
-    skill_package_service: Any = None  # SkillPackageService
-
-    # --- Delegation & Reputation Bricks (Issue #2131) ---
-    delegation_service: Any = None  # DELEGATION brick
-    reputation_service: Any = None  # REPUTATION brick
-
-    # --- Version Brick (Issue #2034: moved from KernelServices) ---
-    version_service: Any = None  # VersionService (file history, rollback, diff)
-
-    # --- Memory Brick (Issue #2177) ---
-    memory_permission: Any = None  # MemoryPermissionProtocol adapter
-
-    # --- Search Brick (Issue #810) ---
-    zoekt_pipe_consumer: Any = None  # DT_PIPE consumer for Zoekt index notifications
-
-    # --- Factory-created bricks (Issue #2134: moved from NexusFS flat params) ---
-    parse_fn: Any = None  # Callable for parsing files (ParsersBrick)
-    content_cache: Any = None  # ContentCache instance
-    parser_registry: Any = None  # ParserRegistry (file format detection)
-    provider_registry: Any = None  # ProviderRegistry (parsing providers)
-    vfs_lock_manager: Any = None  # VFS lock manager (fine-grained file locks)
-
-    # --- Governance Brick (Issue #2129) ---
-    governance_anomaly_service: Any = None
-    governance_collusion_service: Any = None
-    governance_graph_service: Any = None
-    governance_response_service: Any = None
-
-
-# ---------------------------------------------------------------------------
-# WiredServices — Tier 2b: services needing NexusFS reference
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class WiredServices:
-    """Tier 2b (WIRED) — services requiring NexusFS reference.
-
-    Created by ``nexus.factory._wired._boot_wired_services()`` and bound
-    to NexusFS via ``_bind_wired_services()``.
-
-    Issue #2133: Replaces ``dict[str, Any]`` return type in wiring layer.
-    """
-
-    rebac_service: Any = None
-    mount_service: Any = None
-    gateway: Any = None
-    mount_core_service: Any = None
-    sync_service: Any = None
-    sync_job_service: Any = None
-    mount_persist_service: Any = None
-    mcp_service: Any = None
-    llm_service: Any = None
-    llm_subsystem: Any = None
-    oauth_service: Any = None
-    skill_service: Any = None
-    skill_package_service: Any = None
-    search_service: Any = None
-    share_link_service: Any = None
-    events_service: Any = None
-    task_queue_service: Any = None
-
-    # Versioning services (Issue #882: session-managed facades)
-    time_travel_service: Any = None
-    operations_service: Any = None
-
-    # RPC services (Issue #2133: migrated from service_wiring.py)
-    workspace_rpc_service: Any = None
-    agent_rpc_service: Any = None
-    user_provisioning_service: Any = None
-    sandbox_rpc_service: Any = None
-    metadata_export_service: Any = None
-    ace_rpc_service: Any = None
-    descendant_checker: Any = None
-    memory_provider: Any = None
 
 
 # ---------------------------------------------------------------------------

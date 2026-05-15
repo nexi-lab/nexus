@@ -21,7 +21,7 @@ Usage:
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.bricks.rebac._path_utils import get_ancestors, get_parent, get_parent_chain
+from nexus.bricks.rebac._path_utils import get_parent, get_parent_chain
 
 logger = logging.getLogger(__name__)
 
@@ -200,104 +200,28 @@ class HierarchyManager:
         When parent tuples are created, cached permission checks for descendant
         paths may become invalid. This method clears cache for the entire hierarchy.
 
+        Note: L2 SQL cache (rebac_check_cache) has been removed. L1 in-memory
+        cache invalidation is handled by the CacheCoordinator during rebac_write.
+
         Args:
             path: File or directory path
         """
-        # Get connection to cache database
-        conn = self.rebac_manager._get_connection()
-        try:
-            cursor = self.rebac_manager._create_cursor(conn)
-
-            # Build list of all paths to invalidate (ancestors + exact + descendants via LIKE)
-            # Ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
-            ancestor_paths = list(get_ancestors(path))
-
-            # Invalidate cache for all ancestor paths (exact matches)
-            for ancestor_path in ancestor_paths:
-                cursor.execute(
-                    self.rebac_manager._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE object_type = 'file' AND object_id = ?
-                        """
-                    ),
-                    (ancestor_path,),
-                )
-
-            # CRITICAL FIX: Also invalidate cache for all DESCENDANT paths
-            # When parent tuples are created for /a/b, all cached checks for /a/b/c, /a/b/c/d, etc.
-            # must be invalidated because they can now inherit permissions from /a/b
-            cursor.execute(
-                self.rebac_manager._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_check_cache
-                    WHERE object_type = 'file' AND object_id LIKE ?
-                    """
-                ),
-                (path + "/%",),
-            )
-
-            conn.commit()
-        finally:
-            self.rebac_manager._close_connection(conn)
+        # L2 SQL cache removed — invalidation is now a no-op.
+        # L1 in-memory cache is invalidated by CacheCoordinator.invalidate_for_write()
+        # which is called by rebac_write() for each parent tuple created.
 
     def _invalidate_cache_for_path_hierarchy_bulk(self, paths: list[str]) -> None:
         """Invalidate cache for multiple paths in bulk (optimized).
 
-        This is much more efficient than calling _invalidate_cache_for_path_hierarchy()
-        for each path individually because it uses a single DELETE query with IN clause.
+        Note: L2 SQL cache (rebac_check_cache) has been removed. L1 in-memory
+        cache invalidation is handled by the CacheCoordinator during rebac_write.
 
         Args:
             paths: List of file/directory paths to invalidate
         """
-        if not paths:
-            return
-
-        # Get connection to cache database
-        conn = self.rebac_manager._get_connection()
-        try:
-            cursor = self.rebac_manager._create_cursor(conn)
-
-            # Collect all paths to invalidate (ancestors + exact + descendants)
-            all_invalidate_paths: set[str] = set()
-
-            for path in paths:
-                # Add ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
-                all_invalidate_paths.update(get_ancestors(path))
-
-            # Convert to list for SQL query
-            paths_list = list(all_invalidate_paths)
-
-            # Bulk DELETE for exact path matches using IN clause
-            if paths_list:
-                placeholders = ", ".join("?" * len(paths_list))
-                cursor.execute(
-                    self.rebac_manager._fix_sql_placeholders(
-                        f"""
-                        DELETE FROM rebac_check_cache
-                        WHERE object_type = 'file' AND object_id IN ({placeholders})
-                        """
-                    ),
-                    paths_list,
-                )
-
-            # Also invalidate descendants using LIKE (one query per original path)
-            # Note: Can't easily combine LIKE queries, but this is still much better
-            # than the previous approach which did multiple queries per path
-            for path in paths:
-                cursor.execute(
-                    self.rebac_manager._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE object_type = 'file' AND object_id LIKE ?
-                        """
-                    ),
-                    (path + "/%",),
-                )
-
-            conn.commit()
-        finally:
-            self.rebac_manager._close_connection(conn)
+        # L2 SQL cache removed — invalidation is now a no-op.
+        # L1 in-memory cache is invalidated by CacheCoordinator.invalidate_for_write()
+        # which is called by rebac_write_batch() for each parent tuple created.
 
     def remove_parent_tuples(
         self,

@@ -9,8 +9,9 @@ Uses mock backends and rebac_manager to isolate the parallel listing + permissio
 from unittest.mock import MagicMock
 
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.bricks.search.search_service import SearchService
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
-from nexus.services.search.search_service import SearchService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,7 +39,7 @@ def _make_backend(tree: dict[str, list[str]]) -> MagicMock:
 
 def _make_context(
     user: str = "alice",
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     is_admin: bool = False,
 ) -> OperationContext:
     """Create an OperationContext for testing."""
@@ -98,17 +99,17 @@ def _make_search_service(
     enforcer: PermissionEnforcer,
     rebac_manager: MagicMock | None = None,
 ) -> SearchService:
-    """Create a SearchService with mocked metadata_store and router."""
+    """Create a SearchService with mocked metadata_store and dlc."""
     mock_metadata = MagicMock()
     # metadata.list should return empty (we are testing the dynamic connector path)
     mock_metadata.list = MagicMock(return_value=[])
 
-    mock_router = MagicMock()
+    mock_dlc = MagicMock()
 
     svc = SearchService(
         metadata_store=mock_metadata,
         permission_enforcer=enforcer,
-        router=mock_router,
+        dlc=mock_dlc,
         rebac_manager=rebac_manager or enforcer.rebac_manager,
         enforce_permissions=True,
     )

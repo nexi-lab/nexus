@@ -11,10 +11,11 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
+    embedded ⊂ lite ⊂ sandbox ⊂ full ⊆ cloud
 
-REMOTE is orthogonal — zero local bricks, all operations proxy via RemoteBackend:
-    remote  (no local bricks — NFS-client model)
+CLUSTER and REMOTE are orthogonal tiers — not part of the superset chain:
+    cluster  (minimal multi-node — Raft + federation only; disjoint from embedded)
+    remote   (no local bricks — NFS-client model; Issue #844)
 """
 
 import logging
@@ -30,13 +31,9 @@ logger = logging.getLogger(__name__)
 # Brick name constants — canonical names used across the system
 # ---------------------------------------------------------------------------
 
-# Kernel-level (always present, never gated)
-BRICK_STORAGE = "storage"
-
-# System services (gated by profile)
+# Services (gated by profile)
 BRICK_EVENTLOG = "eventlog"
 BRICK_NAMESPACE = "namespace"
-BRICK_AGENT_REGISTRY = "agent_registry"
 BRICK_PERMISSIONS = "permissions"
 BRICK_SCHEDULER = "scheduler"
 
@@ -51,24 +48,100 @@ BRICK_RESILIENCY = "resiliency"
 BRICK_SEARCH = "search"
 BRICK_PAY = "pay"
 BRICK_LLM = "llm"
-BRICK_SKILLS = "skills"
 BRICK_SANDBOX = "sandbox"
 BRICK_WORKFLOWS = "workflows"
-BRICK_A2A = "a2a"
 BRICK_DISCOVERY = "discovery"
 BRICK_MCP = "mcp"
 BRICK_MEMORY = "memory"
+BRICK_SKILLS = "skills"
+BRICK_ACCESS_MANIFEST = "access_manifest"
+BRICK_CATALOG = "catalog"
+BRICK_DELEGATION = "delegation"
+BRICK_IDENTITY = "identity"
+BRICK_SHARE_LINK = "share_link"
+BRICK_VERSIONING = "versioning"
+BRICK_WORKSPACE = "workspace"
+BRICK_PORTABILITY = "portability"
+BRICK_PARSERS = "parsers"
+BRICK_SNAPSHOT = "snapshot"
+BRICK_TASK_MANAGER = "task_manager"
 
-# Cloud-only
 BRICK_FEDERATION = "federation"
+
+# ---------------------------------------------------------------------------
+# Driver constants — `BackendFactory.build` matches `backend_type` strings
+# ---------------------------------------------------------------------------
+#
+# Drivers are kernel-side dynamic backends instantiated at
+# `sys_setattr(DT_MOUNT)` time.  Profile gating limits which `backend_type`
+# strings the active deployment will accept; mounts requesting a disabled
+# driver fail with a clear error.
+#
+# Every backend_type the Rust factory dispatches on must appear here
+# *and* in the active profile's driver set — there is no implicit "local
+# defaults always work" shortcut.  See
+# `rust/backends/src/python/factory.rs` for the matching dispatch.
+
+# Local-host storage drivers (kernel-shipped, no network)
+DRIVER_PATH_LOCAL = "path_local"
+DRIVER_CAS_LOCAL = "cas-local"
+DRIVER_LOCAL_CONNECTOR = "local_connector"
+
+# Networked storage drivers (CAS / cloud / cross-node)
+DRIVER_S3 = "s3"
+DRIVER_GCS = "gcs"
+DRIVER_GDRIVE = "gdrive"
+DRIVER_REMOTE = "remote"
+
+# AI / LLM connectors
+DRIVER_OPENAI = "openai"
+DRIVER_ANTHROPIC = "anthropic"
+
+# Communication / messaging connectors
+DRIVER_GMAIL = "gmail"
+DRIVER_SLACK = "slack"
+DRIVER_X = "x"
+DRIVER_HN = "hn"
+DRIVER_NOSTR = "nostr"
+
+# Generic CLI proxy
+DRIVER_CLI = "cli"
+
+# Convenience grouping — local-host backends every interactive deployment
+# needs.  Profiles that want host-FS access list this set explicitly.
+LOCAL_DEFAULT_DRIVERS: frozenset[str] = frozenset(
+    {
+        DRIVER_PATH_LOCAL,
+        DRIVER_CAS_LOCAL,
+        DRIVER_LOCAL_CONNECTOR,
+    }
+)
+
+ALL_DRIVER_NAMES: frozenset[str] = frozenset(
+    {
+        DRIVER_PATH_LOCAL,
+        DRIVER_CAS_LOCAL,
+        DRIVER_LOCAL_CONNECTOR,
+        DRIVER_S3,
+        DRIVER_GCS,
+        DRIVER_GDRIVE,
+        DRIVER_REMOTE,
+        DRIVER_OPENAI,
+        DRIVER_ANTHROPIC,
+        DRIVER_GMAIL,
+        DRIVER_SLACK,
+        DRIVER_X,
+        DRIVER_HN,
+        DRIVER_NOSTR,
+        DRIVER_CLI,
+    }
+)
 
 # All brick names for validation
 ALL_BRICK_NAMES: frozenset[str] = frozenset(
     {
-        BRICK_STORAGE,
         BRICK_EVENTLOG,
         BRICK_NAMESPACE,
-        BRICK_AGENT_REGISTRY,
         BRICK_PERMISSIONS,
         BRICK_SCHEDULER,
         BRICK_CACHE,
@@ -79,13 +152,23 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_SEARCH,
         BRICK_PAY,
         BRICK_LLM,
-        BRICK_SKILLS,
         BRICK_SANDBOX,
         BRICK_WORKFLOWS,
-        BRICK_A2A,
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_SKILLS,
+        BRICK_ACCESS_MANIFEST,
+        BRICK_CATALOG,
+        BRICK_DELEGATION,
+        BRICK_IDENTITY,
+        BRICK_SHARE_LINK,
+        BRICK_VERSIONING,
+        BRICK_WORKSPACE,
+        BRICK_PORTABILITY,
+        BRICK_PARSERS,
+        BRICK_SNAPSHOT,
+        BRICK_TASK_MANAGER,
         BRICK_FEDERATION,
     }
 )
@@ -99,17 +182,19 @@ class DeploymentProfile(StrEnum):
     """Deployment profile controlling which bricks are enabled by default.
 
     Profiles define capability tiers for different deployment targets:
-    - minimal: Bare minimum runnable — storage only, no system services (Issue #2194)
-    - embedded: MCU / WASM (<1 MB) — storage + eventlog only
+    - cluster: Minimal multi-node — Raft + federation, no auth/PostgreSQL
+    - embedded: MCU / WASM (<1 MB) — eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
+    - sandbox: Agent sandbox (zero external services; SQLite + in-mem cache + BM25S; #3778)
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
     - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
     - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)
     """
 
-    MINIMAL = "minimal"
+    CLUSTER = "cluster"
     EMBEDDED = "embedded"
     LITE = "lite"
+    SANDBOX = "sandbox"
     FULL = "full"
     CLOUD = "cloud"
     REMOTE = "remote"
@@ -121,6 +206,21 @@ class DeploymentProfile(StrEnum):
     def is_brick_enabled(self, brick: str) -> bool:
         """Check if a brick is enabled by default in this profile."""
         return brick in self.default_bricks()
+
+    def default_drivers(self) -> frozenset[str]:
+        """Return the default set of enabled drivers for this profile.
+
+        Drivers are kernel-side dynamic backends (`backend_type` for
+        `sys_setattr(DT_MOUNT)`).  Every driver — including local CAS /
+        path / connector backends — must appear in the profile that
+        wants to mount it; the kernel gate has no implicit local-default
+        bypass.  See `rust/kernel/src/hal/object_store_provider.rs`.
+        """
+        return _PROFILE_DRIVERS[self]
+
+    def is_driver_enabled(self, driver: str) -> bool:
+        """Check if a driver is enabled by default in this profile."""
+        return driver in self.default_drivers()
 
     def tuning(self) -> "ProfileTuning":
         """Return the performance tuning configuration for this profile.
@@ -136,13 +236,14 @@ class DeploymentProfile(StrEnum):
 # Profile-to-brick mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 
-_MINIMAL_BRICKS: frozenset[str] = frozenset(
+_CLUSTER_BRICKS: frozenset[str] = frozenset(
     {
-        BRICK_STORAGE,
+        BRICK_IPC,
+        BRICK_FEDERATION,
     }
 )
 
-_EMBEDDED_BRICKS: frozenset[str] = _MINIMAL_BRICKS | frozenset(
+_EMBEDDED_BRICKS: frozenset[str] = frozenset(
     {
         BRICK_EVENTLOG,
     }
@@ -151,11 +252,18 @@ _EMBEDDED_BRICKS: frozenset[str] = _MINIMAL_BRICKS | frozenset(
 _LITE_BRICKS: frozenset[str] = _EMBEDDED_BRICKS | frozenset(
     {
         BRICK_NAMESPACE,
-        BRICK_AGENT_REGISTRY,
         BRICK_PERMISSIONS,
         BRICK_CACHE,
         BRICK_IPC,
         BRICK_SCHEDULER,
+    }
+)
+
+_SANDBOX_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
+    {
+        BRICK_SEARCH,
+        BRICK_MCP,
+        BRICK_PARSERS,
     }
 )
 
@@ -167,31 +275,105 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_SKILLS,
         BRICK_SANDBOX,
         BRICK_WORKFLOWS,
-        BRICK_A2A,
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_TASK_MANAGER,
         BRICK_OBSERVABILITY,
         BRICK_UPLOADS,
         BRICK_RESILIENCY,
+        BRICK_ACCESS_MANIFEST,
+        BRICK_CATALOG,
+        BRICK_DELEGATION,
+        BRICK_IDENTITY,
+        BRICK_SHARE_LINK,
+        BRICK_VERSIONING,
+        BRICK_WORKSPACE,
+        BRICK_PORTABILITY,
+        BRICK_PARSERS,
+        BRICK_SNAPSHOT,
     }
 )
 
-_CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset(
-    {
-        BRICK_FEDERATION,
-    }
-)
+_CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset({BRICK_FEDERATION})
 
 _REMOTE_BRICKS: frozenset[str] = frozenset()  # no local bricks — NFS-client model
 
 _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
-    DeploymentProfile.MINIMAL: _MINIMAL_BRICKS,
+    DeploymentProfile.CLUSTER: _CLUSTER_BRICKS,
     DeploymentProfile.EMBEDDED: _EMBEDDED_BRICKS,
     DeploymentProfile.LITE: _LITE_BRICKS,
+    DeploymentProfile.SANDBOX: _SANDBOX_BRICKS,
     DeploymentProfile.FULL: _FULL_BRICKS,
     DeploymentProfile.CLOUD: _CLOUD_BRICKS,
     DeploymentProfile.REMOTE: _REMOTE_BRICKS,
+}
+
+
+# ---------------------------------------------------------------------------
+# Profile-to-driver mappings (frozen — immutable at runtime)
+# ---------------------------------------------------------------------------
+#
+# Driver gating mirrors brick gating: each profile lists every
+# `backend_type` string its active deployment can mount.  Local CAS /
+# path / connector backends are listed explicitly — there is no implicit
+# kernel-default bypass.  See `default_drivers()` for the surface; see
+# `rust/kernel/src/hal/object_store_provider.rs::is_driver_enabled` for
+# the enforcement point.
+
+# Cluster — minimum-by-default.  The Rust `nexusd-cluster` binary opts
+# in to whatever driver set its compiled features expose (currently just
+# `path_local`); operator deployments add what they need on top via env
+# overrides.  No driver is implicitly enabled here.
+_CLUSTER_DRIVERS: frozenset[str] = frozenset()
+
+# Embedded / lite — single-machine.  Local-host backends only; no network
+# storage or connector drivers.
+_EMBEDDED_DRIVERS: frozenset[str] = LOCAL_DEFAULT_DRIVERS
+_LITE_DRIVERS: frozenset[str] = LOCAL_DEFAULT_DRIVERS
+
+# Sandbox — agent sandbox with Nostr cross-instance messaging + LLM
+# connectors so chat-with-me / model calls work end-to-end.  Includes
+# local-host backends so agents can read/write the host filesystem.
+_SANDBOX_CONNECTORS: frozenset[str] = frozenset(
+    {
+        DRIVER_OPENAI,
+        DRIVER_ANTHROPIC,
+        DRIVER_NOSTR,
+        DRIVER_CLI,
+    }
+)
+_SANDBOX_DRIVERS: frozenset[str] = LOCAL_DEFAULT_DRIVERS | _SANDBOX_CONNECTORS
+
+# Full — desktop / laptop deployments. Adds cloud storage + connector
+# integrations on top of the sandbox set.
+_FULL_DRIVERS: frozenset[str] = _SANDBOX_DRIVERS | frozenset(
+    {
+        DRIVER_S3,
+        DRIVER_GCS,
+        DRIVER_GDRIVE,
+        DRIVER_GMAIL,
+        DRIVER_SLACK,
+        DRIVER_X,
+        DRIVER_HN,
+        DRIVER_REMOTE,
+    }
+)
+
+# Cloud — multi-tenant superset.
+_CLOUD_DRIVERS: frozenset[str] = _FULL_DRIVERS
+
+# Remote — NFS-client model: no local mounts, only the remote proxy.
+_REMOTE_DRIVERS: frozenset[str] = frozenset({DRIVER_REMOTE})
+
+_PROFILE_DRIVERS: dict[DeploymentProfile, frozenset[str]] = {
+    DeploymentProfile.CLUSTER: _CLUSTER_DRIVERS,
+    DeploymentProfile.EMBEDDED: _EMBEDDED_DRIVERS,
+    DeploymentProfile.LITE: _LITE_DRIVERS,
+    DeploymentProfile.SANDBOX: _SANDBOX_DRIVERS,
+    DeploymentProfile.FULL: _FULL_DRIVERS,
+    DeploymentProfile.CLOUD: _CLOUD_DRIVERS,
+    DeploymentProfile.REMOTE: _REMOTE_DRIVERS,
 }
 
 
@@ -235,5 +417,50 @@ def resolve_enabled_bricks(
                 enabled.add(brick_name)
             else:
                 enabled.discard(brick_name)
+
+    return frozenset(enabled)
+
+
+def resolve_enabled_drivers(
+    profile: DeploymentProfile,
+    *,
+    overrides: dict[str, bool] | None = None,
+) -> frozenset[str]:
+    """Resolve the effective set of enabled drivers for a profile.
+
+    Mirrors :func:`resolve_enabled_bricks` for the driver dimension.
+    Starts with the profile's default driver set, then applies explicit
+    overrides.  Explicit overrides always win over profile defaults.
+
+    Args:
+        profile: The deployment profile providing defaults.
+        overrides: Dict of driver_name -> enabled.  Unknown driver names
+            raise ValueError.
+
+    Returns:
+        Frozen set of enabled driver names.
+    """
+    enabled = set(profile.default_drivers())
+
+    if overrides:
+        unknown = set(overrides.keys()) - ALL_DRIVER_NAMES
+        if unknown:
+            raise ValueError(f"Unknown driver names in overrides: {unknown}")
+
+        for driver_name, is_enabled in overrides.items():
+            default_enabled = driver_name in profile.default_drivers()
+            if is_enabled != default_enabled:
+                action = "enabling" if is_enabled else "disabling"
+                logger.warning(
+                    "Driver override: %s '%s' (profile '%s' default: %s)",
+                    action,
+                    driver_name,
+                    profile.value,
+                    "enabled" if default_enabled else "disabled",
+                )
+            if is_enabled:
+                enabled.add(driver_name)
+            else:
+                enabled.discard(driver_name)
 
     return frozenset(enabled)

@@ -64,6 +64,9 @@ class DirectoryGrantExpander:
         self._engine = engine
         self._tiger_cache = tiger_cache
         self._metadata_store = metadata_store
+        # Pull the kernel out of the proxy so listing / existence calls
+        # land on ``kernel.metastore_*`` directly (survives W3).
+        self._kernel: Any = metadata_store
         self._is_postgresql = is_postgresql
         self._running = False
         self._stop_event: asyncio.Event | None = None
@@ -71,6 +74,7 @@ class DirectoryGrantExpander:
     def set_metadata_store(self, store: Any) -> None:
         """Set the metadata store for file listing."""
         self._metadata_store = store
+        self._kernel = store
 
     def get_pending_grants(self, limit: int = 10) -> list[dict]:
         """Get pending directory grants to expand.
@@ -253,16 +257,17 @@ class DirectoryGrantExpander:
         Returns:
             List of file paths
         """
-        if not self._metadata_store:
+        if self._kernel is None:
             logger.warning("[LEOPARD-WORKER] No metadata store, cannot list files")
             return []
 
         try:
-            files = self._metadata_store.list(
-                prefix=directory_path,
-                recursive=True,
-                zone_id=zone_id,
-            )
+            # ``kernel.metastore_list`` is single-zone — ``zone_id`` is the
+            # public-API contract but the underlying call ignores it (matches
+            # the pre-W1.5 proxy ``list(prefix=, zone_id=)`` behavior).
+            del zone_id
+            _page = self._kernel.metastore_list_paginated(directory_path, True, 100000, None)
+            files = _page["items"]
             return [f.path for f in files if f.path]
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to list directory: {e}")
@@ -378,17 +383,30 @@ class DirectoryGrantExpander:
 
         return total_expanded
 
+    async def start(self) -> None:
+        """BackgroundService: start the worker loop as a background task."""
+        if self._running:
+            return  # idempotent
+        self._worker_task: asyncio.Task | None = asyncio.create_task(
+            self.run_worker(), name="directory-grant-expander"
+        )
+        logger.info("[LEOPARD-WORKER] Started via BackgroundService.start()")
+
+    async def stop(self) -> None:
+        """BackgroundService: stop the worker gracefully."""
+        self._running = False
+        if self._stop_event:
+            self._stop_event.set()
+        _task = getattr(self, "_worker_task", None)
+        if _task is not None and not _task.done():
+            await _task
+            self._worker_task = None
+
     async def run_worker(self) -> None:
         """Run the expansion worker continuously.
 
-        This should be started as a background task:
-            asyncio.create_task(expander.run_worker())
-
-        Stop with:
-            expander.stop()
+        Prefer ``start()`` / ``stop()`` for BackgroundService lifecycle.
         """
-        import asyncio
-
         self._running = True
         self._stop_event = asyncio.Event()
 
@@ -420,9 +438,3 @@ class DirectoryGrantExpander:
                 await asyncio.sleep(self.POLL_INTERVAL * 2)
 
         logger.info("[LEOPARD-WORKER] Worker stopped")
-
-    def stop(self) -> None:
-        """Stop the worker gracefully."""
-        self._running = False
-        if self._stop_event:
-            self._stop_event.set()

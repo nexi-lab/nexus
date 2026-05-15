@@ -1,0 +1,140 @@
+#!/usr/bin/env bun
+/**
+ * nexus-tui entry point.
+ *
+ * Parses CLI args, resolves config, and renders the TUI via OpenTUI.
+ *
+ * Usage:
+ *   bunx @nexus-ai-fs/tui
+ *   bunx @nexus-ai-fs/tui --url http://remote:2026 --api-key nx_live_myagent
+ *   bunx @nexus-ai-fs/tui --agent-id bot-worker-1 --zone-id org_acme
+ */
+
+import { createCliRenderer } from "@opentui/core";
+import { render } from "@opentui/solid";
+import { resolveConfig } from "@nexus-ai-fs/api-client";
+import { useGlobalStore, setClientFactory } from "./stores/global-store.js";
+import { createWorkerManager } from "./worker/worker-manager.js";
+import { App } from "./app.js";
+import { resetTerminal } from "./utils/terminal.js";
+
+interface CliArgs {
+  url?: string;
+  apiKey?: string;
+  agentId?: string;
+  subject?: string;
+  zoneId?: string;
+}
+
+// Parse CLI arguments
+function parseArgs(): CliArgs {
+  const args = process.argv.slice(2);
+  const result: CliArgs = {};
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const next = args[i + 1];
+
+    if ((arg === "--url" || arg === "-u") && next) {
+      result.url = next;
+      i++;
+    } else if ((arg === "--api-key" || arg === "-k") && next) {
+      result.apiKey = next;
+      i++;
+    } else if ((arg === "--agent-id") && next) {
+      result.agentId = next;
+      i++;
+    } else if ((arg === "--subject") && next) {
+      result.subject = next;
+      i++;
+    } else if ((arg === "--zone-id") && next) {
+      result.zoneId = next;
+      i++;
+    } else if (arg === "--help" || arg === "-h") {
+      console.log(`
+nexus-tui — Terminal UI for Nexus
+
+Usage:
+  nexus-tui [options]
+
+Published package:
+  bunx @nexus-ai-fs/tui [options]
+
+Options:
+  --url, -u <url>        Nexus server URL (default: NEXUS_URL or http://localhost:2026)
+  --api-key, -k <key>    API key (default: NEXUS_API_KEY env var)
+  --agent-id <id>        Agent identity (X-Agent-ID header)
+  --subject <subject>    Subject override (X-Nexus-Subject header)
+  --zone-id <id>         Zone isolation (X-Nexus-Zone-ID header)
+  --help, -h             Show this help message
+
+Environment Variables:
+  NEXUS_URL              Server URL
+  NEXUS_API_KEY          API key
+  NEXUS_AGENT_ID         Agent identity
+  NEXUS_SUBJECT          Subject override
+  NEXUS_ZONE_ID          Zone isolation
+
+Config File:
+  ~/.nexus/config.yaml   Auto-discovered (same as nexus CLI)
+
+Local development:
+  cd packages/nexus-api-client && npm install && npm run build
+  cd packages/nexus-tui && bun install && bun run src/index.tsx
+`.trim());
+      process.exit(0);
+    }
+  }
+
+  return result;
+}
+
+async function main(): Promise<void> {
+  const cliArgs = parseArgs();
+
+  // Resolve config: CLI args > env vars > config file > defaults
+  // Disable key transformation — all TUI store types use snake_case matching the API wire format
+  const config = resolveConfig({
+    baseUrl: cliArgs.url,
+    apiKey: cliArgs.apiKey,
+    agentId: cliArgs.agentId,
+    subject: cliArgs.subject,
+    zoneId: cliArgs.zoneId,
+    transformKeys: false,
+  });
+
+  // §2: Spawn the API worker thread before initConfig so that testConnection()
+  // routes through the worker from the very first request.
+  const workerManager = createWorkerManager(config);
+  setClientFactory((newConfig) => {
+    // On identity switch (setIdentity) the factory is called with updated config.
+    // Reconfigure the worker so subsequent requests carry the new identity headers.
+    workerManager.reconfigure(newConfig);
+    // Cast is safe: WorkerFetchClient implements every public FetchClient method
+    // called by stores (get, post, put, patch, delete, postNoContent,
+    // deleteNoContent, rawRequest). Only the knowledge-platform helpers (getAspects
+    // etc.) are absent — none are called by TUI stores.
+    return workerManager.client as unknown as import("@nexus-ai-fs/api-client").FetchClient;
+  });
+
+  // Initialize global store — testConnection() is called automatically by initConfig()
+  // when a client is available (consolidates health + features + auth check, Decision 5A)
+  useGlobalStore.getState().initConfig(config);
+
+  // Create OpenTUI renderer and mount the Solid tree
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: true,
+    screenMode: "alternate-screen",
+  });
+
+  await render(() => <App />, renderer);
+}
+
+main().catch((err) => {
+  // Restore terminal state in case OpenTUI already enabled raw mode / alternate screen.
+  resetTerminal();
+  const fs = require("fs");
+  fs.appendFileSync("/tmp/tui-fatal.log", "FATAL: " + String(err) + "\n" + (err?.stack ?? "") + "\n");
+  console.error("Fatal error:", err);
+  process.exit(1);
+});

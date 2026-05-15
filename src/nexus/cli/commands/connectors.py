@@ -4,23 +4,55 @@ Commands for discovering and inspecting available connectors:
 - nexus connectors list - List all registered connectors
 - nexus connectors info - Show connector details
 
-Works with both local and remote Nexus instances.
+Uses the HTTP REST API for connector discovery (not gRPC, which
+doesn't expose connector registry methods).
 """
 
-import json
+import asyncio
 import sys
 from typing import Any
 
 import click
-from rich.table import Table
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.theme import console
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
-    console,
-    get_filesystem,
     handle_error,
 )
+
+
+def _resolve_http_url(remote_url: str | None) -> tuple[str, str | None]:
+    """Resolve the HTTP base URL and API key from args or environment."""
+    import os
+
+    url = remote_url or os.environ.get("NEXUS_URL")
+    api_key = os.environ.get("NEXUS_API_KEY")
+
+    if not url:
+        console.print("[nexus.error]Error:[/nexus.error] NEXUS_URL or --remote-url is required")
+        console.print(
+            "[nexus.warning]Hint:[/nexus.warning] export NEXUS_URL=http://your-nexus-server:2026"
+            " or use `eval $(nexus env)`"
+        )
+        sys.exit(1)
+
+    return url.rstrip("/"), api_key
+
+
+async def _http_get(url: str, api_key: str | None) -> Any:
+    """Make an authenticated HTTP GET request."""
+    import httpx
+
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
 
 
 @click.group(name="connectors")
@@ -31,51 +63,11 @@ def connectors_group() -> None:
     Use these commands to see what connectors are available
     and their configuration requirements.
 
-    Works with both local and remote Nexus instances:
-        # Local (direct registry access)
-        nexus connectors list
-
-        # Remote (via RPC to server)
-        nexus connectors list --remote-url http://localhost:2026
-
     Examples:
-        # List all connectors
         nexus connectors list
-
-        # List only storage connectors
         nexus connectors list --category storage
-
-        # Show details for a specific connector
-        nexus connectors info gcs_connector
+        nexus connectors info gws_gmail
     """
-    pass
-
-
-def _list_connectors_local(category: str | None) -> list[dict]:
-    """List connectors from local registry."""
-    from nexus.backends import ConnectorRegistry
-
-    if category:
-        connectors = ConnectorRegistry.list_by_category(category)
-    else:
-        connectors = ConnectorRegistry.list_all()
-
-    return [
-        {
-            "name": c.name,
-            "description": c.description,
-            "category": c.category,
-            "requires": c.requires,
-            "user_scoped": c.user_scoped,
-        }
-        for c in connectors
-    ]
-
-
-def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any]]:
-    """List connectors from remote server via RPC."""
-    result: list[dict[str, Any]] = nx.list_connectors(category=category)
-    return result
 
 
 @connectors_group.command(name="list")
@@ -84,71 +76,79 @@ def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any
     "-c",
     type=str,
     default=None,
-    help="Filter by category (storage, api, oauth, database)",
+    help="Filter by category (storage, api, oauth, cli)",
 )
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@add_output_options
 @add_backend_options
-def list_connectors(category: str | None, as_json: bool, backend_config: BackendConfig) -> None:
+def list_connectors(
+    category: str | None,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """List all registered connectors.
 
     Shows all available connector types that can be used with 'nexus mounts add'.
 
     Examples:
-        # List all connectors (local)
         nexus connectors list
-
-        # List connectors from remote server
-        nexus connectors list --remote-url http://localhost:2026
-
-        # List only storage connectors
         nexus connectors list --category storage
-
-        # Output as JSON
         nexus connectors list --json
     """
+    timing = CommandTiming()
     try:
-        # Check if we're connecting to a remote server
-        if backend_config.remote_url:
-            nx = get_filesystem(backend_config)
-            try:
-                connectors = _list_connectors_remote(nx, category)
-            except AttributeError:
-                console.print("[red]Error:[/red] Server doesn't support list_connectors")
-                console.print("[yellow]Hint:[/yellow] Update server to latest Nexus version")
-                sys.exit(1)
-        else:
-            # Local mode - use registry directly
-            connectors = _list_connectors_local(category)
+        base_url, api_key = _resolve_http_url(remote_url)
+        api_key = remote_api_key or api_key
+
+        with timing.phase("server"):
+            data = asyncio.run(_http_get(f"{base_url}/api/v2/connectors", api_key))
+
+        connectors: list[dict[str, Any]] = data.get("connectors", [])
+
+        if category:
+            connectors = [c for c in connectors if c.get("category") == category]
 
         if not connectors:
             if category:
-                console.print(f"[yellow]No connectors found in category '{category}'[/yellow]")
+                console.print(
+                    f"[nexus.warning]No connectors found in category '{category}'[/nexus.warning]"
+                )
             else:
-                console.print("[yellow]No connectors registered[/yellow]")
+                console.print("[nexus.warning]No connectors registered[/nexus.warning]")
             return
 
-        if as_json:
-            console.print(json.dumps(connectors, indent=2))
-            return
+        def _render(items: list[dict[str, Any]]) -> None:
+            from rich.table import Table
 
-        # Create table
-        table = Table(title="Available Connectors", show_header=True, header_style="bold cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Description")
-        table.add_column("Category", style="yellow")
-        table.add_column("Dependencies", style="dim")
-
-        for c in connectors:
-            deps = ", ".join(c["requires"]) if c.get("requires") else "-"
-            table.add_row(
-                c["name"],
-                c.get("description", ""),
-                c.get("category", ""),
-                deps,
+            table = Table(
+                title="Available Connectors", show_header=True, header_style="nexus.table_header"
             )
+            table.add_column("Name", style="nexus.success")
+            table.add_column("Description")
+            table.add_column("Category", style="nexus.warning")
+            table.add_column("Capabilities", style="nexus.muted")
 
-        console.print(table)
-        console.print(f"\n[dim]Total: {len(connectors)} connectors[/dim]")
+            for c in items:
+                caps = c.get("capabilities", [])
+                caps_str = ", ".join(caps[:3])
+                if len(caps) > 3:
+                    caps_str += f" (+{len(caps) - 3})"
+                table.add_row(
+                    c["name"],
+                    c.get("description", ""),
+                    c.get("category", ""),
+                    caps_str,
+                )
+
+            console.print(table)
+            console.print(f"\n[nexus.muted]Total: {len(items)} connectors[/nexus.muted]")
+
+        render_output(
+            data=connectors,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         handle_error(e)
@@ -157,98 +157,133 @@ def list_connectors(category: str | None, as_json: bool, backend_config: Backend
 @connectors_group.command(name="info")
 @click.argument("connector_name", type=str)
 @add_backend_options
-def connector_info(connector_name: str, backend_config: BackendConfig) -> None:
+def connector_info(
+    connector_name: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Show details for a specific connector.
 
-    CONNECTOR_NAME: The connector identifier (e.g., gcs_connector, s3_connector)
+    CONNECTOR_NAME: The connector identifier (e.g., gws_gmail, path_s3)
 
     Examples:
-        # Local
-        nexus connectors info gcs_connector
-
-        # Remote
-        nexus connectors info gcs_connector --remote-url http://localhost:2026
+        nexus connectors info gws_gmail
+        nexus connectors info path_s3
     """
     try:
-        # Get connector info
-        if backend_config.remote_url:
-            nx = get_filesystem(backend_config)
-            try:
-                connectors = _list_connectors_remote(nx, None)
-                info = next((c for c in connectors if c["name"] == connector_name), None)
-                if not info:
-                    available = ", ".join(c["name"] for c in connectors)
-                    console.print(f"[red]Unknown connector: {connector_name}[/red]")
-                    console.print(f"[dim]Available: {available}[/dim]")
-                    sys.exit(1)
-            except AttributeError:
-                console.print("[red]Error:[/red] Server doesn't support list_connectors")
-                sys.exit(1)
-        else:
-            # Local mode
-            from nexus.backends import ConnectorRegistry
+        base_url, api_key = _resolve_http_url(remote_url)
+        api_key = remote_api_key or api_key
 
-            try:
-                c = ConnectorRegistry.get_info(connector_name)
-                info = {
-                    "name": c.name,
-                    "description": c.description,
-                    "category": c.category,
-                    "requires": c.requires,
-                    "user_scoped": c.user_scoped,
-                    "class": f"{c.connector_class.__module__}.{c.connector_class.__name__}",
-                }
-            except KeyError:
-                available = ", ".join(ConnectorRegistry.list_available())
-                console.print(f"[red]Unknown connector: {connector_name}[/red]")
-                console.print(f"[dim]Available: {available}[/dim]")
-                sys.exit(1)
+        data = asyncio.run(_http_get(f"{base_url}/api/v2/connectors", api_key))
+        connectors: list[dict[str, Any]] = data.get("connectors", [])
 
-        console.print(f"\n[bold cyan]{info['name']}[/bold cyan]")
-        console.print(f"  [dim]Description:[/dim] {info.get('description') or 'No description'}")
-        console.print(f"  [dim]Category:[/dim] {info.get('category', 'unknown')}")
-        console.print(f"  [dim]User-scoped:[/dim] {'Yes' if info.get('user_scoped') else 'No'}")
+        info = next((c for c in connectors if c["name"] == connector_name), None)
+        if not info:
+            available = ", ".join(c["name"] for c in connectors)
+            console.print(f"[nexus.error]Unknown connector: {connector_name}[/nexus.error]")
+            console.print(f"[nexus.muted]Available: {available}[/nexus.muted]")
+            sys.exit(1)
+
+        console.print(f"\n[bold nexus.value]{info['name']}[/bold nexus.value]")
+        console.print(
+            f"  [nexus.muted]Description:[/nexus.muted] {info.get('description') or 'No description'}"
+        )
+        console.print(f"  [nexus.muted]Category:[/nexus.muted] {info.get('category', 'unknown')}")
+        console.print(
+            f"  [nexus.muted]User-scoped:[/nexus.muted] {'Yes' if info.get('user_scoped') else 'No'}"
+        )
+
+        caps = info.get("capabilities", [])
+        if caps:
+            console.print(f"  [nexus.muted]Capabilities:[/nexus.muted] {', '.join(caps)}")
 
         requires = info.get("requires", [])
         if requires:
-            console.print(f"  [dim]Dependencies:[/dim] {', '.join(requires)}")
+            console.print(f"  [nexus.muted]Dependencies:[/nexus.muted] {', '.join(requires)}")
         else:
-            console.print("  [dim]Dependencies:[/dim] None (core)")
+            console.print("  [nexus.muted]Dependencies:[/nexus.muted] None (core)")
 
         if "class" in info:
-            console.print(f"  [dim]Class:[/dim] {info['class']}")
-
-        # Show connection arguments (local mode only)
-        if not backend_config.remote_url:
-            from nexus.backends import ConnectorRegistry
-
-            connection_args = ConnectorRegistry.get_connection_args(connector_name)
-            if connection_args:
-                console.print("\n  [bold]Connection Arguments:[/bold]")
-
-                # Create table for args
-                args_table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
-                args_table.add_column("Name", style="green")
-                args_table.add_column("Type", style="yellow")
-                args_table.add_column("Required", style="cyan")
-                args_table.add_column("Description")
-
-                for arg_name, arg in connection_args.items():
-                    required_str = "[red]Yes[/red]" if arg.required else "No"
-                    type_str = arg.type.value
-                    if arg.secret:
-                        type_str += " [dim](secret)[/dim]"
-                    desc = arg.description
-                    if arg.default is not None:
-                        desc += f" [dim](default: {arg.default})[/dim]"
-                    if arg.env_var:
-                        desc += f" [dim](env: {arg.env_var})[/dim]"
-                    args_table.add_row(arg_name, type_str, required_str, desc)
-
-                console.print(args_table)
+            console.print(f"  [nexus.muted]Class:[/nexus.muted] {info['class']}")
 
         console.print()
 
+    except Exception as e:
+        handle_error(e)
+
+
+@connectors_group.command(name="capabilities")
+@click.argument("name", required=False, default=None)
+@add_output_options
+@add_backend_options
+def connectors_capabilities(
+    name: str | None,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Show connector capabilities.
+
+    Without arguments, shows capabilities for all connectors.
+    With a connector name, shows detailed capabilities for that connector.
+
+    Examples:
+        nexus connectors capabilities
+        nexus connectors capabilities gws_gmail
+    """
+    timing = CommandTiming()
+    try:
+        base_url, api_key = _resolve_http_url(remote_url)
+        api_key = remote_api_key or api_key
+
+        with timing.phase("server"):
+            data = asyncio.run(_http_get(f"{base_url}/api/v2/connectors", api_key))
+
+        connectors: list[dict[str, Any]] = data.get("connectors", [])
+
+        if name:
+            connectors = [
+                c for c in connectors if c.get("name") == name or c.get("connector_id") == name
+            ]
+            if not connectors:
+                available = ", ".join(c["name"] for c in data.get("connectors", []))
+                console.print(f"[nexus.error]Error:[/nexus.error] Connector '{name}' not found")
+                console.print(f"[nexus.muted]Available: {available}[/nexus.muted]")
+                sys.exit(1)
+
+        def _render(items: list[dict[str, Any]]) -> None:
+            from rich.table import Table
+
+            table = Table(
+                title="Connector Capabilities",
+                show_header=True,
+                header_style="nexus.table_header",
+            )
+            table.add_column("Name", style="nexus.value")
+            table.add_column("Category", style="nexus.success")
+            table.add_column("Capabilities", style="nexus.warning")
+
+            for c in items:
+                caps = c.get("capabilities", [])
+                caps_str = ", ".join(str(cap) for cap in caps) if caps else "none"
+                table.add_row(
+                    c.get("name", "?"),
+                    c.get("category", "?"),
+                    caps_str,
+                )
+
+            console.print(table)
+            console.print(f"\n[nexus.muted]Total: {len(items)} connectors[/nexus.muted]")
+
+        render_output(
+            data=connectors,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+
+    except SystemExit:
+        raise
     except Exception as e:
         handle_error(e)
 

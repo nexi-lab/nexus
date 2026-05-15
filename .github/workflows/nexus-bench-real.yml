@@ -1,0 +1,123 @@
+name: Nexus Bench Real Target
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Benchmark target to run"
+        required: true
+        default: "http"
+        type: choice
+        options:
+          - noop
+          - mount
+          - http
+      runner_label:
+        description: "Runner label with the real target environment"
+        required: true
+        default: "self-hosted"
+        type: string
+      mount_root:
+        description: "Mounted filesystem root for target=mount"
+        required: false
+        default: ""
+        type: string
+      base_url:
+        description: "Nexus HTTP base URL for target=http"
+        required: false
+        default: "http://localhost:2026"
+        type: string
+      warmups:
+        description: "Warmup replays per workload"
+        required: true
+        default: "1"
+        type: string
+      iterations:
+        description: "Measured replays per workload"
+        required: true
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  nexus-bench-real:
+    name: Real target suite (${{ inputs.target }})
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 60
+    env:
+      OUT_DIR: target/nexus-bench-real/${{ inputs.target }}
+      NEXUS_BENCH_API_KEY: ${{ secrets.NEXUS_BENCH_API_KEY }}
+      BENCH_TARGET: ${{ inputs.target }}
+      BENCH_MOUNT_ROOT: ${{ inputs.mount_root }}
+      BENCH_BASE_URL: ${{ inputs.base_url }}
+      BENCH_WARMUPS: ${{ inputs.warmups }}
+      BENCH_ITERATIONS: ${{ inputs.iterations }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test harness
+        run: cargo test --locked --manifest-path nexus-bench/Cargo.toml
+
+      - name: Validate traces
+        run: cargo run --manifest-path nexus-bench/Cargo.toml -- validate --trace-dir nexus-bench/traces
+
+      - name: Run real target suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+
+          case "$BENCH_TARGET" in
+            noop)
+              cargo run --manifest-path nexus-bench/Cargo.toml -- suite \
+                --target noop \
+                --trace-dir nexus-bench/traces \
+                --out-dir "$OUT_DIR" \
+                --warmups "$BENCH_WARMUPS" \
+                --iterations "$BENCH_ITERATIONS"
+              ;;
+            mount)
+              if [[ -z "$BENCH_MOUNT_ROOT" ]]; then
+                echo "::error::mount_root is required when target=mount"
+                exit 1
+              fi
+              cargo run --manifest-path nexus-bench/Cargo.toml -- suite \
+                --target mount \
+                --mount-root "$BENCH_MOUNT_ROOT" \
+                --trace-dir nexus-bench/traces \
+                --out-dir "$OUT_DIR" \
+                --warmups "$BENCH_WARMUPS" \
+                --iterations "$BENCH_ITERATIONS"
+              ;;
+            http)
+              if [[ -z "$NEXUS_BENCH_API_KEY" ]]; then
+                echo "::error::NEXUS_BENCH_API_KEY secret is required when target=http"
+                exit 1
+              fi
+              cargo run --manifest-path nexus-bench/Cargo.toml -- suite \
+                --target http \
+                --base-url "$BENCH_BASE_URL" \
+                --api-key "$NEXUS_BENCH_API_KEY" \
+                --trace-dir nexus-bench/traces \
+                --out-dir "$OUT_DIR" \
+                --warmups "$BENCH_WARMUPS" \
+                --iterations "$BENCH_ITERATIONS"
+              ;;
+          esac
+
+      - name: Upload suite artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nexus-bench-real-${{ inputs.target }}
+          path: target/nexus-bench-real/${{ inputs.target }}/

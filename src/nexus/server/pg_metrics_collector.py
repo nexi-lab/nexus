@@ -20,7 +20,7 @@ from prometheus_client.core import GaugeMetricFamily
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from nexus.services.subsystems.observability_subsystem import QueryObserver
+    from nexus.server.observability.observability_subsystem import QueryObserver
 
 
 class QueryObserverCollector:

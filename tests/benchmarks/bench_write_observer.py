@@ -19,35 +19,31 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.piped_record_store_write_observer import (
     _AUDIT_PIPE_PATH,
     PipedRecordStoreWriteObserver,
 )
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
-from nexus.system_services.pipe_manager import PipeManager
 
 # ── Constants ──────────────────────────────────────────────────────────
 WARMUP = 100
 ITERATIONS = 1000
 
 
-def _make_metadata(path: str, *, etag: str = "abc123", size: int = 100) -> FileMetadata:
+def _make_metadata(path: str, *, content_id: str = "abc123", size: int = 100) -> FileMetadata:
     return FileMetadata(
         path=path,
-        backend_name="local",
-        physical_path=etag,
         size=size,
-        etag=etag,
+        content_id=content_id,
         mime_type="text/plain",
         created_at=datetime.now(UTC),
         modified_at=datetime.now(UTC),
         version=1,
         zone_id="root",
-        created_by="bench",
         owner_id="bench",
     )
 
@@ -77,13 +73,13 @@ def bench_sync(tmp_dir: Path) -> list[float]:
 
     # Warmup
     for i in range(WARMUP):
-        md = _make_metadata(f"/warmup/{i}.txt", etag=f"w{i}")
+        md = _make_metadata(f"/warmup/{i}.txt", content_id=f"w{i}")
         observer.on_write(md, is_new=True, path=md.path)
 
     # Measure
     times: list[float] = []
     for i in range(ITERATIONS):
-        md = _make_metadata(f"/bench/{i}.txt", etag=f"b{i}")
+        md = _make_metadata(f"/bench/{i}.txt", content_id=f"b{i}")
         t0 = time.perf_counter()
         observer.on_write(md, is_new=True, path=md.path)
         t1 = time.perf_counter()
@@ -100,18 +96,66 @@ _BENCH_PIPE_CAPACITY = 4 * 1024 * 1024  # 4MB — holds ~8k serialized events
 
 async def _bench_piped_async(tmp_dir: Path) -> list[float]:
     db_path = tmp_dir / "piped.db"
-    raft_path = tmp_dir / "piped-raft"
 
     record_store = SQLAlchemyRecordStore(db_path=str(db_path))
-    metastore = RaftMetadataStore.embedded(str(raft_path))
-    pipe_manager = PipeManager(metastore)
 
-    # Pre-create the pipe with benchmark-sized capacity so that
-    # observer.start() finds an existing pipe (open path) and reuses it.
-    pipe_manager.create(_AUDIT_PIPE_PATH, capacity=_BENCH_PIPE_CAPACITY, owner_id="bench")
+    # Create Rust kernel for IPC pipe operations
+    from nexus_runtime import PyKernel
+
+    kernel = PyKernel()
+
+    # Pre-create the pipe with benchmark-sized capacity
+    kernel.create_pipe(_AUDIT_PIPE_PATH, _BENCH_PIPE_CAPACITY)
 
     observer = PipedRecordStoreWriteObserver(record_store, strict_mode=False)
-    observer.set_pipe_manager(pipe_manager)
+
+    # Bind a minimal NexusFS-like object that satisfies the observer's
+    # runtime contract: _kernel for pipe operations, sys_read() for the
+    # background consumer, and sys_unlink() for stop().
+    class _BenchNx:
+        """Minimal NexusFS fake matching the observer's runtime contract.
+
+        Uses Rust kernel IPC directly. Translates pipe errors to
+        NexusFileNotFoundError so the consumer's shutdown path works.
+        """
+
+        def __init__(self, k: Any) -> None:
+            self._kernel = k
+            # Rust kernel handles IPC blocking internally (no Python IPCWaiter needed)
+
+        async def sys_setattr(self, path: str, **kwargs: Any) -> dict:
+            """No-op — pipe already created via kernel.create_pipe."""
+            return {"path": path, "created": False}
+
+        def pipe_read_nowait(self, path: str) -> bytes | None:
+            """Tier 2 NexusFS public sync API — sync passthrough to kernel."""
+            return self._kernel.pipe_read_nowait(path)
+
+        def sys_read(self, path: str, **kwargs: Any) -> bytes:
+            from nexus.contracts.exceptions import NexusFileNotFoundError
+
+            # Blocking read: poll pipe_read_nowait with asyncio.sleep
+            while True:
+                try:
+                    data = self.pipe_read_nowait(path)
+                    if data is not None:
+                        return bytes(data)
+                    # No data available; yield and retry.
+                    time.sleep(0.001)
+                except RuntimeError as exc:
+                    if "PipeClosed" in str(exc) or "not found" in str(exc):
+                        raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
+                    raise
+
+        def sys_unlink(self, path: str, **kwargs: Any) -> dict:
+            try:
+                self._kernel.close_pipe(path)
+            except (RuntimeError, Exception):
+                pass  # Already cleaned up
+            return {"path": path}
+
+    fake_nx: Any = _BenchNx(kernel)
+    observer.bind_fs(fake_nx)
 
     # Suppress observer warnings during benchmark
     obs_logger = logging.getLogger("nexus.storage.piped_record_store_write_observer")
@@ -123,20 +167,20 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
     try:
         # Warmup
         for i in range(WARMUP):
-            md = _make_metadata(f"/warmup/{i}.txt", etag=f"w{i}")
+            md = _make_metadata(f"/warmup/{i}.txt", content_id=f"w{i}")
             observer.on_write(md, is_new=True, path=md.path)
 
         # Measure
         times: list[float] = []
         for i in range(ITERATIONS):
-            md = _make_metadata(f"/bench/{i}.txt", etag=f"b{i}")
+            md = _make_metadata(f"/bench/{i}.txt", content_id=f"b{i}")
             t0 = time.perf_counter()
             observer.on_write(md, is_new=True, path=md.path)
             t1 = time.perf_counter()
             times.append((t1 - t0) * 1000)  # ms
     finally:
         await observer.stop()
-        pipe_manager.close_all()
+        kernel.close_all_pipes()
         obs_logger.setLevel(prev_level)
 
     return times

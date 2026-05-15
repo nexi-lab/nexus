@@ -2,8 +2,11 @@
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.entity_registry import EntityRegistry
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from tests.testkit.records import InMemoryRecordStore
 
 
 @pytest.fixture

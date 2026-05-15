@@ -54,7 +54,7 @@ def connect_to_nexus(tenant_id: str = "adk-demo", agent_id: str = "file-agent"):
         agent_id: Agent identifier for tracking
 
     Returns:
-        NexusFilesystem instance
+        NexusFS instance
     """
     # Check if using remote server
     server_url = os.getenv("NEXUS_URL")
@@ -88,7 +88,7 @@ def create_nexus_tools(nx):
     Google ADK automatically converts them to agent tools.
 
     Args:
-        nx: NexusFilesystem instance
+        nx: NexusFS instance
 
     Returns:
         List of functions that the agent can call
@@ -171,7 +171,7 @@ def create_nexus_tools(nx):
         except Exception as e:
             return f"Error finding files: {str(e)}"
 
-    def read_file(path: str, preview_only: bool) -> str:
+    async def read_file(path: str, preview_only: bool) -> str:
         """Read file content from Nexus.
 
         Args:
@@ -206,7 +206,7 @@ def create_nexus_tools(nx):
         except Exception as e:
             return f"Error reading file: {str(e)}"
 
-    def write_file(path: str, content: str) -> str:
+    async def write_file(path: str, content: str) -> str:
         """Write content to Nexus filesystem.
 
         Creates parent directories automatically. Overwrites existing files.
@@ -225,7 +225,7 @@ def create_nexus_tools(nx):
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
             nx.sys_write(path, content_bytes)
 
-            if nx.sys_access(path):
+            if await nx.access(path):
                 return f"Successfully wrote {len(content_bytes)} bytes to {path}"
             else:
                 return f"Error: Failed to write file {path}"
@@ -237,7 +237,7 @@ def create_nexus_tools(nx):
     return [grep_files, glob_files, read_file, write_file]
 
 
-def setup_test_data(nx):
+async def setup_test_data(nx):
     """Set up test data in Nexus for the demo."""
     print("\n" + "=" * 70)
     print("Setting Up Test Data")
@@ -299,7 +299,7 @@ def process_data(data: dict) -> dict:
 class DataProcessor:
     """Synchronous data processor."""
 
-    def process(self, item):
+    async def process(self, item):
         """Process single item."""
         return item
 ''',
@@ -316,7 +316,7 @@ class DataProcessor:
     return test_files
 
 
-def cleanup_test_data(nx, test_files):
+async def cleanup_test_data(nx, test_files):
     """Clean up test data from Nexus."""
     if os.getenv("KEEP") == "1":
         print("\n" + "=" * 70)

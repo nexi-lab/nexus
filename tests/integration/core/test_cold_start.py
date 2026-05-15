@@ -6,6 +6,8 @@ circular import errors or missing dependencies. Does NOT require a database.
 
 import importlib
 
+import pytest
+
 
 class TestColdStartImports:
     """Verify the full import chain resolves without circular imports."""
@@ -33,12 +35,12 @@ class TestColdStartImports:
     def test_all_protocols_importable_from_new_locations(self) -> None:
         """Protocols should be importable from their new canonical locations."""
         from nexus.contracts.describable import Describable
+        from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
+        from nexus.contracts.protocols.permission_enforcer import PermissionEnforcerProtocol
+        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
+        from nexus.contracts.protocols.workspace_manager import WorkspaceManagerProtocol
         from nexus.contracts.wirable_fs import WirableFS
-        from nexus.core.protocols import VFSCoreProtocol, VFSRouterProtocol
-        from nexus.services.protocols.entity_registry import EntityRegistryProtocol
-        from nexus.services.protocols.permission_enforcer import PermissionEnforcerProtocol
-        from nexus.services.protocols.rebac import ReBACBrickProtocol
-        from nexus.services.protocols.workspace_manager import WorkspaceManagerProtocol
+        from nexus.core.protocols import VFSCoreProtocol
 
         # runtime_checkable means isinstance() works
         for proto in (
@@ -48,7 +50,6 @@ class TestColdStartImports:
             WorkspaceManagerProtocol,
             WirableFS,
             Describable,
-            VFSRouterProtocol,
             VFSCoreProtocol,
         ):
             assert (
@@ -59,50 +60,29 @@ class TestColdStartImports:
 
 
 class TestColdStartNexusFSConstruction:
-    """Verify NexusFS can be constructed without factory (test mode)."""
+    """Verify NexusFS can be constructed via factory (test mode)."""
 
-    def test_nexus_fs_minimal_construction(self) -> None:
-        """NexusFS should construct with just backend + metadata_store."""
+    @pytest.mark.asyncio
+    def test_nexus_fs_minimal_construction(self, tmp_path) -> None:
+        """NexusFS should construct via make_test_nexus with defaults."""
+        from tests.testkit import make_test_nexus
+
+        nx = make_test_nexus(tmp_path)
+
+        # ServiceRegistry should be empty (kernel-only — no bricks)
+        assert nx.service("rebac") is None
+        assert nx.service("mount") is None
+        assert nx.service("mcp") is None
+
+    def test_enlist_wired_services(self, tmp_path) -> None:
+        """enlist_wired_services should register services via registry (#1708)."""
         from unittest.mock import MagicMock
 
-        from nexus.core.config import ParseConfig
-        from nexus.core.nexus_fs import NexusFS
+        from nexus.factory.service_routing import enlist_wired_services
+        from tests.testkit import make_test_nexus
 
-        mock_backend = MagicMock()
-        mock_backend.content_cache = None
-        mock_metadata = MagicMock()
-        mock_metadata.list = MagicMock(return_value=[])
-
-        nx = NexusFS(
-            backend=mock_backend,
-            metadata_store=mock_metadata,
-            parsing=ParseConfig(auto_parse=False),
-        )
-
-        # Service attributes should be None (no factory wiring)
-        assert nx.rebac_service is None
-        assert nx.mount_service is None
-        assert nx.mcp_service is None
-
-    def test_wired_services_can_be_bound(self) -> None:
-        """_bind_wired_services should accept WiredServices dataclass."""
-        from unittest.mock import MagicMock
-
-        from nexus.core.config import ParseConfig, WiredServices
-        from nexus.core.nexus_fs import NexusFS
-
-        mock_backend = MagicMock()
-        mock_backend.content_cache = None
-        mock_metadata = MagicMock()
-        mock_metadata.list = MagicMock(return_value=[])
-
-        nx = NexusFS(
-            backend=mock_backend,
-            metadata_store=mock_metadata,
-            parsing=ParseConfig(auto_parse=False),
-        )
+        nx = make_test_nexus(tmp_path)
 
         mock_svc = MagicMock()
-        ws = WiredServices(rebac_service=mock_svc)
-        nx._bind_wired_services(ws)
-        assert nx.rebac_service is mock_svc
+        enlist_wired_services(nx, {"rebac_service": mock_svc})
+        assert nx.service("rebac") is mock_svc

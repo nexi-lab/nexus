@@ -27,6 +27,7 @@ _INTERNAL_ATTRS = frozenset(
         "connect_timeout",
         "session",
         "max_retries",
+        "close",  # local lifecycle method — must not be proxied as an RPC call
     }
 )
 
@@ -50,6 +51,16 @@ class RPCProxyBase:
     # Cache for ABC method parameter names (class-level)
     _param_name_cache: dict[str, list[str]] = {}
 
+    def close(self) -> None:
+        """Local lifecycle method — close any underlying transport/session.
+
+        Subclasses should override to release resources.  The base
+        implementation is a no-op so that callers can safely call close()
+        without knowing whether the proxy has resources to release.
+        ``close`` must not be proxied as a remote RPC call (it is listed in
+        _INTERNAL_ATTRS for that reason).
+        """
+
     def _call_rpc(
         self,
         method: str,
@@ -61,19 +72,34 @@ class RPCProxyBase:
 
     @classmethod
     def _get_param_names(cls, method_name: str) -> list[str]:
-        """Get parameter names for a method from the NexusFilesystemABC ABC.
+        """Get parameter names for a method from known service classes.
 
         Uses inspect.signature to extract parameter names, caching results
-        for performance. Falls back to empty list for non-ABC methods.
+        for performance. Falls back to empty list for unknown methods.
         """
         if method_name not in cls._param_name_cache:
             # Lazy import to avoid circular dependency
-            from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+            from nexus.core.nexus_fs import NexusFS
 
-            abc_method = getattr(NexusFilesystemABC, method_name, None)
-            if abc_method and callable(abc_method):
+            # Try NexusFS first, then RPC params
+            method = getattr(NexusFS, method_name, None)
+            if method is None:
                 try:
-                    sig = inspect.signature(abc_method)
+                    import dataclasses as _dc
+
+                    from nexus.server._rpc_params_generated import METHOD_PARAMS
+
+                    params_cls = METHOD_PARAMS.get(method_name)
+                    if params_cls and _dc.is_dataclass(params_cls):
+                        names = [f.name for f in _dc.fields(params_cls)]
+                        cls._param_name_cache[method_name] = names
+                        return names
+                except (ImportError, AttributeError):
+                    pass
+
+            if method and callable(method):
+                try:
+                    sig = inspect.signature(method)
                     names = [p for p in sig.parameters if p != "self"]
                     cls._param_name_cache[method_name] = names
                 except (ValueError, TypeError):

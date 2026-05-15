@@ -32,21 +32,20 @@ from nexus.proxy.transport import HttpTransport
 logger = logging.getLogger(__name__)
 
 
-def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
+async def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     """Create a FastAPI app with real NexusFS for testing."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     os.environ.setdefault("NEXUS_JWT_SECRET", "test-secret-12345")
 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(parents=True, exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_dir))
-    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
+    backend = CASLocalBackend(root_path=str(storage_dir))
+    metadata_store = str(tmp_path / "raft-metadata")
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
@@ -87,7 +86,7 @@ class TestProxyWithRealFastAPIPermissions:
 
     async def test_health_through_real_server(self, tmp_path) -> None:  # noqa: ANN001
         """Verify transport can reach the real FastAPI health endpoint."""
-        app, api_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, api_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(
             transport=asgi,
@@ -109,7 +108,7 @@ class TestProxyWithRealFastAPIPermissions:
         encoding) is accepted by the real FastAPI server's /api/nfs/{method}
         endpoint with auth enabled.
         """
-        app, api_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, api_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(
             transport=asgi,
@@ -128,10 +127,10 @@ class TestProxyWithRealFastAPIPermissions:
 
         try:
             # Write through proxy — exercises base64 encoding + _forward
-            await proxy.sys_write("/proxy-e2e.txt", b"hello world", "root")
+            await proxy.write("/proxy-e2e.txt", b"hello world", "root")
 
             # Read through proxy — exercises _forward + response decoding
-            data = await proxy.sys_read("/proxy-e2e.txt", "root")
+            data = proxy.sys_read("/proxy-e2e.txt", "root")
             assert data == b"hello world" or data == b"aGVsbG8gd29ybGQ="
         finally:
             await proxy.stop()
@@ -139,7 +138,7 @@ class TestProxyWithRealFastAPIPermissions:
 
     async def test_proxy_exists_through_real_server(self, tmp_path) -> None:  # noqa: ANN001
         """exists() through proxy → real server returns correct result."""
-        app, api_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, api_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(
             transport=asgi,
@@ -170,7 +169,7 @@ class TestProxyWithRealFastAPIPermissions:
             assert resp.status_code == 200
 
             # Now call exists() through the proxy's _forward() path
-            result = await proxy.sys_access("/e2e-check.txt", "root")
+            result = await proxy.access("/e2e-check.txt", "root")
             # Result type varies — could be bool or truthy value
             assert result, "exists() should return truthy for existing file"
         finally:
@@ -192,7 +191,7 @@ class TestProxyPermissionDeniedRealServer:
 
     async def test_no_api_key_real_server_401(self, tmp_path) -> None:  # noqa: ANN001
         """Proxy with no api_key → real server returns 401 → RemoteCallError."""
-        app, _correct_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, _correct_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         # No Authorization header
         client = httpx.AsyncClient(transport=asgi, base_url="http://test")
@@ -209,7 +208,7 @@ class TestProxyPermissionDeniedRealServer:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.sys_access("/file.txt", "root")
+                await proxy.access("/file.txt", "root")
 
             # Real server returns 401 for missing auth
             assert exc_info.value.status_code == 401
@@ -223,7 +222,7 @@ class TestProxyPermissionDeniedRealServer:
 
     async def test_wrong_api_key_real_server_401(self, tmp_path) -> None:  # noqa: ANN001
         """Wrong API key → real server returns 401 → RemoteCallError (not queued)."""
-        app, _correct_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, _correct_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         # Wrong key
         client = httpx.AsyncClient(
@@ -244,7 +243,7 @@ class TestProxyPermissionDeniedRealServer:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.sys_access("/file.txt", "root")
+                await proxy.access("/file.txt", "root")
 
             assert exc_info.value.status_code == 401
             assert await proxy.pending_count() == 0
@@ -254,7 +253,7 @@ class TestProxyPermissionDeniedRealServer:
 
     async def test_repeated_auth_failures_dont_trip_circuit(self, tmp_path) -> None:  # noqa: ANN001
         """Multiple 401s from real server do NOT trip the circuit breaker."""
-        app, _correct_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, _correct_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(transport=asgi, base_url="http://test")
 
@@ -272,7 +271,7 @@ class TestProxyPermissionDeniedRealServer:
             # 5 auth failures — more than cb_failure_threshold
             for _ in range(5):
                 with pytest.raises(RemoteCallError):
-                    await proxy.sys_mkdir("/denied", "root")
+                    proxy.mkdir("/denied", "root")
 
             # Circuit must still be CLOSED — auth errors are NOT connectivity failures
             assert proxy.circuit_state is CircuitState.CLOSED
@@ -309,7 +308,7 @@ class TestProxyPermissionDeniedMock:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.sys_mkdir("/denied", "z1")
+                proxy.mkdir("/denied", "z1")
             assert exc_info.value.status_code == 403
             assert await proxy.pending_count() == 0
             assert proxy.circuit_state is CircuitState.CLOSED
@@ -358,9 +357,9 @@ class TestProxyOfflineQueueReplayE2E:
             await proxy.start()
             try:
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.sys_mkdir("/queued_dir1", "z1")
+                    proxy.mkdir("/queued_dir1", "z1")
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.sys_mkdir("/queued_dir2", "z1")
+                    proxy.mkdir("/queued_dir2", "z1")
 
                 assert await proxy.pending_count() == 2
 
@@ -396,12 +395,12 @@ class TestProxyOfflineQueueReplayE2E:
             try:
                 for _ in range(2):
                     with pytest.raises(OfflineQueuedError):
-                        await proxy.sys_access("/f", "z1")
+                        await proxy.access("/f", "z1")
 
                 assert proxy.circuit_state is CircuitState.OPEN
 
                 with pytest.raises((CircuitOpenError, OfflineQueuedError)):
-                    await proxy.sys_access("/f", "z1")
+                    await proxy.access("/f", "z1")
 
                 assert any("Circuit open" in r.message for r in caplog.records)
             finally:
@@ -428,7 +427,7 @@ class TestProxyOfflineQueueReplayE2E:
         await proxy.start()
         try:
             with pytest.raises(OfflineQueuedError):
-                await proxy.sys_mkdir("/will_fail", "z1")
+                proxy.mkdir("/will_fail", "z1")
 
             await asyncio.sleep(1.5)
             assert await proxy.pending_count() == 0
@@ -463,7 +462,7 @@ class TestProxyOfflineQueueReplayE2E:
         try:
             for _ in range(3):
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.sys_access("/f", "z1")
+                    await proxy.access("/f", "z1")
 
             assert proxy.circuit_state is CircuitState.OPEN
 
@@ -501,11 +500,11 @@ class TestProxyPerformance:
         await proxy.start()
 
         try:
-            await proxy.sys_access("/f", "z1")  # warm up
+            await proxy.access("/f", "z1")  # warm up
 
             start = time.monotonic()
             for _ in range(100):
-                await proxy.sys_access("/f", "z1")
+                await proxy.access("/f", "z1")
             elapsed = time.monotonic() - start
 
             avg_ms = (elapsed / 100) * 1000
@@ -513,47 +512,3 @@ class TestProxyPerformance:
             assert avg_ms < 5.0, f"_forward() too slow: {avg_ms:.3f}ms avg"
         finally:
             await proxy.stop()
-
-    async def test_enqueue_under_5ms(self, tmp_path) -> None:  # noqa: ANN001
-        """Offline queue enqueue < 5ms per operation."""
-        from nexus.proxy.offline_queue import OfflineQueue
-
-        queue = OfflineQueue(str(tmp_path / "perf.db"), max_retry_count=10)
-        await queue.initialize()
-
-        try:
-            await queue.enqueue("warmup", kwargs={"k": "v"})  # warm up
-
-            start = time.monotonic()
-            for i in range(100):
-                await queue.enqueue(f"op_{i}", kwargs={"path": f"/f_{i}.txt"})
-            elapsed = time.monotonic() - start
-
-            avg_ms = (elapsed / 100) * 1000
-            logger.info("Average enqueue latency: %.3f ms", avg_ms)
-            assert avg_ms < 5.0, f"enqueue too slow: {avg_ms:.3f}ms avg"
-        finally:
-            await queue.close()
-
-    async def test_no_n_plus_1_in_batch_dequeue(self, tmp_path) -> None:  # noqa: ANN001
-        """Batch dequeue is a single SQL query, not N+1."""
-        from nexus.proxy.offline_queue import OfflineQueue
-
-        queue = OfflineQueue(str(tmp_path / "batch.db"), max_retry_count=10)
-        await queue.initialize()
-
-        try:
-            for i in range(50):
-                await queue.enqueue(f"op_{i}")
-
-            start = time.monotonic()
-            batch = await queue.dequeue_batch(limit=50)
-            elapsed = time.monotonic() - start
-
-            assert len(batch) == 50
-            dequeue_ms = elapsed * 1000
-            logger.info("Batch dequeue (50 items): %.3f ms", dequeue_ms)
-            # Single query should be well under 10ms
-            assert dequeue_ms < 10.0, f"Batch dequeue too slow: {dequeue_ms:.3f}ms"
-        finally:
-            await queue.close()

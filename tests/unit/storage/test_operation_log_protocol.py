@@ -5,7 +5,7 @@ Verifies that OperationLogger structurally conforms to OperationLogProtocol.
 
 from unittest.mock import MagicMock
 
-from nexus.services.protocols.operation_log import OperationLogProtocol
+from nexus.contracts.protocols.operation_log import OperationLogProtocol
 from nexus.storage.operation_logger import OperationLogger
 
 
@@ -29,6 +29,7 @@ class TestOperationLogProtocol:
         assert hasattr(logger, "get_path_history")
         assert hasattr(logger, "agent_activity_summary")
         assert hasattr(logger, "get_metadata_snapshot")
+        assert hasattr(logger, "replay_changes")
 
     def test_protocol_methods_are_callable(self) -> None:
         """Test that all protocol methods are callable."""
@@ -42,3 +43,4 @@ class TestOperationLogProtocol:
         assert callable(logger.get_path_history)
         assert callable(logger.agent_activity_summary)
         assert callable(logger.get_metadata_snapshot)
+        assert callable(logger.replay_changes)

@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "accounts": [
+    {
+      "email": "user@example.com",
+      "active": true,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/calendar"
+      ],
+      "expires_at": "2026-04-15T12:00:00Z"
+    },
+    {
+      "email": "admin@corp.com",
+      "active": false,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ],
+      "expires_at": "2026-04-14T08:00:00Z"
+    }
+  ]
+}

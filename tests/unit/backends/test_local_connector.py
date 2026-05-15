@@ -5,15 +5,15 @@ Tests cover:
 - Read/write operations with L1 caching
 - Directory operations
 - Readonly mode
-- FileWatcher integration (get_physical_path, get_watch_root)
+- Watch integration (get_physical_path, get_watch_root)
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.local_connector import LocalConnectorBackend
+from nexus.backends.storage.local_connector import LocalConnectorBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -88,16 +88,6 @@ class TestPathTranslation:
         with pytest.raises(BackendError, match="escapes mount root"):
             connector._to_physical("escape/file.txt")
 
-    def test_get_physical_path(self, tmp_path: Path):
-        """get_physical_path should return same as _to_physical."""
-        connector = LocalConnectorBackend(tmp_path)
-        assert connector.get_physical_path("file.txt") == tmp_path / "file.txt"
-
-    def test_get_watch_root(self, tmp_path: Path):
-        """get_watch_root should return local_path."""
-        connector = LocalConnectorBackend(tmp_path)
-        assert connector.get_watch_root() == tmp_path
-
 
 class TestReadContent:
     """Test read_content with L1 caching."""
@@ -135,31 +125,6 @@ class TestReadContent:
         connector = LocalConnectorBackend(tmp_path)
         with pytest.raises(BackendError):
             connector.read_content("", None)
-
-    def test_read_uses_l1_cache(self, tmp_path: Path):
-        """Should check L1 cache before reading from disk."""
-        test_file = tmp_path / "cached.txt"
-        test_file.write_bytes(b"original content")
-
-        connector = LocalConnectorBackend(tmp_path)
-
-        context = MagicMock()
-        context.backend_path = "cached.txt"
-        context.virtual_path = "/mnt/local/cached.txt"
-        context.zone_id = None
-
-        # Mock L1 cache hit
-        with patch.object(connector, "_read_from_cache") as mock_cache:
-            mock_entry = MagicMock()
-            mock_entry.stale = False
-            mock_entry.content_binary = b"cached content"
-            mock_cache.return_value = mock_entry
-
-            result = connector.read_content("", context)
-
-            # Should return cached content
-            assert result == b"cached content"
-            mock_cache.assert_called_once()
 
 
 class TestWriteContent:
@@ -231,15 +196,6 @@ class TestDirectoryOperations:
         assert connector.exists("exists.txt") is True
         assert connector.exists("not_exists.txt") is False
 
-    def test_is_dir(self, tmp_path: Path):
-        """Should check if path is directory."""
-        (tmp_path / "file.txt").write_text("content")
-        (tmp_path / "subdir").mkdir()
-
-        connector = LocalConnectorBackend(tmp_path)
-        assert connector.is_dir("subdir") is True
-        assert connector.is_dir("file.txt") is False
-
     def test_mkdir(self, tmp_path: Path):
         """Should create directory."""
         connector = LocalConnectorBackend(tmp_path)
@@ -253,20 +209,17 @@ class TestDirectoryOperations:
         (tmp_path / "to_delete.txt").write_text("content")
 
         connector = LocalConnectorBackend(tmp_path)
-        result = connector.delete("to_delete.txt")
+        connector.delete("to_delete.txt")
 
-        assert result.success is True
         assert not (tmp_path / "to_delete.txt").exists()
 
     def test_delete_readonly_rejected(self, tmp_path: Path):
-        """Should reject delete in readonly mode."""
+        """Should raise BackendError in readonly mode."""
         (tmp_path / "file.txt").write_text("content")
 
         connector = LocalConnectorBackend(tmp_path, readonly=True)
-        result = connector.delete("file.txt")
-
-        assert result.success is False
-        assert "read-only" in result.error_message
+        with pytest.raises(BackendError, match="read-only"):
+            connector.delete("file.txt")
 
 
 class TestBackendInterface:
@@ -284,27 +237,5 @@ class TestBackendInterface:
         with pytest.raises(BackendError):
             connector.get_content_size("somehash")
 
-        result = connector.get_ref_count("somehash")
-        assert result == 0
-
         with pytest.raises(BackendError):
             connector.delete_content("somehash")
-
-
-class TestCacheConfiguration:
-    """Test cache configuration."""
-
-    def test_l1_only_is_true(self, tmp_path: Path):
-        """LocalConnectorBackend should have l1_only=True."""
-        connector = LocalConnectorBackend(tmp_path)
-        assert connector.l1_only is True
-
-    def test_has_caching_returns_true(self, tmp_path: Path):
-        """_has_caching should return True (L1-only mode)."""
-        connector = LocalConnectorBackend(tmp_path)
-        assert connector._has_caching() is True
-
-    def test_has_l2_caching_returns_false(self, tmp_path: Path):
-        """_has_l2_caching should return False (L1-only mode)."""
-        connector = LocalConnectorBackend(tmp_path)
-        assert connector._has_l2_caching() is False

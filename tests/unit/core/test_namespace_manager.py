@@ -15,8 +15,12 @@ import threading
 from unittest.mock import patch
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from sqlalchemy import create_engine
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.namespace_manager import (
     MountEntry,
@@ -25,6 +29,7 @@ from nexus.bricks.rebac.namespace_manager import (
 )
 from nexus.contracts.types import OperationContext, Permission
 from nexus.storage.models import Base
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -48,6 +53,7 @@ def enhanced_rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()
@@ -173,7 +179,7 @@ class TestNamespaceManagerVisibility:
         assert namespace_manager.is_visible(subject, "/workspace/anything") is False
         assert namespace_manager.is_visible(subject, "/workspace") is False
         assert namespace_manager.is_visible(subject, "/shared/zone1/data") is False
-        assert namespace_manager.is_visible(subject, "/system/config") is False
+        assert namespace_manager.is_visible(subject, "/__sys__/config") is False
 
         # Mount table should be empty
         mount_table = namespace_manager.get_mount_table(subject)
@@ -625,17 +631,16 @@ class TestPermissionEnforcerNamespaceIntegration:
 
 
 class TestNamespaceManagerDualPath:
-    """Test with both Rust and Python paths for rebac_list_objects."""
+    """Test rebac_list_objects via Rust acceleration (always enabled)."""
 
-    @pytest.fixture(params=[True, False], ids=["rust", "python"])
-    def ns_manager_dual(self, request, enhanced_rebac_manager):
-        """NamespaceManager with RUST_AVAILABLE patched to True or False."""
-        with patch("nexus.bricks.rebac.utils.fast.RUST_AVAILABLE", request.param):
-            ns = NamespaceManager(
-                rebac_manager=enhanced_rebac_manager,
-                revision_window=100,
-            )
-            yield ns
+    @pytest.fixture()
+    def ns_manager_dual(self, enhanced_rebac_manager):
+        """NamespaceManager for permission testing."""
+        ns = NamespaceManager(
+            rebac_manager=enhanced_rebac_manager,
+            revision_window=100,
+        )
+        yield ns
 
     def test_visibility_both_paths(self, enhanced_rebac_manager, ns_manager_dual):
         """is_visible() produces same results regardless of Rust/Python path."""

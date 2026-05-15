@@ -143,6 +143,9 @@ class NoOpPermissionEnforcer:
     Implements ``PermissionEnforcerProtocol`` structurally (duck typing).
     """
 
+    def check_owner(self, metadata: Any, context: Any) -> bool:  # noqa: ARG002
+        return True
+
     def check(
         self,
         path: str,

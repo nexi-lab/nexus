@@ -1,5 +1,5 @@
 {
-  "name": "@nexus/pay",
+  "name": "@nexus-ai-fs/pay",
   "version": "0.1.0",
   "description": "TypeScript SDK for Nexus Pay — agent payment API",
   "type": "module",
@@ -23,15 +23,23 @@
     "README.md"
   ],
   "scripts": {
+    "build:api-client": "sh -c 'test -d ../nexus-api-client/node_modules || npm --prefix ../nexus-api-client ci; npm --prefix ../nexus-api-client run build'",
+    "prebuild": "npm run build:api-client",
     "build": "tsup",
+    "pretest": "npm run build:api-client",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "vitest run tests/e2e.test.ts",
+    "prelint": "npm run build:api-client",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@nexus-ai-fs/api-client": "file:../nexus-api-client"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

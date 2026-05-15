@@ -1,0 +1,241 @@
+name: Conda Pack
+
+# Build a self-contained conda environment tarball for each platform.
+# Triggered by the same v* tags as release.yml, runs in parallel.
+# Artifacts are attached to the GitHub Release created by release.yml.
+# softprops/action-gh-release@v2 safely updates an existing release,
+# so there is no conflict between this workflow and release.yml.
+#
+# Build order per runner:
+#   1. Create nexus conda env (Python 3.14)
+#   2. Rust toolchain + (macOS) pinned protoc 3.20.3
+#   3. pip install . (pdf-inspector builds from sdist against pyo3-ffi)
+#   4. Compile nexus-cdylib (rust/nexus-cdylib) via maturin — composes
+#      kernel + lib + raft rlibs; Metastore / ZoneManager are exposed
+#      from nexus_runtime
+#   5. pip install nexus-kernel wheel into the nexus env (skipped on Windows)
+#   6. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+# pdf-inspector ships PyO3 0.22.6 in its sdist; that release caps at
+# Python 3.13 and only accepts 3.14 when we opt into abi3 forward-
+# compatibility. pyproject.toml's core deps document the requirement.
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
+jobs:
+  conda-pack:
+    name: conda-pack / ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90        # Rust compilation can be slow on macOS/Windows runners
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # kernel (shm_pipe/shm_stream) uses POSIX-only APIs (fcntl, pipe,
+          # O_NONBLOCK) that do not exist on Windows. That wheel is skipped on
+          # Windows via `if: matrix.os != 'windows-latest'` below.
+          - os: windows-latest
+            artifact_name: nexus-windows-x86_64
+
+          # Intel Mac (x86_64) — matches the runner used in release.yml
+          - os: macos-15-intel
+            artifact_name: nexus-macos-x86_64
+
+          # Apple Silicon (arm64)
+          - os: macos-14
+            artifact_name: nexus-macos-arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Python / Conda ────────────────────────────────────────────────────
+      # Sets up Miniconda and configures bash as a login shell with conda
+      # initialized. All subsequent steps that touch conda must use
+      # `shell: bash -el {0}` to inherit this environment.
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniconda-version: latest
+          auto-activate-base: true
+          activate-environment: ""
+          channels: conda-forge,defaults
+          channel-priority: strict
+
+      - name: Create nexus conda environment (Python 3.14)
+        shell: bash -el {0}
+        run: |
+          conda create -n nexus python=3.14 -y
+
+      # ── Rust toolchain ────────────────────────────────────────────────────
+      # Must come BEFORE `pip install .` because pdf-inspector's sdist has
+      # no cp314 wheel and builds from source against pyo3-ffi. Reads the
+      # required toolchain version from rust-toolchain.toml automatically.
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Add rustfmt and clippy components
+        shell: bash -el {0}
+        run: rustup component add rustfmt clippy
+
+      # Cache compiled Rust artifacts across runs to speed up re-builds.
+      - name: Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: conda-pack-rust-${{ matrix.os }}
+          workspaces: |
+            rust/kernel
+
+      # ── protoc for raft-proto transitive build script ────────────────────
+      # rust/kernel pulls in raft → raft-proto, whose build script uses
+      # protobuf-build 0.14.1 and only accepts classic 3.x protoc. brew's
+      # current `protobuf` formula ships 34.x which is rejected, so pin
+      # a late 3.x release and prepend it to PATH. 3.20.2 (not 3.20.3)
+      # is the last 3.x release whose GitHub assets include an arm64
+      # macOS zip — 3.20.3 shipped x86_64 only, so `osx-aarch_64.zip`
+      # 404s on macos-14.
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          PROTOC_VERSION=3.20.2
+          case "$(uname -m)" in
+            arm64) ARCH=aarch_64 ;;
+            x86_64) ARCH=x86_64 ;;
+            *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          mkdir -p "$HOME/protoc"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-${ARCH}.zip"
+          unzip -o /tmp/protoc.zip -d "$HOME/protoc"
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+          "$HOME/protoc/bin/protoc" --version
+
+      - name: Install project into nexus environment
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus pip install .
+
+      # ── maturin builds ───────────────────────────────────────────────────
+      # Install maturin inside the nexus env so it automatically uses the
+      # correct Python interpreter when building the extension modules.
+      - name: Install maturin into nexus environment
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus pip install maturin
+
+      # Skipped on Windows: shm_pipe.rs / shm_stream.rs use POSIX-only APIs.
+      # Phase 0: the wheel-producing crate is `rust/nexus-cdylib/` — kernel
+      # is rlib-only now. nexus-cdylib composes kernel + lib + raft into
+      # the single `nexus_runtime` wheel; Metastore / ZoneManager are
+      # exposed from `nexus_runtime` directly (no separate raft wheel).
+      - name: Build nexus-kernel wheel  (rust/nexus-cdylib)
+        if: matrix.os != 'windows-latest'
+        shell: bash -el {0}
+        run: |
+          mkdir -p build/dist
+          conda run -n nexus maturin build --release \
+            --out build/dist \
+            -m rust/nexus-cdylib/Cargo.toml
+
+      # ── Install wheels into the nexus env ────────────────────────────────
+      - name: Install Rust wheels into nexus environment
+        if: matrix.os != 'windows-latest'
+        shell: bash -el {0}
+        run: |
+          echo "=== Built wheels ==="
+          ls -lh build/dist/
+          conda run -n nexus pip install build/dist/*.whl
+
+      - name: Verify kernel extension in nexus environment
+        if: matrix.os != 'windows-latest'
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus python -c "from nexus_runtime import PyMetaStore; print('nexus_runtime OK')"
+
+      # ── conda-pack ───────────────────────────────────────────────────────
+      - name: Install conda-pack into base environment
+        shell: bash -el {0}
+        run: |
+          conda install -n base -c conda-forge conda-pack -y
+
+      # ── macOS: strip & ad-hoc re-sign all dylibs/so ──────────────────────────
+      # conda-forge signs its libraries with its own Team ID. When sudowork later
+      # re-signs the packed tarball with the developer certificate, any file that
+      # fails to re-sign retains the conda-forge Team ID while others get the new
+      # one — causing "different Team IDs" dlopen failures on the user's machine.
+      # Stripping and applying a uniform ad-hoc signature here ensures all native
+      # libraries start from a consistent (signerless) state before sudowork signs.
+      - name: Strip and ad-hoc sign dylibs/so (macOS only)
+        if: runner.os == 'macOS'
+        shell: bash -el {0}
+        run: |
+          CONDA_ENV_PREFIX=$(conda run -n nexus python -c "import sys; print(sys.prefix)")
+          echo "Stripping and ad-hoc signing native libraries in: ${CONDA_ENV_PREFIX}"
+          SIGNED=0
+          FAILED=0
+          while IFS= read -r -d '' f; do
+            codesign --remove-signature "$f" 2>/dev/null || true
+            if codesign --force --sign - "$f" 2>/dev/null; then
+              SIGNED=$((SIGNED + 1))
+            else
+              echo "  WARNING: could not ad-hoc sign: $f"
+              FAILED=$((FAILED + 1))
+            fi
+          done < <(find "$CONDA_ENV_PREFIX" \( -name "*.dylib" -o -name "*.so" \) -print0)
+          echo "Ad-hoc signed ${SIGNED} file(s), ${FAILED} failure(s)"
+
+      - name: Pack nexus environment
+        shell: bash -el {0}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          OUTPUT="${{ matrix.artifact_name }}.tar.gz"
+
+          # Write a VERSION file into the conda env so users know what
+          # version they downloaded after extraction.
+          CONDA_ENV_PREFIX=$(conda run -n nexus python -c "import sys; print(sys.prefix)")
+          echo "${VERSION}" > "${CONDA_ENV_PREFIX}/VERSION"
+
+          echo "Packing environment to: ${OUTPUT}  (version: ${VERSION})"
+          conda-pack -n nexus -o "${OUTPUT}"
+          ls -lh "${OUTPUT}"
+
+      - name: Upload packed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.tar.gz
+          if-no-files-found: error
+
+  # ── Attach to GitHub Release ──────────────────────────────────────────────
+  # Runs after all three conda-pack jobs succeed. The release itself is
+  # created by release.yml — this job simply appends the three tarballs.
+  attach-to-release:
+    name: Attach conda packs to GitHub Release
+    needs: conda-pack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all conda-pack artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded files
+        run: find artifacts -type f | sort
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

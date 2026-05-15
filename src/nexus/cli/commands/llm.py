@@ -1,13 +1,21 @@
-"""LLM-powered document reading commands."""
+"""LLM commands — start streaming LLM calls via kernel DT_STREAM.
+
+Usage::
+
+    nexus llm "What is 2+2?" --model gpt-4o
+    nexus llm "Summarize this file" --model gpt-4o --stream-path /root/llm/.streams/my-session
+"""
+
+from __future__ import annotations
 
 import asyncio
+import json
 import sys
-from typing import Any
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -16,284 +24,141 @@ from nexus.cli.utils import (
 
 
 def register_commands(cli: click.Group) -> None:
-    """Register LLM commands."""
+    """Register all LLM commands."""
     cli.add_command(llm)
 
 
-@click.group()
-def llm() -> None:
-    """LLM-powered document operations.
-
-    Use AI to read, analyze, and answer questions about documents.
-    """
-    pass
-
-
-@llm.command()
-@click.argument("path", type=str)
+@click.command()
 @click.argument("prompt", type=str)
 @click.option(
+    "-m",
     "--model",
-    default="claude-sonnet-4",
-    help="LLM model to use (default: claude-sonnet-4)",
-    show_default=True,
+    type=str,
+    default=None,
+    help="Model name (e.g. gpt-4o, gpt-4o-mini). Uses backend default if not set.",
 )
 @click.option(
-    "--max-tokens",
-    default=1000,
-    type=int,
-    help="Maximum tokens in response",
-    show_default=True,
+    "--stream-path",
+    type=str,
+    default=None,
+    help="VFS path for the DT_STREAM. Auto-generated if not set.",
 )
 @click.option(
-    "--api-key",
-    envvar="API_KEY",  # Will check multiple env vars below
-    help="API key for LLM provider (or set ANTHROPIC_API_KEY/OPENAI_API_KEY/OPENROUTER_API_KEY)",
-)
-@click.option(
-    "--no-search",
+    "--no-stream",
     is_flag=True,
-    help="Disable semantic search (read entire document)",
+    help="Don't read streaming tokens; just print the stream path and exit.",
 )
-@click.option(
-    "--search-mode",
-    type=click.Choice(["semantic", "keyword", "hybrid"]),
-    default="semantic",
-    help="Search mode for context retrieval",
-    show_default=True,
-)
-@click.option(
-    "--stream",
-    is_flag=True,
-    help="Stream the response (show output as it's generated)",
-)
-@click.option(
-    "--detailed",
-    is_flag=True,
-    help="Show detailed output with citations and metadata",
-)
+@add_output_options
 @add_backend_options
-def read(
-    path: str,
+def llm(
     prompt: str,
-    model: str,
-    max_tokens: int,
-    api_key: str | None,
-    no_search: bool,
-    search_mode: str,
-    stream: bool,
-    detailed: bool,
-    backend_config: BackendConfig,
+    model: str | None,
+    stream_path: str | None,
+    no_stream: bool,
+    output_opts: "OutputOptions",
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
-    """Read and analyze documents with LLM.
+    """Start a streaming LLM call.
 
-    Ask questions about documents and get AI-powered answers with citations.
+    Sends a prompt to the mounted LLM backend and streams tokens back
+    via a kernel DT_STREAM.
 
-    PATH: Document path or glob pattern (e.g., /report.pdf or /docs/**/*.md)
-
-    PROMPT: Your question or instruction
-
+    \b
     Examples:
-
-        # Ask a question about a single document
-        nexus llm read /reports/q4.pdf "What were the top 3 challenges?"
-
-        # Query multiple documents
-        nexus llm read "/docs/**/*.md" "How does authentication work?"
-
-        # Use a different model
-        nexus llm read /report.pdf "Summarize this" --model gpt-4o
-
-        # Stream the response
-        nexus llm read /long-report.pdf "Analyze trends" --stream
-
-        # Show detailed output with citations
-        nexus llm read /docs/**/*.md "Explain the API" --detailed
-
-        # Disable semantic search (read full document)
-        nexus llm read /report.txt "Summarize" --no-search
-
-        # Use keyword search instead of semantic
-        nexus llm read /docs/**/*.md "API endpoints" --search-mode keyword
+        nexus llm "What is 2+2?"
+        nexus llm "Explain quantum computing" --model gpt-4o
+        nexus llm "Hello" --no-stream
     """
-    try:
-        nx = get_filesystem(backend_config)
 
-        # Auto-detect API key from environment if not provided
-        if not api_key:
-            import os
+    async def _impl() -> None:
+        try:
+            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+        except Exception as e:
+            handle_error(e)
+            return
 
-            api_key = (
-                os.getenv("OPENROUTER_API_KEY")
-                or os.getenv("ANTHROPIC_API_KEY")
-                or os.getenv("OPENAI_API_KEY")
-            )
+        import uuid
 
-        # Run async function
-        if stream:
-            asyncio.run(
-                _read_stream(
-                    nx=nx,
-                    path=path,
-                    prompt=prompt,
-                    model=model,
-                    max_tokens=max_tokens,
-                    api_key=api_key,
-                    use_search=not no_search,
-                    search_mode=search_mode,
+        # Build request
+        messages = [{"role": "user", "content": prompt}]
+        request: dict = {"messages": messages}
+        if model:
+            request["model"] = model
+
+        # Generate stream path if not provided
+        _stream_path = stream_path or f"/root/llm/.streams/{uuid.uuid4().hex[:12]}"
+
+        try:
+            # Rust-kernel-owned streaming. `nx.llm_start_streaming` blocks
+            # the worker thread until the SSE completes, so we wrap it in
+            # `asyncio.to_thread` to keep the event loop free for readers.
+            request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
+            llm_mount = "/llm" if _stream_path.startswith("/llm") else "/root/llm"
+            _task = asyncio.create_task(
+                asyncio.to_thread(
+                    nx._kernel.llm_start_streaming,
+                    llm_mount,
+                    "root",
+                    request_bytes,
+                    _stream_path,
                 )
             )
-        elif detailed:
-            asyncio.run(
-                _read_detailed(
-                    nx=nx,
-                    path=path,
-                    prompt=prompt,
-                    model=model,
-                    max_tokens=max_tokens,
-                    api_key=api_key,
-                    use_search=not no_search,
-                    search_mode=search_mode,
+            # Small sleep to let the stream register before we tail-read.
+            await asyncio.sleep(0)
+            result = {"stream_path": _stream_path, "status": "streaming"}
+        except Exception as e:
+            handle_error(e)
+            return
+
+        if no_stream or getattr(output_opts, "json_output", False):
+            # Just print the result and exit
+            if getattr(output_opts, "json_output", False):
+                click.echo(json.dumps(result, indent=2))
+            else:
+                console.print("[nexus.success]Stream started[/nexus.success]")
+                console.print(f"  Stream path: {result.get('stream_path', _stream_path)}")
+                console.print(f"  Status:      {result.get('status', 'unknown')}")
+                console.print(
+                    f"\n  Read tokens:  nexus cat {result.get('stream_path', _stream_path)}"
                 )
-            )
-        else:
-            asyncio.run(
-                _read_simple(
-                    nx=nx,
-                    path=path,
-                    prompt=prompt,
-                    model=model,
-                    max_tokens=max_tokens,
-                    api_key=api_key,
-                    use_search=not no_search,
-                    search_mode=search_mode,
+            return
+
+        # Stream tokens in real-time
+        actual_path = result.get("stream_path", _stream_path)
+        while True:
+            try:
+                data = nx.sys_read(actual_path, context=None)
+                if not data:
+                    break
+                text = (
+                    data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
                 )
-            )
 
-        nx.close()
-    except Exception as e:
-        handle_error(e)
+                # Check for control messages
+                if text.startswith("{"):
+                    try:
+                        msg = json.loads(text)
+                        if msg.get("type") == "done":
+                            sys.stdout.write("\n")
+                            sys.stdout.flush()
+                            _model = msg.get("model", "unknown")
+                            _latency = msg.get("latency_ms", 0)
+                            console.print(f"\n[dim]model={_model} latency={_latency}ms[/dim]")
+                            break
+                        if msg.get("type") == "error":
+                            console.print(
+                                f"\n[nexus.error]Error:[/nexus.error] {msg.get('message')}"
+                            )
+                            break
+                    except json.JSONDecodeError:
+                        sys.stdout.write(text)
+                        sys.stdout.flush()
+                else:
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+            except Exception:
+                # Stream closed or read error — done
+                break
 
-
-async def _read_simple(
-    nx: Any,
-    path: str,
-    prompt: str,
-    model: str,
-    max_tokens: int,
-    api_key: str | None,
-    use_search: bool,
-    search_mode: str,
-) -> None:
-    """Simple read - just print the answer."""
-    console.print(f"[cyan]Reading:[/cyan] {path}")
-    console.print(f"[cyan]Question:[/cyan] {prompt}")
-    console.print()
-
-    answer = await nx.llm_read(
-        path=path,
-        prompt=prompt,
-        model=model,
-        max_tokens=max_tokens,
-        api_key=api_key,
-        use_search=use_search,
-        search_mode=search_mode,
-    )
-
-    console.print("[green]Answer:[/green]")
-    console.print(answer)
-
-
-async def _read_detailed(
-    nx: Any,
-    path: str,
-    prompt: str,
-    model: str,
-    max_tokens: int,
-    api_key: str | None,
-    use_search: bool,
-    search_mode: str,
-) -> None:
-    """Detailed read - show answer with citations and metadata."""
-    console.print(f"[cyan]Reading:[/cyan] {path}")
-    console.print(f"[cyan]Question:[/cyan] {prompt}")
-    console.print()
-
-    with console.status("[bold cyan]Processing..."):
-        result = await nx.llm_read_detailed(
-            path=path,
-            prompt=prompt,
-            model=model,
-            max_tokens=max_tokens,
-            api_key=api_key,
-            use_search=use_search,
-            search_mode=search_mode,
-        )
-
-    # Print answer
-    console.print("[green]Answer:[/green]")
-    console.print(result.answer)
-    console.print()
-
-    # Print sources
-    console.print(f"[yellow]Sources ({len(result.sources)}):[/yellow]")
-    for source in result.sources:
-        console.print(f"  • {source}")
-    console.print()
-
-    # Print citations if available
-    if result.citations:
-        console.print(f"[yellow]Citations ({len(result.citations)}):[/yellow]")
-        for i, citation in enumerate(result.citations[:10], start=1):  # Show first 10
-            score_str = f" (score: {citation.score:.2f})" if citation.score else ""
-            chunk_str = (
-                f" [chunk {citation.chunk_index}]" if citation.chunk_index is not None else ""
-            )
-            console.print(f"  {i}. {citation.path}{chunk_str}{score_str}")
-        if len(result.citations) > 10:
-            console.print(f"  ... and {len(result.citations) - 10} more")
-        console.print()
-
-    # Print metadata
-    console.print("[yellow]Metadata:[/yellow]")
-    if result.tokens_used:
-        console.print(f"  Tokens: {result.tokens_used:,}")
-    if result.cost:
-        console.print(f"  Cost: ${result.cost:.4f}")
-    if result.cached:
-        console.print("  [green]Cached response[/green]")
-        if result.cache_savings:
-            console.print(f"  Cache savings: ${result.cache_savings:.4f}")
-
-
-async def _read_stream(
-    nx: Any,
-    path: str,
-    prompt: str,
-    model: str,
-    max_tokens: int,
-    api_key: str | None,
-    use_search: bool,
-    search_mode: str,
-) -> None:
-    """Stream read - show response as it's generated."""
-    console.print(f"[cyan]Reading:[/cyan] {path}")
-    console.print(f"[cyan]Question:[/cyan] {prompt}")
-    console.print()
-    console.print("[green]Answer:[/green]")
-
-    async for chunk in nx.llm_read_stream(
-        path=path,
-        prompt=prompt,
-        model=model,
-        max_tokens=max_tokens,
-        api_key=api_key,
-        use_search=use_search,
-        search_mode=search_mode,
-    ):
-        # Print chunk without newline
-        sys.stdout.write(chunk)
-        sys.stdout.flush()
-
-    # Final newline
-    print()
+    asyncio.run(_impl())

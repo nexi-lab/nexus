@@ -264,16 +264,19 @@ def run_sync(
         Exception: Any exception raised by the coroutine is re-raised.
     """
     try:
-        asyncio.get_running_loop()
-        # We are inside an async context (e.g. a sync function called
-        # from a FastAPI threadpool worker while the main loop runs).
-        # Cannot use asyncio.run() — submit to the background loop.
-        bg_loop = _ensure_background_loop()
-        future = asyncio.run_coroutine_threadsafe(coro, bg_loop)
-        return future.result(timeout=timeout)
+        loop = asyncio.get_running_loop()  # noqa: F841 — used only as sentinel
     except RuntimeError:
         # No running event loop → safe to use asyncio.run().
+        if timeout is not None:
+            return asyncio.run(asyncio.wait_for(coro, timeout=timeout))
         return asyncio.run(coro)
+
+    # We are inside an async context (e.g. a sync function called
+    # from a FastAPI threadpool worker while the main loop runs).
+    # Cannot use asyncio.run() — submit to the background loop.
+    bg_loop = _ensure_background_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, bg_loop)
+    return future.result(timeout=timeout)
 
 
 def fire_and_forget(coro: Coroutine[Any, Any, Any]) -> None:

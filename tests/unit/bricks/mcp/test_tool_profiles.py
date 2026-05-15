@@ -443,7 +443,17 @@ class TestDefaultConfigValidity:
             }
         )
         server = create_mcp_server(nx=mock_nx)
-        registered_tools = set(server._tool_manager._tools.keys())
+        # FastMCP 2.x used per-type managers (``_tool_manager._tools``) but
+        # 3.x replaced them with a single ``_local_provider._components``
+        # registry keyed by ``"tool:<name>@..."``. Support both.
+        if hasattr(server, "_local_provider"):
+            registered_tools = {
+                c.name
+                for k, c in server._local_provider._components.items()
+                if k.startswith("tool:")
+            }
+        else:
+            registered_tools = set(server._tool_manager._tools.keys())
 
         # Check all non-optional profile tool names exist
         missing_tools: dict[str, list[str]] = {}

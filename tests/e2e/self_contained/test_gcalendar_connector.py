@@ -3,8 +3,8 @@
 Tests the Calendar connector end-to-end including:
 - Schema validation
 - Trait-based validation
-- Error formatting with SKILL.md references
-- SKILL.md auto-generation
+- Error formatting with README.md references
+- README.md auto-generation
 - YAML parsing
 
 Note: These tests mock the Google Calendar API since we can't
@@ -24,12 +24,9 @@ from nexus.backends.connectors.calendar.schemas import (
     TimeSlot,
     UpdateEventSchema,
 )
-from nexus.backends.local import LocalBackend
+from nexus.backends.connectors.calendar.transport import CalendarTransport
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
-from nexus.core.config import PermissionConfig
-from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ============================================================================
 # FIXTURES
@@ -87,19 +84,19 @@ def mock_calendar_service():
 @pytest.fixture
 def calendar_backend(mock_calendar_service, tmp_path):
     """Create a Calendar backend with mocked Google service."""
-    from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
+    from nexus.backends.connectors.calendar.connector import PathCalendarBackend
 
     # Create a mock token manager
     with patch(
-        "nexus.backends.gcalendar_connector.GoogleCalendarConnectorBackend._register_oauth_provider"
+        "nexus.backends.connectors.calendar.connector.PathCalendarBackend._register_oauth_provider"
     ):
-        backend = GoogleCalendarConnectorBackend(
+        backend = PathCalendarBackend(
             token_manager_db=str(tmp_path / "tokens.db"),
             user_email="test@example.com",
         )
 
-    # Replace _get_calendar_service to return our mock
-    backend._get_calendar_service = MagicMock(return_value=mock_calendar_service)
+    # Replace _get_calendar_service on the transport (OAuth calls)
+    backend._cal_transport._get_calendar_service = MagicMock(return_value=mock_calendar_service)
 
     return backend
 
@@ -110,7 +107,7 @@ def operation_context():
     return OperationContext(
         user_id="test@example.com",
         groups=[],
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
     )
 
 
@@ -219,7 +216,7 @@ class TestTraitValidation:
             calendar_backend.validate_traits("create_event", data)
 
         assert exc_info.value.code == "MISSING_AGENT_INTENT"
-        assert "SKILL.md" in str(exc_info.value)
+        assert "README.md" in str(exc_info.value)
 
     def test_delete_requires_explicit_confirm(self, calendar_backend):
         """Test that delete_event requires confirm=true."""
@@ -258,12 +255,12 @@ class TestTraitValidation:
 # ============================================================================
 
 
-class TestSkillDocGeneration:
-    """Test SKILL.md auto-generation."""
+class TestReadmeDocGeneration:
+    """Test README.md auto-generation."""
 
-    def test_generate_skill_doc(self, calendar_backend):
-        """Test that SKILL.md is generated correctly."""
-        doc = calendar_backend.generate_skill_doc("/mnt/calendar/")
+    def test_generate_readme(self, calendar_backend):
+        """Test that README.md is generated correctly."""
+        doc = calendar_backend.generate_readme("/mnt/calendar/")
 
         # Check header
         assert "# Gcalendar Connector" in doc
@@ -284,38 +281,13 @@ class TestSkillDocGeneration:
         assert "## Error Codes" in doc
         assert "MISSING_AGENT_INTENT" in doc
 
-    def test_skill_doc_includes_examples(self, calendar_backend):
-        """Test that SKILL.md includes YAML examples."""
-        doc = calendar_backend.generate_skill_doc("/mnt/calendar/")
+    def test_readme_doc_includes_examples(self, calendar_backend):
+        """Test that README.md includes YAML examples."""
+        doc = calendar_backend.generate_readme("/mnt/calendar/")
 
         # Should include YAML code blocks
         assert "```yaml" in doc
         assert "# agent_intent:" in doc
-
-    def test_write_skill_docs(self, calendar_backend, isolated_db, tmp_path):
-        """Test writing SKILL.md to filesystem."""
-        # Create a real NexusFS for writing
-        backend = LocalBackend(root_path=str(tmp_path / "storage"))
-        nx = create_nexus_fs(
-            backend=backend,
-            metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
-            record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
-            permissions=PermissionConfig(enforce=False),
-        )
-
-        try:
-            # Write SKILL.md
-            result = calendar_backend.write_skill_docs("/mnt/calendar/", filesystem=nx)
-            assert isinstance(result, dict)
-            skill_path = result.get("skill_md")
-
-            if skill_path:
-                # Read back and verify
-                content = nx.sys_read(skill_path)
-                assert b"Gcalendar Connector" in content
-                assert b"agent_intent" in content
-        finally:
-            nx.close()
 
 
 # ============================================================================
@@ -339,7 +311,7 @@ end:
   timeZone: America/Los_Angeles
 """
 
-        data = calendar_backend._parse_yaml_content(content)
+        data = CalendarTransport._parse_yaml_content(content)
 
         assert data["agent_intent"] == "User wants to create a team meeting"
         assert data["confirm"] is True
@@ -353,7 +325,7 @@ start:
   dateTime: "2024-01-15T09:00:00-08:00"
 """
 
-        data = calendar_backend._parse_yaml_content(content)
+        data = CalendarTransport._parse_yaml_content(content)
 
         assert "agent_intent" in data
         assert "weekly standup" in data["agent_intent"].lower()
@@ -365,11 +337,11 @@ start:
 
 
 class TestErrorFormatting:
-    """Test error message formatting with SKILL.md references."""
+    """Test error message formatting with README.md references."""
 
-    def test_error_includes_skill_path(self, calendar_backend):
-        """Test that errors include SKILL.md path."""
-        # Set mount path so skill_md_path is computed correctly
+    def test_error_includes_readme_path(self, calendar_backend):
+        """Test that errors include README.md path."""
+        # Set mount path so readme_md_path is computed correctly
         calendar_backend.set_mount_path("/mnt/calendar")
 
         error = calendar_backend.format_error_with_skill_ref(
@@ -377,7 +349,7 @@ class TestErrorFormatting:
             message="Missing required field",
         )
 
-        assert "/mnt/calendar/.skill/SKILL.md" in str(error)
+        assert "/mnt/calendar/.readme/README.md" in str(error)
 
     def test_error_includes_section_anchor(self, calendar_backend):
         """Test that errors include section anchor."""
@@ -423,9 +395,9 @@ end:
         # Set backend path in context
         operation_context.backend_path = "primary/_new.yaml"
 
-        response = calendar_backend.write_content(content, operation_context)
+        response = calendar_backend.write_content(content, context=operation_context)
 
-        assert response.content_hash == "test_event_123"
+        assert response.content_id == "test_event_123"
 
     def test_update_event_success(self, calendar_backend, operation_context):
         """Test successful event update."""
@@ -435,23 +407,25 @@ summary: Updated Project Discussion
 
         operation_context.backend_path = "primary/test_event_123.yaml"
 
-        response = calendar_backend.write_content(content, operation_context)
+        response = calendar_backend.write_content(content, context=operation_context)
 
-        assert response.content_hash == "updated"
+        assert response.content_id == "updated"
 
     def test_list_calendars(self, calendar_backend, operation_context):
         """Test listing calendars."""
-        calendars = calendar_backend._list_calendars(operation_context)
+        calendars = calendar_backend.list_dir("", context=operation_context)
 
         assert "primary/" in calendars
         assert len(calendars) >= 1
 
     def test_list_events(self, calendar_backend, operation_context):
         """Test listing events in a calendar."""
-        events = calendar_backend._list_events("primary", operation_context)
+        events = calendar_backend.list_dir("primary", context=operation_context)
 
-        assert "event1.yaml" in events
-        assert "event2.yaml" in events
+        # Human-readable key format: "{summary-slug}__{eventId}.yaml".
+        # Events are ordered newest-first by default (reverse-chronological).
+        assert any(e.endswith("__event1.yaml") for e in events)
+        assert any(e.endswith("__event2.yaml") for e in events)
 
 
 # ============================================================================

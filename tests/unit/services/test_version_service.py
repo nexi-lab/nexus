@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.versioning.version_service import VersionService
+from nexus.bricks.versioning.version_service import VersionService
 
 
 class TestVersionServiceInit:
@@ -244,9 +244,9 @@ class TestVersionServiceRollback:
         )
 
     @pytest.mark.asyncio
-    async def test_rollback_requires_router(self, service, operation_context):
-        """Test that rollback requires router to be configured."""
-        with pytest.raises(RuntimeError, match="Router not configured"):
+    async def test_rollback_requires_dlc(self, service, operation_context):
+        """Test that rollback requires DLC to be configured."""
+        with pytest.raises(RuntimeError, match="DLC not configured"):
             await service.rollback(
                 path="/test.txt",
                 version=2,
@@ -465,7 +465,7 @@ class TestVersionServiceHelpers:
 #         """Create real metadata store."""
 #         from nexus.storage.raft_metadata_store import RaftMetadataStore
 #
-#         store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft"))
+#         store = str(isolated_db).replace(".db", "-raft")
 #         yield store
 #         store.close()
 #

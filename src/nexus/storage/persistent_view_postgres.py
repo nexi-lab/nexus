@@ -15,9 +15,10 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.persistent_view import PersistentView
@@ -66,6 +67,29 @@ _DELETE_ALL = text("""
     DELETE FROM persistent_namespace_views
 """)
 
+_CREATE_TABLE = text("""
+    CREATE TABLE IF NOT EXISTS persistent_namespace_views (
+        id              VARCHAR(36)  PRIMARY KEY NOT NULL,
+        subject_type    VARCHAR(50)  NOT NULL,
+        subject_id      VARCHAR(255) NOT NULL,
+        zone_id         VARCHAR(255) NOT NULL DEFAULT 'root',
+        mount_paths_json TEXT        NOT NULL,
+        grants_hash     VARCHAR(16)  NOT NULL,
+        revision_bucket INTEGER      NOT NULL,
+        created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (subject_type, subject_id, zone_id)
+    )
+""")
+
+
+def _is_missing_view_table_error(exc: OperationalError) -> bool:
+    """Return whether an OperationalError means the view table is absent."""
+    message = str(exc).lower()
+    return "persistent_namespace_views" in message and (
+        "no such table" in message or "does not exist" in message or "undefinedtable" in message
+    )
+
 
 class PostgresPersistentViewStore:
     """PostgreSQL-backed persistent namespace view store.
@@ -76,6 +100,26 @@ class PostgresPersistentViewStore:
 
     def __init__(self, record_store: "RecordStoreProtocol") -> None:
         self._engine = record_store.engine
+        self._ensure_table(self._engine)
+
+    @staticmethod
+    def _ensure_table(engine: "Any") -> None:
+        """Create the persistent_namespace_views table if it does not exist.
+
+        This replaces the former ORM model (PersistentNamespaceViewModel)
+        that was removed in the dead-ORM cleanup.  Using raw DDL keeps the
+        store fully ORM-free while guaranteeing the table exists for both
+        production (Alembic-managed) and test (in-memory SQLite) scenarios.
+        """
+        with engine.begin() as conn:
+            conn.execute(_CREATE_TABLE)
+
+    def _recover_missing_table(self, exc: OperationalError) -> bool:
+        if not _is_missing_view_table_error(exc):
+            return False
+        logger.warning("[L3] persistent_namespace_views table missing; recreating before retry")
+        self._ensure_table(self._engine)
+        return True
 
     def save_view(
         self,
@@ -97,20 +141,28 @@ class PostgresPersistentViewStore:
             "zone_id": effective_zone,
         }
 
-        with self._engine.begin() as conn:
-            conn.execute(_DELETE_EXACT, params)
-            conn.execute(
-                _INSERT_VIEW,
-                {
-                    **params,
-                    "id": view_id,
-                    "mount_paths_json": json.dumps(mount_paths),
-                    "grants_hash": grants_hash,
-                    "revision_bucket": revision_bucket,
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
+        def _save_once() -> None:
+            with self._engine.begin() as conn:
+                conn.execute(_DELETE_EXACT, params)
+                conn.execute(
+                    _INSERT_VIEW,
+                    {
+                        **params,
+                        "id": view_id,
+                        "mount_paths_json": json.dumps(mount_paths),
+                        "grants_hash": grants_hash,
+                        "revision_bucket": revision_bucket,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+
+        try:
+            _save_once()
+        except OperationalError as exc:
+            if not self._recover_missing_table(exc):
+                raise
+            _save_once()
 
     def load_view(
         self,
@@ -121,16 +173,22 @@ class PostgresPersistentViewStore:
         """Load a persisted namespace view."""
         effective_zone = zone_id or ROOT_ZONE_ID
 
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                _LOAD_VIEW,
-                {
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                    "zone_id": effective_zone,
-                },
-            )
-            row = result.fetchone()
+        params = {
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "zone_id": effective_zone,
+        }
+
+        try:
+            with self._engine.connect() as conn:
+                result = conn.execute(_LOAD_VIEW, params)
+                row = result.fetchone()
+        except OperationalError as exc:
+            if not self._recover_missing_table(exc):
+                raise
+            with self._engine.connect() as conn:
+                result = conn.execute(_LOAD_VIEW, params)
+                row = result.fetchone()
 
         if row is None:
             return None
@@ -162,18 +220,26 @@ class PostgresPersistentViewStore:
         subject_id: str,
     ) -> int:
         """Delete all persisted views for a subject (all zones)."""
-        with self._engine.begin() as conn:
-            result = conn.execute(
-                _DELETE_SUBJECT,
-                {
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                },
-            )
-            return result.rowcount or 0
+        params = {
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+        }
+        try:
+            with self._engine.begin() as conn:
+                result = conn.execute(_DELETE_SUBJECT, params)
+                return result.rowcount or 0
+        except OperationalError as exc:
+            if not self._recover_missing_table(exc):
+                raise
+            return 0
 
     def delete_all_views(self) -> int:
         """Delete all persisted views across all subjects and zones."""
-        with self._engine.begin() as conn:
-            result = conn.execute(_DELETE_ALL)
-            return result.rowcount or 0
+        try:
+            with self._engine.begin() as conn:
+                result = conn.execute(_DELETE_ALL)
+                return result.rowcount or 0
+        except OperationalError as exc:
+            if not self._recover_missing_table(exc):
+                raise
+            return 0

@@ -24,6 +24,7 @@ class AsyncAdminClient:
         expires_days: int | None = None,
         subject_type: str | None = None,
         subject_id: str | None = None,
+        grants: builtins.list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "user_id": user_id,
@@ -37,6 +38,8 @@ class AsyncAdminClient:
             params["subject_type"] = subject_type
         if subject_id is not None:
             params["subject_id"] = subject_id
+        if grants is not None:
+            params["grants"] = grants
         return await self._call_rpc("admin_create_key", params)  # type: ignore[no-any-return]
 
     async def list_keys(

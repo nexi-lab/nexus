@@ -11,7 +11,6 @@ No additional crypto dependencies required.
 """
 
 import logging
-from typing import Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -25,16 +24,7 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-
-class TokenEncryptor(Protocol):
-    """Protocol for Fernet token encryption/decryption.
-
-    Satisfied by OAuthCrypto and any compatible implementation.
-    """
-
-    def encrypt_token(self, token: str) -> str: ...
-    def decrypt_token(self, encrypted: str) -> str: ...
-
+from nexus.contracts.protocols.token_encryptor import TokenEncryptor
 
 logger = logging.getLogger(__name__)
 

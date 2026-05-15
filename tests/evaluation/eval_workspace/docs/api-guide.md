@@ -217,7 +217,7 @@ Configure webhooks to receive real-time notifications for events.
 Official SDKs are available for:
 
 - **Python**: `pip install nexus-sdk`
-- **JavaScript**: `npm install @nexus/sdk`
+- **JavaScript**: `npm install @nexus-ai-fs/sdk`
 - **Go**: `go get github.com/nexus/go-sdk`
 
 ## Support

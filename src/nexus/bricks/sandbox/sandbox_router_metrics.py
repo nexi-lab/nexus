@@ -1,7 +1,7 @@
 """Sandbox router metrics — thread-safe in-process counters (Issue #1317).
 
 Provides lightweight observability for the SandboxRouter without
-external dependencies. Follows the WriteBackMetrics pattern.
+external dependencies.
 
 Features:
     - Per-tier selection counters (monty, docker, e2b)

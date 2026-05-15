@@ -78,8 +78,8 @@ def redaction_server(tmp_path, monkeypatch):
             sys.executable,
             "-c",
             (
-                f"from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                f"from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}', '--init', '--auth-type', 'database'])"
             ),
         ],
@@ -230,8 +230,8 @@ def test_log_redaction_disabled_e2e(tmp_path, monkeypatch) -> None:
             sys.executable,
             "-c",
             (
-                f"from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                f"from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}', '--init', '--auth-type', 'database'])"
             ),
         ],

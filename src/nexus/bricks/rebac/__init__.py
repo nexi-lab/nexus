@@ -20,9 +20,6 @@ from typing import TYPE_CHECKING
 from nexus.contracts.rebac_types import (
     WILDCARD_SUBJECT,
     CheckResult,
-    ConsistencyLevel,
-    ConsistencyMode,
-    ConsistencyRequirement,
     Entity,
     GraphLimitExceeded,
     GraphLimits,
@@ -50,9 +47,6 @@ _LAZY_IMPORTS: dict[str, str] = {
 __all__ = [
     # Types (eagerly loaded from contracts)
     "CheckResult",
-    "ConsistencyLevel",
-    "ConsistencyMode",
-    "ConsistencyRequirement",
     "Entity",
     "GraphLimitExceeded",
     "GraphLimits",

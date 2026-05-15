@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "epic": 4061,
+  "description": "Required nexus-bench workloads and metrics for S3 Files roadmap performance claims.",
+  "claims_require_real_target": true,
+  "real_targets": ["mount", "http"],
+  "smoke_only_targets": ["noop"],
+  "issues": [
+    {
+      "issue": 4053,
+      "title": "Replace nexus-fuse SQLite cache with foyer hybrid",
+      "required_workloads": ["agent-cold-start", "agent-warm-trace"],
+      "primary_metrics": ["cache_hit_rate", "latency_ms.p99", "latency_ms.p95"],
+      "acceptance_claims": [
+        ">=2x hit-rate on agent workload trace",
+        "or >=30% p99 read latency reduction"
+      ],
+      "requires_observability_issue": 4062
+    },
+    {
+      "issue": 4055,
+      "title": "Eager-hydrate small files into L1 cache on workspace attach",
+      "required_workloads": ["agent-cold-start", "agent-warm-trace"],
+      "primary_metrics": ["latency_ms.p50", "latency_ms.p95", "cache_hit_rate"],
+      "acceptance_claims": [">=3x cold-start small-read p50 reduction"],
+      "requires_observability_issue": 4062
+    },
+    {
+      "issue": 4056,
+      "title": "Replace blocking reqwest with async HTTP client",
+      "required_workloads": ["concurrent-reads", "agent-warm-trace"],
+      "primary_metrics": ["throughput.ops_per_sec", "latency_ms.p99"],
+      "acceptance_claims": [
+        ">=2x concurrent-read throughput",
+        "no single-thread latency regression"
+      ],
+      "requires_observability_issue": null
+    },
+    {
+      "issue": 4057,
+      "title": "New nexus-prefetch crate",
+      "required_workloads": ["seq-large-read", "stride-read", "agent-warm-trace"],
+      "primary_metrics": [
+        "throughput.ops_per_sec",
+        "bytes_egress",
+        "nexus_prefetch_issued_bytes_total",
+        "nexus_prefetch_used_bytes_total"
+      ],
+      "acceptance_claims": [
+        "sequential read throughput >=1.5x",
+        "random-stride throughput >=1.3x",
+        "no small random-read regression"
+      ],
+      "requires_observability_issue": 4062
+    },
+    {
+      "issue": 4058,
+      "title": "Implement read batch",
+      "required_workloads": ["metadata-storm", "agent-cold-start"],
+      "primary_metrics": [
+        "throughput.ops_per_sec",
+        "latency_ms.p95",
+        "nexus_read_batch_size"
+      ],
+      "acceptance_claims": ["100-file batch vs 100 sequential reads >=3x faster"],
+      "requires_observability_issue": 4062
+    },
+    {
+      "issue": 4059,
+      "title": "Write coalescing buffer",
+      "required_workloads": ["bursty-write", "read-after-write"],
+      "primary_metrics": [
+        "rpc_count",
+        "latency_ms.p95",
+        "nexus_write_coalesce_flush_total",
+        "nexus_write_backend_rpc_total"
+      ],
+      "acceptance_claims": ["bursty 100-write workload backend RPC count >=10x lower"],
+      "requires_observability_issue": 4062
+    },
+    {
+      "issue": 4060,
+      "title": "FUSE passthrough for large reads",
+      "required_workloads": ["seq-large-read"],
+      "primary_metrics": [
+        "throughput.ops_per_sec",
+        "latency_ms.p99",
+        "nexus_fuse_passthrough_used_total"
+      ],
+      "acceptance_claims": ["1GB sequential read throughput >=2x"],
+      "requires_observability_issue": 4062
+    }
+  ]
+}

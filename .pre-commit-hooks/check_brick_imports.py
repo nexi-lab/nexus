@@ -6,8 +6,8 @@ LEGO Architecture Principle 3: "Bricks don't know about each other"
 and bricks must never import from nexus.core (the kernel).
 
 Bricks communicate with the kernel exclusively through protocols defined
-in core/protocols/ and services/protocols/. Direct imports from nexus.core
-or nexus.services internals are architectural violations. Cross-brick
+in core/protocols/ and contracts/protocols/. Direct imports from nexus.core
+or nexus.services are architectural violations. Cross-brick
 imports (bricks/<X>/ importing from nexus.bricks.<Y>) are also forbidden.
 
 Reference: docs/design/NEXUS-LEGO-ARCHITECTURE.md §1.2, Principle 3
@@ -25,7 +25,7 @@ BRICKS_RELATIVE_PATH = Path("src") / "nexus" / "bricks"
 #   - nexus.core.protocols.*    (kernel protocol interfaces)
 #   - nexus.contracts.cache_store (CacheStoreABC — kernel storage pillar)
 #   - nexus.core.object_store   (ObjectStoreABC — kernel storage pillar)
-#   - nexus.services.protocols.*  (system service protocol interfaces)
+#   - nexus.contracts.protocols.* (service protocol interfaces)
 #   - nexus.storage.*           (storage pillar ABCs + RecordStoreABC)
 #   - Third-party packages
 #   - Same brick (nexus.bricks.<own_brick>.*)
@@ -37,16 +37,20 @@ BRICKS_RELATIVE_PATH = Path("src") / "nexus" / "bricks"
 FORBIDDEN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Direct core imports (excluding protocols and storage-pillar ABCs)
     (
-        re.compile(r"^\s*from\s+nexus\.core(?!\.protocols\b|\.cache_store\b|\.object_store\b)"),
+        re.compile(
+            r"^\s*from\s+nexus\.core(?!\.protocols\b|\.cache_store\b|\.object_store\b|\.path_utils\b|\.nexus_fs\b)"
+        ),
         "nexus.core",
     ),
     (
-        re.compile(r"^\s*import\s+nexus\.core(?!\.protocols\b|\.cache_store\b|\.object_store\b)"),
+        re.compile(
+            r"^\s*import\s+nexus\.core(?!\.protocols\b|\.cache_store\b|\.object_store\b|\.path_utils\b|\.nexus_fs\b)"
+        ),
         "nexus.core",
     ),
-    # Direct services imports (excluding protocols)
-    (re.compile(r"^\s*from\s+nexus\.services(?!\.protocols\b)"), "nexus.services"),
-    (re.compile(r"^\s*import\s+nexus\.services(?!\.protocols\b)"), "nexus.services"),
+    # Direct services imports (protocols moved to contracts/protocols/)
+    (re.compile(r"^\s*from\s+nexus\.services"), "nexus.services"),
+    (re.compile(r"^\s*import\s+nexus\.services"), "nexus.services"),
 ]
 
 # Regex to extract the target brick name from a brick import line
@@ -66,6 +70,14 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ("search", "cache"): [
         "nexus.bricks.search.embeddings",
     ],
+    # search -> rebac: TYPE_CHECKING + lazy imports for permissions (moved from services/)
+    ("search", "rebac"): [
+        "nexus.bricks.search.search_service",
+    ],
+    # search -> memory: lazy imports for MemoryViewRouter (memory path listing)
+    ("search", "memory"): [
+        "nexus.bricks.search.search_service",
+    ],
     # TODO(#2429): Fix a2a->ipc via DI refactoring.
     ("a2a", "ipc"): [
         "nexus.bricks.a2a.messaging_adapters",
@@ -78,6 +90,24 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ("mcp", "discovery"): [
         "nexus.bricks.mcp.server",
     ],
+    # Issue #3790: PolicyGate is exposed via app.state.policy_gate so MCP
+    # middlewares can call gate.check() during egress/zone-access hooks.
+    # mount.py routes SSRF-blocked egress through the gate (Task 18).
+    # connection_manager.py and mcp_service.py thread the gate down to
+    # MCPMountManager (Task 18 follow-up) — TYPE_CHECKING-only annotation.
+    ("mcp", "approvals"): [
+        "nexus.bricks.mcp.server",
+        "nexus.bricks.mcp.mount",
+        "nexus.bricks.mcp.connection_manager",
+        "nexus.bricks.mcp.mcp_service",
+    ],
+    # Issue #3790: ReBACCapabilityAuth uses AuthResult as a type-only hint
+    # (TYPE_CHECKING) for the auth-pipeline boundary it adapts. The runtime
+    # surface is duck-typed via a Protocol — no live coupling to the auth
+    # brick's internals.
+    ("approvals", "auth"): [
+        "nexus.bricks.approvals.grpc_auth",
+    ],
     # TODO(#2429): Fix parsers->sandbox via DI refactoring.
     ("parsers", "sandbox"): [
         "nexus.bricks.parsers.validation.runner",
@@ -88,6 +118,35 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
         "nexus.bricks.memory.coref_resolver",
         "nexus.bricks.memory.relationship_extractor",
     ],
+    # Issue #3793: portability signer raises ArchiveSignatureError which lives in
+    # archive.errors. The portability brick is the foundation layer that archive
+    # extends — signer.py is owned by the archive feature set and references its
+    # own error hierarchy. TODO(#3793): move ArchiveSignatureError to a shared
+    # contracts module when the archive brick is fully stabilised.
+    ("portability", "archive"): [
+        "nexus.bricks.portability.signer",
+        "nexus.bricks.portability.tests.test_signer",
+        # Task 9 (#3793): _check_embedding_compat raises ArchiveEmbeddingDimMismatch.
+        # Task 10 (#3793): _check_target_empty raises ArchiveTargetNotEmpty.
+        # TODO(#3793): move shared archive errors to contracts when archive brick stabilises.
+        "nexus.bricks.portability.import_service",
+        "nexus.bricks.portability.tests.test_import_embedding",
+        "nexus.bricks.portability.tests.test_import_target_guard",
+    ],
+    # Issue #3793 Task 20: archive.verify and archive.cli_glue import from portability
+    # (ArchiveSigner, canonical_json_bytes, ZoneImportService, ZoneImportOptions, TrustStore).
+    # The archive brick is the consumer layer built on top of portability — these are
+    # thin CLI-glue and verifier modules, not brick internals.
+    # TODO(#3793): eliminate when CLI glue moves to nexus.cli.archive after brick stabilises.
+    ("archive", "portability"): [
+        "nexus.bricks.archive.verify",
+        "nexus.bricks.archive.cli_glue",
+        # Orchestrator constructs real ZoneExportOptions to drive ZoneExportService.
+        "nexus.bricks.archive.orchestrator",
+        # Test helpers legitimately import the portability signer to build test fixtures.
+        "nexus.bricks.archive.tests.unit.test_verify",
+        "nexus.bricks.archive.tests.unit.test_orchestrator",
+    ],
 }
 
 # Known exceptions for bricks importing from nexus.core (non-protocol) or
@@ -96,6 +155,11 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
 # TODO(#2429): Fix mcp.server -> nexus.core.filesystem via protocol/DI.
 KNOWN_CORE_EXCEPTIONS: dict[str, list[str]] = {
     "nexus.bricks.mcp.server": ["nexus.core"],
+    # search_service moved from services/ — needs core.metastore, core.router, core.path_utils,
+    # and services.gateway (TYPE_CHECKING + lazy imports)
+    "nexus.bricks.search.search_service": ["nexus.core", "nexus.services"],
+    # dispatch_consumer needs core.pipe + core.pipe_manager for DT_PIPE lifecycle
+    "nexus.bricks.task_manager.dispatch_consumer": ["nexus.core"],
 }
 
 # Lines matching these patterns are not actual imports (comments, strings, etc.)
@@ -279,7 +343,7 @@ def main() -> int:
         print("     nexus.core.protocols.*      (kernel protocol interfaces)")
         print("     nexus.contracts.cache_store  (CacheStoreABC -- storage pillar)")
         print("     nexus.core.object_store     (ObjectStoreABC -- storage pillar)")
-        print("     nexus.services.protocols.*   (system service protocol interfaces)")
+        print("     nexus.contracts.protocols.*  (service protocol interfaces)")
         print("     nexus.storage.*              (RecordStoreABC + storage utilities)")
         print("     nexus.bricks.<own_brick>.*   (same-brick internal imports)")
         print()

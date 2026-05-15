@@ -11,8 +11,8 @@ from nexus.fuse.ops._shared import (
     FUSESharedContext,
     check_namespace_visible,
     get_file_content,
+    invalidate_dir_cache,
     parse_virtual_path_for_fuse,
-    resolve_io_profile,
     try_rust,
 )
 
@@ -34,14 +34,14 @@ class IOHandler:
     def __init__(self, ctx: FUSESharedContext) -> None:
         self._ctx = ctx
 
-    def open(self, path: str, flags: int) -> int:
+    async def open(self, path: str, flags: int) -> int:
         """Open a file and return a file descriptor."""
         ctx = self._ctx
 
         original_path, view_type = parse_virtual_path_for_fuse(ctx, path)
 
         # A1-B: Validate namespace visibility at open time
-        check_namespace_visible(ctx, original_path)
+        await check_namespace_visible(ctx, original_path)
 
         # Check if file exists - use cache first
         content_cached = ctx.cache.get_content(original_path) is not None
@@ -55,7 +55,7 @@ class IOHandler:
             )
         else:
             logger.debug(f"[FUSE-OPEN] Cache MISS for {original_path}, checking remote")
-            if not ctx.nexus_fs.sys_access(original_path):
+            if not ctx.nexus_fs.access(original_path):
                 raise FuseOSError(errno.ENOENT)
 
         # Generate file descriptor (thread-safe)
@@ -63,14 +63,11 @@ class IOHandler:
             ctx.fd_counter += 1
             fd = ctx.fd_counter
 
-            io_profile_str = resolve_io_profile(ctx, original_path)
-
             ctx.open_files[fd] = {
                 "path": original_path,
                 "view_type": view_type,
                 "flags": flags,
                 "auth_verified": ctx.context is not None,
-                "io_profile": io_profile_str,
             }
 
         # Trigger prefetch-on-open for readahead
@@ -82,15 +79,7 @@ class IOHandler:
                     if stat_result:
                         file_size = stat_result.get("st_size")
 
-                io_profile_arg = None
-                try:
-                    from nexus.contracts.io_profile import IOProfile
-
-                    io_profile_arg = IOProfile(io_profile_str)
-                except (ImportError, ValueError):
-                    pass
-
-                ctx.readahead.on_open(fd, original_path, file_size, io_profile=io_profile_arg)
+                ctx.readahead.on_open(fd, original_path, file_size)
             except Exception as e:
                 logger.debug(f"[FUSE-OPEN] Readahead on_open failed (non-critical): {e}")
         elif content_cached:
@@ -98,7 +87,7 @@ class IOHandler:
 
         return fd
 
-    def read(self, _path: str, size: int, offset: int, fh: int) -> bytes:
+    async def read(self, _path: str, size: int, offset: int, fh: int) -> bytes:
         """Read file content."""
         ctx = self._ctx
 
@@ -110,13 +99,8 @@ class IOHandler:
         original_path = file_info["path"]
         view_type = file_info["view_type"]
 
-        # Rust delegation for raw reads
-        if view_type is None:
-            ok, content = try_rust(ctx, "READ", "read", original_path)
-            if ok:
-                return bytes(content)[offset : offset + size]
-
-        # Readahead buffer check
+        # Readahead buffer check FIRST — must happen before try_rust(sys_read)
+        # so the readahead manager observes every read for pattern detection.
         if ctx.readahead and view_type is None:
             prefetched = ctx.readahead.on_read(fh, original_path, offset, size)
             if prefetched is not None:
@@ -125,29 +109,21 @@ class IOHandler:
                 )
                 return cast("bytes", prefetched)
 
-        skip_auth = file_info.get("auth_verified", False)
+        # Rust delegation for raw reads (miss path or no readahead)
+        if view_type is None:
+            ok, content = try_rust(ctx, "READ", "sys_read", original_path)
+            if ok:
+                return bytes(content)[offset : offset + size]
 
-        cache_priority = 0
-        io_profile_str = file_info.get("io_profile", "balanced")
-        try:
-            from nexus.contracts.io_profile import IOProfile
-
-            cache_priority = IOProfile(io_profile_str).config().cache_priority
-        except (ImportError, ValueError):
-            pass
-
-        content = get_file_content(
-            ctx, original_path, view_type, skip_auth=skip_auth, cache_priority=cache_priority
-        )
+        content = await get_file_content(ctx, original_path, view_type, cache_priority=0)
 
         return content[offset : offset + size]
 
-    def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
+    async def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
         """Write file content.
 
-        TODO(Issue #13B): Current implementation uses read-modify-write pattern,
-        which is not optimal for large files. A write-buffering layer that batches
-        writes and flushes on fsync/release would improve performance significantly.
+        Uses per-path locking to serialize concurrent writes and prevent
+        data loss from interleaved read-modify-write cycles (H13).
         """
         ctx = self._ctx
 
@@ -166,33 +142,54 @@ class IOHandler:
             logger.debug(f"Blocked write to OS metadata file: {original_path}")
             raise FuseOSError(errno.EPERM)
 
-        write_ctx = None if file_info.get("auth_verified") else ctx.context
+        # Per-path lock serializes concurrent writes to the same file (H13)
+        import threading
+        from typing import Any
 
-        # Read existing content
-        existing_content = b""
-        if ctx.nexus_fs.sys_access(original_path):
-            raw_content = ctx.nexus_fs.sys_read(original_path, context=write_ctx)
-            assert isinstance(raw_content, bytes), "Expected bytes from read()"
-            existing_content = raw_content
+        _ctx_any: Any = ctx  # Dynamic attrs not on FUSESharedContext
+        if not hasattr(_ctx_any, "_write_locks"):
+            _ctx_any._write_locks = {}
+            _ctx_any._write_locks_guard = threading.Lock()
+        with _ctx_any._write_locks_guard:
+            lock = _ctx_any._write_locks.setdefault(original_path, threading.Lock())
 
-        # Handle offset writes
-        if offset > len(existing_content):
-            existing_content += b"\x00" * (offset - len(existing_content))
+        with lock:
+            # Pre-invalidate readahead BEFORE the backend write commits
+            # so a concurrent read between commit and the post-write
+            # invalidation can't return a stale prefetched block (Issue
+            # #4057 adversarial review round 10 finding #1).  Bumping
+            # the session id atomically discards any in-flight prefetch
+            # jobs and dropped buffers; the post-write invalidation
+            # below stays as belt-and-suspenders for cache layers other
+            # than the Rust engine.
+            if ctx.readahead:
+                ctx.readahead.invalidate_path(original_path)
 
-        new_content = existing_content[:offset] + data + existing_content[offset + len(data) :]
+            # Read existing content
+            existing_content = b""
+            if ctx.nexus_fs.access(original_path):
+                raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
+                assert isinstance(raw_content, bytes), "Expected bytes from read()"
+                existing_content = raw_content
 
-        # Write via Rust or Python
-        if not write_ctx:
-            ok, _ = try_rust(ctx, "WRITE", "write", original_path, new_content)
+            # Handle offset writes
+            if offset > len(existing_content):
+                existing_content += b"\x00" * (offset - len(existing_content))
+
+            new_content = existing_content[:offset] + data + existing_content[offset + len(data) :]
+
+            # Write via Rust or Python
+            ok, _ = try_rust(ctx, "WRITE", "sys_write", original_path, new_content)
             if not ok:
-                ctx.nexus_fs.sys_write(original_path, new_content, context=write_ctx)
-        else:
-            ctx.nexus_fs.sys_write(original_path, new_content, context=write_ctx)
+                ctx.nexus_fs.write(original_path, new_content, context=ctx.context)
 
-        # Invalidate caches
-        ctx.cache.invalidate_path(original_path)
+        # Invalidate caches + fire-and-forget lease revocation (Issue #3397)
+        invalidation_paths = [original_path]
         if path != original_path:
-            ctx.cache.invalidate_path(path)
+            invalidation_paths.append(path)
+        ctx.cache.invalidate_file(original_path)
+        invalidate_dir_cache(ctx, original_path)
+        ctx.cache.invalidate_and_revoke(invalidation_paths)
 
         if ctx.readahead:
             ctx.readahead.invalidate_path(original_path)

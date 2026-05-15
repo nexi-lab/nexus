@@ -42,14 +42,13 @@ from typing import TYPE_CHECKING, Self
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from nexus.backends.local import LocalBackend  # noqa: E402
+from nexus.backends.storage.cas_local import CASLocalBackend  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.server.fastapi_server import create_app  # noqa: E402
 
@@ -923,7 +922,7 @@ class NexusTestServer:
         self.temp_dir: tempfile.TemporaryDirectory | None = None
         self.nexus_fs: NexusFS | None = None
 
-    def start(self) -> str:
+    async def start(self) -> str:
         """Start the server and return the URL."""
         # Create temp directory for storage
         self.temp_dir = tempfile.TemporaryDirectory(prefix="nexus_etag_test_")
@@ -932,10 +931,10 @@ class NexusTestServer:
         db_path = Path(self.temp_dir.name) / "nexus.db"
 
         # Create NexusFS instance
-        backend = LocalBackend(root_path=str(storage_path))
+        backend = CASLocalBackend(root_path=str(storage_path))
         self.nexus_fs = NexusFS(
             backend=backend,
-            metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
+            metadata_store=str(db_path).replace(".db", "-raft"),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             is_admin=True,  # Admin for testing
             enforce_permissions=False,  # Simplified for testing
@@ -943,7 +942,7 @@ class NexusTestServer:
 
         # Ensure workspace directory exists (may already exist by default)
         with contextlib.suppress(FileExistsError):
-            self.nexus_fs.sys_mkdir("/workspace")
+            self.nexus_fs.mkdir("/workspace")
 
         # Create FastAPI app
         app = create_app(

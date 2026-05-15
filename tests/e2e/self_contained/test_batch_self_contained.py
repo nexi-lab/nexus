@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.routers.batch import create_batch_router
 
 
@@ -21,7 +22,7 @@ def _make_mock_fs() -> MagicMock:
     # Simulate realistic read latency
     fs.read.return_value = b"hello world content here"
     fs.write.return_value = {
-        "etag": "e3b0c44298fc1c14",
+        "content_id": "e3b0c44298fc1c14",
         "version": 1,
         "size": 24,
         "modified_at": "2026-02-17T00:00:00Z",
@@ -35,7 +36,7 @@ def _make_mock_fs() -> MagicMock:
     meta = MagicMock()
     meta.path = "/test.txt"
     meta.size = 24
-    meta.etag = "e3b0c44298fc1c14"
+    meta.content_id = "e3b0c44298fc1c14"
     meta.version = 1
     meta.is_dir = False
     meta.created_at = None
@@ -47,7 +48,7 @@ def _make_mock_fs() -> MagicMock:
 def _make_mock_context() -> MagicMock:
     ctx = MagicMock()
     ctx.user_id = "e2e-test-user"
-    ctx.zone_id = "root"
+    ctx.zone_id = ROOT_ZONE_ID
     ctx.groups = ["testers"]
     ctx.is_admin = False
     ctx.is_system = False
@@ -107,7 +108,7 @@ class TestBatchSelfContainedE2E:
         def tracking_write(*args: Any, **kwargs: Any) -> dict:
             execution_order.append("write")
             return {
-                "etag": "new",
+                "content_id": "new",
                 "version": 1,
                 "size": 5,
                 "modified_at": "2026-02-17T00:00:00Z",

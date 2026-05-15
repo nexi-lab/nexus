@@ -148,15 +148,28 @@ class TestHandleToolErrors:
         assert result.startswith("Error:")
         assert "not found" in result.lower()
 
-    def test_rejects_async_functions(self):
-        """#7B: Decorating an async function should raise TypeError."""
-        import pytest
+    async def test_wraps_async_functions(self):
+        """Decorating an async function wraps it with async error handling."""
 
-        with pytest.raises(TypeError, match="cannot wrap async function"):
+        @handle_tool_errors("async op")
+        async def my_async_tool(path: str) -> str:
+            return "ok"
 
-            @handle_tool_errors("async op")
-            async def my_async_tool(path: str) -> str:
-                return "ok"
+        # Async wrapper should work and return str(result)
+        result = await my_async_tool("/data.txt")
+        assert result == "ok"
+
+    async def test_async_wrapper_catches_errors(self):
+        """Async-wrapped function catches exceptions like sync wrapper."""
+
+        @handle_tool_errors("reading file")
+        async def my_async_tool(path: str) -> str:
+            raise FileNotFoundError(f"No such file: {path}")
+
+        result = await my_async_tool("/missing.txt")
+        assert result.startswith("Error:")
+        assert "not found" in result.lower()
+        assert "/missing.txt" in result
 
 
 # ---------------------------------------------------------------------------

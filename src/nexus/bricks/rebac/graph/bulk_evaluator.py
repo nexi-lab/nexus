@@ -215,6 +215,22 @@ def compute_permission(
                     )
                     return _store(True)
 
+            # Fix nexi-lab/nexus#3733 Bug A: skip Pattern 2 for ``parent``
+            # tupleset. Pattern 2 finds tuples where ``obj`` is the OBJECT
+            # of a tuple with this relation — which for ``parent`` returns
+            # ``obj``'s CHILDREN, not its parent. That's the inverse of
+            # what ``parent_owner``/``parent_viewer`` mean, and causes a
+            # privilege escalation where owning any child grants access
+            # to all siblings (via the parent). The same guard already
+            # exists in ``zone_traversal.py``; it was missing here.
+            if tupleset_relation == "parent":
+                logger.debug(
+                    "compute_permission [depth=%d]: skipping Pattern 2 for 'parent' tupleset "
+                    "(not a group pattern, would cause privilege escalation)",
+                    depth,
+                )
+                return _store(False)
+
             # Pattern 2 (group-style): (?, tupleset_relation, obj)
             related_subjects = find_subjects(obj, tupleset_relation, tuples_graph)
             logger.debug(
@@ -256,6 +272,8 @@ def check_direct_relation(
         True if direct tuple exists.
     """
     for tuple_data in tuples_graph:
+        if _has_conditions(tuple_data):
+            continue
         if (
             tuple_data["subject_type"] == subject.entity_type
             and tuple_data["subject_id"] == subject.entity_id
@@ -284,6 +302,8 @@ def find_related_objects(
 
     related = []
     for tuple_data in tuples_graph:
+        if _has_conditions(tuple_data):
+            continue
         if (
             tuple_data["subject_type"] == obj.entity_type
             and tuple_data["subject_id"] == obj.entity_id
@@ -309,6 +329,8 @@ def find_subjects(
 
     subjects = []
     for tuple_data in tuples_graph:
+        if _has_conditions(tuple_data):
+            continue
         if (
             tuple_data["object_type"] == obj.entity_type
             and tuple_data["object_id"] == obj.entity_id
@@ -316,3 +338,8 @@ def find_subjects(
         ):
             subjects.append(_Entity(tuple_data["subject_type"], tuple_data["subject_id"]))
     return subjects
+
+
+def _has_conditions(tuple_data: dict[str, Any]) -> bool:
+    """Bulk checks have no ABAC context, so conditioned tuples are unusable."""
+    return bool(tuple_data.get("conditions"))

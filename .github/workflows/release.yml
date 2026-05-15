@@ -1,13 +1,24 @@
 name: Release
 
+# Atomic release pipeline (Issue #2946).
+# The GitHub Release (the user-visible "this version exists" signal) is only
+# created AFTER both PyPI publish AND Docker publish succeed.
+# PyPI publish is irreversible, but without a GitHub Release users won't
+# discover the version via the releases page or release notifications.
+
 on:
   push:
     tags:
       - "v*"
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 permissions:
   contents: write
+  packages: write
   id-token: write
+  attestations: write
 
 jobs:
   verify-version:
@@ -21,43 +32,26 @@ jobs:
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
           PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          RUST_PKG_VERSION=$(grep '^version = ' rust/nexus-cdylib/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          RUST_CARGO_VERSION=$(grep '^version = ' rust/kernel/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          API_CLIENT_VERSION=$(node -p "require('./packages/nexus-api-client/package.json').version")
+          TUI_VERSION=$(node -p "require('./packages/nexus-tui/package.json').version")
           echo "Tag version: $TAG_VERSION"
           echo "Package version: $PKG_VERSION"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "❌ Version mismatch! Tag is v$TAG_VERSION but pyproject.toml has $PKG_VERSION"
+          echo "Rust package version: $RUST_PKG_VERSION"
+          echo "Rust Cargo version: $RUST_CARGO_VERSION"
+          echo "API client version: $API_CLIENT_VERSION"
+          echo "TUI version: $TUI_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_CARGO_VERSION" ] || [ "$TAG_VERSION" != "$API_CLIENT_VERSION" ] || [ "$TAG_VERSION" != "$TUI_VERSION" ]; then
+            echo "❌ Version mismatch! Tag is v$TAG_VERSION but package metadata is inconsistent"
             exit 1
           fi
           echo "✅ Version match confirmed"
 
-  build-wheels:
+  build-wheel:
     needs: [verify-version]
-    name: Build wheels for ${{ matrix.platform.target }}
-    runs-on: ${{ matrix.platform.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          # Linux builds
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            arch: x64
-          # TODO: Re-enable aarch64 Linux builds once Docker/QEMU issues are resolved
-          # - os: ubuntu-latest
-          #   target: aarch64-unknown-linux-gnu
-          #   arch: aarch64
-
-          # macOS builds
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            arch: x64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            arch: arm64
-
-          # Windows builds
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            arch: x64
+    name: Build wheel
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -66,23 +60,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-          architecture: ${{ matrix.platform.arch }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform.target }}
+          python-version: "3.14"
 
       - name: Build wheels
         run: |
-          pip install maturin
-          maturin build --release --target ${{ matrix.platform.target }} --out dist
+          python -m pip install build
+          python -m build --wheel --outdir dist
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.platform.target }}
+          name: wheel
           path: dist/*.whl
           if-no-files-found: error
 
@@ -100,12 +88,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Build sdist
         run: |
-          pip install maturin
-          maturin sdist --out dist
+          python -m pip install build
+          python -m build --sdist --outdir dist
 
       - name: Upload sdist
         uses: actions/upload-artifact@v4
@@ -114,52 +102,676 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
-  publish:
-    name: Publish to PyPI
-    needs: [build-wheels, build-sdist]
+  build-rust-wheel:
+    needs: [verify-version]
+    name: Build nexus-kernel wheel (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-14, windows-latest]
+        python-version: ["3.14"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install protoc (macOS)
+        # raft-proto's build script uses `protobuf-build v0.14.1`, which
+        # rejects protoc's new calendar-versioned releases (e.g. "libprotoc
+        # 34.1") with "No suitable `protoc` (>= 3.1.0) found in PATH". Pin
+        # to a late 3.x release — brew's `protobuf` formula ships 34.x
+        # and is unusable here. We pick 3.20.2 rather than 3.20.3 because
+        # the 3.20.3 GitHub release only published `osx-x86_64.zip`; the
+        # arm64 artifact was dropped, so `osx-aarch_64.zip` 404s on
+        # macos-14 (Apple Silicon) runners.
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          PROTOC_VERSION=3.20.2
+          case "$(uname -m)" in
+            arm64) ARCH=aarch_64 ;;
+            x86_64) ARCH=x86_64 ;;
+            *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          mkdir -p "$HOME/protoc"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-${ARCH}.zip"
+          unzip -o /tmp/protoc.zip -d "$HOME/protoc"
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+          "$HOME/protoc/bin/protoc" --version
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-rust-${{ matrix.os }}
+          workspaces: |
+            rust/nexus-cdylib
+
+      - name: Build nexus-kernel wheel
+        run: |
+          python -m pip install maturin
+          maturin build --release --compatibility off --manifest-path rust/nexus-cdylib/Cargo.toml --interpreter python --out dist
+
+      - name: Upload nexus-kernel wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-wheel-${{ matrix.os }}-${{ matrix.python-version }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build-rust-sdist:
+    needs: [verify-version]
+    name: Build nexus-kernel source distribution
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-rust-sdist
+          workspaces: |
+            rust/nexus-cdylib
+
+      - name: Build nexus-kernel sdist
+        run: |
+          python -m pip install maturin
+          maturin sdist --manifest-path rust/nexus-cdylib/Cargo.toml --out dist
+
+      - name: Upload nexus-kernel sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish-rust:
+    name: Publish nexus-kernel to PyPI
+    needs: [build-rust-wheel, build-rust-sdist]
+    runs-on: ubuntu-latest
+    env:
+      NEXUS_FAST_PYPI_API_TOKEN: ${{ secrets.NEXUS_FAST_PYPI_API_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download rust artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: rust-*
           path: artifacts
 
-      - name: Collect all distributions
+      - name: Collect nexus-kernel distributions
         run: |
-          mkdir -p dist
-          # Copy source distribution
-          cp artifacts/sdist/* dist/ 2>/dev/null || true
-          # Copy all wheels
-          find artifacts -name "*.whl" -exec cp {} dist/ \;
-          ls -lh dist/
+          mkdir -p dist-rust
+          cp artifacts/rust-sdist/* dist-rust/ 2>/dev/null || true
+          find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-rust/ \;
+          ls -lh dist-rust/
 
-      - name: Publish to PyPI
+      - name: Skip nexus-kernel PyPI publish
+        if: ${{ env.NEXUS_FAST_PYPI_API_TOKEN == '' }}
+        run: echo "NEXUS_FAST_PYPI_API_TOKEN not configured; skipping nexus-kernel publish."
+
+      - name: Publish nexus-kernel to PyPI
+        if: ${{ env.NEXUS_FAST_PYPI_API_TOKEN != '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ env.NEXUS_FAST_PYPI_API_TOKEN }}
+          packages-dir: dist-rust
+
+  publish-pypi:
+    name: Publish nexus-ai-fs to PyPI
+    needs: [build-wheel, build-sdist, build-rust-wheel, build-rust-sdist]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: artifacts/wheel
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: artifacts/sdist
+
+      - name: Collect nexus-ai-fs distributions
+        run: |
+          mkdir -p dist-main
+          cp artifacts/sdist/* dist-main/ 2>/dev/null || true
+          cp artifacts/wheel/* dist-main/ 2>/dev/null || true
+          ls -lh dist-main/
+
+      - name: Publish nexus-ai-fs to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist-main
+          skip_existing: true
+
+  # ── nexus-fs slim package publish ──────────────────────────────────────
+  # Builds and publishes the standalone nexus-fs package alongside nexus-ai-fs.
+  # Uses its own pyproject.toml (packages/nexus-fs/) and hatchling build backend.
+  # Uses the same PYPI_API_TOKEN as nexus-ai-fs (org-scoped token).
+  publish-nexus-fs:
+    name: Publish nexus-fs to PyPI
+    # nexus-fs declares nexus-runtime as a hard dep; ensure nexus-runtime is
+    # published first so the smoke-test pip install can resolve it.
+    needs: [verify-version, publish-rust]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build tools
+        run: python -m pip install build hatchling
+
+      - name: Build nexus-fs wheel and sdist
+        run: |
+          ln -s ../../src src
+          sed -i 's|"../../src/nexus"|"src/nexus"|' pyproject.toml
+          python -m hatchling build -d ../../dist-nexus-fs
+          git checkout pyproject.toml
+          rm -f src
+        working-directory: packages/nexus-fs
+
+      - name: Validate wheel
+        run: |
+          pip install twine check-wheel-contents pydistcheck
+          twine check --strict dist-nexus-fs/*
+          # W002 (duplicate files) can occur due to symlink resolution in hatchling;
+          # log but don't fail — pydistcheck size gate catches bloated wheels.
+          check-wheel-contents dist-nexus-fs/*.whl || echo "::warning::check-wheel-contents found issues (non-fatal)"
+          pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist-nexus-fs/*.whl
+
+      - name: Download nexus-runtime artifacts (built by publish-rust)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rust-wheel-*
+          path: /tmp/nexus-runtime-artifacts
+          merge-multiple: true
+
+      - name: Verify nexus-runtime is on PyPI before publishing nexus-fs
+        run: |
+          # nexus-runtime is a hard dep of nexus-fs. Guard the publish step by
+          # verifying the exact version declared in pyproject.toml is resolvable
+          # from PyPI. If publish-rust skipped (token absent), this check catches
+          # the gap before nexus-fs is uploaded and users encounter a broken dep.
+          # Read the exact version from the nexus-runtime source (nexus-cdylib).
+          EXACT_RUNTIME=$(grep '^version = ' rust/nexus-cdylib/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Exact nexus-runtime version for this release: $EXACT_RUNTIME"
+          python - "$EXACT_RUNTIME" <<'PY'
+          import sys, urllib.request, urllib.error, json
+          exact = sys.argv[1]
+          if not exact:
+              print("FATAL: could not read nexus-runtime version from rust/nexus-cdylib/pyproject.toml", file=sys.stderr)
+              sys.exit(1)
+          try:
+              with urllib.request.urlopen(f"https://pypi.org/pypi/nexus-runtime/{exact}/json") as r:
+                  json.load(r)  # 200 means the exact version exists
+          except urllib.error.HTTPError as e:
+              if e.code == 404:
+                  print(f"FATAL: nexus-runtime {exact} is not on PyPI; publish-rust must publish first", file=sys.stderr)
+                  sys.exit(1)
+              raise
+          print(f"OK: nexus-runtime {exact} is on PyPI")
+          PY
+
+      - name: Smoke test — install in clean environment
+        run: |
+          python -m venv /tmp/nexus-fs-release-test
+          # Install nexus-runtime from local artifacts using pip's own wheel
+          # compatibility logic (--no-index --find-links avoids OS/arch mismatch).
+          /tmp/nexus-fs-release-test/bin/pip install \
+            --no-index --find-links /tmp/nexus-runtime-artifacts \
+            nexus-runtime
+          /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
+          PKG_VERSION=$(grep '^version = ' packages/nexus-fs/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          /tmp/nexus-fs-release-test/bin/python - "$PKG_VERSION" <<'PY'
+          import sys, nexus.fs
+          pkg_ver = sys.argv[1]
+          runtime_ver = nexus.fs.__version__
+          print(f"nexus-fs __version__ = {runtime_ver}, pyproject.toml = {pkg_ver}")
+          if runtime_ver != pkg_ver:
+              print(f"FATAL: __version__ {runtime_ver!r} != pyproject.toml {pkg_ver!r}", file=sys.stderr)
+              sys.exit(1)
+          PY
+          /tmp/nexus-fs-release-test/bin/nexus-fs --help
+
+      - name: Detect existing nexus-fs PyPI version
+        id: nexus-fs-pypi
+        run: |
+          NEXUS_FS_VERSION=$(grep '^version = ' packages/nexus-fs/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$NEXUS_FS_VERSION" >> "$GITHUB_OUTPUT"
+          export NEXUS_FS_VERSION
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          version = os.environ["NEXUS_FS_VERSION"]
+          url = "https://pypi.org/pypi/nexus-fs/json"
+          exists = False
+
+          try:
+              with urllib.request.urlopen(url) as response:
+                  payload = json.load(response)
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  raise
+          else:
+              exists = version in payload.get("releases", {})
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"exists={'true' if exists else 'false'}\n")
+          print(f"nexus-fs version {version} exists on PyPI: {exists}")
+          PY
+
+      - name: Skip nexus-fs PyPI publish
+        if: ${{ steps.nexus-fs-pypi.outputs.exists == 'true' }}
+        run: echo "nexus-fs v${{ steps.nexus-fs-pypi.outputs.version }} already exists on PyPI; skipping publish."
+
+      - name: Publish nexus-fs to PyPI
+        if: ${{ steps.nexus-fs-pypi.outputs.exists != 'true' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist-nexus-fs
+
+      - name: Upload nexus-fs artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-fs-dist
+          path: dist-nexus-fs/*
+          retention-days: 90
+
+  publish-ts-packages:
+    name: Publish TypeScript packages to npm
+    needs: [verify-version]
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Skip when NPM token is not configured
+        if: ${{ env.NODE_AUTH_TOKEN == '' }}
+        run: echo "NPM_TOKEN not configured; skipping TypeScript package publish."
+
+      - name: Set up Node
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Set up Bun
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build and test api-client
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        working-directory: packages/nexus-api-client
+        run: |
+          npm install
+          npm run build
+          npm test
+
+      - name: Publish @nexus-ai-fs/api-client
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        run: |
+          VERSION="$(node -p "require('./packages/nexus-api-client/package.json').version")"
+          if npm view "@nexus-ai-fs/api-client@${VERSION}" version >/dev/null 2>&1; then
+            echo "@nexus-ai-fs/api-client@${VERSION} already published"
+          else
+            cd packages/nexus-api-client
+            npm publish --access public
+          fi
+
+      - name: Test TUI
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        working-directory: packages/nexus-tui
+        run: |
+          bun install
+          bun test
+
+      - name: Prepare TUI manifest for publish
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        run: |
+          API_VERSION="$(node -p "require('./packages/nexus-api-client/package.json').version")"
+          API_VERSION="$API_VERSION" node <<'EOF'
+          const fs = require("fs");
+          const path = "packages/nexus-tui/package.json";
+          const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+          pkg.dependencies["@nexus-ai-fs/api-client"] = `^${process.env.API_VERSION}`;
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+          EOF
+
+      - name: Publish @nexus-ai-fs/tui
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        run: |
+          VERSION="$(node -p "require('./packages/nexus-tui/package.json').version")"
+          if npm view "@nexus-ai-fs/tui@${VERSION}" version >/dev/null 2>&1; then
+            echo "@nexus-ai-fs/tui@${VERSION} already published"
+          else
+            cd packages/nexus-tui
+            npm publish --access public
+          fi
+
+  # Docker build, smoke test, and GHCR push.
+  #
+  # Why this shape (fan-out per platform, then merge manifests):
+  #   Earlier versions did a single multi-arch build per variant on
+  #   one ubuntu-latest runner using QEMU to emulate arm64. CUDA
+  #   repeatedly tripped the 2-hour job timeout because emulated
+  #   arm64 on x86_64 is 5-10x slower than native. GitHub now ships
+  #   free `ubuntu-24.04-arm` hosted runners (GA for public repos
+  #   since early 2025; private repos since 2026-01-29), so the
+  #   correct pattern is matrix-per-platform on native hardware +
+  #   a merge job that stitches the per-platform digests into one
+  #   multi-arch manifest with `docker buildx imagetools create`.
+  #   See docs: https://docs.docker.com/build/ci/github-actions/multi-platform/
+  #
+  # docker-publish.yml handles branch pushes (develop/main) via the
+  # same pattern (kept in sync).
+  build-docker-platform:
+    name: Build ${{ matrix.variant }} / ${{ matrix.platform }}
+    needs: [verify-version]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - variant: cpu
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          - variant: cuda
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - variant: cuda
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize platform pair (for artifact name)
+        id: pair
+        run: |
+          pair="${{ matrix.platform }}"
+          echo "value=${pair//\//-}" >> "$GITHUB_OUTPUT"
+
+      # Local-load build + smoke tests, amd64 CPU only. Exists to catch
+      # build-time regressions and runtime ImportErrors BEFORE we publish
+      # the final manifest. Other matrix cells go straight to push-by-
+      # digest: CUDA images ship AVX-512 binaries that SIGILL on hosted
+      # runners, and arm64 cells on ubuntu-24.04-arm don't need their own
+      # copy of the smoke tests (same image content, different arch).
+      - name: Build image for smoke tests (amd64 CPU only)
+        if: matrix.variant == 'cpu' && matrix.platform == 'linux/amd64'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ghcr.io/nexi-lab/nexus:smoke-test
+          build-args: TORCH_VARIANT=${{ matrix.variant }}
+          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }}
+          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }},mode=max,ignore-error=true
+
+      - name: Smoke test — critical imports
+        if: matrix.variant == 'cpu' && matrix.platform == 'linux/amd64'
+        run: |
+          docker run --rm --entrypoint "" \
+            -e GLIBC_TUNABLES=glibc.rtld.optional_static_tls=16384 \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          import nexus_runtime
+          from nexus_runtime import PyMetaStore
+          import txtai
+          import pgvector
+          import docker
+          import fastembed
+          import psutil
+          print('All critical imports OK')
+          "
+
+      - name: Smoke test — CLI entrypoints
+        if: matrix.variant == 'cpu' && matrix.platform == 'linux/amd64'
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            sh -c "nexus --version && nexusd --help > /dev/null 2>&1 && echo 'CLI OK'"
+
+      - name: Smoke test — env-var config (no config file)
+        if: matrix.variant == 'cpu' && matrix.platform == 'linux/amd64'
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          from nexus.config import load_config
+          cfg = load_config()
+          assert cfg.profile == 'full', f'Expected profile=full, got {cfg.profile}'
+          print(f'Config OK: profile={cfg.profile}')
+          "
+
+      # Push-by-digest: produces a single-platform image in the registry
+      # and emits its digest so the merge job can assemble the multi-arch
+      # manifest. name-canonical=true keeps the reference stable.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          sbom: false
+          build-args: TORCH_VARIANT=${{ matrix.variant }}
+          outputs: type=image,name=ghcr.io/nexi-lab/nexus,push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
+          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }}
+          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }},mode=max,ignore-error=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Merge the per-platform digests (amd64 + arm64) into one multi-arch
+  # manifest per variant and push the user-facing tags (:<version>,
+  # :stable, :latest, plus -cuda suffixes).
+  merge-docker-manifests:
+    name: Merge manifests (${{ matrix.variant }})
+    needs: [build-docker-platform]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            suffix: ""
+          - variant: cuda
+            suffix: "-cuda"
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-release-${{ matrix.variant }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build tag list
+        id: tags
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          SUFFIX="${{ matrix.suffix }}"
+          {
+            echo "args=-t ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX} -t ghcr.io/nexi-lab/nexus:stable${SUFFIX} -t ghcr.io/nexi-lab/nexus:latest${SUFFIX}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create ${{ steps.tags.outputs.args }} \
+            $(printf 'ghcr.io/nexi-lab/nexus@sha256:%s ' *)
+
+      - name: Inspect
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          SUFFIX="${{ matrix.suffix }}"
+          docker buildx imagetools inspect "ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX}"
+
+  # nexusd-cluster: standalone Rust runtime for the cluster profile.
+  # Build matrix + per-platform size budgets live in the reusable
+  # cluster-binary-build.yml so per-PR builds (cluster-binary.yml) and
+  # release tags share one SSOT.
+  build-cluster-binary:
+    needs: [verify-version]
+    uses: ./.github/workflows/cluster-binary-build.yml
+    with:
+      upload_retention_days: 90
+
+  # GitHub Release is created ONLY after both PyPI and Docker succeed.
+  # This is the user-visible "released" signal — without it, the version
+  # doesn't appear on the releases page or trigger notifications.
+  create-release:
+    name: Create GitHub Release
+    needs:
+      - publish-pypi
+      - publish-rust
+      - publish-nexus-fs
+      - publish-ts-packages
+      - merge-docker-manifests
+      - build-cluster-binary
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: artifacts/wheel
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: artifacts/sdist
+
+      - name: Download rust artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rust-*
+          path: artifacts
+
+      - name: Download nexus-fs artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nexus-fs-dist
+          path: artifacts/nexus-fs
+        continue-on-error: true
+
+      - name: Download cluster binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nexusd-cluster-*
+          path: artifacts/cluster
+          merge-multiple: true
+
+      - name: Collect release artifacts
+        run: |
+          mkdir -p dist-release
+          cp artifacts/sdist/* dist-release/ 2>/dev/null || true
+          cp artifacts/wheel/* dist-release/ 2>/dev/null || true
+          cp artifacts/rust-sdist/* dist-release/ 2>/dev/null || true
+          cp artifacts/nexus-fs/* dist-release/ 2>/dev/null || true
+          cp artifacts/cluster/* dist-release/ 2>/dev/null || true
+          find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-release/ \;
+          ls -lh dist-release/
 
       - name: Extract release notes
         id: extract-release-notes
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          # Extract release notes from CHANGELOG.md if it exists
           if [ -f CHANGELOG.md ]; then
-            # Try to extract section for this version
             NOTES=$(sed -n "/## \[${VERSION}\]/,/## \[/p" CHANGELOG.md | sed '$ d' | tail -n +2)
-            if [ -z "$NOTES" ]; then
-              NOTES="Release version ${VERSION}"
-            fi
+            [ -z "$NOTES" ] && NOTES="Release version ${VERSION}"
           else
             NOTES="Release version ${VERSION}"
           fi
-
-          # Save to file for multiline support
           echo "$NOTES" > release_notes.txt
 
       - name: Create GitHub Release
@@ -167,7 +779,7 @@ jobs:
         with:
           body_path: release_notes.txt
           files: |
-            dist/*
+            dist-release/*
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
         env:

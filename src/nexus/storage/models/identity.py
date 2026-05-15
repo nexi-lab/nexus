@@ -1,7 +1,7 @@
 """SQLAlchemy models for agent identity (KYA -- Issue #1355).
 
 AgentKeyModel stores Ed25519 signing keys for agent identity.
-Keys are separate from AgentRecordModel (Decision #2B) to support:
+Keys are separate from agent lifecycle state (Decision #2B) to support:
 - Key rotation with grace period (multiple active keys per agent)
 - Clean separation of concerns (identity keys vs lifecycle state)
 - Matching the existing APIKeyModel pattern

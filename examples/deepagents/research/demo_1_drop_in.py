@@ -93,7 +93,7 @@ def create_research_agent_with_nexus(nx, workspace="/research"):
     return agent
 
 
-def main():
+async def main():
     """Run the research agent demo."""
 
     print("=" * 70)
@@ -123,7 +123,7 @@ def main():
     workspace = "/research-demo"
     print(f"📂 Creating workspace: {workspace}")
     with contextlib.suppress(Exception):
-        nx.sys_mkdir(workspace, parents=True)  # Directory may already exist
+        nx.mkdir(workspace, parents=True)  # Directory may already exist
     print()
 
     # Create agent

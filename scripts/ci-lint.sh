@@ -85,6 +85,16 @@ run_brick_imports() {
     fi
 }
 
+run_cli_theme() {
+    info "CLI theme compliance check (no bare color tags)"
+    if bash scripts/check_cli_theme.sh; then
+        pass "CLI theme"
+    else
+        fail "CLI theme"
+        return 1
+    fi
+}
+
 run_fix() {
     info "auto-fixing: ruff check --fix + ruff format"
     uv run ruff check . --fix
@@ -110,6 +120,7 @@ run_all() {
     run_file_size   || failed=1
     run_type_ignore || failed=1
     run_brick_imports || failed=1
+    run_cli_theme     || failed=1
 
     echo ""
     if [ "$failed" -eq 0 ]; then

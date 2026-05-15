@@ -1,7 +1,7 @@
 """End-to-end tests for CDC Chunked Storage via FastAPI HTTP endpoints (Issue #1074).
 
 Tests chunked storage through actual HTTP API calls to verify the full stack:
-FastAPI -> NexusFS -> LocalBackend (chunked storage)
+FastAPI -> NexusFS -> CASLocalBackend (chunked storage)
 
 Run with:
     pytest tests/e2e/test_chunked_storage_api_e2e.py -v --override-ini="addopts="
@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from nexus.backends.chunked_storage import CDC_THRESHOLD_BYTES
+from nexus.backends.engines.cdc import CDC_THRESHOLD_BYTES
 
 
 def encode_bytes_param(data: bytes) -> dict:
@@ -172,16 +172,18 @@ class TestChunkedStorageHTTPAPI:
         assert response.status_code == 200
         assert response.json().get("error") is None
 
-        # Get ETags - same content should have same ETag
-        response = rpc_call(test_app, "get_etag", {"path": path_a})
+        # Get content_ids - same content should have same content_id
+        response = rpc_call(test_app, "get_content_id", {"path": path_a})
         assert response.status_code == 200
-        etag_a = response.json().get("result")
+        content_id_a = response.json().get("result")
 
-        response = rpc_call(test_app, "get_etag", {"path": path_b})
+        response = rpc_call(test_app, "get_content_id", {"path": path_b})
         assert response.status_code == 200
-        etag_b = response.json().get("result")
+        content_id_b = response.json().get("result")
 
-        assert etag_a == etag_b, "Same content should have same ETag (deduplicated)"
+        assert content_id_a == content_id_b, (
+            "Same content should have same content_id (deduplicated)"
+        )
 
         # Read both back
         response = rpc_call(test_app, "read", {"path": path_a}, timeout=120.0)

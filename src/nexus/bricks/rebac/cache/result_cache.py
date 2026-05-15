@@ -5,7 +5,7 @@ reducing latency from ~5ms (database) to <1ms (memory).
 
 Architecture:
 - L1 Cache (in-memory): This module - <1ms lookup, 50k entries (Issue #1077)
-- L2 Cache (database): rebac_check_cache table - 5-10ms lookup
+- L2 Cache (database): removed (was rebac_check_cache table — now CacheStoreABC)
 - L3 Compute: Graph traversal - 50-500ms
 
 Revision Quantization (Issue #909):
@@ -28,15 +28,27 @@ Tiered TTL (Issue #1077):
 - Denial: 60 seconds (security critical)
 """
 
+import itertools
 import logging
 import math
 import random
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
 
-from cachetools import TTLCache
+# Issue #3192: Using cachebox (Rust-backed) TTLCache for lock-free cache internals.
+# The RLock is retained for Python-side secondary index consistency.
+# Runtime: prefer cachebox, fall back to cachetools.
+# Type-checking: use cachetools (broader stubs available).
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from cachetools import LRUCache, TTLCache
+else:
+    try:
+        from cachebox import LRUCache, TTLCache
+    except ImportError:
+        from cachetools import LRUCache, TTLCache
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -66,7 +78,7 @@ class ReBACPermissionCache:
 
     def __init__(
         self,
-        max_size: int = 50000,  # Issue #1077: increased from 10k to 50k
+        max_size: int = 5000,
         ttl_seconds: int = 300,
         denial_ttl_seconds: int = 60,
         enable_metrics: bool = True,
@@ -111,6 +123,8 @@ class ReBACPermissionCache:
                 - "targeted": Use secondary indexes for O(1) invalidation (default)
                 - "zone_wide": Legacy O(n) full cache scan
         """
+        if max_size < 2:
+            raise ValueError(f"ReBACPermissionCache max_size must be >= 2, got {max_size}")
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
         self._denial_ttl_seconds = denial_ttl_seconds
@@ -126,6 +140,17 @@ class ReBACPermissionCache:
         # Local cache for revisions to reduce DB queries (zone -> (revision, timestamp))
         self._revision_cache: dict[str, tuple[int, float]] = {}
         self._revision_cache_ttl = 1.0  # Refresh revision from DB every 1 second
+
+        # SharedRingBuffer for cross-process revision broadcasting (Issue #3192)
+        # When set, revision updates are read from mmap instead of DB queries.
+        self._revision_ring_buffer: Any = None  # SharedRingBuffer | None
+
+        # Read fence for cross-zone staleness detection (Issue #3396)
+        # When set, cache hits are checked against per-zone generation counters.
+        # An entry cached before the latest cross-zone invalidation is treated as miss.
+        self._read_fence: Any = None  # ReadFence | None
+        # Per-key fence generation at cache write time: key -> generation
+        self._fence_stamps: LRUCache = LRUCache(maxsize=max_size)
 
         # Split caches for grants and denials (Issue #877)
         # Denials use shorter TTL for security - revoked access should be reflected quickly
@@ -151,7 +176,7 @@ class ReBACPermissionCache:
 
         # Write frequency tracking for adaptive TTL
         # Maps object path -> (write_count, last_reset_time)
-        self._write_frequency: dict[str, tuple[int, float]] = {}
+        self._write_frequency: LRUCache = LRUCache(maxsize=max_size)
         self._write_frequency_window = 300.0  # 5-minute window
 
         # Stampede prevention (Issue #878)
@@ -170,7 +195,7 @@ class ReBACPermissionCache:
         # Maps key -> (created_at, jittered_ttl, delta, revision)
         # delta is the recomputation time in seconds (Issue #718)
         # revision is the zone revision at cache time (Issue #1081)
-        self._entry_metadata: dict[str, tuple[float, float, float, int]] = {}
+        self._entry_metadata: LRUCache = LRUCache(maxsize=max_size)
         # Track keys currently being refreshed in background
         self._refresh_in_progress: set[str] = set()
 
@@ -215,6 +240,12 @@ class ReBACPermissionCache:
         self._targeted_invalidations = 0
         self._index_lookups = 0
 
+        # Counter for periodic stale-index pruning (every max_size//4 inserts)
+        self._index_inserts_since_prune: int = 0
+        self._index_prune_interval: int = max(max_size // 4, 64)
+        # Max entries examined per prune call — bounds lock-hold time on hot path
+        self._index_prune_budget: int = max(max_size // 2, 64)
+
     def _get_jittered_ttl(self, base_ttl: float) -> float:
         """Add random jitter to TTL to prevent thundering herd.
 
@@ -258,6 +289,7 @@ class ReBACPermissionCache:
         object_type: str,
         object_id: str,
         zone_id: str,
+        path_prefixes: list[str] | None = None,
     ) -> None:
         """Add a cache key to secondary indexes for O(1) invalidation (Issue #1077).
 
@@ -270,9 +302,17 @@ class ReBACPermissionCache:
             object_type: Type of object
             object_id: Object identifier (path)
             zone_id: Zone ID
+            path_prefixes: Optional pre-computed path prefixes (Issue #3192).
+                If provided, skips O(depth) prefix computation inside the lock.
         """
         if self._invalidation_mode != "targeted":
             return
+
+        # Periodically prune index entries whose primary cache keys were evicted by TTL/LRU.
+        self._index_inserts_since_prune += 1
+        if self._index_inserts_since_prune >= self._index_prune_interval:
+            self._prune_stale_indexes()
+            self._index_inserts_since_prune = 0
 
         # Subject index
         subject_key = (zone_id, subject_type, subject_id)
@@ -289,17 +329,80 @@ class ReBACPermissionCache:
         # Path prefix index - index all path prefixes for directory-based invalidation
         # e.g., /workspace/project/file.py -> index at /workspace, /workspace/project
         # Only index actual paths (starting with /) to avoid infinite loops with non-path IDs
+        # Issue #3192: Use pre-computed prefixes when available to reduce lock hold time
         if object_type in ("file", "memory", "resource") and object_id.startswith("/"):
-            path = object_id
-            while path and path != "/":
-                parent = path.rsplit("/", 1)[0] or "/"
+            prefixes = (
+                path_prefixes
+                if path_prefixes is not None
+                else self._compute_path_prefixes(object_id)
+            )
+            for parent in prefixes:
                 prefix_key = (zone_id, object_type, parent)
                 if prefix_key not in self._path_prefix_index:
                     self._path_prefix_index[prefix_key] = set()
                 self._path_prefix_index[prefix_key].add(key)
-                if parent == "/":
+
+    @staticmethod
+    def _compute_path_prefixes(object_id: str) -> list[str]:
+        """Compute path prefix list for directory-based invalidation (Issue #3192).
+
+        Walks up the path hierarchy and returns all parent paths.
+        e.g., /workspace/project/file.py -> ["/workspace/project", "/workspace", "/"]
+
+        This is a pure computation with no side effects, so it can be called
+        outside the lock to reduce lock hold time.
+
+        Args:
+            object_id: Object identifier (must be an absolute path starting with "/")
+
+        Returns:
+            List of parent path prefixes from most specific to root.
+        """
+        prefixes: list[str] = []
+        path = object_id
+        while path and path != "/":
+            parent = path.rsplit("/", 1)[0] or "/"
+            prefixes.append(parent)
+            if parent == "/":
+                break
+            path = parent
+        return prefixes
+
+    def _prune_stale_indexes(self) -> None:
+        """Remove index entries whose primary cache keys have been TTL/LRU-evicted.
+
+        Budget is split evenly across the three indexes. Each call draws a
+        random sample of index buckets so successive calls cover different
+        regions and stale entries near the "end" of any index are not starved.
+        Per-set work is capped at per_set_cap keys via islice. Safe to delete
+        from the index dict because we iterate over the snapshot, not the dict.
+        Must be called under self._lock.
+        """
+        per_index_budget = max(self._index_prune_budget // 3, 16)
+        per_set_cap = max(per_index_budget // 8, 8)
+        for index in (self._subject_index, self._object_index, self._path_prefix_index):
+            n = min(per_index_budget, len(index))
+            if n == 0:
+                continue
+            # Random sample ensures forward progress across repeated prune calls
+            keys_to_check = random.sample(list(index), n)
+            remaining = per_index_budget
+            for index_key in keys_to_check:
+                if remaining <= 0:
                     break
-                path = parent
+                key_set = index.get(index_key)
+                if key_set is None or not key_set:
+                    index.pop(index_key, None)
+                    continue
+                sample = set(itertools.islice(key_set, per_set_cap))
+                remaining -= len(sample)
+                dead = {
+                    k for k in sample if k not in self._grant_cache and k not in self._denial_cache
+                }
+                if dead:
+                    key_set -= dead
+                    if not key_set:
+                        del index[index_key]
 
     def _remove_from_indexes(self, key: str) -> None:
         """Remove a cache key from all secondary indexes (Issue #1077).
@@ -346,6 +449,15 @@ class ReBACPermissionCache:
                 if parent == "/":
                     break
                 path = parent
+
+    def _evict_key_unlocked(self, key: str) -> None:
+        """Remove a key and all companion metadata while holding ``_lock``."""
+        self._grant_cache.pop(key, None)
+        self._denial_cache.pop(key, None)
+        self._fence_stamps.pop(key, None)
+        self._entry_metadata.pop(key, None)
+        self._refresh_in_progress.discard(key)
+        self._remove_from_indexes(key)
 
     def _get_keys_for_subject(self, zone_id: str, subject_type: str, subject_id: str) -> set[str]:
         """Get all cache keys for a subject using secondary index (Issue #1077).
@@ -433,6 +545,17 @@ class ReBACPermissionCache:
         """
         self._revision_fetcher = fetcher
 
+    def set_revision_ring_buffer(self, ring_buffer: Any) -> None:
+        """Set SharedRingBuffer for cross-process revision broadcasting (Issue #3192).
+
+        When set, revision updates are read from mmap instead of DB queries,
+        eliminating a DB round-trip per revision check.
+
+        Args:
+            ring_buffer: SharedRingBuffer instance opened as consumer
+        """
+        self._revision_ring_buffer = ring_buffer
+
     def _get_revision_bucket(self, zone_id: str | None) -> int:
         """Get quantized revision bucket for cache key.
 
@@ -456,6 +579,22 @@ class ReBACPermissionCache:
             cached_rev, cached_at = self._revision_cache[effective_zone]
             if current_time - cached_at < self._revision_cache_ttl:
                 return cached_rev // self._revision_quantization_window
+
+        # Issue #3192: Try SharedRingBuffer (cross-process mmap, no DB round-trip)
+        if self._revision_ring_buffer is not None:
+            try:
+                import json as _json
+
+                entries = self._revision_ring_buffer.read(from_seq=0)
+                if entries:
+                    _seq, data = entries[-1]  # latest entry
+                    rev_data = _json.loads(data)
+                    if rev_data.get("zone_id") == effective_zone:
+                        revision = rev_data.get("revision", 0)
+                        self._revision_cache[effective_zone] = (revision, current_time)
+                        return revision // self._revision_quantization_window
+            except Exception:
+                pass  # fall through to DB
 
         # Fetch from DB via callback
         if self._revision_fetcher:
@@ -571,12 +710,21 @@ class ReBACPermissionCache:
 
         with self._lock:
             # Check grant cache first (Issue #877)
-            result = self._grant_cache.get(key)
+            result: bool | None = self._grant_cache.get(key)
             is_grant_hit = result is not None
 
             # If not in grant cache, check denial cache
             if result is None:
                 result = self._denial_cache.get(key)
+
+            # Issue #3396: Read fence staleness check.
+            if result is not None and self._read_fence is not None:
+                zone_part = zone_id if zone_id else ROOT_ZONE_ID
+                entry_gen = self._fence_stamps.get(key, 0)
+                if self._read_fence.is_stale(zone_part, entry_gen):
+                    self._evict_key_unlocked(key)
+                    result = None
+                    is_grant_hit = False
 
             # Track metrics
             if self._enable_metrics:
@@ -662,6 +810,15 @@ class ReBACPermissionCache:
             if result is None:
                 result = self._denial_cache.get(key)
 
+            # Issue #3396: Read fence staleness check (same as get()).
+            if result is not None and self._read_fence is not None:
+                zone_part = zone_id if zone_id else ROOT_ZONE_ID
+                entry_gen = self._fence_stamps.get(key, 0)
+                if self._read_fence.is_stale(zone_part, entry_gen):
+                    self._evict_key_unlocked(key)
+                    result = None
+                    is_grant_hit = False
+
             # Track metrics
             if self._enable_metrics:
                 if result is not None:
@@ -717,6 +874,15 @@ class ReBACPermissionCache:
         key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
         zone_part = zone_id if zone_id else ROOT_ZONE_ID
 
+        # Pre-compute path prefixes outside lock (Issue #3192: reduce lock hold time)
+        path_prefixes: list[str] = []
+        if (
+            self._invalidation_mode == "targeted"
+            and object_type in ("file", "memory", "resource")
+            and object_id.startswith("/")
+        ):
+            path_prefixes = self._compute_path_prefixes(object_id)
+
         with self._lock:
             # Issue #1077: Get tiered TTL based on relation type
             # Only use tiered TTL when relation is explicitly provided
@@ -751,7 +917,19 @@ class ReBACPermissionCache:
                     self._denial_sets += 1
 
             # Issue #1077: Add to secondary indexes for O(1) invalidation
-            self._add_to_indexes(key, subject_type, subject_id, object_type, object_id, zone_part)
+            self._add_to_indexes(
+                key,
+                subject_type,
+                subject_id,
+                object_type,
+                object_id,
+                zone_part,
+                path_prefixes or None,
+            )
+
+            # Issue #3396: Stamp entry with fence generation at write time.
+            if self._read_fence is not None:
+                self._fence_stamps[key] = self._read_fence.generation(zone_part)
 
             if self._enable_metrics:
                 self._sets += 1
@@ -1030,11 +1208,20 @@ class ReBACPermissionCache:
 
         with self._lock:
             # Get cached value (existing logic)
-            result = self._grant_cache.get(key)
+            result: bool | None = self._grant_cache.get(key)
             is_grant_hit = result is not None
 
             if result is None:
                 result = self._denial_cache.get(key)
+
+            # Issue #3396: Read fence staleness check (same as get()).
+            if result is not None and self._read_fence is not None:
+                zone_part = zone_id if zone_id else ROOT_ZONE_ID
+                entry_gen = self._fence_stamps.get(key, 0)
+                if self._read_fence.is_stale(zone_part, entry_gen):
+                    self._evict_key_unlocked(key)
+                    result = None
+                    is_grant_hit = False
 
             # Track metrics
             if self._enable_metrics:
@@ -1101,6 +1288,10 @@ class ReBACPermissionCache:
             if key in self._denial_cache:
                 del self._denial_cache[key]
                 count += 1
+            # Issue #3396: clean up fence stamps to prevent memory leak
+            self._fence_stamps.pop(key, None)
+            self._entry_metadata.pop(key, None)
+            self._refresh_in_progress.discard(key)
         return count
 
     def _collect_matching_keys(
@@ -1421,6 +1612,8 @@ class ReBACPermissionCache:
             self._object_index.clear()
             self._path_prefix_index.clear()
             self._entry_metadata.clear()
+            # Issue #3396: Clear fence stamps to prevent memory leak
+            self._fence_stamps.clear()
             if self._enable_metrics:
                 logger.info("L1 cache cleared (grant, denial caches, and indexes)")
 

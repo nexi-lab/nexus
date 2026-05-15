@@ -4,7 +4,7 @@ This module provides a provider-based parsing system that supports multiple
 parsing backends:
 - UnstructuredProvider: Uses Unstructured.io API
 - LlamaParseProvider: Uses LlamaParse API
-- MarkItDownProvider: Local parsing with MarkItDown (fallback)
+- PdfInspectorProvider: Local PDF parsing with pdf-inspector (Rust + PyO3)
 
 Example:
     >>> from nexus.bricks.parsers.providers import ProviderRegistry

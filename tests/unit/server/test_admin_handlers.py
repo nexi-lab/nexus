@@ -15,6 +15,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.server.auth.factory import _ChainedAPIKeyAuth
 from nexus.server.rpc.handlers.admin import (
     format_api_key_response,
     handle_admin_create_key,
@@ -22,6 +26,7 @@ from nexus.server.rpc.handlers.admin import (
     handle_admin_list_keys,
     handle_admin_revoke_key,
     handle_admin_update_key,
+    handle_admin_write_permission,
     require_admin,
     require_database_auth,
 )
@@ -36,7 +41,7 @@ class FakeContext:
 
     is_admin: bool = False
     user: str = "testuser"
-    zone_id: str = "root"
+    zone_id: str = ROOT_ZONE_ID
 
 
 @dataclass
@@ -50,10 +55,21 @@ class FakeParams:
 
 @pytest.fixture()
 def db_engine(tmp_path):
-    """Create fresh SQLite database."""
+    """Create fresh SQLite database, pre-seeded with zone rows."""
     db_path = tmp_path / "test_admin.db"
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
+    # Seed zones required by junction-backed tests (#3871).
+    # All NOT NULL columns must be provided — INSERT OR IGNORE silently drops
+    # the row otherwise (zones requires zone_id, name, phase, finalizers,
+    # created_at, updated_at).
+    from nexus.storage.models.auth import ZoneModel
+
+    SessionLocal = sessionmaker(bind=engine)
+    with SessionLocal() as s:
+        for zid in ("zone1", "zone2"):
+            s.add(ZoneModel(zone_id=zid, name=zid, phase="Active"))
+        s.commit()
     return engine
 
 
@@ -105,6 +121,36 @@ class TestRequireAdmin:
 
         with pytest.raises(NexusPermissionError):
             require_admin(None)
+
+
+class TestHandleAdminWritePermission:
+    def test_uses_service_registry_rebac_manager(self, admin_context):
+        """Should use the canonical ServiceRegistry lookup for ReBAC writes."""
+        rebac = MagicMock()
+        nx = MagicMock()
+        nx.service.side_effect = lambda name: rebac if name == "rebac_manager" else None
+        nx._rebac_manager = None
+        nx.rebac_manager = None
+        params = FakeParams(
+            tuples=[
+                {
+                    "subject": ("user", "alice"),
+                    "relation": "direct_viewer",
+                    "object": ("file", "/workspace/demo"),
+                    "zone_id": "root",
+                }
+            ]
+        )
+
+        result = handle_admin_write_permission(nx, params, admin_context)
+
+        assert result == {"created": 1}
+        rebac.rebac_write.assert_called_once_with(
+            subject=("user", "alice"),
+            relation="direct_viewer",
+            object=("file", "/workspace/demo"),
+            zone_id="root",
+        )
 
 
 # ── require_database_auth Tests ──────────────────────────
@@ -184,7 +230,7 @@ class TestHandleAdminCreateKey:
         """Should create a key and return key details with raw key."""
         params = FakeParams(
             name="test-key",
-            zone_id="zone_alpha",
+            zone_id="zone1",
             user_id="alice",
             is_admin=False,
             expires_days=None,
@@ -197,7 +243,7 @@ class TestHandleAdminCreateKey:
         assert "key_id" in result
         assert "api_key" in result
         assert result["api_key"].startswith("sk-")
-        assert result["zone_id"] == "zone_alpha"
+        assert result["zone_id"] == "zone1"
 
     def test_non_admin_rejected(self, auth_provider, non_admin_context):
         """Non-admin should be rejected."""
@@ -216,34 +262,45 @@ class TestHandleAdminCreateKey:
         with pytest.raises(NexusPermissionError):
             handle_admin_create_key(auth_provider, params, non_admin_context)
 
+    def test_creates_key_with_chained_static_database_auth(self, session_factory, admin_context):
+        """Daemon static+database auth wrapper must support admin key creation."""
+        record_store = SimpleNamespace(session_factory=session_factory)
+        static_provider = StaticAPIKeyAuth(
+            {"sk-" + "a" * 32: {"subject_id": "admin", "is_admin": True}}
+        )
+        db_provider = DatabaseAPIKeyAuth(record_store, require_expiry=False)
+        auth_provider = _ChainedAPIKeyAuth(static_provider, db_provider)
+
+        params = FakeParams(
+            name="demo-user",
+            zone_id="zone1",
+            user_id="demo",
+            is_admin=False,
+            expires_days=None,
+            subject_type="user",
+            subject_id=None,
+        )
+
+        result = handle_admin_create_key(auth_provider, params, admin_context)
+
+        assert result["api_key"].startswith("sk-")
+        assert result["user_id"] == "demo"
+        assert result["zone_id"] == "zone1"
+
 
 # ── handle_admin_list_keys Tests ──────────────────────────
 
 
 class TestHandleAdminListKeys:
     def test_list_keys_with_zone_filter(self, auth_provider, admin_context):
-        """Should filter by zone_id."""
-        # Create keys in two zones
-        params_z1 = FakeParams(
-            name="key-z1",
-            zone_id="zone1",
-            user_id="u1",
-            is_admin=False,
-            expires_days=None,
-            subject_type="user",
-            subject_id=None,
-        )
-        params_z2 = FakeParams(
-            name="key-z2",
-            zone_id="zone2",
-            user_id="u2",
-            is_admin=False,
-            expires_days=None,
-            subject_type="user",
-            subject_id=None,
-        )
-        handle_admin_create_key(auth_provider, params_z1, admin_context)
-        handle_admin_create_key(auth_provider, params_z2, admin_context)
+        """Should filter by zone_id via junction (#3871)."""
+        from nexus.storage.api_key_ops import create_api_key
+
+        # Create keys in two zones using junction-backed create_api_key.
+        with auth_provider.session_factory() as s:
+            create_api_key(s, user_id="u1", name="key-z1", zones=["zone1"])
+            create_api_key(s, user_id="u2", name="key-z2", zones=["zone2"])
+            s.commit()
 
         # List only zone1
         list_params = FakeParams(
@@ -266,28 +323,21 @@ class TestHandleAdminListKeys:
 
 class TestHandleAdminGetKey:
     def test_get_key_with_zone_isolation(self, auth_provider, admin_context):
-        """Getting a key with wrong zone should raise NotFound."""
+        """Getting a key with wrong zone should raise NotFound (junction-based, #3871)."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
+        from nexus.storage.api_key_ops import create_api_key
 
-        # Create a key in zone1
-        create_params = FakeParams(
-            name="isolated",
-            zone_id="zone1",
-            user_id="u1",
-            is_admin=False,
-            expires_days=None,
-            subject_type="user",
-            subject_id=None,
-        )
-        created = handle_admin_create_key(auth_provider, create_params, admin_context)
-        key_id = created["key_id"]
+        # Create a key in zone1 only (no zone2 junction row).
+        with auth_provider.session_factory() as s:
+            key_id, _ = create_api_key(s, user_id="u1", name="isolated", zones=["zone1"])
+            s.commit()
 
-        # Get with correct zone — should succeed
+        # Get with correct zone — should succeed.
         get_params = FakeParams(key_id=key_id, zone_id="zone1")
         result = handle_admin_get_key(auth_provider, get_params, admin_context)
         assert result["key_id"] == key_id
 
-        # Get with wrong zone — should fail
+        # Get with wrong zone — should fail (no zone2 junction row).
         get_params_wrong = FakeParams(key_id=key_id, zone_id="zone2")
         with pytest.raises(NexusFileNotFoundError):
             handle_admin_get_key(auth_provider, get_params_wrong, admin_context)
@@ -298,38 +348,27 @@ class TestHandleAdminGetKey:
 
 class TestHandleAdminRevokeKey:
     def test_revoke_with_correct_zone(self, auth_provider, admin_context):
-        """Revoking with correct zone should succeed."""
-        create_params = FakeParams(
-            name="revoke-me",
-            zone_id="zone1",
-            user_id="u1",
-            is_admin=False,
-            expires_days=None,
-            subject_type="user",
-            subject_id=None,
-        )
-        created = handle_admin_create_key(auth_provider, create_params, admin_context)
+        """Revoking with correct zone should succeed (junction-based, #3871)."""
+        from nexus.storage.api_key_ops import create_api_key
 
-        revoke_params = FakeParams(key_id=created["key_id"], zone_id="zone1")
+        with auth_provider.session_factory() as s:
+            key_id, _ = create_api_key(s, user_id="u1", name="revoke-me", zones=["zone1"])
+            s.commit()
+
+        revoke_params = FakeParams(key_id=key_id, zone_id="zone1")
         result = handle_admin_revoke_key(auth_provider, revoke_params, admin_context)
         assert result["success"] is True
 
     def test_revoke_with_wrong_zone_raises(self, auth_provider, admin_context):
-        """Revoking with wrong zone should raise NotFound."""
+        """Revoking with wrong zone should raise NotFound (junction-based, #3871)."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
+        from nexus.storage.api_key_ops import create_api_key
 
-        create_params = FakeParams(
-            name="zone-isolated",
-            zone_id="zone1",
-            user_id="u1",
-            is_admin=False,
-            expires_days=None,
-            subject_type="user",
-            subject_id=None,
-        )
-        created = handle_admin_create_key(auth_provider, create_params, admin_context)
+        with auth_provider.session_factory() as s:
+            key_id, _ = create_api_key(s, user_id="u1", name="zone-isolated", zones=["zone1"])
+            s.commit()
 
-        revoke_params = FakeParams(key_id=created["key_id"], zone_id="zone2")
+        revoke_params = FakeParams(key_id=key_id, zone_id="zone2")
         with pytest.raises(NexusFileNotFoundError):
             handle_admin_revoke_key(auth_provider, revoke_params, admin_context)
 
@@ -339,53 +378,76 @@ class TestHandleAdminRevokeKey:
 
 class TestHandleAdminUpdateKey:
     def test_self_demotion_prevented(self, auth_provider, admin_context):
-        """Cannot remove admin from the last admin key."""
+        """Cannot remove admin from the last admin key (junction-based, #3871)."""
         from nexus.contracts.exceptions import ValidationError
+        from nexus.storage.api_key_ops import create_api_key
 
-        # Create a single admin key
-        create_params = FakeParams(
-            name="sole-admin",
-            zone_id="zone1",
-            user_id="admin_user",
-            is_admin=True,
-            expires_days=None,
-            subject_type="user",
-            subject_id=None,
-        )
-        created = handle_admin_create_key(auth_provider, create_params, admin_context)
+        # Create a single admin key via junction-backed helper.
+        with auth_provider.session_factory() as s:
+            key_id, _ = create_api_key(
+                s, user_id="admin_user", name="sole-admin", zones=["zone1"], is_admin=True
+            )
+            s.commit()
 
-        # Try to remove admin privileges — should fail
+        # Try to remove admin privileges — should fail (last admin in zone1).
         update_params = FakeParams(
-            key_id=created["key_id"],
-            zone_id="zone1",
+            key_id=key_id,
+            zone_id=None,
             is_admin=False,
             name=None,
             expires_days=None,
         )
-        with pytest.raises(ValidationError, match="last admin key"):
+        with pytest.raises(
+            ValidationError, match="zones \\['zone1'\\] would have no remaining admin"
+        ):
+            handle_admin_update_key(auth_provider, update_params, admin_context)
+
+    def test_partial_overlap_demotion_blocked(self, auth_provider, admin_context):
+        """Multi-zone admin demotion blocked when ANY zone would lose its sole admin (#3871).
+
+        Target admin covers zone1+zone2; another admin covers only zone1. Demoting
+        the target leaves zone2 with zero admins — must raise.
+        """
+        from nexus.contracts.exceptions import ValidationError
+        from nexus.storage.api_key_ops import create_api_key
+
+        with auth_provider.session_factory() as s:
+            target_id, _ = create_api_key(
+                s, user_id="admin_a", name="multi", zones=["zone1", "zone2"], is_admin=True
+            )
+            create_api_key(s, user_id="admin_b", name="zone1-only", zones=["zone1"], is_admin=True)
+            s.commit()
+
+        update_params = FakeParams(
+            key_id=target_id,
+            zone_id=None,
+            is_admin=False,
+            name=None,
+            expires_days=None,
+        )
+        with pytest.raises(
+            ValidationError, match=r"zones \['zone2'\] would have no remaining admin"
+        ):
             handle_admin_update_key(auth_provider, update_params, admin_context)
 
     def test_demotion_allowed_when_other_admins_exist(self, auth_provider, admin_context):
-        """Can remove admin when other admin keys exist in the same zone."""
-        # Create two admin keys in zone1
-        last_created = None
-        for i in range(2):
-            create_params = FakeParams(
-                name=f"admin-{i}",
-                zone_id="zone1",
-                user_id=f"admin_{i}",
-                is_admin=True,
-                expires_days=None,
-                subject_type="user",
-                subject_id=None,
-            )
-            last_created = handle_admin_create_key(auth_provider, create_params, admin_context)
+        """Can remove admin when other admin keys exist in the same zone (junction, #3871)."""
+        from nexus.storage.api_key_ops import create_api_key
 
-        assert last_created is not None
-        # Remove admin from the second key — should succeed
+        # Create two admin keys in zone1 via junction-backed helper.
+        with auth_provider.session_factory() as s:
+            key_id_a, _ = create_api_key(
+                s, user_id="admin_0", name="admin-0", zones=["zone1"], is_admin=True
+            )
+            key_id_b, _ = create_api_key(
+                s, user_id="admin_1", name="admin-1", zones=["zone1"], is_admin=True
+            )
+            s.commit()
+
+        # Remove admin from the second key — should succeed (admin_0 still covers zone1).
         update_params = FakeParams(
-            key_id=last_created["key_id"],
-            zone_id="zone1",
+            key_id=key_id_b,
+            zone_id=None,
             is_admin=False,
             name=None,
             expires_days=None,
@@ -395,20 +457,15 @@ class TestHandleAdminUpdateKey:
         assert result["is_admin"] is False
 
     def test_update_name(self, auth_provider, admin_context):
-        """Updating just the name should work."""
-        create_params = FakeParams(
-            name="old-name",
-            zone_id="zone1",
-            user_id="u1",
-            is_admin=False,
-            expires_days=None,
-            subject_type="user",
-            subject_id=None,
-        )
-        created = handle_admin_create_key(auth_provider, create_params, admin_context)
+        """Updating just the name should work (junction-based, #3871)."""
+        from nexus.storage.api_key_ops import create_api_key
+
+        with auth_provider.session_factory() as s:
+            key_id, _ = create_api_key(s, user_id="u1", name="old-name", zones=["zone1"])
+            s.commit()
 
         update_params = FakeParams(
-            key_id=created["key_id"],
+            key_id=key_id,
             zone_id="zone1",
             name="new-name",
             is_admin=None,
@@ -418,23 +475,17 @@ class TestHandleAdminUpdateKey:
         assert result["name"] == "new-name"
 
     def test_update_with_wrong_zone_raises(self, auth_provider, admin_context):
-        """Updating a key from the wrong zone should raise NotFound."""
+        """Updating a key with wrong zone should raise NotFound (junction-based, #3871)."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
+        from nexus.storage.api_key_ops import create_api_key
 
-        create_params = FakeParams(
-            name="zone-locked",
-            zone_id="zone1",
-            user_id="u1",
-            is_admin=False,
-            expires_days=None,
-            subject_type="user",
-            subject_id=None,
-        )
-        created = handle_admin_create_key(auth_provider, create_params, admin_context)
+        with auth_provider.session_factory() as s:
+            key_id, _ = create_api_key(s, user_id="u1", name="iso", zones=["zone1"])
+            s.commit()
 
         update_params = FakeParams(
-            key_id=created["key_id"],
-            zone_id="zone2",
+            key_id=key_id,
+            zone_id="zone2",  # wrong zone
             name="hacked",
             is_admin=None,
             expires_days=None,

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.portability import (
     ConflictMode,
     ZoneImportOptions,
@@ -20,7 +20,6 @@ from nexus.bricks.portability import (
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
@@ -32,14 +31,14 @@ def temp_dir():
 
 
 @pytest.fixture
-def source_nexus_fs_with_permissions(temp_dir):
+async def source_nexus_fs_with_permissions(temp_dir):
     """Create source NexusFS with permissions enabled."""
     data_dir = temp_dir / "source_data"
     data_dir.mkdir()
 
     fs = create_nexus_fs(
-        backend=LocalBackend(data_dir),
-        metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
+        backend=CASLocalBackend(data_dir),
+        metadata_store=str(data_dir / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=True),  # Enable permissions
@@ -49,27 +48,23 @@ def source_nexus_fs_with_permissions(temp_dir):
     admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
     # Create test files as admin
-    fs.sys_write(
-        "/workspace/readme.md", b"# Test Project\n\nPermissions test.", context=admin_context
-    )
-    fs.sys_write(
-        "/workspace/src/main.py", b'print("Hello with permissions!")', context=admin_context
-    )
-    fs.sys_write("/docs/guide.txt", b"User guide with permissions.", context=admin_context)
+    fs.write("/workspace/readme.md", b"# Test Project\n\nPermissions test.", context=admin_context)
+    fs.write("/workspace/src/main.py", b'print("Hello with permissions!")', context=admin_context)
+    fs.write("/docs/guide.txt", b"User guide with permissions.", context=admin_context)
 
     yield fs
     fs.close()
 
 
 @pytest.fixture
-def target_nexus_fs_with_permissions(temp_dir):
+async def target_nexus_fs_with_permissions(temp_dir):
     """Create target NexusFS with permissions enabled."""
     data_dir = temp_dir / "target_data"
     data_dir.mkdir()
 
     fs = create_nexus_fs(
-        backend=LocalBackend(data_dir),
-        metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
+        backend=CASLocalBackend(data_dir),
+        metadata_store=str(data_dir / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=True),  # Enable permissions
@@ -137,7 +132,8 @@ class TestExportWithPermissions:
 class TestImportWithPermissions:
     """Tests for import with permissions enabled."""
 
-    def test_import_with_permissions_enabled(
+    @pytest.mark.asyncio
+    async def test_import_with_permissions_enabled(
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test that import works with permissions enabled on target."""
@@ -162,14 +158,15 @@ class TestImportWithPermissions:
         )
         assert b"Permissions test" in content
 
-    def test_import_conflict_skip_with_permissions(
+    @pytest.mark.asyncio
+    async def test_import_conflict_skip_with_permissions(
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test SKIP conflict mode with permissions enabled."""
         admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
-        target_nexus_fs_with_permissions.sys_write(
+        target_nexus_fs_with_permissions.write(
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 
@@ -191,14 +188,15 @@ class TestImportWithPermissions:
         )
         assert content == b"Existing content"
 
-    def test_import_overwrite_with_permissions(
+    @pytest.mark.asyncio
+    async def test_import_overwrite_with_permissions(
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test OVERWRITE conflict mode with permissions enabled."""
         admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
-        target_nexus_fs_with_permissions.sys_write(
+        target_nexus_fs_with_permissions.write(
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 
@@ -224,7 +222,8 @@ class TestImportWithPermissions:
 class TestRoundTripWithPermissions:
     """Tests for export -> import round trip with permissions."""
 
-    def test_roundtrip_preserves_content_with_permissions(
+    @pytest.mark.asyncio
+    async def test_roundtrip_preserves_content_with_permissions(
         self, source_nexus_fs_with_permissions, target_nexus_fs_with_permissions, temp_dir
     ):
         """Test that content is preserved through export/import with permissions."""

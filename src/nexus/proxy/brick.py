@@ -10,6 +10,7 @@ import base64
 import contextlib
 import logging
 from dataclasses import asdict
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.proxy.circuit_breaker import AsyncCircuitBreaker, CircuitState
@@ -20,7 +21,7 @@ from nexus.proxy.errors import (
     RemoteCallError,
     is_connection_error,
 )
-from nexus.proxy.offline_queue import OfflineQueue
+from nexus.proxy.queue_protocol import InMemoryQueue
 from nexus.proxy.replay_engine import ReplayEngine
 from nexus.proxy.transport import HttpTransport
 
@@ -61,9 +62,7 @@ class ProxyBrick:
     ) -> None:
         self._config = config
         self._transport = transport or HttpTransport(config)
-        self._queue: OfflineQueueProtocol = queue or OfflineQueue(
-            config.queue_db_path, max_retry_count=config.max_retry_count
-        )
+        self._queue: OfflineQueueProtocol = queue or InMemoryQueue()
         self._circuit = AsyncCircuitBreaker(
             failure_threshold=config.cb_failure_threshold,
             recovery_timeout=config.cb_recovery_timeout,
@@ -104,6 +103,7 @@ class ProxyBrick:
             circuit=self._circuit,
             batch_size=self._config.replay_batch_size,
             poll_interval=self._config.replay_poll_interval,
+            on_replay_success=self._on_replay_success,
         )
         self._replay_task = asyncio.create_task(self._replay_engine.run())
 
@@ -142,11 +142,13 @@ class ProxyBrick:
 
     async def _do_forward(self, method: str, *, data: bytes | None = None, **kwargs: Any) -> Any:
         """Unified forward — handles both regular and streaming calls (#6-A)."""
+        payload_ref = base64.b64encode(data).decode() if data is not None else None
+
         allowed = await self._circuit.allow_request()
         if not allowed:
             if self._edge_sync is not None:
                 self._edge_sync.notify_disconnected()
-            queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+            queue_id = await self._queue.enqueue(method, kwargs=kwargs, payload_ref=payload_ref)
             self._wake_replay()
             logger.warning("Circuit open — operation '%s' queued (id=%d)", method, queue_id)
             raise CircuitOpenError(
@@ -168,7 +170,7 @@ class ProxyBrick:
                 await self._circuit.record_failure()
                 if self._edge_sync is not None:
                     self._edge_sync.notify_disconnected()
-                queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+                queue_id = await self._queue.enqueue(method, kwargs=kwargs, payload_ref=payload_ref)
                 self._wake_replay()
                 logger.warning("Operation '%s' queued for offline replay (id=%d)", method, queue_id)
                 raise OfflineQueuedError(method, queue_id) from exc
@@ -186,6 +188,11 @@ class ProxyBrick:
         """Signal the replay engine to process the queue immediately."""
         if self._replay_engine is not None:
             self._replay_engine.wake()
+
+    def _on_replay_success(self) -> None:
+        """Called by ReplayEngine after a successful replay — advances reconnect state."""
+        if self._edge_sync is not None:
+            self._edge_sync.notify_connected()
 
     # ------------------------------------------------------------------
     # Properties
@@ -236,6 +243,10 @@ class ProxyVFSBrick(ProxyBrick):
         encoded = base64.b64encode(data).decode()
         await self._forward("write", path=path, content=encoded, zone_id=zone_id)
 
+    async def write(self, path: str, data: bytes, zone_id: str) -> None:
+        """Tier 2 write — delegates to sys_write for proxy."""
+        await self.sys_write(path, data, zone_id)
+
     async def sys_readdir(self, path: str, zone_id: str) -> list[str]:
         return cast(list[str], await self._forward("list_dir", path=path, zone_id=zone_id))
 
@@ -246,35 +257,50 @@ class ProxyVFSBrick(ProxyBrick):
     async def sys_rename(self, src: str, dst: str, zone_id: str) -> None:
         await self._forward("rename", src=src, dst=dst, zone_id=zone_id)
 
-    async def sys_mkdir(self, path: str, zone_id: str) -> None:
+    async def mkdir(self, path: str, zone_id: str) -> None:
         await self._forward("mkdir", path=path, zone_id=zone_id)
 
-    async def sys_access(self, path: str, zone_id: str) -> bool:
+    async def access(self, path: str, zone_id: str) -> bool:
         return cast(bool, await self._forward("exists", path=path, zone_id=zone_id))
 
     async def count_dir(self, path: str, zone_id: str) -> int:
         return cast(int, await self._forward("count_dir", path=path, zone_id=zone_id))
 
+    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+        """VFSOperations-compatible alias for sys_rename."""
+        await self.sys_rename(src, dst, zone_id)
 
-class ProxyEventLogBrick(ProxyBrick):
-    """Proxy for ``EventLogProtocol`` — forwards audit events to cloud."""
+    async def sys_unlink(self, path: str, zone_id: str) -> None:
+        """Delete a file at the given path via remote kernel."""
+        await self._forward("sys_unlink", path=path, zone_id=zone_id)
 
-    async def append(self, event: Any) -> Any:
-        return await self._forward("event_log.append", event=asdict(event))
+    async def file_mtime(self, path: str, zone_id: str) -> "datetime | None":
+        """Return server-observed mtime via the ``sys_stat`` RPC (modified_at field).
 
-    async def read(
-        self,
-        *,
-        since_sequence: int = 0,
-        limit: int = 100,
-        zone_id: str | None = None,
-    ) -> list[Any]:
-        return await self._forward(  # type: ignore[no-any-return]
-            "event_log.read",
-            since_sequence=since_sequence,
-            limit=limit,
-            zone_id=zone_id,
-        )
+        ``sys_stat`` is an existing RPC in the server dispatch table (mapped to
+        ``handle_get_metadata``). Its response includes ``modified_at`` set by
+        the kernel at write time — server-controlled, not sender-influenced.
+
+        Returns ``None`` when the stat call fails or ``modified_at`` is absent.
+        Callers treat ``None`` as a safe-fail: retention is skipped.
+        """
+        try:
+            result = await self._forward("sys_stat", path=path, zone_id=zone_id)
+            if not isinstance(result, dict):
+                return None
+            metadata = result.get("metadata") or result
+            if not isinstance(metadata, dict):
+                return None
+            modified_at = metadata.get("modified_at")
+            if modified_at is None:
+                return None
+            if isinstance(modified_at, datetime):
+                return modified_at
+            if isinstance(modified_at, str):
+                return datetime.fromisoformat(modified_at)
+        except Exception:
+            pass
+        return None
 
 
 class ProxySchedulerBrick(ProxyBrick):
@@ -308,51 +334,3 @@ class ProxySchedulerBrick(ProxyBrick):
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         return await self._forward("scheduler.metrics", zone_id=zone_id)  # type: ignore[no-any-return]
-
-
-class ProxyAgentRegistryBrick(ProxyBrick):
-    """Proxy for ``AgentRegistryProtocol`` — forwards registry ops to cloud."""
-
-    async def register(
-        self,
-        agent_id: str,
-        owner_id: str,
-        *,
-        zone_id: str | None = None,
-        name: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> Any:
-        return await self._forward(
-            "agent_registry.register",
-            agent_id=agent_id,
-            owner_id=owner_id,
-            zone_id=zone_id,
-            name=name,
-            metadata=metadata,
-        )
-
-    async def get(self, agent_id: str) -> Any | None:
-        return await self._forward("agent_registry.get", agent_id=agent_id)
-
-    async def transition(
-        self,
-        agent_id: str,
-        target_state: str,
-        *,
-        expected_generation: int | None = None,
-    ) -> Any:
-        return await self._forward(
-            "agent_registry.transition",
-            agent_id=agent_id,
-            target_state=target_state,
-            expected_generation=expected_generation,
-        )
-
-    async def heartbeat(self, agent_id: str) -> None:
-        await self._forward("agent_registry.heartbeat", agent_id=agent_id)
-
-    async def list_by_zone(self, zone_id: str) -> list[Any]:
-        return await self._forward("agent_registry.list_by_zone", zone_id=zone_id)  # type: ignore[no-any-return]
-
-    async def unregister(self, agent_id: str) -> bool:
-        return await self._forward("agent_registry.unregister", agent_id=agent_id)  # type: ignore[no-any-return]

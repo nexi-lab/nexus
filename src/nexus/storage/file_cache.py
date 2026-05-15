@@ -32,13 +32,16 @@ Usage:
 import json as _json
 import logging
 import shutil
+import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import blake3
 
+# RUST_FALLBACK: BloomFilter (read_file / read_files_bulk are required)
 if TYPE_CHECKING:
-    from nexus_fast import BloomFilter
+    from nexus_runtime import BloomFilter
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +87,15 @@ class FileContentCache:
         self._bloom = None
         self._bloom_capacity = bloom_capacity
         self._bloom_fp_rate = bloom_fp_rate
+
+        # Lease-aware staleness tracking (Issue #3400).
+        # _leased_paths: paths with active leases (content is known-fresh).
+        # _stale_paths:  paths whose leases were revoked (content may be stale).
+        # Both are keyed by "zone_id:path_hash" for O(1) lookup.
+        self._lease_lock = threading.Lock()
+        self._leased_paths: set[str] = set()
+        self._stale_paths: set[str] = set()
+
         self._ensure_cache_dir()
         self._init_bloom_filter()
 
@@ -92,22 +104,27 @@ class FileContentCache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _init_bloom_filter(self) -> None:
-        """Initialize Bloom filter for fast cache miss detection."""
-        try:
-            from nexus_fast import BloomFilter
+        """Initialize Bloom filter for fast cache miss detection.
 
-            self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
-            self._populate_bloom_from_disk()
+        Degrades gracefully to `_bloom=None` when nexus_runtime is absent or stale.
+        """
+        # RUST_FALLBACK: BloomFilter (optional — stale/absent binary disables bloom)
+        from nexus._rust_compat import BloomFilter
+
+        if BloomFilter is None:
             logger.debug(
-                f"Bloom filter initialized: capacity={self._bloom_capacity}, "
-                f"fp_rate={self._bloom_fp_rate}, memory={self._bloom.memory_bytes} bytes"
+                "BloomFilter unavailable (stale or absent nexus_runtime) — "
+                "cache miss detection will use disk checks"
             )
-        except ImportError:
-            logger.warning("nexus_fast not available, Bloom filter disabled")
             self._bloom = None
-        except Exception as e:
-            logger.warning(f"Failed to initialize Bloom filter: {e}")
-            self._bloom = None
+            return
+
+        self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
+        self._populate_bloom_from_disk()
+        logger.debug(
+            f"Bloom filter initialized: capacity={self._bloom_capacity}, "
+            f"fp_rate={self._bloom_fp_rate}, memory={self._bloom.memory_bytes} bytes"
+        )
 
     def _populate_bloom_from_disk(self) -> None:
         """Populate Bloom filter from existing cache entries on disk.
@@ -137,6 +154,48 @@ class FileContentCache:
                 logger.info(f"Bloom filter populated with {len(keys)} entries from disk")
         except Exception as e:
             logger.warning(f"Failed to populate Bloom filter from disk: {e}")
+
+    # =================================================================
+    # Lease-aware staleness (Issue #3400)
+    # =================================================================
+
+    def _lease_key(self, zone_id: str, virtual_path: str) -> str:
+        """Compose a lease-tracking key from zone + path hash."""
+        return f"{zone_id}:{self._path_hash(virtual_path)}"
+
+    def mark_lease_acquired(self, zone_id: str, virtual_path: str) -> None:
+        """Record that a lease has been acquired for a path.
+
+        The cached content for this path is now known-fresh.  Clears any
+        prior staleness marker so subsequent reads return cached data.
+        """
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            self._leased_paths.add(key)
+            self._stale_paths.discard(key)
+
+    def mark_lease_revoked(self, zone_id: str, virtual_path: str) -> None:
+        """Record that a lease has been revoked for a path.
+
+        The cached content may now be stale — subsequent reads for this
+        path will return ``None`` until fresh content is written.
+        """
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            self._leased_paths.discard(key)
+            self._stale_paths.add(key)
+
+    def is_stale(self, zone_id: str, virtual_path: str) -> bool:
+        """Check whether cached content for a path is marked stale."""
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            return key in self._stale_paths
+
+    def has_active_lease(self, zone_id: str, virtual_path: str) -> bool:
+        """Check whether a path has an active lease (content is fresh)."""
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            return key in self._leased_paths
 
     def _bloom_key(self, zone_id: str, virtual_path: str) -> str:
         """Generate Bloom filter key for a cache entry.
@@ -171,6 +230,13 @@ class FileContentCache:
         hash_hex: str = blake3.blake3(virtual_path.encode()).hexdigest()
         return hash_hex[:32]
 
+    @staticmethod
+    def _safe_zone_id(zone_id: str) -> str:
+        """Validate zone_id is safe for filesystem path construction."""
+        from nexus.lib.zone import validate_zone_id
+
+        return validate_zone_id(zone_id)
+
     def _get_cache_path(self, zone_id: str, virtual_path: str) -> Path:
         """Get the file path for cached content.
 
@@ -178,17 +244,20 @@ class FileContentCache:
         This prevents too many files in a single directory (max 256 per level).
         """
         path_hash = self._path_hash(virtual_path)
-        return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.bin"
+        safe_zone = self._safe_zone_id(zone_id)
+        return self.cache_dir / safe_zone / path_hash[:2] / path_hash[2:4] / f"{path_hash}.bin"
 
     def _get_text_cache_path(self, zone_id: str, virtual_path: str) -> Path:
         """Get the file path for cached parsed text."""
         path_hash = self._path_hash(virtual_path)
-        return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.txt"
+        safe_zone = self._safe_zone_id(zone_id)
+        return self.cache_dir / safe_zone / path_hash[:2] / path_hash[2:4] / f"{path_hash}.txt"
 
     def _get_meta_cache_path(self, zone_id: str, virtual_path: str) -> Path:
         """Get the file path for cached metadata (replaces DB ContentCacheModel)."""
         path_hash = self._path_hash(virtual_path)
-        return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.meta"
+        safe_zone = self._safe_zone_id(zone_id)
+        return self.cache_dir / safe_zone / path_hash[:2] / path_hash[2:4] / f"{path_hash}.meta"
 
     def write(
         self,
@@ -222,6 +291,12 @@ class FileContentCache:
         except Exception as e:
             logger.error(f"Failed to write cache file {cache_path}: {e}")
             raise
+
+        # Clear staleness AFTER successful write — if write_bytes() failed
+        # the stale marker must survive so reads don't serve old data.
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            self._stale_paths.discard(key)
 
         # Write text content if provided
         if text_content:
@@ -268,9 +343,12 @@ class FileContentCache:
             virtual_path: Virtual file path
 
         Returns:
-            Metadata dict, or None if not cached
+            Metadata dict, or None if not cached or stale
         """
         if not self._bloom_check(zone_id, virtual_path):
+            return None
+
+        if self.is_stale(zone_id, virtual_path):
             return None
 
         meta_path = self._get_meta_cache_path(zone_id, virtual_path)
@@ -311,40 +389,64 @@ class FileContentCache:
         Uses Bloom filter for fast cache miss detection - avoids disk I/O
         for entries that definitely don't exist.
 
-        Uses mmap-based reading via nexus_fast for better performance:
+        Uses mmap-based reading via nexus_runtime for better performance:
         - Leverages OS page cache efficiently
         - 20-70% faster for medium to large files
+
+        Returns ``None`` (forcing a re-fetch from the backend) when:
+        - The entry doesn't exist (Bloom filter negative)
+        - The entry has been marked stale by lease revocation (Issue #3400)
 
         Args:
             zone_id: Zone ID
             virtual_path: Virtual file path
 
         Returns:
-            Cached content bytes, or None if not cached
+            Cached content bytes, or None if not cached or stale
         """
         # Fast path: Bloom filter says entry definitely doesn't exist
         if not self._bloom_check(zone_id, virtual_path):
             return None
 
+        # Staleness check: lease was revoked → content may be stale
+        if self.is_stale(zone_id, virtual_path):
+            return None
+
         cache_path = self._get_cache_path(zone_id, virtual_path)
 
-        try:
-            from nexus_fast import read_file
+        from nexus._rust_compat import read_file
 
-            result: bytes | None = read_file(str(cache_path))
-            return result
-        except ImportError:
-            # Fallback to standard read if nexus_fast not available
+        try:
+            if read_file is not None:
+                data: bytes | None = read_file(str(cache_path))
+                return data
             if not cache_path.exists():
                 return None
-            try:
-                return cache_path.read_bytes()
-            except Exception as e:
-                logger.warning(f"Failed to read cache file {cache_path}: {e}")
-                return None
+            return cache_path.read_bytes()
         except Exception as e:
             logger.warning(f"Failed to read cache file {cache_path}: {e}")
             return None
+
+    def read_if_fresh(
+        self,
+        zone_id: str,
+        virtual_path: str,
+        expected_fingerprint: str | None,
+    ) -> bytes | None:
+        """Read cached bytes only when metadata proves the entry is fresh."""
+        meta = self.read_meta(zone_id, virtual_path)
+        if meta is None:
+            return None
+
+        if expected_fingerprint is not None:
+            if meta.get("fingerprint") != expected_fingerprint:
+                return None
+        else:
+            expires_at = meta.get("expires_at")
+            if expires_at is not None and expires_at < time.time():
+                return None
+
+        return self.read(zone_id, virtual_path)
 
     def read_text(self, zone_id: str, virtual_path: str) -> str | None:
         """Read parsed text content from cache.
@@ -357,11 +459,15 @@ class FileContentCache:
             virtual_path: Virtual file path
 
         Returns:
-            Cached text content, or None if not cached
+            Cached text content, or None if not cached or stale
         """
         # Fast path: Bloom filter says entry definitely doesn't exist
         # (text file uses same path hash as binary file)
         if not self._bloom_check(zone_id, virtual_path):
+            return None
+
+        # Staleness check
+        if self.is_stale(zone_id, virtual_path):
             return None
 
         text_path = self._get_text_cache_path(zone_id, virtual_path)
@@ -382,7 +488,7 @@ class FileContentCache:
     ) -> dict[str, bytes]:
         """Read multiple files from cache.
 
-        Uses parallel mmap-based reading via nexus_fast for better performance
+        Uses parallel mmap-based reading via nexus_runtime for better performance
         when reading many files (10+ files uses parallel I/O).
 
         Args:
@@ -393,7 +499,12 @@ class FileContentCache:
             Dict mapping virtual_path to content (only for cached files)
         """
         # Filter out paths that definitely don't exist (via Bloom filter)
-        paths_to_check = [p for p in virtual_paths if self._bloom_check(zone_id, p)]
+        # and paths that are marked stale (lease revoked)
+        paths_to_check = [
+            p
+            for p in virtual_paths
+            if self._bloom_check(zone_id, p) and not self.is_stale(zone_id, p)
+        ]
 
         if not paths_to_check:
             return {}
@@ -406,27 +517,24 @@ class FileContentCache:
             cache_to_virtual[cache_path] = vpath
             cache_paths.append(cache_path)
 
-        try:
-            from nexus_fast import read_files_bulk
+        from nexus._rust_compat import read_files_bulk
 
-            # Parallel mmap read
+        if read_files_bulk is not None:
             cache_contents = read_files_bulk(cache_paths)
+        else:
+            cache_contents = {}
+            for cache_path in cache_paths:
+                path = Path(cache_path)
+                if path.exists():
+                    cache_contents[cache_path] = path.read_bytes()
 
-            # Map back to virtual paths
-            result: dict[str, bytes] = {}
-            for cache_path, content in cache_contents.items():
-                virtual_path = cache_to_virtual.get(cache_path)
-                if virtual_path:
-                    result[virtual_path] = content
-            return result
-        except ImportError:
-            # Fallback to sequential read if nexus_fast not available
-            result = {}
-            for path in paths_to_check:
-                content = self.read(zone_id, path)
-                if content is not None:
-                    result[path] = content
-            return result
+        # Map back to virtual paths
+        result: dict[str, bytes] = {}
+        for cache_path, content in cache_contents.items():
+            virtual_path = cache_to_virtual.get(cache_path)
+            if virtual_path:
+                result[virtual_path] = content
+        return result
 
     def read_text_bulk(
         self,
@@ -536,6 +644,15 @@ class FileContentCache:
             except Exception as e:
                 logger.warning(f"Failed to delete meta cache {meta_path}: {e}")
 
+        # Clear staleness / lease state only AFTER files are deleted.
+        # If deletion failed, preserve stale markers so reads don't
+        # silently serve the old on-disk content.
+        if deleted:
+            key = self._lease_key(zone_id, virtual_path)
+            with self._lease_lock:
+                self._stale_paths.discard(key)
+                self._leased_paths.discard(key)
+
         return deleted
 
     def delete_zone(self, zone_id: str) -> int:
@@ -547,7 +664,8 @@ class FileContentCache:
         Returns:
             Number of files deleted
         """
-        zone_dir = self.cache_dir / zone_id
+        safe_zone = self._safe_zone_id(zone_id)
+        zone_dir = self.cache_dir / safe_zone
         if not zone_dir.exists():
             return 0
 

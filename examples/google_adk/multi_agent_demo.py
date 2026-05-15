@@ -102,7 +102,7 @@ def create_multi_agent_system(nx):
         except Exception as e:
             return f"Error: {e}"
 
-    def read_file(path: str, max_lines: int = 200) -> str:
+    async def read_file(path: str, max_lines: int = 200) -> str:
         """Read file content."""
         try:
             content = nx.sys_read(path)
@@ -118,7 +118,7 @@ def create_multi_agent_system(nx):
         except Exception as e:
             return f"Error reading {path}: {e}"
 
-    def write_file(path: str, content: str) -> str:
+    async def write_file(path: str, content: str) -> str:
         """Write content to file."""
         try:
             nx.sys_write(path, content.encode("utf-8"))
@@ -218,7 +218,7 @@ Work systematically through the task!""",
     return coordinator
 
 
-def run_demo():
+async def run_demo():
     """Run multi-agent demo."""
     print("=" * 70)
     print("Google ADK Multi-Agent System with Nexus")
@@ -321,7 +321,7 @@ Make it useful for new developers!""",
         print(f"\nFinal Result:\n{result}")
 
         # Show what was written
-        if nx.sys_access("/reports/multi-agent-analysis.md"):
+        if await nx.access("/reports/multi-agent-analysis.md"):
             print("\n" + "=" * 70)
             print("Generated Report Preview:")
             print("=" * 70)

@@ -27,7 +27,6 @@ Performance expectations:
 - Cache miss detection: O(1) via Bloom filter
 """
 
-import contextlib
 import logging
 import os
 import shutil
@@ -37,9 +36,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, unquote
 
+# RUST_FALLBACK: BloomFilter
 if TYPE_CHECKING:
-    from nexus_fast import BloomFilter
+    from nexus_runtime import BloomFilter
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ DEFAULT_BLOOM_CAPACITY = 1_000_000
 DEFAULT_BLOOM_FP_RATE = 0.01
 
 # Metadata file format version
-METADATA_VERSION = 1
+METADATA_VERSION = 2
 
 
 @dataclass
@@ -171,17 +172,19 @@ class LocalDiskCache:
 
     def _init_bloom_filter(self) -> None:
         """Initialize Bloom filter for fast cache miss detection."""
-        try:
-            from nexus_fast import BloomFilter
+        # RUST_FALLBACK: BloomFilter
+        from nexus._rust_compat import BloomFilter
 
-            self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
-            logger.debug(
-                f"Bloom filter initialized: capacity={self._bloom_capacity}, "
-                f"fp_rate={self._bloom_fp_rate}"
-            )
-        except ImportError:
-            logger.warning("nexus_fast not available, Bloom filter disabled")
+        if BloomFilter is None:
             self._bloom = None
+            logger.debug("BloomFilter unavailable; local disk cache will use metadata lookups")
+            return
+
+        self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
+        logger.debug(
+            f"Bloom filter initialized: capacity={self._bloom_capacity}, "
+            f"fp_rate={self._bloom_fp_rate}"
+        )
 
     def _make_cache_key(self, content_hash: str, zone_id: str | None = None) -> str:
         """Create zone-isolated cache key.
@@ -197,6 +200,9 @@ class LocalDiskCache:
             Cache key in format "{zone_id}:{content_hash}" or just "{content_hash}"
         """
         if zone_id:
+            from nexus.lib.zone import validate_zone_id
+
+            validate_zone_id(zone_id)
             return f"{zone_id}:{content_hash}"
         return content_hash
 
@@ -206,14 +212,17 @@ class LocalDiskCache:
         Uses hash-based sharding: {key[:2]}/{key[2:4]}/{key}.bin
         This prevents too many files in a single directory.
         """
-        # Use last 64 chars for path (content_hash part) to maintain sharding
-        hash_part = cache_key[-64:] if len(cache_key) > 64 else cache_key
-        return self.content_dir / hash_part[:2] / hash_part[2:4] / f"{cache_key}.bin"
+        safe_key = quote(cache_key, safe=":")
+        # Use the escaped key for sharding so opaque logical keys never create
+        # accidental path components.
+        hash_part = safe_key[-64:] if len(safe_key) > 64 else safe_key
+        return self.content_dir / hash_part[:2] / hash_part[2:4] / f"{safe_key}.bin"
 
     def _get_block_path(self, cache_key: str, block_idx: int) -> Path:
         """Get file path for a specific block of large content."""
-        hash_part = cache_key[-64:] if len(cache_key) > 64 else cache_key
-        return self.blocks_dir / hash_part[:2] / hash_part[2:4] / f"{cache_key}.{block_idx:04d}.bin"
+        safe_key = quote(cache_key, safe=":")
+        hash_part = safe_key[-64:] if len(safe_key) > 64 else safe_key
+        return self.blocks_dir / hash_part[:2] / hash_part[2:4] / f"{safe_key}.{block_idx:04d}.bin"
 
     def get(self, content_hash: str, zone_id: str | None = None) -> bytes | None:
         """Get content from cache by hash.
@@ -413,23 +422,29 @@ class LocalDiskCache:
             return self._remove_entry(cache_key)
 
     def _remove_entry(self, content_hash: str) -> bool:
-        """Internal: Remove entry from cache (must hold lock)."""
-        entry = self._entries.pop(content_hash, None)
+        """Internal: Remove entry from cache (must hold lock).
+
+        Deletion order: files first, then metadata.  If file deletion
+        fails the metadata is preserved so the entry can be retried on
+        the next eviction pass — this prevents size-tracking drift.
+
+        The entry is NOT removed from ``_clock_order`` here; orphaned
+        entries are lazily cleaned up during CLOCK scans (O(1) skip
+        vs O(n) ``list.remove``).
+        """
+        entry = self._entries.get(content_hash)
         if entry is None:
             return False
 
-        # Remove from clock order
-        with contextlib.suppress(ValueError):
-            self._clock_order.remove(content_hash)
-
-        # Delete files
+        # Delete content file FIRST — only update metadata on success
         content_path = self._get_content_path(content_hash)
         try:
             content_path.unlink(missing_ok=True)
         except Exception as e:
             logger.warning(f"Failed to delete cached content {content_hash}: {e}")
+            return False
 
-        # Delete blocks if they exist
+        # Delete blocks (best-effort — content file is already gone)
         for block_idx in range(0, 1000):  # Max 1000 blocks
             block_path = self._get_block_path(content_hash, block_idx)
             if not block_path.exists():
@@ -439,6 +454,10 @@ class LocalDiskCache:
             except Exception as e:
                 logger.debug("Failed to delete cache block %s: %s", block_path, e)
 
+        # Safe to update metadata now that files are deleted.
+        # _clock_order is NOT touched — orphans are lazily cleaned
+        # during the next CLOCK scan (see _evict_clock).
+        self._entries.pop(content_hash, None)
         self._current_size_bytes -= entry.size_bytes
         self._stats.evictions += 1
         self._stats.bytes_evicted += entry.size_bytes
@@ -494,9 +513,12 @@ class LocalDiskCache:
             else:
                 # Evict this entry
                 size = entry.size_bytes
-                self._remove_entry(content_hash)
-                bytes_freed += size
-                logger.debug(f"Evicted {content_hash[:16]}... ({size} bytes)")
+                if self._remove_entry(content_hash):
+                    bytes_freed += size
+                    logger.debug(f"Evicted {content_hash[:16]}... ({size} bytes)")
+                else:
+                    # File deletion failed; skip for now, retry next scan
+                    self._clock_hand += 1
 
         if bytes_freed > 0:
             logger.info(
@@ -634,8 +656,9 @@ class LocalDiskCache:
 
                 # Read entries
                 for _ in range(entry_count):
-                    # Hash (32 bytes hex = 64 bytes)
-                    content_hash = f.read(64).decode("ascii")
+                    # Key length (2 bytes) + variable-length key
+                    key_len = struct.unpack("!H", f.read(2))[0]
+                    content_hash = f.read(key_len).decode("ascii")
                     # Size, created, accessed, access_count, priority
                     size, created, accessed, access_count, priority = struct.unpack(
                         "!QddIi", f.read(8 + 8 + 8 + 4 + 4)
@@ -674,9 +697,9 @@ class LocalDiskCache:
 
         for cache_file in self.content_dir.rglob("*.bin"):
             try:
-                content_hash = cache_file.stem
-                if len(content_hash) != 64:  # SHA-256 hex length
-                    continue
+                content_hash = unquote(cache_file.stem)
+                # Accept plain SHA-256 hashes (64 chars) and zone-prefixed
+                # keys, plus opaque logical keys produced by the split cache.
 
                 size = cache_file.stat().st_size
                 mtime = cache_file.stat().st_mtime
@@ -714,7 +737,9 @@ class LocalDiskCache:
 
                     # Entries
                     for content_hash, entry in self._entries.items():
-                        f.write(content_hash.encode("ascii"))
+                        key_bytes = content_hash.encode("ascii")
+                        f.write(struct.pack("!H", len(key_bytes)))
+                        f.write(key_bytes)
                         f.write(
                             struct.pack(
                                 "!QddIi",

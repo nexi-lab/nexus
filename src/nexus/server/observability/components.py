@@ -7,12 +7,13 @@ FunctionPairComponent replaces 5 near-identical adapter classes with a
 single generic class parameterized by start/shutdown callables.
 """
 
+import inspect
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+    from nexus.server.observability.observability_subsystem import ObservabilitySubsystem
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,11 @@ class FunctionPairComponent:
 
     Args:
         component_name: Human-readable name for logging.
-        start_fn: Callable invoked during ``start()``.
-        stop_fn: Optional callable invoked during ``shutdown()``.
+        start_fn: Callable invoked during ``start()``. May be sync or async;
+            an awaitable return value is awaited so providers can perform
+            real async setup (e.g. await a worker's start coroutine).
+        stop_fn: Optional callable invoked during ``shutdown()``. May be sync
+            or async — see ``start_fn``.
         start_kwargs: Keyword arguments forwarded to ``start_fn``.
     """
 
@@ -49,7 +53,9 @@ class FunctionPairComponent:
         return self._name
 
     async def start(self) -> None:
-        self._start_fn(**self._start_kwargs)
+        result = self._start_fn(**self._start_kwargs)
+        if inspect.isawaitable(result):
+            await result
         self._started = True
 
     async def shutdown(self, timeout_ms: int = 5000) -> None:  # noqa: ARG002
@@ -57,7 +63,9 @@ class FunctionPairComponent:
             return
         if self._stop_fn is not None:
             try:
-                self._stop_fn()
+                result = self._stop_fn()
+                if inspect.isawaitable(result):
+                    await result
             except Exception:
                 logger.warning("Error in %s shutdown", self._name, exc_info=True)
         self._started = False
@@ -101,7 +109,7 @@ class WriteBufferComponent:
     The write observer is started in server lifespan (not by this component).
     This component manages its graceful shutdown during server teardown.
 
-    Issue #809: PipedRecordStoreWriteObserver replaces WriteBuffer.
+    Issue #809: RecordStoreWriteObserver (OBSERVE-phase) replaces WriteBuffer.
     Shutdown is now handled by _shutdown_pipe_consumers in services.py.
     This component is kept for observability registry health reporting.
     """

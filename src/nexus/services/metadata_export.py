@@ -3,8 +3,8 @@
 Extracted from NexusFS kernel — provides JSONL export/import of file metadata
 for backup, migration, and disaster recovery.
 
-Architecture: System Service (server-layer), wired into _brick_sources
-via factory function. Receives MetastoreABC via dependency injection.
+Wired into ServiceRegistry via factory function.
+Receives MetastoreABC via dependency injection.
 """
 
 import json
@@ -13,7 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.kernel_helpers import metastore_list_iter, metastore_set_file_metadata
 from nexus.lib.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -39,6 +40,8 @@ class MetadataExportService:
         created_by: str | None = None,
     ) -> None:
         self._metadata: Any = metadata
+        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
+        self._kernel: Any = metadata
         self._created_by = created_by
 
     @rpc_expose(description="Export metadata to JSONL file")
@@ -70,7 +73,7 @@ class MetadataExportService:
 
         all_files = [
             m
-            for m in self._metadata.list_iter(filter.path_prefix)
+            for m in metastore_list_iter(self._kernel, filter.path_prefix)
             if not m.path.startswith(SYSTEM_PATH_PREFIX)
         ]
 
@@ -94,12 +97,14 @@ class MetadataExportService:
         count = 0
         with output_file.open("w", encoding="utf-8") as f:
             for file_meta in filtered_files:
+                # ``backend_name``/``physical_path`` were removed from
+                # FileMetadata — the kernel resolves the physical
+                # location at read time via the mount/route layer, so
+                # exported metadata no longer surfaces them.
                 metadata_dict: dict[str, Any] = {
                     "path": file_meta.path,
-                    "backend_name": file_meta.backend_name,
-                    "physical_path": file_meta.physical_path,
                     "size": file_meta.size,
-                    "etag": file_meta.etag,
+                    "content_id": file_meta.content_id,
                     "mime_type": file_meta.mime_type,
                     "created_at": (
                         file_meta.created_at.isoformat() if file_meta.created_at else None
@@ -111,8 +116,9 @@ class MetadataExportService:
                 }
 
                 try:
-                    if file_meta.custom_metadata:
-                        metadata_dict["custom_metadata"] = dict(file_meta.custom_metadata)
+                    custom = getattr(file_meta, "custom_metadata", None)
+                    if custom:
+                        metadata_dict["custom_metadata"] = dict(custom)
                 except (AttributeError, TypeError):
                     pass
 
@@ -179,8 +185,8 @@ class MetadataExportService:
                     if metadata_dict.get("modified_at"):
                         modified_at = datetime.fromisoformat(metadata_dict["modified_at"])
 
-                    existing = self._metadata.get(path)
-                    imported_etag = metadata_dict.get("etag")
+                    existing = self._kernel.sys_stat(path, "root")
+                    imported_content_id = metadata_dict.get("content_id")
 
                     if existing:
                         self._handle_collision(
@@ -190,7 +196,7 @@ class MetadataExportService:
                             metadata_dict,
                             path,
                             original_path,
-                            imported_etag,
+                            imported_content_id,
                             created_at,
                             modified_at,
                         )
@@ -200,7 +206,7 @@ class MetadataExportService:
                             options,
                             metadata_dict,
                             path,
-                            imported_etag,
+                            imported_content_id,
                             created_at,
                             modified_at,
                         )
@@ -220,32 +226,37 @@ class MetadataExportService:
         metadata_dict: dict[str, Any],
         path: str,
         original_path: str,
-        imported_etag: str | None,
+        imported_content_id: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
     ) -> None:
         """Handle import collision with existing file."""
-        existing_etag = existing.etag
-        is_same_content = existing_etag == imported_etag
+        existing_content_id = existing.get("content_id")
+        is_same_content = existing_content_id == imported_content_id
 
         if is_same_content:
             if options.dry_run:
                 result.updated += 1
                 return
 
-            file_meta = FileMetadata(
-                path=path,
-                backend_name=metadata_dict["backend_name"],
-                physical_path=metadata_dict["physical_path"],
-                size=metadata_dict["size"],
-                etag=imported_etag,
-                mime_type=metadata_dict.get("mime_type"),
-                created_at=created_at or existing.created_at,
-                modified_at=modified_at or existing.modified_at,
-                version=metadata_dict.get("version", existing.version),
-                created_by=self._created_by,
+            _existing_mod = existing.get("modified_at")
+            _existing_cre = existing.get("created_at")
+            _mod_dt = modified_at or (
+                datetime.fromisoformat(_existing_mod) if _existing_mod else None
             )
-            self._metadata.put(file_meta)
+            _cre_dt = created_at or (
+                datetime.fromisoformat(_existing_cre) if _existing_cre else None
+            )
+            self._kernel.sys_setattr(
+                path,
+                0,  # UPDATE existing entry
+                content_id=imported_content_id,
+                size=metadata_dict["size"],
+                mime_type=metadata_dict.get("mime_type"),
+                version=metadata_dict.get("version", existing.get("version")),
+                modified_at_ms=int(_mod_dt.timestamp() * 1000) if _mod_dt else None,
+                created_at_ms=int(_cre_dt.timestamp() * 1000) if _cre_dt else None,
+            )
             self._import_custom_metadata(path, metadata_dict)
             result.updated += 1
             return
@@ -255,8 +266,8 @@ class MetadataExportService:
             result.collisions.append(
                 CollisionDetail(
                     path=path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_content_id,
+                    imported_content_id=imported_content_id,
                     resolution="skip",
                     message="Skipped: existing file has different content",
                 )
@@ -268,8 +279,8 @@ class MetadataExportService:
                 existing,
                 metadata_dict,
                 path,
-                existing_etag,
-                imported_etag,
+                existing_content_id,
+                imported_content_id,
                 created_at,
                 modified_at,
             )
@@ -280,8 +291,8 @@ class MetadataExportService:
                 metadata_dict,
                 path,
                 original_path,
-                existing_etag,
-                imported_etag,
+                existing_content_id,
+                imported_content_id,
                 created_at,
                 modified_at,
             )
@@ -292,8 +303,8 @@ class MetadataExportService:
                 existing,
                 metadata_dict,
                 path,
-                existing_etag,
-                imported_etag,
+                existing_content_id,
+                imported_content_id,
                 created_at,
                 modified_at,
             )
@@ -305,8 +316,8 @@ class MetadataExportService:
         existing: Any,
         metadata_dict: dict[str, Any],
         path: str,
-        existing_etag: str | None,
-        imported_etag: str | None,
+        existing_content_id: str | None,
+        imported_content_id: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
     ) -> None:
@@ -315,34 +326,34 @@ class MetadataExportService:
             result.collisions.append(
                 CollisionDetail(
                     path=path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_content_id,
+                    imported_content_id=imported_content_id,
                     resolution="overwrite",
                     message="Would overwrite with imported content",
                 )
             )
             return
 
-        file_meta = FileMetadata(
-            path=path,
-            backend_name=metadata_dict["backend_name"],
-            physical_path=metadata_dict["physical_path"],
+        _existing_cre = existing.get("created_at")
+        _cre_dt = created_at or (datetime.fromisoformat(_existing_cre) if _existing_cre else None)
+        _existing_ver = existing.get("version") or 0
+        self._kernel.sys_setattr(
+            path,
+            0,  # UPDATE existing entry
+            content_id=imported_content_id,
             size=metadata_dict["size"],
-            etag=imported_etag,
             mime_type=metadata_dict.get("mime_type"),
-            created_at=created_at or existing.created_at,
-            modified_at=modified_at,
-            version=metadata_dict.get("version", existing.version + 1),
-            created_by=self._created_by,
+            version=metadata_dict.get("version", _existing_ver + 1),
+            modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
+            created_at_ms=int(_cre_dt.timestamp() * 1000) if _cre_dt else None,
         )
-        self._metadata.put(file_meta)
         self._import_custom_metadata(path, metadata_dict)
         result.updated += 1
         result.collisions.append(
             CollisionDetail(
                 path=path,
-                existing_etag=existing_etag,
-                imported_etag=imported_etag,
+                existing_content_id=existing_content_id,
+                imported_content_id=imported_content_id,
                 resolution="overwrite",
                 message="Overwrote with imported content",
             )
@@ -355,49 +366,47 @@ class MetadataExportService:
         metadata_dict: dict[str, Any],
         path: str,
         original_path: str,
-        existing_etag: str | None,
-        imported_etag: str | None,
+        existing_content_id: str | None,
+        imported_content_id: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
     ) -> None:
-        suffix = 1
-        while self._metadata.exists(f"{path}_imported{suffix}"):
-            suffix += 1
-        remapped_path = f"{path}_imported{suffix}"
+        import uuid as _uuid
+
+        remapped_path = f"{path}_imported{_uuid.uuid4().hex[:8]}"
 
         if options.dry_run:
             result.remapped += 1
             result.collisions.append(
                 CollisionDetail(
                     path=original_path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_content_id,
+                    imported_content_id=imported_content_id,
                     resolution="remap",
                     message=f"Would remap to: {remapped_path}",
                 )
             )
             return
 
-        file_meta = FileMetadata(
-            path=remapped_path,
-            backend_name=metadata_dict["backend_name"],
-            physical_path=metadata_dict["physical_path"],
+        file_meta_path = remapped_path
+        self._kernel.sys_setattr(
+            file_meta_path,
+            0,  # DT_REG upsert
+            content_id=imported_content_id,
             size=metadata_dict["size"],
-            etag=imported_etag,
             mime_type=metadata_dict.get("mime_type"),
-            created_at=created_at,
-            modified_at=modified_at,
             version=metadata_dict.get("version", 1),
-            created_by=self._created_by,
+            zone_id=ROOT_ZONE_ID,
+            created_at_ms=int(created_at.timestamp() * 1000) if created_at else None,
+            modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
         )
-        self._metadata.put(file_meta)
         self._import_custom_metadata(remapped_path, metadata_dict)
         result.remapped += 1
         result.collisions.append(
             CollisionDetail(
                 path=original_path,
-                existing_etag=existing_etag,
-                imported_etag=imported_etag,
+                existing_content_id=existing_content_id,
+                imported_content_id=imported_content_id,
                 resolution="remap",
                 message=f"Remapped to: {remapped_path}",
             )
@@ -410,12 +419,16 @@ class MetadataExportService:
         existing: Any,
         metadata_dict: dict[str, Any],
         path: str,
-        existing_etag: str | None,
-        imported_etag: str | None,
+        existing_content_id: str | None,
+        imported_content_id: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
     ) -> None:
-        existing_time = existing.modified_at or existing.created_at
+        _existing_mod = existing.get("modified_at")
+        _existing_cre = existing.get("created_at")
+        existing_time = (datetime.fromisoformat(_existing_mod) if _existing_mod else None) or (
+            datetime.fromisoformat(_existing_cre) if _existing_cre else None
+        )
         imported_time = modified_at or created_at
 
         if existing_time and existing_time.tzinfo is None:
@@ -429,34 +442,36 @@ class MetadataExportService:
                 result.collisions.append(
                     CollisionDetail(
                         path=path,
-                        existing_etag=existing_etag,
-                        imported_etag=imported_etag,
+                        existing_content_id=existing_content_id,
+                        imported_content_id=imported_content_id,
                         resolution="auto_overwrite",
                         message=f"Would overwrite: imported is newer ({imported_time} > {existing_time})",
                     )
                 )
                 return
 
-            file_meta = FileMetadata(
-                path=path,
-                backend_name=metadata_dict["backend_name"],
-                physical_path=metadata_dict["physical_path"],
-                size=metadata_dict["size"],
-                etag=imported_etag,
-                mime_type=metadata_dict.get("mime_type"),
-                created_at=created_at or existing.created_at,
-                modified_at=modified_at,
-                version=metadata_dict.get("version", existing.version + 1),
-                created_by=self._created_by,
+            _auto_existing_cre = existing.get("created_at")
+            _cre_dt = created_at or (
+                datetime.fromisoformat(_auto_existing_cre) if _auto_existing_cre else None
             )
-            self._metadata.put(file_meta)
+            _existing_ver = existing.get("version") or 0
+            self._kernel.sys_setattr(
+                path,
+                0,  # UPDATE existing entry
+                content_id=imported_content_id,
+                size=metadata_dict["size"],
+                mime_type=metadata_dict.get("mime_type"),
+                version=metadata_dict.get("version", _existing_ver + 1),
+                modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
+                created_at_ms=int(_cre_dt.timestamp() * 1000) if _cre_dt else None,
+            )
             self._import_custom_metadata(path, metadata_dict)
             result.updated += 1
             result.collisions.append(
                 CollisionDetail(
                     path=path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_content_id,
+                    imported_content_id=imported_content_id,
                     resolution="auto_overwrite",
                     message=f"Overwrote: imported is newer ({imported_time} > {existing_time})",
                 )
@@ -466,8 +481,8 @@ class MetadataExportService:
             result.collisions.append(
                 CollisionDetail(
                     path=path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_content_id,
+                    imported_content_id=imported_content_id,
                     resolution="auto_skip",
                     message="Skipped: existing is newer or equal",
                 )
@@ -479,7 +494,7 @@ class MetadataExportService:
         options: ImportOptions,
         metadata_dict: dict[str, Any],
         path: str,
-        imported_etag: str | None,
+        imported_content_id: str | None,
         created_at: datetime | None,
         modified_at: datetime | None,
     ) -> None:
@@ -488,20 +503,18 @@ class MetadataExportService:
             result.created += 1
             return
 
-        file_meta = FileMetadata(
-            path=path,
-            backend_name=metadata_dict["backend_name"],
-            physical_path=metadata_dict["physical_path"],
+        self._kernel.sys_setattr(
+            path,
+            0,  # DT_REG upsert
+            content_id=imported_content_id,
             size=metadata_dict["size"],
-            etag=imported_etag,
             mime_type=metadata_dict.get("mime_type"),
-            created_at=created_at,
-            modified_at=modified_at,
             version=metadata_dict.get("version", 1),
-            created_by=self._created_by,
+            zone_id=ROOT_ZONE_ID,
+            created_at_ms=int(created_at.timestamp() * 1000) if created_at else None,
+            modified_at_ms=int(modified_at.timestamp() * 1000) if modified_at else None,
         )
 
-        self._metadata.put(file_meta)
         self._import_custom_metadata(path, metadata_dict)
         result.created += 1
 
@@ -512,6 +525,6 @@ class MetadataExportService:
             if isinstance(custom_meta, dict):
                 for key, value in custom_meta.items():
                     try:
-                        self._metadata.set_file_metadata(path, key, value)
+                        metastore_set_file_metadata(self._kernel, path, key, value)
                     except Exception as e:
                         logger.debug("Failed to set custom metadata %s for %s: %s", key, path, e)

@@ -525,7 +525,7 @@ class TestEditConcurrency:
     """Test edit with optimistic concurrency control."""
 
     def test_edit_with_if_match_success(self, test_app, user1):
-        """Test edit with matching etag succeeds."""
+        """Test edit with matching content_id succeeds."""
         token = user1["token"]
 
         # Create a file
@@ -539,16 +539,20 @@ class TestEditConcurrency:
         assert "result" in write_result, f"Write failed: {write_result}"
         # Write returns dict - format differs between FastAPI and sync server
         result = write_result["result"]
-        etag = result["bytes_written"]["etag"] if "bytes_written" in result else result.get("etag")
+        content_id = (
+            result["bytes_written"]["content_id"]
+            if "bytes_written" in result
+            else result.get("content_id")
+        )
 
-        # Edit with correct etag
+        # Edit with correct content_id
         edit_result = make_rpc_request(
             test_app,
             "edit",
             {
                 "path": "/test/concurrency.txt",
                 "edits": [{"old_str": "original", "new_str": "modified"}],
-                "if_match": etag,
+                "if_match": content_id,
             },
             token=token,
         )
@@ -558,7 +562,7 @@ class TestEditConcurrency:
         assert result["success"] is True
 
     def test_edit_with_if_match_conflict(self, test_app, user1):
-        """Test edit with stale etag fails."""
+        """Test edit with stale content_id fails."""
         token = user1["token"]
 
         # Create a file
@@ -571,11 +575,13 @@ class TestEditConcurrency:
         )
         # Write returns dict - format differs between FastAPI and sync server
         result = write_result["result"]
-        old_etag = (
-            result["bytes_written"]["etag"] if "bytes_written" in result else result.get("etag")
+        old_content_id = (
+            result["bytes_written"]["content_id"]
+            if "bytes_written" in result
+            else result.get("content_id")
         )
 
-        # Modify file (changes etag)
+        # Modify file (changes content_id)
         make_rpc_request(
             test_app,
             "write",
@@ -583,14 +589,14 @@ class TestEditConcurrency:
             token=token,
         )
 
-        # Try to edit with stale etag
+        # Try to edit with stale content_id
         edit_result = make_rpc_request(
             test_app,
             "edit",
             {
                 "path": "/test/conflict.txt",
                 "edits": [{"old_str": "original", "new_str": "modified"}],
-                "if_match": old_etag,
+                "if_match": old_content_id,
             },
             token=token,
         )

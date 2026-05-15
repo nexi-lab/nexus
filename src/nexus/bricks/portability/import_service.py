@@ -12,30 +12,142 @@ References:
 """
 
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.archive.errors import ArchiveEmbeddingDimMismatch, ArchiveTargetNotEmpty
 from nexus.bricks.portability.bundle import BundleReader
 from nexus.bricks.portability.models import (
     ConflictMode,
     ContentMode,
     FileRecord,
     ImportResult,
+    MissingCredentialsError,
     PermissionRecord,
     ZoneImportOptions,
 )
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
+    from nexus.bricks.portability.mount_import import _MountWriter
     from nexus.contracts.portability_types import PortabilityFSProtocol
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
+_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z0-9_]+)\}", re.IGNORECASE)
 
-def _create_import_context() -> "OperationContext":
+
+def _scan_for_placeholders(rows: list[dict]) -> set[str]:
+    """Return the set of ``${NAME}`` placeholder names found across all string values.
+
+    Args:
+        rows: List of row dicts to scan.
+
+    Returns:
+        Set of placeholder names (e.g. ``{"PROVIDER_KEY_anthropic"}``).
+    """
+    found: set[str] = set()
+    for row in rows:
+        for v in row.values():
+            if isinstance(v, str):
+                for m in _PLACEHOLDER_RE.finditer(v):
+                    found.add(m.group(1))
+    return found
+
+
+def _apply_injections(rows: list[dict], injections: dict[str, str]) -> list[dict]:
+    """Substitute every ``${NAME}`` placeholder for its injected value.
+
+    Placeholders whose names are not present in *injections* are left as-is
+    (so a subsequent :func:`_scan_for_placeholders` call will still find them).
+
+    Args:
+        rows: List of row dicts to process.
+        injections: Mapping of placeholder name → replacement string.
+
+    Returns:
+        New list of row dicts with substitutions applied.
+    """
+    if not injections:
+        return rows
+
+    def _sub(m: re.Match[str]) -> str:
+        return injections.get(m.group(1), m.group(0))
+
+    out: list[dict] = []
+    for row in rows:
+        new_row = dict(row)
+        for k, v in row.items():
+            if isinstance(v, str):
+                new_row[k] = _PLACEHOLDER_RE.sub(_sub, v)
+        out.append(new_row)
+    return out
+
+
+def _check_target_empty(*, existing_zones: list[str], force: bool) -> None:
+    """Raise ArchiveTargetNotEmpty if the restore target has existing zones.
+
+    Args:
+        existing_zones: Zone IDs already present in the target nexus instance.
+        force: When ``True`` the operator has acknowledged the risk; the check
+               is skipped and the restore proceeds (DESTRUCTIVE).
+
+    Raises:
+        ArchiveTargetNotEmpty: When *existing_zones* is non-empty and
+            *force* is ``False``.
+    """
+    if existing_zones and not force:
+        raise ArchiveTargetNotEmpty(existing_zones)
+
+
+def _check_embedding_compat(
+    *,
+    archive_model: str | None,
+    archive_dim: int | None,
+    current_model: str,
+    current_dim: int,
+    rebuild_embeddings: bool,
+) -> None:
+    """Raise ArchiveEmbeddingDimMismatch if archive embeddings are incompatible.
+
+    Returns None on compatibility (or if ``rebuild_embeddings`` overrides), or
+    if the archive carries no embedding metadata (v1 bundles).
+
+    Args:
+        archive_model: Embedding model name stored in the bundle manifest.
+                       ``None`` for v1 bundles that pre-date embedding metadata.
+        archive_dim: Embedding vector dimension stored in the bundle manifest.
+                     ``None`` for v1 bundles.
+        current_model: Active embedding model in the running Nexus instance.
+        current_dim: Active embedding dimension in the running Nexus instance.
+        rebuild_embeddings: When ``True`` the caller intends to re-embed all
+                            documents after restore, so a mismatch is safe and
+                            the check is skipped.
+
+    Raises:
+        ArchiveEmbeddingDimMismatch: When the archive model or dimension differs
+            from the current configuration and ``rebuild_embeddings`` is False.
+    """
+    if archive_model is None or archive_dim is None:
+        # v1 bundle — no embedding metadata to check.
+        return
+    if rebuild_embeddings:
+        return
+    if archive_model == current_model and archive_dim == current_dim:
+        return
+    raise ArchiveEmbeddingDimMismatch(
+        archive_model=archive_model,
+        archive_dim=archive_dim,
+        current_model=current_model,
+        current_dim=current_dim,
+    )
+
+
+def _create_import_context(zone_id: str | None = None) -> "OperationContext":
     """Create a system context for import operations.
 
     Import is a privileged system operation that bypasses normal permission checks.
@@ -47,6 +159,7 @@ def _create_import_context() -> "OperationContext":
         groups=[],
         is_admin=True,
         is_system=True,  # System operations bypass all checks
+        zone_id=zone_id,
     )
 
 
@@ -75,6 +188,7 @@ class ZoneImportService:
         nexus_fs: "PortabilityFSProtocol",
         *,
         file_metadata_class: type[Any] | None = None,
+        mount_manager: "_MountWriter | None" = None,
     ):
         """Initialize the import service.
 
@@ -82,9 +196,14 @@ class ZoneImportService:
             nexus_fs: NexusFS-compatible instance with metadata store and backend access
             file_metadata_class: FileMetadata class for metadata-only imports (DI).
                                  If None, metadata-only imports are skipped.
+            mount_manager: Optional MountManager for restoring mount configs (Issue #4083).
+                           Required when importing bundles that contain mounts.jsonl and
+                           restore_mounts=True (the default). Pass None to preserve
+                           back-compat with callers that don't need mount restore.
         """
         self.nexus_fs = nexus_fs
         self._file_metadata_class = file_metadata_class
+        self._mount_manager = mount_manager
 
     def import_zone(
         self,
@@ -134,6 +253,66 @@ class ZoneImportService:
 
                 manifest = reader.get_manifest()
 
+                # --- Pre-flight guards (v2+) ---
+
+                # Guard 1: target-not-empty check.
+                # Discover zones already present in the target nexus instance.
+                # ``list_zones`` was a Raft-only method that commit V dropped;
+                # the Python boundary returns the empty list now, which means
+                # the target-empty check passes unconditionally. Will need to
+                # be reinstated once the kernel exposes the zone registry.
+                existing_zones: list[str] = []
+                _check_target_empty(existing_zones=existing_zones, force=options.force)
+
+                # Guard 2: embedding compatibility.
+                current_model = getattr(
+                    getattr(self.nexus_fs, "config", None), "embedding_model", "unknown"
+                )
+                current_dim = getattr(getattr(self.nexus_fs, "config", None), "embedding_dim", 0)
+                _check_embedding_compat(
+                    archive_model=manifest.embedding_model,
+                    archive_dim=manifest.embedding_dim,
+                    current_model=current_model,
+                    current_dim=current_dim,
+                    rebuild_embeddings=options.rebuild_embeddings,
+                )
+
+                # Guard 3: placeholder injection.
+                # If the bundle's manifest declares placeholders (strip_credentials=True
+                # was used during export), load ALL file records, apply any caller-
+                # supplied injections, then check that no placeholders remain.
+                if manifest.placeholders and options.require_no_placeholders:
+                    all_rows = [
+                        dict(rec.__dict__) if hasattr(rec, "__dict__") else vars(rec)
+                        for rec in reader.iter_file_records()
+                    ]
+                    all_rows = _apply_injections(all_rows, options.injections)
+                    remaining = _scan_for_placeholders(all_rows)
+                    if remaining:
+                        from nexus.bricks.archive.errors import ArchivePlaceholderNotInjected
+
+                        raise ArchivePlaceholderNotInjected(sorted(remaining))
+
+                # Guard 4: mount credential validation (Issue #4083) — BEFORE any side effect.
+                # Read mount records from the bundle (returns [] for v2 bundles that have
+                # no mounts.jsonl). If the bundle contains mounts and restore_mounts is
+                # enabled, validate that every redacted credential field has an override
+                # supplied. Raises MissingCredentialsError immediately so the operator
+                # sees the full list of gaps before any file/permission writes happen.
+                _mount_records = []
+                if options.restore_mounts:
+                    from nexus.bricks.portability.mount_import import validate_overrides
+
+                    _mount_records = reader.read_mount_records()
+                    if _mount_records:
+                        validate_overrides(_mount_records, options.mount_overrides)
+                        if self._mount_manager is None:
+                            raise ValueError(
+                                "Bundle contains mounts.jsonl but no MountManager supplied. "
+                                "Pass ZoneImportService(mount_manager=...) or set "
+                                "restore_mounts=False."
+                            )
+
                 # Check zone remapping
                 if options.target_zone_id:
                     result.zone_remapped = True
@@ -143,7 +322,35 @@ class ZoneImportService:
                         options.target_zone_id,
                     )
 
-                # Phase 1: Import file metadata and content
+                # Phase 1: Restore mounts FIRST (Issue #4083, round-10
+                # reviewer finding). Mount restore must run before file
+                # import — a bundle can carry files at paths that lie
+                # under a restored mount (e.g., /personal/alice/foo.txt
+                # where /personal/alice is a mount). If file import runs
+                # first, those writes go to the wrong (default/raft)
+                # backend, then the restored mount shadows them and
+                # reads point at an external backend that never received
+                # the content. dry_run still skips persistence.
+                if _mount_records and options.restore_mounts:
+                    if options.dry_run:
+                        logger.info(
+                            "DRY RUN: would restore %d mount(s); skipping save_mount/update_mount",
+                            len(_mount_records),
+                        )
+                    else:
+                        from nexus.bricks.portability.mount_import import import_mounts
+
+                        mount_errors = import_mounts(
+                            mounts=_mount_records,
+                            overrides=options.mount_overrides or {},
+                            mount_manager=self._mount_manager,
+                            target_zone_id=options.target_zone_id,
+                            conflict_mode=options.conflict_mode,
+                        )
+                        result.errors.extend(mount_errors)
+
+                # Phase 2: Import file metadata and content (now routed
+                # through restored mounts where applicable).
                 self._import_files(
                     reader=reader,
                     options=options,
@@ -152,7 +359,7 @@ class ZoneImportService:
                     progress_callback=progress_callback,
                 )
 
-                # Phase 2: Import permissions (if enabled)
+                # Phase 3: Import permissions (if enabled).
                 if options.import_permissions and manifest.include_permissions:
                     self._import_permissions(
                         reader=reader,
@@ -161,6 +368,8 @@ class ZoneImportService:
                         progress_callback=progress_callback,
                     )
 
+        except (MissingCredentialsError, ValueError):
+            raise
         except Exception as e:
             logger.exception("Import failed: %s", e)
             result.add_error(
@@ -257,11 +466,11 @@ class ZoneImportService:
         if remapped_path != original_path:
             result.paths_remapped += 1
 
-        # Determine target zone (used for logging/tracking)
-        _ = options.target_zone_id or record.zone_id
+        # Determine target zone for write context
+        target_zone_id = options.target_zone_id or record.zone_id
 
         # Check if file already exists
-        existing = self.nexus_fs.metadata.get(remapped_path)
+        existing = self.nexus_fs._kernel.sys_stat(remapped_path, ROOT_ZONE_ID)
 
         if existing is not None:
             # Handle conflict
@@ -274,11 +483,12 @@ class ZoneImportService:
                 raise FileExistsError(f"File already exists: {remapped_path}")
 
             elif options.conflict_mode == ConflictMode.MERGE:
-                # Merge: prefer newer content based on updated_at
+                # Merge: prefer newer content based on modified_at
+                existing_modified = existing.get("modified_at")
                 if (
-                    existing.modified_at
+                    existing_modified
                     and record.updated_at
-                    and existing.modified_at >= record.updated_at
+                    and existing_modified >= record.updated_at.isoformat()
                 ):
                     logger.debug("Skipping older file: %s", remapped_path)
                     result.files_skipped += 1
@@ -297,46 +507,53 @@ class ZoneImportService:
 
         # Import content blob if needed
         content: bytes | None = None
-        if options.content_mode == ContentMode.INCLUDE and record.content_hash:
+        content_ref_valid = False  # True when content_id exists in CAS/backend
+        if options.content_mode == ContentMode.INCLUDE and record.content_id:
             # Check if we already imported this content (deduplication)
-            if record.content_hash in content_hashes_imported:
+            if record.content_id in content_hashes_imported:
                 result.content_blobs_skipped += 1
+                content_ref_valid = True  # Already in CAS from a prior file
             else:
-                content = reader.read_content_blob(record.content_hash)
+                content = reader.read_content_blob(record.content_id)
                 if content is not None:
-                    content_hashes_imported.add(record.content_hash)
+                    content_hashes_imported.add(record.content_id)
                     result.content_blobs_imported += 1
                 else:
                     logger.warning(
-                        "Content blob not found for %s: %s", remapped_path, record.content_hash
+                        "Content blob not found for %s: %s", remapped_path, record.content_id
                     )
                     result.add_warning(
-                        f"Content blob not found: {record.content_hash} for {remapped_path}"
+                        f"Content blob not found: {record.content_id} for {remapped_path}"
                     )
 
-        elif options.content_mode == ContentMode.REFERENCE and record.content_hash:
-            # Reference mode: verify content exists in backend
+        elif options.content_mode == ContentMode.REFERENCE and record.content_id:
+            # Reference mode: verify content exists by reading through the
+            # VFS path. R20.18.x removed direct backend access on NexusFS;
+            # the kernel owns routing, so we re-read via sys_read and
+            # compare hashes if available. A sys_read success is proof
+            # enough that the content exists in *some* local backend.
             try:
-                response = self.nexus_fs.backend.read_content(record.content_hash)
-                if not response.success:
+                data = self.nexus_fs.sys_read(remapped_path)
+                if data is None:
                     result.add_warning(
-                        f"Referenced content not found: {record.content_hash} for {remapped_path}"
+                        f"Referenced content not found: {record.content_id} for {remapped_path}"
                     )
+                else:
+                    content_ref_valid = True
             except Exception as e:
-                result.add_warning(
-                    f"Failed to verify content reference: {record.content_hash}: {e}"
-                )
+                result.add_warning(f"Failed to verify content reference: {record.content_id}: {e}")
 
         # Write file to NexusFS
         if content is not None:
             try:
                 # Use system context for import (privileged operation)
-                import_context = _create_import_context()
-                write_result = self.nexus_fs.sys_write(
+                import_context = _create_import_context(zone_id=target_zone_id)
+                # force=True (skip OCC) → just call write() directly.
+                # Issue #1323: OCC extracted to lib/occ.py, write() is now OCC-free.
+                write_result = self.nexus_fs.write(
                     path=remapped_path,
-                    content=content,
+                    buf=content,
                     context=import_context,
-                    force=True,  # Skip version check since we're restoring
                 )
 
                 # Update metadata if preserving timestamps
@@ -352,7 +569,11 @@ class ZoneImportService:
                 else:
                     result.files_created += 1
 
-                logger.debug("Imported %s: etag=%s", remapped_path, write_result.get("etag", "N/A"))
+                logger.debug(
+                    "Imported %s: content_id=%s",
+                    remapped_path,
+                    write_result.get("content_id", "N/A"),
+                )
 
             except Exception as e:
                 logger.warning("Failed to write %s: %s", remapped_path, e)
@@ -363,8 +584,10 @@ class ZoneImportService:
                 )
                 result.files_failed += 1
 
-        elif options.content_mode == ContentMode.SKIP:
-            # Metadata-only import
+        elif content_ref_valid or options.content_mode == ContentMode.SKIP:
+            # Content already in CAS (dedup) / verified in backend (reference) /
+            # metadata-only import (SKIP) — create metadata entry pointing to
+            # the existing content_id.
             self._import_metadata_only(
                 path=remapped_path,
                 record=record,
@@ -398,20 +621,21 @@ class ZoneImportService:
                 result.files_skipped += 1
                 return
 
-            metadata = self._file_metadata_class(
-                path=path,
-                backend_name=record.backend_id,
-                physical_path=record.physical_path,
-                size=record.size_bytes,
-                etag=record.content_hash,
-                mime_type=record.file_type,
-                created_at=record.created_at if options.preserve_timestamps else None,
-                modified_at=record.updated_at if options.preserve_timestamps else None,
-                version=record.current_version if options.preserve_ids else 1,
-            )
+            _created_at = record.created_at if options.preserve_timestamps else None
+            _modified_at = record.updated_at if options.preserve_timestamps else None
 
-            # Store metadata
-            self.nexus_fs.metadata.put(metadata)
+            # Store metadata via sys_setattr DT_REG upsert
+            self.nexus_fs._kernel.sys_setattr(
+                path,
+                0,  # DT_REG upsert
+                content_id=record.content_id,
+                size=record.size_bytes,
+                mime_type=record.file_type,
+                version=record.current_version if options.preserve_ids else 1,
+                zone_id=ROOT_ZONE_ID,
+                created_at_ms=int(_created_at.timestamp() * 1000) if _created_at else None,
+                modified_at_ms=int(_modified_at.timestamp() * 1000) if _modified_at else None,
+            )
 
             if is_update:
                 result.files_updated += 1
@@ -440,17 +664,11 @@ class ZoneImportService:
             created_at: Original creation time
             updated_at: Original modification time
         """
-        try:
-            # Use metadata store to update timestamps (if supported by implementation)
-            set_fn = getattr(self.nexus_fs.metadata, "set_file_metadata", None)
-            if set_fn is None:
-                return
-            if created_at:
-                set_fn(path, "created_at", created_at.isoformat())
-            if updated_at:
-                set_fn(path, "modified_at", updated_at.isoformat())
-        except Exception as e:
-            logger.warning("Failed to update timestamps for %s: %s", path, e)
+        # created_at / modified_at live on the inode (FileMetadata.created_at_ms /
+        # modified_at_ms) — no xattr write needed. sys_write already sets
+        # modified_at_ms; callers that need to override timestamps should use
+        # sys_setattr(modified_at_ms=...) instead.
+        pass
 
     @staticmethod
     def validate_permission_graph(

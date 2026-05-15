@@ -5,8 +5,6 @@ Provides bounded, reusable strategies for:
   - ReadSet entries and read sets (ReadSet / ReadSetRegistry)
   - Agent requests (Scheduler)
   - Operation contexts (Permissions)
-  - Agent info with generation counters (Agent Registry)
-
 All strategies are explicitly bounded to prevent pathological inputs:
   - Path strings: max 255 chars, valid path characters
   - Collections: max 50 entries
@@ -15,25 +13,33 @@ All strategies are explicitly bounded to prevent pathological inputs:
 
 from hypothesis import strategies as st
 
+from nexus.contracts.protocols.scheduler import AgentRequest
 from nexus.contracts.types import OperationContext
-from nexus.services.protocols.agent_registry import AgentInfo
-from nexus.services.protocols.scheduler import AgentRequest
 from nexus.storage.read_set import AccessType, ReadSetEntry, ResourceType
 
 # ---------------------------------------------------------------------------
 # Path strategies
 # ---------------------------------------------------------------------------
 
-# Characters allowed in path segments (no /, no null, no control chars)
-_PATH_SEGMENT_CHARS = st.characters(
-    whitelist_categories=("L", "N", "P", "S"),
-    blacklist_characters="/\x00",
-)
-
-_PATH_SEGMENT = st.text(
-    alphabet=_PATH_SEGMENT_CHARS,
-    min_size=1,
-    max_size=50,
+# Keep path generation cheap under xdist. These cover common filesystem-safe
+# segment shapes without making Hypothesis synthesize arbitrary strings.
+_PATH_SEGMENT = st.sampled_from(
+    [
+        "workspace",
+        "shared",
+        "external",
+        "system",
+        "archives",
+        "data",
+        "docs",
+        "file.txt",
+        "name_1",
+        "x-y",
+        "user@example",
+        "v1.2",
+        "a+b",
+        "0",
+    ]
 )
 
 
@@ -167,26 +173,4 @@ def agent_request(
         priority=draw(st.integers(min_value=0, max_value=100)),
         submitted_at=draw(st.text(min_size=0, max_size=30)),
         payload=draw(st.fixed_dictionaries({})),
-    )
-
-
-# ---------------------------------------------------------------------------
-# AgentInfo / Generation Counter strategies
-# ---------------------------------------------------------------------------
-
-
-@st.composite
-def agent_info(
-    draw: st.DrawFn,
-    *,
-    agent_id: str | None = None,
-) -> AgentInfo:
-    """Generate an AgentInfo with a valid generation counter."""
-    return AgentInfo(
-        agent_id=agent_id or draw(_IDENTIFIER),
-        owner_id=draw(_IDENTIFIER),
-        zone_id=draw(st.one_of(st.none(), _IDENTIFIER)),
-        name=draw(st.one_of(st.none(), _IDENTIFIER)),
-        state=draw(st.sampled_from(["CONNECTED", "DISCONNECTED", "IDLE", "BUSY"])),
-        generation=draw(st.integers(min_value=0, max_value=1_000_000)),
     )

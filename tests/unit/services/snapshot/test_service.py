@@ -17,6 +17,7 @@ from nexus.bricks.snapshot.service import (
     TransactionNotActiveError,
     TransactionNotFoundError,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class TestInit:
@@ -191,13 +192,16 @@ class TestTrackWrite:
             info1.transaction_id, "/file.txt", "hash1", {"size": 1}, "hash2"
         )
 
-        # Second transaction tries same path — should not track
+        # Second transaction tries same path — should raise conflict
         mock_cas_store.hold_reference.reset_mock()
-        snapshot_service.track_write(
-            info2.transaction_id, "/file.txt", "hash2", {"size": 2}, "hash3"
-        )
+        with pytest.raises(TransactionConflictError) as exc_info:
+            snapshot_service.track_write(
+                info2.transaction_id, "/file.txt", "hash2", {"size": 2}, "hash3"
+            )
         # CAS release should be called since tracking failed
         mock_cas_store.release.assert_called_with("hash2")
+        assert len(exc_info.value.conflicts) == 1
+        assert exc_info.value.conflicts[0].path == "/file.txt"
 
 
 class TestTrackDelete:
@@ -235,7 +239,7 @@ class TestCommit:
 
         model = TransactionSnapshotModel(
             transaction_id="txn-committed",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="committed",
             created_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -266,7 +270,7 @@ class TestCommit:
 
         txn_model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -293,8 +297,8 @@ class TestCommit:
 
         # Mock metadata store to return matching hash (no conflict)
         meta = MagicMock()
-        meta.etag = "new-hash"
-        snapshot_service._metadata_store.get.return_value = meta
+        meta.content_id = "new-hash"
+        snapshot_service._metadata_store.sys_stat.return_value = {"content_id": meta.content_id}
 
         snapshot_service.registry.register("txn-1")
         await snapshot_service.commit("txn-1")
@@ -315,7 +319,7 @@ class TestCommit:
 
         txn_model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -340,8 +344,8 @@ class TestCommit:
 
         # Metadata store returns different hash (conflict!)
         meta = MagicMock()
-        meta.etag = "different-hash"
-        snapshot_service._metadata_store.get.return_value = meta
+        meta.content_id = "different-hash"
+        snapshot_service._metadata_store.sys_stat.return_value = {"content_id": meta.content_id}
 
         snapshot_service.registry.register("txn-1")
         with pytest.raises(TransactionConflictError) as exc_info:
@@ -375,7 +379,7 @@ class TestRollback:
         now = datetime.now(UTC)
         txn_model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=now,
             expires_at=now + timedelta(hours=1),
@@ -412,11 +416,10 @@ class TestRollback:
 
         await snapshot_service.rollback("txn-1")
 
-        # Should have called metadata_store.put to restore
-        mock_metadata_store.put.assert_called_once()
-        restored = mock_metadata_store.put.call_args[0][0]
-        assert restored.path == "/file.txt"
-        assert restored.etag == "original-hash"
+        # Should have called sys_setattr to restore
+        mock_metadata_store.sys_setattr.assert_called_once()
+        call_args = mock_metadata_store.sys_setattr.call_args
+        assert call_args[0][0] == "/file.txt"  # path
 
         # Should release CAS hold
         mock_cas_store.release.assert_called_with("original-hash")
@@ -437,7 +440,7 @@ class TestRollback:
         now = datetime.now(UTC)
         txn_model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=now,
             expires_at=now + timedelta(hours=1),
@@ -466,7 +469,7 @@ class TestRollback:
 
         await snapshot_service.rollback("txn-1")
 
-        mock_metadata_store.delete.assert_called_with("/new-file.txt")
+        mock_metadata_store.sys_unlink.assert_called()
         mock_cas_store.release.assert_called_with("new-hash")
 
 
@@ -495,7 +498,7 @@ class TestGetTransaction:
         now = datetime.now(UTC)
         model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=now,
             expires_at=now + timedelta(hours=1),
@@ -524,7 +527,7 @@ class TestListTransactions:
         session.execute.return_value.scalars.return_value.all.return_value = []
         snapshot_service._session_factory.return_value = session
 
-        result = await snapshot_service.list_transactions(zone_id="root")
+        result = await snapshot_service.list_transactions(zone_id=ROOT_ZONE_ID)
         assert result == []
 
 

@@ -89,11 +89,11 @@ class NexusBackend:
         full_path = f"{self.base_path}/{path}".replace("//", "/")
         return full_path
 
-    def _exists(self, path: str) -> bool:
+    async def _exists(self, path: str) -> bool:
         """Check if a path exists in Nexus."""
-        return self.nx.sys_access(path)
+        return await self.nx.access(path)
 
-    def ls_info(self, path: str) -> list[FileInfo]:
+    async def ls_info(self, path: str) -> list[FileInfo]:
         """
         List directory contents with metadata.
 
@@ -119,7 +119,7 @@ class NexusBackend:
                 entry_path = f"{resolved_path}/{display_path}".replace("//", "/")
 
                 try:
-                    is_dir = self.nx.sys_is_directory(entry_path)
+                    is_dir = await self.nx.is_directory(entry_path)
 
                     # Get file size by reading if it's a file
                     size = 0
@@ -148,7 +148,7 @@ class NexusBackend:
             # Return empty list on errors (DeepAgents convention)
             return []
 
-    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
+    async def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
         """
         Read file content with line numbers.
 
@@ -192,7 +192,7 @@ class NexusBackend:
         except Exception as e:
             return f"Error reading file: {str(e)}"
 
-    def write(self, file_path: str, content: str) -> WriteResult:
+    async def write(self, file_path: str, content: str) -> WriteResult:
         """
         Write content to file (creates or overwrites).
 
@@ -219,7 +219,7 @@ class NexusBackend:
                 error=f"Failed to write file: {str(e)}", path=file_path, files_update=None
             )
 
-    def edit(
+    async def edit(
         self, file_path: str, old_string: str, new_string: str, replace_all: bool = False
     ) -> EditResult:
         """
@@ -290,7 +290,7 @@ class NexusBackend:
                 occurrences=0,
             )
 
-    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+    async def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
         """
         Find files matching glob pattern.
 
@@ -316,7 +316,7 @@ class NexusBackend:
                     if match_path.startswith(resolved_path):
                         relative_path = match_path[len(resolved_path) :].lstrip("/")
 
-                    is_dir = self.nx.sys_is_directory(match_path)
+                    is_dir = await self.nx.is_directory(match_path)
 
                     # Get file size if it's a file
                     size = 0
@@ -343,7 +343,7 @@ class NexusBackend:
             # Return empty list on errors
             return []
 
-    def grep_raw(
+    async def grep_raw(
         self, pattern: str, path: str | None = None, glob: str | None = None
     ) -> list[GrepMatch] | str:
         """

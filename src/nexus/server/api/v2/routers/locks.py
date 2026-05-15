@@ -1,269 +1,256 @@
-"""Lock API v2 router (#2056).
+"""Distributed locks REST API router.
 
-Provides distributed locking endpoints using Redis/Dragonfly:
-- POST   /api/v2/locks              — acquire a lock
-- GET    /api/v2/locks              — list active locks
-- GET    /api/v2/locks/{path:path}  — get lock status
-- DELETE /api/v2/locks/{path:path}  — release a lock
-- PATCH  /api/v2/locks/{path:path}  — extend a lock TTL
+Exposes the kernel's advisory lock syscalls (sys_lock / sys_unlock /
+sys_readdir on /__sys__/locks/) via REST endpoints for the TUI.
 
-Ported from v1 with improvements:
-- Pydantic request/response models (already existed in v1)
-- Extracted helpers (_to_lock_response, _normalize_path) for DRY
-- fence_token returned directly from acquire (no extra get_lock_info call)
+Issue #3250: TUI Locks tab.
 """
 
+import asyncio
 import logging
-from datetime import UTC, datetime
-from typing import Any, Literal
+import time
+import uuid
+from dataclasses import asdict, is_dataclass
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
-from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.server.api.v2.models.locks import (
-    LockAcquireRequest,
-    LockExtendRequest,
-    LockHolderResponse,
-    LockInfoMutex,
-    LockInfoSemaphore,
-    LockListResponse,
-    LockResponse,
-    LockStatusResponse,
-)
-from nexus.server.dependencies import require_auth
+from nexus.server.dependencies import get_operation_context, require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/locks", tags=["locks"])
 
-# =============================================================================
-# Dependencies
-# =============================================================================
+# In-memory lock store (fallback when kernel not available)
+_locks: dict[str, dict[str, Any]] = {}
 
 
-def _get_lock_manager(request: Request) -> Any:
-    """Get the distributed lock manager from NexusFS, raising 503 if not configured."""
-    fs = getattr(request.app.state, "nexus_fs", None)
-    if fs is None:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-    lock_mgr = getattr(fs, "_lock_manager", None)
-    if lock_mgr is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Distributed lock manager not configured. "
-            "Enable Redis/Dragonfly for distributed locking.",
-        )
-    return lock_mgr
+class AcquireRequest(BaseModel):
+    mode: str = "mutex"
+    ttl_seconds: int = 60
 
 
-# =============================================================================
-# Helpers
-# =============================================================================
+class ExtendRequest(BaseModel):
+    lock_id: str
+    ttl: int = 60
 
 
-def _normalize_path(path: str) -> str:
-    """Ensure path has a leading slash."""
-    return path if path.startswith("/") else "/" + path
+def _get_nexus_fs(request: Request) -> Any:
+    """Get the NexusFS instance from app state."""
+    return getattr(request.app.state, "nexus_fs", None)
 
 
-def _to_lock_info_response(lock_info: Any) -> LockInfoMutex | LockInfoSemaphore:
-    """Convert a LockInfo dataclass to the appropriate response model."""
-    if lock_info.mode == "mutex" and lock_info.holders:
-        h = lock_info.holders[0]
-        return LockInfoMutex(
-            lock_id=h.lock_id,
-            holder_info=h.holder_info,
-            acquired_at=h.acquired_at,
-            expires_at=h.expires_at,
-            fence_token=lock_info.fence_token,
-        )
-    return LockInfoSemaphore(
-        max_holders=lock_info.max_holders,
-        holders=[
-            LockHolderResponse(
-                lock_id=h.lock_id,
-                holder_info=h.holder_info,
-                acquired_at=h.acquired_at,
-                expires_at=h.expires_at,
-            )
-            for h in lock_info.holders
-        ],
-        current_holders=len(lock_info.holders),
-        fence_token=lock_info.fence_token,
-    )
+def _normalize_mode(mode: str) -> str:
+    """Map API lock modes to kernel advisory lock modes."""
+    mode_norm = (mode or "mutex").strip().lower()
+    if mode_norm in {"shared", "read", "reader"}:
+        return "shared"
+    return "exclusive"
 
 
-# =============================================================================
-# Endpoints
-# =============================================================================
+def _holder_to_dict(holder: Any) -> dict[str, Any]:
+    """Normalize holder info from dict/dataclass/object to dict."""
+    if holder is None:
+        return {}
+    if isinstance(holder, dict):
+        return holder
+    if is_dataclass(holder) and not isinstance(holder, type):
+        return asdict(holder)
+    return {
+        "lock_id": getattr(holder, "lock_id", None),
+        "holder_info": getattr(holder, "holder_info", ""),
+        "acquired_at": getattr(holder, "acquired_at", 0),
+        "expires_at": getattr(holder, "expires_at", 0),
+    }
 
 
-@router.post("", status_code=201, response_model=LockResponse)
-async def acquire_lock(
-    request: LockAcquireRequest,
-    auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(_get_lock_manager),
-) -> LockResponse:
-    """Acquire a distributed lock on a path.
+def _lock_to_response(lock: Any) -> dict[str, Any]:
+    """Normalize lock info from manager/list call into API response shape."""
+    if lock is None:
+        return {}
+    if isinstance(lock, dict):
+        holders = lock.get("holders", [])
+        first_holder = _holder_to_dict(holders[0]) if holders else {}
+        return {
+            "lock_id": lock.get("lock_id") or first_holder.get("lock_id") or str(uuid.uuid4()),
+            "resource": lock.get("resource", lock.get("path", "")),
+            "mode": lock.get("mode", "mutex"),
+            "max_holders": lock.get("max_holders", 1),
+            "holder_info": lock.get("holder_info", first_holder.get("holder_info", "")),
+            "acquired_at": lock.get("acquired_at", first_holder.get("acquired_at", 0)),
+            "expires_at": lock.get("expires_at", first_holder.get("expires_at", 0)),
+            "fence_token": lock.get("fence_token", 0),
+        }
 
-    Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
-    Use blocking=false for non-blocking acquisition (returns immediately).
-    """
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    path = _normalize_path(request.path)
-    timeout = request.timeout if request.blocking else 0.0
+    # Dataclass/object shape (e.g. LockInfo + HolderInfo).
+    holders = list(getattr(lock, "holders", []) or [])
+    first_holder = _holder_to_dict(holders[0]) if holders else {}
+    return {
+        "lock_id": first_holder.get("lock_id") or str(uuid.uuid4()),
+        "resource": getattr(lock, "resource", getattr(lock, "path", "")),
+        "mode": getattr(lock, "mode", "mutex"),
+        "max_holders": getattr(lock, "max_holders", 1),
+        "holder_info": first_holder.get("holder_info", ""),
+        "acquired_at": first_holder.get("acquired_at", 0),
+        "expires_at": first_holder.get("expires_at", 0),
+        "fence_token": getattr(lock, "fence_token", 0),
+    }
 
+
+def _mgr_release(mgr: Any, lock_id: str, resource: str) -> bool:
+    """Call manager.release with cross-version signature compatibility."""
     try:
-        lock_id = await lock_manager.acquire(
-            zone_id=zone_id,
-            path=path,
-            timeout=timeout,
-            ttl=request.ttl,
-            max_holders=request.max_holders,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-
-    if lock_id is None:
-        if request.blocking:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Lock acquisition timeout after {request.timeout}s",
-            )
-        raise HTTPException(
-            status_code=409,
-            detail="Lock not available (non-blocking mode)",
-        )
-
-    expires_at = datetime.now(UTC).timestamp() + request.ttl
-    expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
-
-    # Get fence token from lock info
-    lock_info = await lock_manager.get_lock_info(zone_id, path)
-    fence_token = lock_info.fence_token if lock_info else 0
-
-    return LockResponse(
-        lock_id=lock_id,
-        path=path,
-        mode="mutex" if request.max_holders == 1 else "semaphore",
-        max_holders=request.max_holders,
-        ttl=int(request.ttl),
-        expires_at=expires_at_iso,
-        fence_token=fence_token,
-    )
+        return bool(mgr.release(lock_id, resource))
+    except TypeError:
+        try:
+            return bool(mgr.release(resource, lock_id=lock_id))
+        except TypeError:
+            return bool(mgr.release(resource, lock_id))
 
 
-@router.get("", response_model=LockListResponse)
+def _mgr_extend(mgr: Any, lock_id: str, resource: str, ttl: int) -> Any:
+    """Call manager.extend with cross-version signature compatibility."""
+    try:
+        return mgr.extend(lock_id, resource, ttl=float(ttl))
+    except TypeError:
+        try:
+            return mgr.extend(resource, lock_id=lock_id, ttl=ttl)
+        except TypeError:
+            return mgr.extend(resource, lock_id, ttl)
+
+
+@router.get("")
 async def list_locks(
-    limit: int = Query(100, ge=1, le=1000, description="Max number of locks to return"),
-    pattern: str = Query("*", description="Path pattern filter (glob-style)"),
-    auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(_get_lock_manager),
-) -> LockListResponse:
-    """List active locks for the current zone."""
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    lock_infos = await lock_manager.list_locks(zone_id, pattern=pattern, limit=limit)
+    request: Request,
+    auth_result: dict = Depends(require_auth),
+) -> dict[str, Any]:
+    """List all active locks (admin/system only).
 
-    locks: list[LockInfoMutex | LockInfoSemaphore] = [
-        _to_lock_info_response(li) for li in lock_infos
-    ]
-    return LockListResponse(locks=locks, count=len(locks))
+    Issue #3786 / Codex Round 8 finding #3: previously this handler
+    invoked sys_readdir without an OperationContext, which the readdir
+    gate treated as privileged.  Now we resolve the caller and require
+    admin/system, then propagate that context downstream so the gate
+    matches the policy stated in the readdir branch.
+    """
+    ctx = get_operation_context(auth_result)
+    if not (getattr(ctx, "is_admin", False) or getattr(ctx, "is_system", False)):
+        raise HTTPException(status_code=403, detail="locks listing requires admin")
+    nx = _get_nexus_fs(request)
+    if nx and hasattr(nx, "sys_readdir"):
+        try:
+            kernel_locks = await asyncio.to_thread(
+                nx.sys_readdir, "/__sys__/locks/", details=True, context=ctx
+            )
+            locks = [
+                {
+                    "lock_id": holder.get("lock_id", ""),
+                    "resource": lock_info.get("path", ""),
+                    "mode": holder.get("mode", "exclusive"),
+                    "max_holders": lock_info.get("max_holders", 1),
+                    "holder_info": holder.get("holder_info", ""),
+                    "acquired_at": holder.get("acquired_at_secs", 0),
+                    "expires_at": holder.get("expires_at_secs", 0),
+                }
+                for lock_info in kernel_locks
+                for holder in lock_info.get("holders", [])
+            ]
+            return {"locks": locks, "count": len(locks)}
+        except Exception as e:
+            logger.debug("Kernel lock list failed: %s", e)
+
+    # Fallback: in-memory store
+    now = time.time()
+    expired = [k for k, v in _locks.items() if v["expires_at"] < now]
+    for k in expired:
+        del _locks[k]
+
+    locks = list(_locks.values())
+    return {"locks": locks, "count": len(locks)}
 
 
-@router.get("/{path:path}", response_model=LockStatusResponse)
-async def get_lock_status(
-    path: str,
-    auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(_get_lock_manager),
-) -> LockStatusResponse:
-    """Get lock status for a specific path."""
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    path = _normalize_path(path)
+@router.post("/{resource:path}/acquire")
+async def acquire_lock(
+    resource: str,
+    body: AcquireRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Acquire a lock on a resource path."""
+    nx = _get_nexus_fs(request)
+    if nx and hasattr(nx, "sys_lock"):
+        try:
+            mode = "exclusive" if body.mode == "mutex" else body.mode
+            lock_id = nx.sys_lock(resource, mode=mode, ttl=body.ttl_seconds)
+            if lock_id:
+                return {"status": "acquired", "lock_id": lock_id, "resource": resource}
+            raise HTTPException(status_code=409, detail=f"Resource already locked: {resource}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.debug("Kernel lock acquire failed: %s", e)
 
-    lock_info = await lock_manager.get_lock_info(zone_id, path)
-    if not lock_info:
-        return LockStatusResponse(path=path, locked=False, lock_info=None)
+    # Fallback: in-memory
+    now = time.time()
+    if resource in _locks and _locks[resource]["expires_at"] > now:
+        raise HTTPException(status_code=409, detail=f"Resource already locked: {resource}")
 
-    return LockStatusResponse(path=path, locked=True, lock_info=_to_lock_info_response(lock_info))
+    lock_id = str(uuid.uuid4())
+    lock = {
+        "lock_id": lock_id,
+        "resource": resource,
+        "mode": body.mode,
+        "max_holders": 1,
+        "holder_info": "admin",
+        "acquired_at": now,
+        "expires_at": now + body.ttl_seconds,
+    }
+    _locks[resource] = lock
+    return {"status": "acquired", **lock}
 
 
-@router.delete("/{path:path}")
+@router.delete("/{resource:path}")
 async def release_lock(
-    path: str,
-    lock_id: str = Query(..., description="Lock ID from acquire response"),
-    force: bool = Query(False, description="Force release (admin only)"),
-    auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(_get_lock_manager),
-) -> JSONResponse:
-    """Release a distributed lock.
+    resource: str,
+    lock_id: str,
+    request: Request,
+) -> None:
+    """Release a lock."""
+    nx = _get_nexus_fs(request)
+    if nx and hasattr(nx, "sys_unlock"):
+        try:
+            nx.sys_unlock(resource, lock_id=lock_id)
+            _locks.pop(resource, None)
+            return
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.debug("Kernel lock release failed: %s", e)
 
-    The lock_id must match the ID returned during acquisition.
-    Use force=true for admin recovery of stuck locks (requires admin role).
-    """
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    path = _normalize_path(path)
-
-    if force:
-        if not auth_result.get("is_admin", False):
-            raise HTTPException(status_code=403, detail="Force release requires admin privileges")
-        released = await lock_manager.force_release(zone_id, path)
-        if not released:
-            raise HTTPException(status_code=404, detail=f"No lock found for path: {path}")
-        logger.warning("Lock force-released by admin: zone=%s, path=%s", zone_id, path)
-        return JSONResponse(content={"released": True, "forced": True})
-
-    released = await lock_manager.release(lock_id, zone_id, path)
-    if not released:
-        raise HTTPException(
-            status_code=403,
-            detail="Lock release failed: not owned by this lock_id or already expired",
-        )
-    return JSONResponse(content={"released": True})
+    if resource not in _locks:
+        raise HTTPException(status_code=404, detail=f"Lock not found: {resource}")
+    if _locks[resource]["lock_id"] != lock_id:
+        raise HTTPException(status_code=403, detail="Lock ID mismatch")
+    del _locks[resource]
 
 
-@router.patch("/{path:path}", response_model=LockResponse)
+@router.patch("/{resource:path}")
 async def extend_lock(
-    path: str,
-    request: LockExtendRequest,
-    auth_result: dict[str, Any] = Depends(require_auth),
-    lock_manager: Any = Depends(_get_lock_manager),
-) -> LockResponse:
-    """Extend a lock's TTL (heartbeat).
+    resource: str,
+    body: ExtendRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Extend a lock's TTL."""
+    nx = _get_nexus_fs(request)
+    if nx and hasattr(nx, "sys_lock"):
+        try:
+            # sys_lock with existing lock_id = extend TTL
+            result = nx.sys_lock(resource, lock_id=body.lock_id, ttl=body.ttl)
+            if result:
+                return {"status": "extended", "resource": resource}
+        except Exception as e:
+            logger.debug("Kernel lock extend failed: %s", e)
 
-    Call this periodically (e.g., every TTL/2) to keep long-running
-    operations alive. The lock must be owned by the caller (lock_id match).
-    """
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    path = _normalize_path(path)
-
-    extended = await lock_manager.extend(request.lock_id, zone_id, path, ttl=request.ttl)
-    if not extended.success:
-        raise HTTPException(
-            status_code=403,
-            detail="Lock extend failed: not owned by this lock_id or already expired",
-        )
-
-    expires_at = datetime.now(UTC).timestamp() + request.ttl
-    expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
-
-    lock_info = extended.lock_info
-    mode: Literal["mutex", "semaphore"] = "mutex"
-    max_holders = 1
-    fence_token = 0
-
-    if lock_info:
-        mode = lock_info.mode
-        fence_token = lock_info.fence_token
-        max_holders = lock_info.max_holders
-
-    return LockResponse(
-        lock_id=request.lock_id,
-        path=path,
-        mode=mode,
-        max_holders=max_holders,
-        ttl=int(request.ttl),
-        expires_at=expires_at_iso,
-        fence_token=fence_token,
-    )
+    if resource not in _locks:
+        raise HTTPException(status_code=404, detail=f"Lock not found: {resource}")
+    _locks[resource]["expires_at"] = time.time() + body.ttl
+    return {"status": "extended", **_locks[resource]}

@@ -18,6 +18,7 @@ from nexus.bricks.snapshot.errors import (
     TransactionNotActiveError,
 )
 from nexus.bricks.snapshot.service import TransactionalSnapshotService
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # ---------------------------------------------------------------------------
 # Lightweight fakes (avoid heavy ORM dependency)
@@ -29,7 +30,7 @@ class FakeTransactionModel:
     """Minimal stand-in for TransactionSnapshotModel."""
 
     transaction_id: str = ""
-    zone_id: str = "root"
+    zone_id: str = ROOT_ZONE_ID
     agent_id: str | None = None
     status: str = "active"
     description: str | None = None
@@ -40,10 +41,10 @@ class FakeTransactionModel:
 
 
 class FakeMetadata:
-    """Minimal metadata stand-in with etag attribute."""
+    """Minimal metadata stand-in with content_id attribute."""
 
-    def __init__(self, etag: str | None = None) -> None:
-        self.etag = etag
+    def __init__(self, content_id: str | None = None) -> None:
+        self.content_id = content_id
 
 
 class FakeCASStore:
@@ -68,19 +69,36 @@ class FakeCASStore:
 
 
 class FakeMetadataStore:
-    """Fake metadata store backed by a dict."""
+    """Fake kernel-handle stub backed by a dict.
+
+    Post-C24 ``TransactionalSnapshotService`` reaches the metastore via
+    ``self._kernel.sys_stat`` / ``sys_setattr`` / ``sys_unlink``
+    (the constructor's ``hasattr(_, "_rust_kernel")`` guard treats
+    anything without that attribute as a bare kernel — so this stub
+    is used directly).
+    """
 
     def __init__(self) -> None:
         self.data: dict[str, Any] = {}
 
-    def get(self, path: str) -> Any:
-        return self.data.get(path)
+    def sys_stat(self, path: str, zone_id: str | None = None) -> Any:
+        obj = self.data.get(path)
+        if obj is None:
+            return None
+        return {"path": path, "content_id": getattr(obj, "content_id", None)}
 
-    def put(self, meta: Any) -> None:
-        self.data[meta.path] = meta
+    def sys_setattr(self, path: str, entry_type: int = 1, **kwargs: Any) -> Any:
+        meta = self.data.get(path)
+        if meta is None:
+            meta = type("FakeMeta", (), {"path": path})()
+            self.data[path] = meta
+        for k, v in kwargs.items():
+            setattr(meta, k, v)
+        return {"path": path}
 
-    def delete(self, path: str) -> None:
+    def sys_unlink(self, path: str, context: Any = None, recursive: bool = False) -> Any:
         self.data.pop(path, None)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +129,7 @@ def _fake_metadata_factory(**kwargs: Any) -> Any:
     """Fake metadata factory that returns a simple object with the given attrs."""
     obj = type("FakeFileMetadata", (), kwargs)()
     obj.path = kwargs.get("path", "")
-    obj.etag = kwargs.get("etag", "")
+    obj.content_id = kwargs.get("content_id", "")
     return obj
 
 
@@ -200,11 +218,11 @@ class TestCommit:
         metadata_store: FakeMetadataStore,
     ) -> None:
         """Commit succeeds when no conflicts exist, releases CAS holds."""
-        metadata_store.data["/f.txt"] = FakeMetadata(etag="hash-new")
+        metadata_store.data["/f.txt"] = FakeMetadata(content_id="hash-new")
 
         txn = FakeTransactionModel(transaction_id="txn-c1", status="active", entry_count=1)
 
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
         fake_entry = SnapshotEntry(
             entry_id="e1",
@@ -240,10 +258,10 @@ class TestCommit:
         metadata_store: FakeMetadataStore,
     ) -> None:
         """Commit raises TransactionConflictError when file was modified externally."""
-        metadata_store.data["/f.txt"] = FakeMetadata(etag="someone-elses-hash")
+        metadata_store.data["/f.txt"] = FakeMetadata(content_id="someone-elses-hash")
 
         txn = FakeTransactionModel(transaction_id="txn-c2", status="active")
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
         fake_entry = SnapshotEntry(
             entry_id="e2",
@@ -302,7 +320,7 @@ class TestRollback:
         cas_store: FakeCASStore,
     ) -> None:
         """Rollback of a write restores original metadata."""
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
         now = datetime.now(UTC)
         original_meta = json.dumps(
@@ -350,7 +368,7 @@ class TestRollback:
         metadata_store: FakeMetadataStore,
     ) -> None:
         """Rollback of a delete restores the deleted file's metadata."""
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
         now = datetime.now(UTC)
         original_meta = json.dumps(
@@ -397,9 +415,9 @@ class TestRollback:
         cas_store: FakeCASStore,
     ) -> None:
         """Rollback of a new file (no original) deletes it from metadata."""
-        from nexus.services.protocols.snapshot import SnapshotEntry
+        from nexus.contracts.protocols.snapshot import SnapshotEntry
 
-        metadata_store.data["/new-file.txt"] = FakeMetadata(etag="new-hash")
+        metadata_store.data["/new-file.txt"] = FakeMetadata(content_id="new-hash")
 
         entry = SnapshotEntry(
             entry_id="e-rb3",

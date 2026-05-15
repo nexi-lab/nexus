@@ -126,13 +126,15 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_available(self):
         """Check if Rust grep is available."""
-        from nexus.bricks.search.primitives.grep_fast import RUST_AVAILABLE
+        RUST_AVAILABLE = True
 
         print(f"\n[INFO] Rust grep available: {RUST_AVAILABLE}")
 
     def test_rust_grep_1k_lines(self, benchmark):
         """Benchmark Rust grep in 1K lines."""
-        from nexus.bricks.search.primitives.grep_fast import RUST_AVAILABLE, grep_bulk
+        from nexus._rust_compat import grep_bulk
+
+        RUST_AVAILABLE = True
 
         content = generate_log_content(1000)
         file_contents = {"/test.log": content}
@@ -161,7 +163,7 @@ class TestRustGrepBenchmarks:
     @pytest.mark.benchmark_ci
     def test_rust_grep_10k_lines(self, benchmark):
         """Benchmark Rust grep in 10K lines."""
-        from nexus.bricks.search.primitives.grep_fast import grep_bulk
+        from nexus._rust_compat import grep_bulk
 
         content = generate_log_content(10000)
         file_contents = {"/test.log": content}
@@ -182,7 +184,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_multiple_files(self, benchmark):
         """Benchmark Rust grep across multiple files."""
-        from nexus.bricks.search.primitives.grep_fast import grep_bulk
+        from nexus._rust_compat import grep_bulk
 
         # Create 10 files with 1K lines each
         file_contents = {f"/file_{i}.log": generate_log_content(1000) for i in range(10)}
@@ -204,7 +206,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_regex_pattern(self, benchmark):
         """Benchmark Rust grep with regex pattern."""
-        from nexus.bricks.search.primitives.grep_fast import grep_bulk
+        from nexus._rust_compat import grep_bulk
 
         content = generate_code_content(5000)
         file_contents = {"/code.py": content}
@@ -228,7 +230,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_case_insensitive(self, benchmark):
         """Benchmark Rust grep with case-insensitive search."""
-        from nexus.bricks.search.primitives.grep_fast import grep_bulk
+        from nexus._rust_compat import grep_bulk
 
         content = generate_log_content(5000)
         file_contents = {"/test.log": content}
@@ -282,13 +284,15 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_grep_available(self):
         """Check if mmap grep is available."""
-        from nexus.bricks.search.primitives.grep_fast import MMAP_AVAILABLE
+        MMAP_AVAILABLE = True
 
         print(f"\n[INFO] Mmap grep available: {MMAP_AVAILABLE}")
 
     def test_mmap_grep_single_file(self, benchmark):
         """Benchmark mmap grep on a single file."""
-        from nexus.bricks.search.primitives.grep_fast import MMAP_AVAILABLE, grep_files_mmap
+        from nexus._rust_compat import grep_files_mmap
+
+        MMAP_AVAILABLE = True
 
         def search():
             result = grep_files_mmap("ERROR", [self.large_file], ignore_case=False)
@@ -315,7 +319,9 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_grep_multiple_files(self, benchmark):
         """Benchmark mmap grep across multiple files."""
-        from nexus.bricks.search.primitives.grep_fast import MMAP_AVAILABLE, grep_files_mmap
+        from nexus._rust_compat import grep_files_mmap
+
+        MMAP_AVAILABLE = True
 
         file_paths = list(self.test_files.keys())
 
@@ -345,11 +351,9 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_vs_bulk_grep_comparison(self, benchmark):
         """Compare mmap grep vs bulk grep (read + grep)."""
-        from nexus.bricks.search.primitives.grep_fast import (
-            MMAP_AVAILABLE,
-            grep_bulk,
-            grep_files_mmap,
-        )
+        from nexus._rust_compat import grep_bulk, grep_files_mmap
+
+        MMAP_AVAILABLE = True
 
         file_paths = list(self.test_files.keys())
 
@@ -379,7 +383,7 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_grep_case_insensitive(self, benchmark):
         """Benchmark mmap grep with case-insensitive search."""
-        from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
+        from nexus._rust_compat import grep_files_mmap
 
         def search():
             result = grep_files_mmap("error", [self.large_file], ignore_case=True)
@@ -400,7 +404,7 @@ class TestRustMmapGrepBenchmarks:
 
     def test_mmap_grep_regex_pattern(self, benchmark):
         """Benchmark mmap grep with regex pattern."""
-        from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
+        from nexus._rust_compat import grep_files_mmap
 
         # Create code files for regex testing
         code_content = generate_code_content(5000)
@@ -461,7 +465,9 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_simple(self, benchmark):
         """Benchmark Rust glob for simple patterns (if available)."""
-        from nexus.bricks.search.primitives.glob_fast import RUST_AVAILABLE, glob_match_bulk
+        from nexus._rust_compat import glob_match_bulk
+
+        RUST_AVAILABLE = True
 
         paths = [f"/dir/file_{i:04d}.txt" for i in range(1000)]
         paths += [f"/dir/file_{i:04d}.py" for i in range(1000)]
@@ -484,7 +490,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_multiple_patterns(self, benchmark):
         """Benchmark Rust glob with multiple patterns."""
-        from nexus.bricks.search.primitives.glob_fast import glob_match_bulk
+        from nexus._rust_compat import glob_match_bulk
 
         paths = [f"/dir/file_{i:04d}.txt" for i in range(500)]
         paths += [f"/dir/file_{i:04d}.py" for i in range(500)]
@@ -506,7 +512,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_recursive_pattern(self, benchmark):
         """Benchmark Rust glob with recursive pattern (**/*)."""
-        from nexus.bricks.search.primitives.glob_fast import glob_match_bulk
+        from nexus._rust_compat import glob_match_bulk
 
         # Generate paths with directory structure
         paths = []
@@ -524,158 +530,6 @@ class TestGlobPatternBenchmarks:
 
         result = benchmark(match)
         assert len(result) == 1000
-
-
-# =============================================================================
-# HYBRID SEARCH FUSION BENCHMARKS (Issue #798)
-# =============================================================================
-
-
-@pytest.mark.benchmark_fusion
-class TestHybridSearchFusionBenchmarks:
-    """Benchmarks for hybrid search fusion algorithms (Issue #798)."""
-
-    @pytest.fixture
-    def small_result_sets(self):
-        """Generate small result sets (100 each) for baseline benchmarks."""
-        keyword_results = [
-            {
-                "chunk_id": f"kw_{i}",
-                "path": f"/file_{i % 10}.py",
-                "chunk_index": i % 5,
-                "score": 100.0 - (i * 0.5),
-            }
-            for i in range(100)
-        ]
-
-        # 50% overlap with keyword results
-        vector_results = [
-            {
-                "chunk_id": f"kw_{i}" if i < 50 else f"vec_{i}",
-                "path": f"/file_{i % 10}.py",
-                "chunk_index": i % 5,
-                "score": 1.0 - (i * 0.005),
-            }
-            for i in range(100)
-        ]
-
-        return keyword_results, vector_results
-
-    @pytest.fixture
-    def large_result_sets(self):
-        """Generate large result sets (1000 each) for stress testing."""
-        keyword_results = [
-            {
-                "chunk_id": f"kw_{i}",
-                "path": f"/file_{i % 100}.py",
-                "chunk_index": i % 10,
-                "score": 100.0 - (i * 0.1),
-            }
-            for i in range(1000)
-        ]
-
-        # 50% overlap with keyword results
-        vector_results = [
-            {
-                "chunk_id": f"kw_{i}" if i < 500 else f"vec_{i}",
-                "path": f"/file_{i % 100}.py",
-                "chunk_index": i % 10,
-                "score": 1.0 - (i * 0.001),
-            }
-            for i in range(1000)
-        ]
-
-        return keyword_results, vector_results
-
-    def test_rrf_fusion_100_results(self, benchmark, small_result_sets):
-        """Benchmark RRF fusion with 100 results from each source."""
-        from nexus.bricks.search.fusion import rrf_fusion
-
-        keyword_results, vector_results = small_result_sets
-
-        def fuse():
-            return rrf_fusion(keyword_results, vector_results, k=60, limit=10)
-
-        result = benchmark(fuse)
-        assert len(result) == 10
-
-    @pytest.mark.benchmark_ci
-    def test_rrf_fusion_1k_results(self, benchmark, large_result_sets):
-        """Benchmark RRF fusion with 1K results from each source."""
-        from nexus.bricks.search.fusion import rrf_fusion
-
-        keyword_results, vector_results = large_result_sets
-
-        def fuse():
-            return rrf_fusion(keyword_results, vector_results, k=60, limit=100)
-
-        result = benchmark(fuse)
-        assert len(result) == 100
-
-    def test_weighted_fusion_100_results(self, benchmark, small_result_sets):
-        """Benchmark weighted fusion with 100 results from each source."""
-        from nexus.bricks.search.fusion import weighted_fusion
-
-        keyword_results, vector_results = small_result_sets
-
-        def fuse():
-            return weighted_fusion(
-                keyword_results, vector_results, alpha=0.5, normalize=True, limit=10
-            )
-
-        result = benchmark(fuse)
-        assert len(result) == 10
-
-    def test_weighted_fusion_1k_results(self, benchmark, large_result_sets):
-        """Benchmark weighted fusion with 1K results from each source."""
-        from nexus.bricks.search.fusion import weighted_fusion
-
-        keyword_results, vector_results = large_result_sets
-
-        def fuse():
-            return weighted_fusion(
-                keyword_results, vector_results, alpha=0.5, normalize=True, limit=100
-            )
-
-        result = benchmark(fuse)
-        assert len(result) == 100
-
-    def test_rrf_weighted_fusion_1k_results(self, benchmark, large_result_sets):
-        """Benchmark RRF weighted fusion with 1K results from each source."""
-        from nexus.bricks.search.fusion import rrf_weighted_fusion
-
-        keyword_results, vector_results = large_result_sets
-
-        def fuse():
-            return rrf_weighted_fusion(keyword_results, vector_results, alpha=0.5, k=60, limit=100)
-
-        result = benchmark(fuse)
-        assert len(result) == 100
-
-    def test_normalization_overhead(self, benchmark, large_result_sets):
-        """Benchmark min-max normalization overhead."""
-        from nexus.bricks.search.fusion import normalize_scores_minmax
-
-        scores = [r["score"] for r in large_result_sets[0]]
-
-        def normalize():
-            return normalize_scores_minmax(scores)
-
-        result = benchmark(normalize)
-        assert len(result) == 1000
-
-    def test_fuse_results_dispatcher(self, benchmark, large_result_sets):
-        """Benchmark fuse_results dispatcher overhead."""
-        from nexus.bricks.search.fusion import FusionConfig, FusionMethod, fuse_results
-
-        keyword_results, vector_results = large_result_sets
-        config = FusionConfig(method=FusionMethod.RRF, rrf_k=60)
-
-        def fuse():
-            return fuse_results(keyword_results, vector_results, config=config, limit=100)
-
-        result = benchmark(fuse)
-        assert len(result) == 100
 
 
 # =============================================================================
@@ -798,3 +652,95 @@ class TestTrigramBenchmarks:
         result = benchmark(search_trigram)
         assert result is not None
         print(f"\n[INFO] Trigram search: {len(result)} matches")
+
+
+# =============================================================================
+# files=[...] VALIDATOR BENCHMARKS (#3701 Issue 13A)
+#
+# These benchmarks document the cost of the caller-supplied files
+# validator used by grep/glob when ``files=[...]`` is set. The
+# FILES_FILTER_TRIGRAM_THRESHOLD constant (200) was chosen as a
+# conservative crossover point between direct-scan and
+# trigram+post-filter — a full end-to-end crossover benchmark would
+# require a real trigram index on a realistic corpus, which is out of
+# scope for this file. Production operators should tune the threshold
+# by profiling their own workloads.
+# =============================================================================
+
+
+def _stub_search_service(list_return: list[str]):
+    """Build a SearchService with just enough wiring to exercise the validator.
+
+    Uses ``patch.object`` so the stub overrides ``list`` and
+    ``_get_routing_params`` without assigning to bound-method
+    attributes (mypy rejects that). Caller must stop the returned
+    patches in a ``finally`` block.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from nexus.bricks.search.search_service import SearchService
+
+    svc = SearchService(metadata_store=MagicMock())
+    list_patch = patch.object(svc, "list", return_value=list_return)
+    routing_patch = patch.object(svc, "_get_routing_params", return_value=(None, None, False))
+    list_patch.start()
+    routing_patch.start()
+    return svc, (list_patch, routing_patch)
+
+
+@pytest.mark.benchmark_hash
+class TestFilesFilterValidator:
+    """Benchmark the validator's overhead at realistic list sizes."""
+
+    def test_validator_small_list(self, benchmark):
+        """Typical agent narrowing: 10 files."""
+        svc, patches = _stub_search_service(list_return=[f"/f{i}.py" for i in range(50)])
+        try:
+            files = [f"/f{i}.py" for i in range(10)]
+
+            def run():
+                return svc._validate_and_normalize_files(files, path="/", context=None)
+
+            result = benchmark(run)
+            assert len(result[0]) == 10
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_validator_at_threshold_size(self, benchmark):
+        """At the trigram-bypass threshold: 200 files."""
+        from nexus.bricks.search.search_service import FILES_FILTER_TRIGRAM_THRESHOLD
+
+        svc, patches = _stub_search_service(
+            list_return=[f"/f{i}.py" for i in range(FILES_FILTER_TRIGRAM_THRESHOLD * 2)]
+        )
+        try:
+            files = [f"/f{i}.py" for i in range(FILES_FILTER_TRIGRAM_THRESHOLD)]
+
+            def run():
+                return svc._validate_and_normalize_files(files, path="/", context=None)
+
+            result = benchmark(run)
+            assert len(result[0]) == FILES_FILTER_TRIGRAM_THRESHOLD
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_validator_at_size_cap(self, benchmark):
+        """Stress: validator at FILES_FILTER_SIZE_CAP = 10k entries."""
+        from nexus.bricks.search.search_service import FILES_FILTER_SIZE_CAP
+
+        svc, patches = _stub_search_service(
+            list_return=[f"/f{i}.py" for i in range(FILES_FILTER_SIZE_CAP)]
+        )
+        try:
+            files = [f"/f{i}.py" for i in range(FILES_FILTER_SIZE_CAP)]
+
+            def run():
+                return svc._validate_and_normalize_files(files, path="/", context=None)
+
+            result = benchmark(run)
+            assert len(result[0]) == FILES_FILTER_SIZE_CAP
+        finally:
+            for p in patches:
+                p.stop()

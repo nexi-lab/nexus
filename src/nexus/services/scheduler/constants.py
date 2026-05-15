@@ -99,6 +99,19 @@ DEFAULT_EST_SERVICE_TIME_SECS: float = 30.0
 STARVATION_PROMOTION_THRESHOLD_SECS: float = 900.0
 
 # =============================================================================
+# Overlap Policy (Issue #2749)
+# =============================================================================
+
+
+class OverlapPolicy(StrEnum):
+    """Policy for handling tasks with duplicate idempotency_key."""
+
+    ALLOW = "allow"  # Current behavior — UPSERT overwrites
+    SKIP = "skip"  # Reject if existing task is running
+    CANCEL_PREVIOUS = "cancel"  # Cancel running task, enqueue new one
+
+
+# =============================================================================
 # Hook Phase Constants
 # =============================================================================
 

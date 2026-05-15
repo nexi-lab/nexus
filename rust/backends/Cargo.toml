@@ -1,0 +1,115 @@
+[package]
+name = "backends"
+version = "0.1.0"
+edition = "2021"
+description = "ObjectStore driver impls — connector backends, CAS local, path local, blob-pack local. Implements kernel::core::traits::ObjectStore. Driver-layer crate."
+
+[lib]
+name = "backends"
+crate-type = ["rlib"]
+
+[features]
+# Default = every driver compiled in.  Python deployments (`nexus-cdylib`)
+# carry the runtime gate (`set_enabled_drivers`) to limit what an active
+# profile can mount, so they need every backend present in the binary.
+# Slim deployments (`nexus-cluster`) opt out by setting
+# `default-features = false` and naming only the drivers they want.
+default = [
+    "driver-path-local",
+    "driver-cas-local",
+    "driver-local-connector",
+    "driver-remote",
+    "connectors",
+]
+
+# Local-host backends (kernel-shipped, no network).
+driver-path-local = []
+driver-cas-local = []
+driver-local-connector = []
+
+# Cross-node RPC proxy — federation primitive.  Always available in
+# Python deployments, opt-in for slim Rust binaries.
+driver-remote = []
+
+# Connector umbrella: every external-API / cloud-blob backend plus the
+# shared HTTP / crypto / streaming dependency stack they all need.
+connectors = [
+    "driver-openai",
+    "driver-anthropic",
+    "driver-s3",
+    "driver-gcs",
+    "driver-gdrive",
+    "driver-gmail",
+    "driver-slack",
+    "driver-x",
+    "driver-hn",
+    "driver-cli",
+    "dep:reqwest",
+    "dep:hmac",
+    "dep:sha2",
+    "dep:futures-util",
+]
+
+# Per-connector features.  Selectable individually for downstream
+# binaries that want, say, only `driver-cli` without the full HTTP stack.
+driver-openai = []
+driver-anthropic = []
+driver-s3 = []
+driver-gcs = []
+driver-gdrive = []
+driver-gmail = []
+driver-slack = []
+driver-x = []
+driver-hn = []
+driver-cli = []
+
+# `python` enables `backends::python` PyO3 wrappers. Mirrors
+# kernel/lib's gating: pure-Rust by default, kernel cdylib pulls
+# `features = ["python"]` to expose `#[pyclass]` types.
+python = ["dep:pyo3"]
+
+[dependencies]
+contracts = { workspace = true }
+kernel = { workspace = true }
+lib = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ahash = { workspace = true }
+regex = { workspace = true }
+memchr = { workspace = true }
+globset = { workspace = true }
+blake3 = { workspace = true }
+fastcdc = { workspace = true }
+roaring = { workspace = true }
+crc32fast = { workspace = true }
+encoding_rs = "0.8.35"
+rayon = "1.11"
+libc = "0.2"
+memmap2 = "0.9.9"
+tempfile = "3"
+dashmap = "6.1"
+parking_lot = "0.12"
+redb = "4"
+uuid = { version = "1", features = ["v4"] }
+lru = "0.18"
+simdutf8 = "0.1"
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros"] }
+futures = "0.3"
+tracing = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+base64 = "0.22"
+# pyo3 features unioned by cargo when kernel cdylib enables `extension-module`
+# on its own pyo3 dep — backends does not need to set extension-module here.
+pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
+# Connector / cloud HTTP stack — feature-gated so non-connector builds
+# stay slim.
+reqwest = { version = "0.13", features = ["json", "stream", "rustls"], default-features = false, optional = true }
+hmac = { version = "0.13", optional = true }
+sha2 = { version = "0.11", optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
+
+[dev-dependencies]
+rcgen = { version = "0.14", features = ["pem", "x509-parser"] }
+tempfile = "3"

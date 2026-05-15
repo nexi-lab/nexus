@@ -59,15 +59,33 @@ class OIDCAuth(AuthProvider):
         logger.info("Initialized OIDCAuth for issuer: %s (JWKS: %s)", issuer, self.jwks_uri)
 
     def _discover_jwks_uri(self, issuer: str) -> str:
-        """Discover JWKS URI from OIDC discovery endpoint."""
-        patterns = {
+        """Discover JWKS URI from OIDC discovery endpoint.
+
+        For well-known issuers, returns the direct JWKS endpoint.
+        For unknown issuers, performs OIDC discovery to find the ``jwks_uri``.
+        """
+        # Direct JWKS endpoints for well-known issuers
+        patterns: dict[str, str] = {
             "https://accounts.google.com": "https://www.googleapis.com/oauth2/v3/certs",
-            "https://login.microsoftonline.com": "{issuer}/discovery/v2.0/keys",
+            "https://login.microsoftonline.com": f"{issuer}/discovery/v2.0/keys",
             "https://github.com": "https://token.actions.githubusercontent.com/.well-known/jwks",
         }
         if issuer in patterns:
             return patterns[issuer]
-        return f"{issuer}/.well-known/openid-configuration"
+
+        # Generic issuers: fetch the OpenID discovery document and extract jwks_uri
+        discovery_url = f"{issuer}/.well-known/openid-configuration"
+        try:
+            response = requests.get(discovery_url, timeout=OIDC_REQUEST_TIMEOUT)
+            response.raise_for_status()
+            config = response.json()
+            jwks_uri = config.get("jwks_uri")
+            if jwks_uri:
+                return str(jwks_uri)
+            raise ValueError(f"No jwks_uri in discovery document from {discovery_url}")
+        except Exception as e:
+            logger.warning("OIDC discovery failed for %s: %s — falling back to /jwks", issuer, e)
+            return f"{issuer}/.well-known/jwks.json"
 
     def _fetch_jwks(self) -> dict[str, Any]:
         """Fetch JWKS from provider with caching (sync version)."""

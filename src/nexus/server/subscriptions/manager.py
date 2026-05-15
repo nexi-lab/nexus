@@ -623,7 +623,7 @@ class SubscriptionManager:
         test_data = {
             "file_path": "/test/webhook-test.txt",
             "size": 100,
-            "etag": "test-etag",
+            "content_id": "test-content-id",
             "version": 1,
             "created": True,
             "zone_id": zone_id,
@@ -672,3 +672,7 @@ class SubscriptionManager:
         logger.info("Closing SubscriptionManager")
         # Currently no persistent connections to close
         # Future: close any persistent HTTP clients or background tasks
+
+    # NOT a BackgroundService today (no start() / no background loop).
+    # Alias kept so a future opt-in only needs to add start().
+    stop = close

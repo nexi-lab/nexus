@@ -44,6 +44,6 @@ METHOD_REGISTRY: dict[str, MethodSpec] = {
     "glob": MethodSpec(response_key="matches"),
     "grep": MethodSpec(response_key="results"),
     # --- Boolean result extraction ---
-    "sys_access": MethodSpec(response_key="exists"),
-    "sys_is_directory": MethodSpec(response_key="is_directory"),
+    "access": MethodSpec(response_key="exists"),
+    "is_directory": MethodSpec(response_key="is_directory"),
 }

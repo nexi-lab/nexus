@@ -27,9 +27,9 @@ from pathlib import Path
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Add src to path for imports
@@ -222,12 +222,13 @@ def test_http_concurrent_requests(
 # =============================================================================
 
 
-def test_in_process_thread_exhaustion(
+@pytest.mark.asyncio
+async def test_in_process_thread_exhaustion(
     num_requests: int = 20,
     timeout: float = 60.0,
 ) -> TestResults:
     """Test thread pool exhaustion with in-process NexusFS."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
 
     results = TestResults()
@@ -238,12 +239,12 @@ def test_in_process_thread_exhaustion(
 
         # Initialize NexusFS
         db_path = os.path.join(tmpdir, "nexus.db")
-        backend = LocalBackend(root_path=tmpdir)
+        backend = CASLocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
         nx = create_nexus_fs(
             backend=backend,
-            metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
+            metadata_store=db_path.replace(".db", "-raft"),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             permissions=PermissionConfig(enforce=False),
         )
@@ -251,7 +252,7 @@ def test_in_process_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(50):
             path = f"/test_file_{i}.txt"
-            nx.sys_write(path, f"Test content {i}".encode())
+            nx.write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True
@@ -260,17 +261,17 @@ def test_in_process_thread_exhaustion(
         context = OperationContext(
             user_id="test_user",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             subject_type="user",
             subject_id="test_user",
         )
 
         # Grant read permission to test user
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         print("Created 50 test files")
@@ -284,7 +285,7 @@ def test_in_process_thread_exhaustion(
             if hasattr(nx._rebac_manager, "_l1_cache") and nx._rebac_manager._l1_cache:
                 nx._rebac_manager._l1_cache.clear()
 
-        def make_list_call(request_id: int) -> RequestResult:
+        async def make_list_call(request_id: int) -> RequestResult:
             thread_name = threading.current_thread().name
             start = time.time()
             try:
@@ -345,7 +346,7 @@ async def test_async_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test that simulates exact FastAPI server behavior with asyncio.to_thread."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
 
     results = TestResults()
@@ -354,12 +355,12 @@ async def test_async_thread_exhaustion(
         print(f"\nSetting up async test environment in {tmpdir}...")
 
         db_path = os.path.join(tmpdir, "nexus.db")
-        backend = LocalBackend(root_path=tmpdir)
+        backend = CASLocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
         nx = create_nexus_fs(
             backend=backend,
-            metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
+            metadata_store=db_path.replace(".db", "-raft"),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             permissions=PermissionConfig(enforce=False),  # Disable for setup
         )
@@ -367,7 +368,7 @@ async def test_async_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(100):
             path = f"/test_file_{i}.txt"
-            nx.sys_write(path, f"Test content {i}".encode())
+            nx.write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True
@@ -376,27 +377,24 @@ async def test_async_thread_exhaustion(
         context = OperationContext(
             user_id="test_user",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             subject_type="user",
             subject_id="test_user",
         )
 
         # Grant test user read permission on root
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         print("Created 100 test files")
 
-        # FORCE WORST CASE: Disable Rust acceleration to simulate slow Python path
-        import nexus.bricks.rebac.utils.fast as rebac_fast
-
-        _original_rust_available = rebac_fast.RUST_AVAILABLE  # noqa: F841
-        rebac_fast.RUST_AVAILABLE = False
-        print("*** DISABLED RUST ACCELERATION (simulating worst case) ***")
+        # NOTE: Rust acceleration is always enabled (RUST_AVAILABLE dead code removed).
+        # This benchmark now measures realistic Rust-accelerated performance.
+        print("*** Rust acceleration is always enabled ***")
 
         # Clear caches
         if hasattr(nx, "_rebac_manager"):
@@ -405,12 +403,18 @@ async def test_async_thread_exhaustion(
             if hasattr(nx._rebac_manager, "_l1_cache") and nx._rebac_manager._l1_cache:
                 nx._rebac_manager._l1_cache.clear()
 
+        main_loop = asyncio.get_running_loop()
+
         def sync_list_operation(request_id: int) -> RequestResult:
-            """Sync operation that will be run in thread pool."""
+            """Sync operation run in thread pool — simulates FastAPI sync endpoint."""
             thread_name = threading.current_thread().name
             start = time.time()
             try:
-                _result = nx.sys_readdir("/", recursive=False, context=context)
+                future = asyncio.run_coroutine_threadsafe(
+                    nx.sys_readdir("/", recursive=False, context=context),
+                    main_loop,
+                )
+                _result = future.result(timeout=timeout)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,

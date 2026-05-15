@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Set up test database URL before importing
@@ -29,7 +28,7 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture
-def test_app():
+async def test_app():
     """Create FastAPI test app with in-memory database."""
     # Create in-memory database
     database_url = "sqlite:///:memory:"
@@ -39,16 +38,16 @@ def test_app():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
 
-    # Create LocalBackend and NexusFS instance
+    # Create CASLocalBackend and NexusFS instance
     import tempfile
 
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
 
     auth_tmpdir = tempfile.mkdtemp(prefix="nexus-test-auth-")
-    backend = LocalBackend(root_path=auth_tmpdir)
+    backend = CASLocalBackend(root_path=auth_tmpdir)
     nx = create_nexus_fs(
         backend=backend,
-        metadata_store=RaftMetadataStore.embedded(os.path.join(auth_tmpdir, "raft-metadata")),
+        metadata_store=os.path.join(auth_tmpdir, "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=":memory:"),
         permissions=PermissionConfig(enforce=False),
     )

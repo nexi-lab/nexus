@@ -11,8 +11,6 @@ Issue #1331: Replace Dragonfly pub/sub with NATS JetStream.
 Keep Dragonfly for caching only.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -38,13 +36,17 @@ from nats.js.api import (
 )
 from nats.js.errors import NotFoundError
 
-from nexus.contracts.constants import DEFAULT_NATS_URL
-from nexus.core.file_events import FileEvent, FileEventType
+from nexus.contracts.constants import DEFAULT_NATS_URL, ROOT_ZONE_ID
 from nexus.services.event_bus.base import EventBusBase
+from nexus.services.event_bus.decorators import requires_started
 from nexus.services.event_bus.protocol import AckableEvent
+from nexus.services.event_bus.types import FileEvent, FileEventType
 
 if TYPE_CHECKING:
     from nats.aio.msg import Msg
+
+    from nexus.contracts.auth_store_protocols import SystemSettingsStoreProtocol
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -80,28 +82,28 @@ class NatsEventBus(EventBusBase):
     def __init__(
         self,
         nats_url: str = DEFAULT_NATS_URL,
-        session_factory: Any | None = None,
+        record_store: "RecordStoreABC | None" = None,
         node_id: str | None = None,
         max_reconnect_attempts: int = -1,
         reconnect_time_wait: float = 2.0,
+        settings_store: "SystemSettingsStoreProtocol | None" = None,
     ) -> None:
         """Initialize NatsEventBus.
 
         Args:
             nats_url: NATS server URL (e.g., "nats://localhost:4222")
-            session_factory: SQLAlchemy SessionLocal for PG SSOT (optional)
+            record_store: RecordStoreABC for PG SSOT (optional)
             node_id: Unique node identifier (auto-generated if None)
             max_reconnect_attempts: Max reconnect attempts (-1 = infinite)
             reconnect_time_wait: Seconds between reconnect attempts
+            settings_store: SystemSettingsStoreProtocol for checkpoint persistence (optional)
         """
-        super().__init__(session_factory=session_factory, node_id=node_id)
+        super().__init__(record_store=record_store, node_id=node_id, settings_store=settings_store)
         self._nats_url = nats_url
         self._max_reconnect_attempts = max_reconnect_attempts
         self._reconnect_time_wait = reconnect_time_wait
         self._nc: NatsClient | None = None
         self._js: JetStreamContext | None = None
-        self._started = False
-        self._lock = asyncio.Lock()
 
     def _subject(self, zone_id: str, event_type: str) -> str:
         """Build subject for a specific zone and event type."""
@@ -115,71 +117,54 @@ class NatsEventBus(EventBusBase):
     # Lifecycle
     # =========================================================================
 
-    async def start(self) -> None:
-        """Connect to NATS and ensure JetStream stream exists."""
-        if self._started:
-            return
+    async def _do_start(self) -> None:
+        """NATS-specific startup: connect and ensure stream exists."""
+        try:
+            self._nc = await nats.connect(
+                self._nats_url,
+                max_reconnect_attempts=self._max_reconnect_attempts,
+                reconnect_time_wait=self._reconnect_time_wait,
+                disconnected_cb=self._on_disconnect,
+                reconnected_cb=self._on_reconnect,
+                error_cb=self._on_error,
+            )
+            self._js = self._nc.jetstream()
 
-        async with self._lock:
-            if self._started:
-                return
+            # Ensure stream exists (idempotent — update if config changed)
+            await self._js.add_stream(
+                StreamConfig(
+                    name=self.STREAM_NAME,
+                    subjects=[f"{self.SUBJECT_PREFIX}.>"],
+                    retention=RetentionPolicy.LIMITS,
+                    max_age=self.MAX_AGE_SECS,
+                    storage=StorageType.FILE,
+                    num_replicas=1,
+                    duplicate_window=self.DUPLICATE_WINDOW_SECS,
+                    max_bytes=self.MAX_BYTES,
+                )
+            )
+            logger.info(f"NatsEventBus connected (url={self._nats_url})")
 
+        except (NoServersError, ConnectionClosedError, OSError) as e:
+            logger.error(f"Failed to connect to NATS: {e}")
+            raise
+
+    async def _do_stop(self) -> None:
+        """NATS-specific shutdown: drain and close connection."""
+        if self._nc and self._nc.is_connected:
             try:
-                self._nc = await nats.connect(
-                    self._nats_url,
-                    max_reconnect_attempts=self._max_reconnect_attempts,
-                    reconnect_time_wait=self._reconnect_time_wait,
-                    disconnected_cb=self._on_disconnect,
-                    reconnected_cb=self._on_reconnect,
-                    error_cb=self._on_error,
-                )
-                self._js = self._nc.jetstream()
+                await self._nc.drain()
+            except Exception as e:
+                logger.warning(f"Error draining NATS connection: {e}")
 
-                # Ensure stream exists (idempotent — update if config changed)
-                await self._js.add_stream(
-                    StreamConfig(
-                        name=self.STREAM_NAME,
-                        subjects=[f"{self.SUBJECT_PREFIX}.>"],
-                        retention=RetentionPolicy.LIMITS,
-                        max_age=self.MAX_AGE_SECS,
-                        storage=StorageType.FILE,
-                        num_replicas=1,
-                        duplicate_window=self.DUPLICATE_WINDOW_SECS,
-                        max_bytes=self.MAX_BYTES,
-                    )
-                )
-
-                self._started = True
-                logger.info(f"NatsEventBus started (url={self._nats_url})")
-
-            except (NoServersError, ConnectionClosedError, OSError) as e:
-                logger.error(f"Failed to connect to NATS: {e}")
-                raise
-
-    async def stop(self) -> None:
-        """Drain and close NATS connection."""
-        if not self._started:
-            return
-
-        async with self._lock:
-            if not self._started:
-                return
-
-            if self._nc and self._nc.is_connected:
-                try:
-                    await self._nc.drain()
-                except Exception as e:
-                    logger.warning(f"Error draining NATS connection: {e}")
-
-            self._js = None
-            self._nc = None
-            self._started = False
-            logger.info("NatsEventBus stopped")
+        self._js = None
+        self._nc = None
 
     # =========================================================================
     # Publish
     # =========================================================================
 
+    @requires_started
     async def publish(self, event: FileEvent) -> int:
         """Publish event to JetStream with synchronous ack.
 
@@ -192,10 +177,10 @@ class NatsEventBus(EventBusBase):
         Raises:
             RuntimeError: If the bus is not started.
         """
-        if not self._started or self._js is None:
-            raise RuntimeError("NatsEventBus not started. Call start() first.")
+        if self._js is None:
+            raise RuntimeError("NatsEventBus JetStream not initialized.")
 
-        zone_id = event.zone_id or "root"
+        zone_id = event.zone_id or ROOT_ZONE_ID
         event_type = event.type.value if isinstance(event.type, FileEventType) else event.type
         subject = self._subject(zone_id, event_type)
 
@@ -216,6 +201,50 @@ class NatsEventBus(EventBusBase):
         except Exception as e:
             logger.error(f"Failed to publish event to NATS: {e}")
             raise
+
+    @requires_started
+    async def publish_batch(self, events: list[FileEvent]) -> list[int]:
+        """Publish batch of events to NATS JetStream.
+
+        Args:
+            events: List of FileEvent objects to publish
+
+        Returns:
+            List of sequence numbers (NATS doesn't provide subscriber counts)
+        """
+        if not events:
+            return []
+
+        if self._js is None:
+            raise RuntimeError("NatsEventBus JetStream not initialized.")
+
+        results = []
+        for event in events:
+            zone_id = event.zone_id or ROOT_ZONE_ID
+            event_type = event.type.value if isinstance(event.type, FileEventType) else event.type
+            subject = self._subject(zone_id, event_type)
+
+            try:
+                payload = event.to_json().encode("utf-8")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Event serialization failed, skipping: {e}. Event: {event!r}")
+                results.append(0)
+                continue
+
+            headers = {
+                "Nats-Msg-Id": event.event_id,  # JetStream dedup key
+                "zone_id": zone_id,
+            }
+
+            try:
+                ack = await self._js.publish(subject, payload, headers=headers)
+                results.append(int(ack.seq))
+            except Exception as e:
+                logger.error(f"Failed to publish event {event.event_id}: {e}")
+                results.append(0)
+
+        logger.debug(f"Published batch of {len(events)} events to NATS JetStream")
+        return results
 
     # =========================================================================
     # Subscribe (simple auto-ack interface)
@@ -318,14 +347,14 @@ class NatsEventBus(EventBusBase):
                 logger.debug("NATS cleanup failed: %s", e)
 
     @staticmethod
-    def _make_ack_fn(msg: Msg) -> Any:
+    def _make_ack_fn(msg: "Msg") -> Any:
         async def _ack() -> None:
             await msg.ack()
 
         return _ack
 
     @staticmethod
-    def _make_nack_fn(msg: Msg) -> Any:
+    def _make_nack_fn(msg: "Msg") -> Any:
         async def _nack(delay: float | None = None) -> None:
             if delay is not None:
                 await msg.nak(delay=delay)
@@ -335,7 +364,7 @@ class NatsEventBus(EventBusBase):
         return _nack
 
     @staticmethod
-    def _make_in_progress_fn(msg: Msg) -> Any:
+    def _make_in_progress_fn(msg: "Msg") -> Any:
         async def _in_progress() -> None:
             await msg.in_progress()
 
@@ -350,7 +379,7 @@ class NatsEventBus(EventBusBase):
         zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
-        since_revision: int | None = None,
+        since_version: int | None = None,
     ) -> FileEvent | None:
         """Wait for a matching event using an ephemeral consumer.
 
@@ -358,7 +387,7 @@ class NatsEventBus(EventBusBase):
             zone_id: Zone ID to subscribe to.
             path_pattern: Path pattern to match.
             timeout: Maximum time to wait in seconds.
-            since_revision: Only return events with revision > this value.
+            since_version: If set, skip events with version <= this value.
 
         Returns:
             FileEvent if matched, None on timeout.
@@ -401,10 +430,8 @@ class NatsEventBus(EventBusBase):
                 if not event.matches_path_pattern(path_pattern):
                     continue
 
-                # Filter by revision if specified
-                if since_revision is not None and (
-                    event.revision is None or event.revision <= since_revision
-                ):
+                # Skip events at or below the requested version threshold
+                if since_version is not None and (event.version or 0) <= since_version:
                     continue
 
                 return event

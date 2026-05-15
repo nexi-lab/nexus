@@ -6,7 +6,7 @@ PostgreSQL's row-level locking behavior.
 
 Requirements:
     - PostgreSQL running at postgresql://postgres:nexus@localhost:5432/nexus
-    - Start with: docker compose -f docker-compose.demo.yml up postgres -d
+    - Start with: docker compose -f dockerfiles/compose.yaml up postgres -d
 
 Run tests with:
     pytest tests/integration/test_auth_postgres.py -v
@@ -77,7 +77,7 @@ def postgres_engine():
     Requires PostgreSQL running at:
         postgresql://postgres:nexus@localhost:5432/nexus
 
-    Start with: docker compose -f docker-compose.demo.yml up postgres -d
+    Start with: docker compose -f dockerfiles/compose.yaml up postgres -d
     """
     database_url = "postgresql://postgres:nexus@localhost:5432/nexus"
 

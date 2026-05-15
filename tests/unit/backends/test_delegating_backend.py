@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.delegating import DelegatingBackend
 from nexus.core.object_store import WriteResult
 
 # ---------------------------------------------------------------------------
@@ -27,14 +27,11 @@ def mock_inner() -> MagicMock:
     mock.name = "test-backend"
     mock.describe.return_value = "test-backend"
     # Set all capability flags to True (opposite of Backend defaults)
-    type(mock).user_scoped = PropertyMock(return_value=True)
     type(mock).is_connected = PropertyMock(return_value=True)
     type(mock).thread_safe = PropertyMock(return_value=True)
     type(mock).supports_rename = PropertyMock(return_value=True)
     type(mock).has_root_path = PropertyMock(return_value=True)
-    type(mock).has_token_manager = PropertyMock(return_value=True)
     type(mock).has_data_dir = PropertyMock(return_value=True)
-    type(mock).is_passthrough = PropertyMock(return_value=True)
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=True)
     return mock
 
@@ -56,14 +53,11 @@ class TestPropertyDelegation:
     @pytest.mark.parametrize(
         "prop",
         [
-            "user_scoped",
             "is_connected",
             "thread_safe",
             "supports_rename",
             "has_root_path",
-            "has_token_manager",
             "has_data_dir",
-            "is_passthrough",
             "supports_parallel_mmap_read",
         ],
     )
@@ -109,10 +103,10 @@ class TestContentDelegation:
         assert result is expected
 
     def test_write_content(self, delegating: DelegatingBackend, mock_inner: MagicMock) -> None:
-        expected = WriteResult(content_hash="hash123", size=4)
+        expected = WriteResult(content_id="hash123", size=4)
         mock_inner.write_content.return_value = expected
         result = delegating.write_content(b"data")
-        mock_inner.write_content.assert_called_once_with(b"data", context=None)
+        mock_inner.write_content.assert_called_once_with(b"data", "", offset=0, context=None)
         assert result is expected
 
     def test_delete_content(self, delegating: DelegatingBackend, mock_inner: MagicMock) -> None:

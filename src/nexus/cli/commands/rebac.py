@@ -11,7 +11,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     add_context_options,
     console,
@@ -73,7 +72,8 @@ def rebac_create(
     subject_relation: str | None,
     wildcard: bool,
     column_config: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
     """Create a relationship tuple.
@@ -105,8 +105,42 @@ def rebac_create(
         # Dynamic viewer with column-level permissions (CSV only)
         nexus rebac create agent alice dynamic_viewer file /data/users.csv --column-config '{"hidden_columns":["password"],"aggregations":{"age":"mean"},"visible_columns":["name","email"]}'
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_create(
+            subject_type,
+            subject_id,
+            relation,
+            object_type,
+            object_id,
+            expires,
+            subject_relation,
+            wildcard,
+            column_config,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_create(
+    subject_type: str,
+    subject_id: str,
+    relation: str,
+    object_type: str,
+    object_id: str,
+    expires: str | None,
+    subject_relation: str | None,
+    wildcard: bool,
+    column_config: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
     try:
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         # Parse expiration time if provided
         expires_at = None
@@ -116,7 +150,7 @@ def rebac_create(
             try:
                 expires_at = datetime.fromisoformat(expires)
             except ValueError:
-                console.print(f"[red]Error:[/red] Invalid date format: {expires}")
+                console.print(f"[nexus.error]Error:[/nexus.error] Invalid date format: {expires}")
                 console.print("Use ISO format: 2025-12-31T23:59:59")
                 nx.close()
                 sys.exit(1)
@@ -132,7 +166,9 @@ def rebac_create(
             try:
                 column_config_dict = json.loads(column_config)
             except json.JSONDecodeError as e:
-                console.print(f"[red]Error:[/red] Invalid JSON in column-config: {e}")
+                console.print(
+                    f"[nexus.error]Error:[/nexus.error] Invalid JSON in column-config: {e}"
+                )
                 nx.close()
                 sys.exit(1)
 
@@ -154,7 +190,9 @@ def rebac_create(
         # Create tuple
         # SECURITY: Pass operation_context for execute permission enforcement
         # Only owners (execute permission) can create permissions on files
-        tuple_id = nx.rebac_service.rebac_create_sync(  # type: ignore[attr-defined]
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        tuple_id = rebac_svc.rebac_create_sync(
             subject=subject_tuple,
             relation=relation,
             object=(object_type, object_id),
@@ -166,35 +204,35 @@ def rebac_create(
 
         nx.close()
 
-        console.print("[green]✓[/green] Created relationship tuple")
-        console.print(f"  Tuple ID: [cyan]{tuple_id}[/cyan]")
-        console.print(f"  Subject: [yellow]{subject_display}[/yellow]")
+        console.print("[nexus.success]✓[/nexus.success] Created relationship tuple")
+        console.print(f"  Tuple ID: [nexus.value]{tuple_id}[/nexus.value]")
+        console.print(f"  Subject: [nexus.warning]{subject_display}[/nexus.warning]")
         if wildcard:
-            console.print("    [dim](wildcard - public access)[/dim]")
+            console.print("    [nexus.muted](wildcard - public access)[/nexus.muted]")
         elif subject_relation:
             console.print(
-                f"    [dim](userset-as-subject: all '{subject_relation}' of {subject_type}:{subject_id})[/dim]"
+                f"    [nexus.muted](userset-as-subject: all '{subject_relation}' of {subject_type}:{subject_id})[/nexus.muted]"
             )
-        console.print(f"  Relation: [magenta]{relation}[/magenta]")
-        console.print(f"  Object: [yellow]{object_type}:{object_id}[/yellow]")
+        console.print(f"  Relation: [nexus.identity]{relation}[/nexus.identity]")
+        console.print(f"  Object: [nexus.warning]{object_type}:{object_id}[/nexus.warning]")
         if zone:
-            console.print(f"  Zone: [blue]{zone}[/blue]")
+            console.print(f"  Zone: [nexus.reference]{zone}[/nexus.reference]")
         if expires_at:
-            console.print(f"  Expires: [dim]{expires_at.isoformat()}[/dim]")
+            console.print(f"  Expires: [nexus.muted]{expires_at.isoformat()}[/nexus.muted]")
         if column_config_dict:
             console.print("  Column Config:")
             if column_config_dict.get("hidden_columns"):
                 console.print(
-                    f"    Hidden Columns: [red]{', '.join(column_config_dict['hidden_columns'])}[/red]"
+                    f"    Hidden Columns: [nexus.error]{', '.join(column_config_dict['hidden_columns'])}[/nexus.error]"
                 )
             if column_config_dict.get("visible_columns"):
                 console.print(
-                    f"    Visible Columns: [green]{', '.join(column_config_dict['visible_columns'])}[/green]"
+                    f"    Visible Columns: [nexus.success]{', '.join(column_config_dict['visible_columns'])}[/nexus.success]"
                 )
             if column_config_dict.get("aggregations"):
                 console.print("    Aggregations:")
                 for col, op in column_config_dict["aggregations"].items():
-                    console.print(f"      {col}: [yellow]{op}[/yellow]")
+                    console.print(f"      {col}: [nexus.warning]{op}[/nexus.warning]")
 
     except Exception as e:
         handle_error(e)
@@ -223,7 +261,8 @@ def rebac_list_cmd(
     relation: str | None,
     output_format: str,
     limit: int | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List relationship tuples with optional filters.
 
@@ -246,10 +285,38 @@ def rebac_list_cmd(
         # JSON output
         nexus rebac list --format json
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_list_cmd(
+            subject_type,
+            subject_id,
+            object_type,
+            object_id,
+            relation,
+            output_format,
+            limit,
+            remote_url,
+            remote_api_key,
+        )
+    )
+
+
+async def _async_rebac_list_cmd(
+    subject_type: str | None,
+    subject_id: str | None,
+    object_type: str | None,
+    object_id: str | None,
+    relation: str | None,
+    output_format: str,
+    limit: int | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         # Build filters
         subject = None
@@ -261,7 +328,9 @@ def rebac_list_cmd(
             obj = (object_type, object_id)
 
         # List tuples
-        tuples = nx.rebac_service.rebac_list_tuples_sync(  # type: ignore[attr-defined]
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        tuples = rebac_svc.rebac_list_tuples_sync(
             subject=subject,
             object=obj,
             relation=relation,
@@ -275,7 +344,7 @@ def rebac_list_cmd(
 
         # Display results
         if not tuples:
-            console.print("[yellow]No tuples found[/yellow]")
+            console.print("[nexus.warning]No tuples found[/nexus.warning]")
             return
 
         if output_format == "json":
@@ -290,11 +359,11 @@ def rebac_list_cmd(
         else:
             # Table format
             table = Table(title=f"ReBAC Tuples ({len(tuples)} found)")
-            table.add_column("Tuple ID", style="dim", no_wrap=True)
-            table.add_column("Subject", style="yellow")
-            table.add_column("Relation", style="magenta")
-            table.add_column("Object", style="cyan")
-            table.add_column("Zone", style="blue")
+            table.add_column("Tuple ID", style="nexus.muted", no_wrap=True)
+            table.add_column("Subject", style="nexus.warning")
+            table.add_column("Relation", style="nexus.identity")
+            table.add_column("Object", style="nexus.value")
+            table.add_column("Zone", style="nexus.reference")
 
             for t in tuples:
                 # Format subject
@@ -329,24 +398,39 @@ def rebac_list_cmd(
 @add_backend_options
 def rebac_delete_cmd(
     tuple_id: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Delete a relationship tuple.
 
     Examples:
         nexus rebac delete 550e8400-e29b-41d4-a716-446655440000
     """
-    try:
-        nx = get_filesystem(backend_config)
+    import asyncio
 
-        deleted = nx.rebac_service.rebac_delete_sync(tuple_id)  # type: ignore[attr-defined]
+    asyncio.run(_async_rebac_delete_cmd(tuple_id, remote_url, remote_api_key))
+
+
+async def _async_rebac_delete_cmd(
+    tuple_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        deleted = rebac_svc.rebac_delete_sync(tuple_id)
 
         nx.close()
 
         if deleted:
-            console.print(f"[green]✓[/green] Deleted relationship tuple [cyan]{tuple_id}[/cyan]")
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Deleted relationship tuple [nexus.value]{tuple_id}[/nexus.value]"
+            )
         else:
-            console.print(f"[yellow]Tuple not found:[/yellow] {tuple_id}")
+            console.print(f"[nexus.warning]Tuple not found:[/nexus.warning] {tuple_id}")
 
     except Exception as e:
         handle_error(e)
@@ -366,7 +450,8 @@ def rebac_check_cmd(
     permission: str,
     object_type: str,
     object_id: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
     """Check if subject has permission on object.
@@ -383,12 +468,40 @@ def rebac_check_cmd(
         # Does eng-team have owner permission on project?
         nexus rebac check group eng-team owner file project-folder
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_check_cmd(
+            subject_type,
+            subject_id,
+            permission,
+            object_type,
+            object_id,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_check_cmd(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    object_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
     try:
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         # Check permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
         zone = operation_context.get("zone")
-        granted = nx.rebac_service.rebac_check_sync(  # type: ignore[attr-defined]
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        granted = rebac_svc.rebac_check_sync(
             subject=(subject_type, subject_id),
             permission=permission,
             object=(object_type, object_id),
@@ -399,14 +512,14 @@ def rebac_check_cmd(
 
         # Display result
         if granted:
-            console.print("[green]✓ GRANTED[/green]")
+            console.print("[nexus.success]✓ GRANTED[/nexus.success]")
             console.print(
-                f"  [yellow]{subject_type}:{subject_id}[/yellow] has [magenta]{permission}[/magenta] on [yellow]{object_type}:{object_id}[/yellow]"
+                f"  [nexus.warning]{subject_type}:{subject_id}[/nexus.warning] has [nexus.identity]{permission}[/nexus.identity] on [nexus.warning]{object_type}:{object_id}[/nexus.warning]"
             )
         else:
-            console.print("[red]✗ DENIED[/red]")
+            console.print("[nexus.error]✗ DENIED[/nexus.error]")
             console.print(
-                f"  [yellow]{subject_type}:{subject_id}[/yellow] does NOT have [magenta]{permission}[/magenta] on [yellow]{object_type}:{object_id}[/yellow]"
+                f"  [nexus.warning]{subject_type}:{subject_id}[/nexus.warning] does NOT have [nexus.identity]{permission}[/nexus.identity] on [nexus.warning]{object_type}:{object_id}[/nexus.warning]"
             )
 
     except Exception as e:
@@ -423,7 +536,8 @@ def rebac_expand_cmd(
     permission: str,
     object_type: str,
     object_id: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
     """Find all subjects with a given permission on an object.
@@ -440,12 +554,36 @@ def rebac_expand_cmd(
         # Who owns the project folder?
         nexus rebac expand owner file project-folder
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_expand_cmd(
+            permission,
+            object_type,
+            object_id,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_expand_cmd(
+    permission: str,
+    object_type: str,
+    object_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
     try:
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         # Expand permission (pass zone_id from --zone-id or NEXUS_ZONE_ID)
         zone = operation_context.get("zone")
-        subjects = nx.rebac_service.rebac_expand_sync(  # type: ignore[attr-defined]
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        subjects = rebac_svc.rebac_expand_sync(
             permission=permission,
             object=(object_type, object_id),
             zone_id=zone,
@@ -456,18 +594,18 @@ def rebac_expand_cmd(
         # Display results
         if not subjects:
             console.print(
-                f"[yellow]No subjects found with[/yellow] [magenta]{permission}[/magenta] [yellow]on[/yellow] [cyan]{object_type}:{object_id}[/cyan]"
+                f"[nexus.warning]No subjects found with[/nexus.warning] [nexus.identity]{permission}[/nexus.identity] [nexus.warning]on[/nexus.warning] [nexus.value]{object_type}:{object_id}[/nexus.value]"
             )
             return
 
         console.print(
-            f"[green]Found {len(subjects)} subjects[/green] with [magenta]{permission}[/magenta] on [cyan]{object_type}:{object_id}[/cyan]"
+            f"[nexus.success]Found {len(subjects)} subjects[/nexus.success] with [nexus.identity]{permission}[/nexus.identity] on [nexus.value]{object_type}:{object_id}[/nexus.value]"
         )
         console.print()
 
         table = Table(title=f"Subjects with '{permission}' permission")
-        table.add_column("Subject Type", style="yellow")
-        table.add_column("Subject ID", style="cyan")
+        table.add_column("Subject Type", style="nexus.warning")
+        table.add_column("Subject ID", style="nexus.value")
 
         for subj_type, subj_id in sorted(subjects):
             table.add_row(subj_type, subj_id)
@@ -485,6 +623,12 @@ def rebac_expand_cmd(
 @click.argument("object_type", type=str)
 @click.argument("object_id", type=str)
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed path information")
+@click.option(
+    "--zone-id",
+    type=str,
+    default=None,
+    help="Zone ID for multi-zone isolation (e.g., 'org_acme'). Can also be set via NEXUS_ZONE_ID env var.",
+)
 @add_backend_options
 def rebac_explain_cmd(
     subject_type: str,
@@ -493,7 +637,9 @@ def rebac_explain_cmd(
     object_type: str,
     object_id: str,
     verbose: bool,
-    backend_config: BackendConfig,
+    zone_id: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Explain why a subject has or doesn't have permission on an object.
 
@@ -509,17 +655,60 @@ def rebac_explain_cmd(
 
         # Show detailed path information
         nexus rebac explain agent alice read file file123 --verbose
+
+        # Explain within a specific zone
+        nexus rebac explain agent alice read file file123 --zone-id org_acme
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_explain_cmd(
+            subject_type,
+            subject_id,
+            permission,
+            object_type,
+            object_id,
+            verbose,
+            zone_id,
+            remote_url,
+            remote_api_key,
+        )
+    )
+
+
+async def _async_rebac_explain_cmd(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    object_id: str,
+    verbose: bool,
+    zone_id: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
+        import os
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
+
+        # Resolve zone_id from option or environment
+        resolved_zone_id = zone_id or os.getenv("NEXUS_ZONE_ID")
 
         # Get explanation
-        explanation = nx.rebac_service.rebac_explain_sync(  # type: ignore[attr-defined]
-            subject=(subject_type, subject_id),
-            permission=permission,
-            object=(object_type, object_id),
+        explain_kwargs: dict[str, Any] = {
+            "subject": (subject_type, subject_id),
+            "permission": permission,
+            "object": (object_type, object_id),
+        }
+        if resolved_zone_id:
+            explain_kwargs["zone_id"] = resolved_zone_id
+
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        explanation = rebac_svc.rebac_explain_sync(
+            **explain_kwargs,
         )
 
         nx.close()
@@ -531,18 +720,28 @@ def rebac_explain_cmd(
 
         # Header
         if result:
-            console.print("[green]✓ GRANTED[/green]")
+            console.print("[nexus.success]✓ GRANTED[/nexus.success]")
         else:
-            console.print("[red]✗ DENIED[/red]")
+            console.print("[nexus.error]✗ DENIED[/nexus.error]")
 
         # Metadata
         console.print()
-        console.print(f"[dim]Subject:[/dim]      [yellow]{subject_type}:{subject_id}[/yellow]")
-        console.print(f"[dim]Permission:[/dim]   [magenta]{permission}[/magenta]")
-        console.print(f"[dim]Resource:[/dim]     [cyan]{object_type}:{object_id}[/cyan]")
+        console.print(
+            f"[nexus.muted]Subject:[/nexus.muted]      [nexus.warning]{subject_type}:{subject_id}[/nexus.warning]"
+        )
+        console.print(
+            f"[nexus.muted]Permission:[/nexus.muted]   [nexus.identity]{permission}[/nexus.identity]"
+        )
+        console.print(
+            f"[nexus.muted]Resource:[/nexus.muted]     [nexus.value]{object_type}:{object_id}[/nexus.value]"
+        )
         if metadata:
-            console.print(f"[dim]Timestamp:[/dim]   {metadata.get('timestamp', 'N/A')}")
-            console.print(f"[dim]Request ID:[/dim]  {metadata.get('request_id', 'N/A')}")
+            console.print(
+                f"[nexus.muted]Timestamp:[/nexus.muted]   {metadata.get('timestamp', 'N/A')}"
+            )
+            console.print(
+                f"[nexus.muted]Request ID:[/nexus.muted]  {metadata.get('request_id', 'N/A')}"
+            )
 
         # Display schema rule if available
         console.print()
@@ -550,7 +749,7 @@ def rebac_explain_cmd(
         if successful_path and "expanded_to" in successful_path:
             expanded = successful_path["expanded_to"]
             console.print(
-                f"[bold]Schema Rule:[/bold] {permission}([cyan]{object_type}[/cyan]) = {' ∪ '.join(expanded)}"
+                f"[bold]Schema Rule:[/bold] {permission}([nexus.value]{object_type}[/nexus.value]) = {' ∪ '.join(expanded)}"
             )
 
         # Display detailed explanation
@@ -565,11 +764,11 @@ def rebac_explain_cmd(
             via = successful_path.get("via_userset") or successful_path.get("via_union_member")
             if via:
                 console.print(
-                    f"  {via}([cyan]{object_type}:{object_id}[/cyan]) = [green]true[/green] ⇒ {permission}(...) = [green]true[/green] ⇒ [green]GRANTED[/green]"
+                    f"  {via}([nexus.value]{object_type}:{object_id}[/nexus.value]) = [nexus.success]true[/nexus.success] ⇒ {permission}(...) = [nexus.success]true[/nexus.success] ⇒ [nexus.success]GRANTED[/nexus.success]"
                 )
             else:
                 console.print(
-                    f"  {permission}([cyan]{object_type}:{object_id}[/cyan]) = [green]true[/green] ⇒ [green]GRANTED[/green]"
+                    f"  {permission}([nexus.value]{object_type}:{object_id}[/nexus.value]) = [nexus.success]true[/nexus.success] ⇒ [nexus.success]GRANTED[/nexus.success]"
                 )
         elif not result:
             console.print("[bold]Reason:[/bold] No valid permission path found")
@@ -579,7 +778,7 @@ def rebac_explain_cmd(
                 console.print("[bold]Attempted paths:[/bold]")
                 for i, path in enumerate(paths, 1):
                     console.print(
-                        f"  {i}. {path.get('permission')} on {path.get('object')} - [red]NOT FOUND[/red]"
+                        f"  {i}. {path.get('permission')} on {path.get('object')} - [nexus.error]NOT FOUND[/nexus.error]"
                     )
         else:
             console.print("[bold]Reason:[/bold] Permission granted (no path information)")
@@ -637,12 +836,16 @@ def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | Non
     # Main check
     step = step_number[0]
     step_number[0] += 1
-    console.print(f"{indent}{step}) Check [magenta]{permission}[/magenta]([cyan]{obj}[/cyan])")
+    console.print(
+        f"{indent}{step}) Check [nexus.identity]{permission}[/nexus.identity]([nexus.value]{obj}[/nexus.value])"
+    )
 
     # Show expansion
     if "expanded_to" in path:
         relations = path["expanded_to"]
-        console.print(f"{indent}   → Expand to {{[magenta]{', '.join(relations)}[/magenta]}}")
+        console.print(
+            f"{indent}   → Expand to {{[nexus.identity]{', '.join(relations)}[/nexus.identity]}}"
+        )
 
     # Show union/intersection
     if "union" in path:
@@ -654,10 +857,10 @@ def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | Non
         tuple_info = path["tuple"]
         tuple_id = tuple_info.get("tuple_id", "N/A")
         tuple_str = _format_tuple(tuple_info)
-        console.print(f"{indent}   → [green]FOUND[/green] tuple: {tuple_str}")
-        console.print(f"{indent}   → Tuple ID: [dim]{tuple_id}[/dim]")
+        console.print(f"{indent}   → [nexus.success]FOUND[/nexus.success] tuple: {tuple_str}")
+        console.print(f"{indent}   → Tuple ID: [nexus.muted]{tuple_id}[/nexus.muted]")
     elif path.get("direct_relation"):
-        console.print(f"{indent}   → [green]FOUND[/green] direct relation")
+        console.print(f"{indent}   → [nexus.success]FOUND[/nexus.success] direct relation")
 
     # Show parent traversal
     if "tupleToUserset" in path:
@@ -672,20 +875,20 @@ def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | Non
                 if isinstance(parent, list | tuple) and len(parent) >= 2:
                     parent_type, parent_id = parent[0], parent[1]
                     console.print(
-                        f"{indent}   • {tupleset}([cyan]{obj}[/cyan]) = [cyan]{parent_type}:{parent_id}[/cyan]  [green]✓[/green]"
+                        f"{indent}   • {tupleset}([nexus.value]{obj}[/nexus.value]) = [nexus.value]{parent_type}:{parent_id}[/nexus.value]  [nexus.success]✓[/nexus.success]"
                     )
                 else:
                     console.print(
-                        f"{indent}   • {tupleset}([cyan]{obj}[/cyan]) = [cyan]{parent}[/cyan]  [green]✓[/green]"
+                        f"{indent}   • {tupleset}([nexus.value]{obj}[/nexus.value]) = [nexus.value]{parent}[/nexus.value]  [nexus.success]✓[/nexus.success]"
                     )
         else:
-            console.print(f"{indent}   • No parent found → [red]SKIPPED[/red]")
+            console.print(f"{indent}   • No parent found → [nexus.error]SKIPPED[/nexus.error]")
 
     # Show status
     if "error" in path:
-        console.print(f"{indent}   → [red]ERROR:[/red] {path['error']}")
+        console.print(f"{indent}   → [nexus.error]ERROR:[/nexus.error] {path['error']}")
     elif not granted and not path.get("sub_paths"):
-        console.print(f"{indent}   → [red]NOT FOUND[/red]")
+        console.print(f"{indent}   → [nexus.error]NOT FOUND[/nexus.error]")
 
     # Display sub-paths recursively
     if "sub_paths" in path:
@@ -709,7 +912,8 @@ def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | Non
 def rebac_check_batch_cmd(
     checks_file: str,
     output_format: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Batch permission checks from a JSON file.
 
@@ -738,17 +942,30 @@ def rebac_check_batch_cmd(
         # Summary only
         nexus rebac check-batch checks.json --format summary
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_check_batch_cmd(checks_file, output_format, remote_url, remote_api_key)
+    )
+
+
+async def _async_rebac_check_batch_cmd(
+    checks_file: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         # Load checks from file
         with open(checks_file) as f:
             checks_data = json.load(f)
 
         if not isinstance(checks_data, list):
-            console.print("[red]Error:[/red] Checks file must contain a JSON array")
+            console.print("[nexus.error]Error:[/nexus.error] Checks file must contain a JSON array")
             nx.close()
             sys.exit(1)
 
@@ -761,15 +978,17 @@ def rebac_check_batch_cmd(
                 obj = tuple(check["object"])
                 checks.append((subject, permission, obj))
             except (KeyError, TypeError) as e:
-                console.print(f"[red]Error:[/red] Invalid check at index {i}: {e}")
+                console.print(f"[nexus.error]Error:[/nexus.error] Invalid check at index {i}: {e}")
                 nx.close()
                 sys.exit(1)
 
         # Perform batch check with Rust acceleration
         console.print(
-            f"[cyan]Checking {len(checks)} permissions (Rust acceleration enabled)...[/cyan]"
+            f"[nexus.value]Checking {len(checks)} permissions (Rust acceleration enabled)...[/nexus.value]"
         )
-        results = nx.rebac_manager.rebac_check_batch_fast(checks)  # type: ignore[attr-defined]
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        results = rebac_svc.rebac_check_batch_sync(checks)
         nx.close()
 
         # Output results
@@ -789,23 +1008,27 @@ def rebac_check_batch_cmd(
             # Summary only
             allowed_count = sum(results)
             denied_count = len(results) - allowed_count
-            console.print(f"[green]✓ {allowed_count} allowed[/green]")
-            console.print(f"[red]✗ {denied_count} denied[/red]")
+            console.print(f"[nexus.success]✓ {allowed_count} allowed[/nexus.success]")
+            console.print(f"[nexus.error]✗ {denied_count} denied[/nexus.error]")
             console.print(f"  Total: {len(results)}")
 
         else:
             # Table output (default)
             table = Table(title=f"Batch Check Results ({len(checks)} checks)")
-            table.add_column("#", style="dim")
-            table.add_column("Subject", style="yellow")
-            table.add_column("Permission", style="magenta")
-            table.add_column("Object", style="cyan")
+            table.add_column("#", style="nexus.muted")
+            table.add_column("Subject", style="nexus.warning")
+            table.add_column("Permission", style="nexus.identity")
+            table.add_column("Object", style="nexus.value")
             table.add_column("Result", style="bold")
 
             for i, ((subject, permission, obj), result) in enumerate(
                 zip(checks, results, strict=False)
             ):
-                result_text = "[green]✓ ALLOWED[/green]" if result else "[red]✗ DENIED[/red]"
+                result_text = (
+                    "[nexus.success]✓ ALLOWED[/nexus.success]"
+                    if result
+                    else "[nexus.error]✗ DENIED[/nexus.error]"
+                )
                 table.add_row(
                     str(i + 1),
                     f"{subject[0]}:{subject[1]}",
@@ -821,7 +1044,7 @@ def rebac_check_batch_cmd(
             denied_count = len(results) - allowed_count
             console.print()
             console.print(
-                f"Summary: [green]{allowed_count} allowed[/green], [red]{denied_count} denied[/red]"
+                f"Summary: [nexus.success]{allowed_count} allowed[/nexus.success], [nexus.error]{denied_count} denied[/nexus.error]"
             )
 
     except Exception as e:
@@ -851,7 +1074,8 @@ def namespace_create(
     config_file: str | None,
     relations: tuple[str, ...],
     permission: tuple[str, ...],
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Create or update a namespace configuration.
 
@@ -879,12 +1103,29 @@ def namespace_create(
           }
         }
     """
+    import asyncio
+
+    asyncio.run(
+        _async_namespace_create(
+            object_type, config_file, relations, permission, remote_url, remote_api_key
+        )
+    )
+
+
+async def _async_namespace_create(
+    object_type: str,
+    config_file: str | None,
+    relations: tuple[str, ...],
+    permission: tuple[str, ...],
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
 
         import yaml
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         config = {}
 
@@ -917,9 +1158,11 @@ def namespace_create(
                 config["permissions"][perm_name] = rels.split(",")
 
         # Create namespace
-        nx.rebac_service.namespace_create_sync(object_type=object_type, config=config)  # type: ignore[attr-defined]
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        rebac_svc.namespace_create_sync(object_type=object_type, config=config)
 
-        console.print(f"[green]✓[/green] Created namespace for '{object_type}'")
+        console.print(f"[nexus.success]✓[/nexus.success] Created namespace for '{object_type}'")
 
     except Exception as e:
         handle_error(e)
@@ -936,7 +1179,8 @@ def namespace_create(
 @add_backend_options
 def namespace_list(
     output_format: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all registered namespace configurations.
 
@@ -947,10 +1191,22 @@ def namespace_list(
         # JSON output
         nexus rebac namespace-list --format json
     """
-    try:
-        nx = get_filesystem(backend_config)
+    import asyncio
 
-        namespaces = nx.rebac_service.namespace_list_sync()  # type: ignore[attr-defined]
+    asyncio.run(_async_namespace_list(output_format, remote_url, remote_api_key))
+
+
+async def _async_namespace_list(
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        namespaces = rebac_svc.namespace_list_sync()
 
         if output_format == "json":
             import json
@@ -958,14 +1214,14 @@ def namespace_list(
             console.print(json.dumps(namespaces, indent=2))
         else:
             if not namespaces:
-                console.print("[yellow]No namespaces registered[/yellow]")
+                console.print("[nexus.warning]No namespaces registered[/nexus.warning]")
                 return
 
             table = Table(title="ReBAC Namespaces")
-            table.add_column("Object Type", style="cyan")
-            table.add_column("Relations", style="green")
-            table.add_column("Permissions", style="magenta")
-            table.add_column("Created", style="dim")
+            table.add_column("Object Type", style="nexus.value")
+            table.add_column("Relations", style="nexus.success")
+            table.add_column("Permissions", style="nexus.identity")
+            table.add_column("Created", style="nexus.muted")
 
             for ns in namespaces:
                 relations = ", ".join(ns["config"]["relations"].keys())
@@ -1002,7 +1258,8 @@ def namespace_list(
 def namespace_get(
     object_type: str,
     output_format: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Get namespace configuration for an object type.
 
@@ -1013,17 +1270,30 @@ def namespace_get(
         # JSON output
         nexus rebac namespace-get group --format json
     """
+    import asyncio
+
+    asyncio.run(_async_namespace_get(object_type, output_format, remote_url, remote_api_key))
+
+
+async def _async_namespace_get(
+    object_type: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
 
         import yaml
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        ns = nx.rebac_service.get_namespace_sync(object_type)  # type: ignore[attr-defined]
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        ns = rebac_svc.get_namespace_sync(object_type)
 
         if ns is None:
-            console.print(f"[red]✗[/red] Namespace '{object_type}' not found")
+            console.print(f"[nexus.error]✗[/nexus.error] Namespace '{object_type}' not found")
             sys.exit(1)
 
         if output_format == "json":
@@ -1042,7 +1312,8 @@ def namespace_get(
 def namespace_delete(
     object_type: str,
     yes: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Delete a namespace configuration.
 
@@ -1055,21 +1326,34 @@ def namespace_delete(
         # Skip confirmation
         nexus rebac namespace-delete document --yes
     """
+    import asyncio
+
+    asyncio.run(_async_namespace_delete(object_type, yes, remote_url, remote_api_key))
+
+
+async def _async_namespace_delete(
+    object_type: str,
+    yes: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         if not yes:
             confirm = input(f"Delete namespace '{object_type}'? (y/N): ")
             if confirm.lower() != "y":
-                console.print("[yellow]Cancelled[/yellow]")
+                console.print("[nexus.warning]Cancelled[/nexus.warning]")
                 return
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        deleted = nx.rebac_service.namespace_delete_sync(object_type)  # type: ignore[attr-defined]
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        deleted = rebac_svc.namespace_delete_sync(object_type)
 
         if deleted:
-            console.print(f"[green]✓[/green] Deleted namespace '{object_type}'")
+            console.print(f"[nexus.success]✓[/nexus.success] Deleted namespace '{object_type}'")
         else:
-            console.print(f"[red]✗[/red] Namespace '{object_type}' not found")
+            console.print(f"[nexus.error]✗[/nexus.error] Namespace '{object_type}' not found")
             sys.exit(1)
 
     except Exception as e:

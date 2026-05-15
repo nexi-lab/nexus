@@ -23,6 +23,9 @@ import re
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("pytest_alembic")
+
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 from pytest_alembic.tests.default import (

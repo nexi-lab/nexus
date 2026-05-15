@@ -1,12 +1,10 @@
 """EventBus protocols — abstract interfaces for event bus implementations."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from nexus.core.file_events import FileEvent
+from nexus.services.event_bus.types import FileEvent
 
 
 @runtime_checkable
@@ -20,6 +18,11 @@ class PubSubClientProtocol(Protocol):
     @property
     def client(self) -> Any:
         """Underlying async client with pubsub() and publish() methods."""
+        ...
+
+    @property
+    def url(self) -> str:
+        """Connection URL for creating fresh connections."""
         ...
 
     async def health_check(self) -> bool:
@@ -92,12 +95,25 @@ class EventBusProtocol(Protocol):
         """
         ...
 
+    async def publish_batch(self, events: list[FileEvent]) -> list[int]:
+        """Publish a batch of events atomically.
+
+        Args:
+            events: List of FileEvent objects to publish
+
+        Returns:
+            List of subscriber counts per event
+
+        Implementations may optimize batching (pipeline, transaction, etc).
+        """
+        ...
+
     async def wait_for_event(
         self,
         zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
-        since_revision: int | None = None,
+        since_version: int | None = None,
     ) -> FileEvent | None:
         """Wait for an event matching the path pattern.
 
@@ -105,7 +121,7 @@ class EventBusProtocol(Protocol):
             zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
-            since_revision: Only return events with revision > this value.
+            since_version: If set, skip events with version <= this value
 
         Returns:
             FileEvent if matched, None on timeout

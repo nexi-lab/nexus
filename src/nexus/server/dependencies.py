@@ -68,6 +68,39 @@ async def _reset_auth_cache(cache_store: "CacheStoreABC | None") -> None:
     await cache_store.delete_by_pattern("auth:cache:*")
 
 
+def _zone_override_allowed(auth_result: dict[str, Any], requested_zone: str) -> bool:
+    """Return whether an authenticated result may operate as requested_zone."""
+    if auth_result.get("is_admin", False):
+        return True
+    if auth_result.get("zone_id") == requested_zone:
+        return True
+    if requested_zone in set(auth_result.get("zone_set") or ()):
+        return True
+    for zone_perm in auth_result.get("zone_perms") or ():
+        if isinstance(zone_perm, (list, tuple)) and zone_perm and zone_perm[0] == requested_zone:
+            return True
+    return False
+
+
+def _apply_zone_override(
+    auth_result: dict[str, Any],
+    requested_zone: str | None,
+) -> dict[str, Any] | None:
+    """Apply X-Nexus-Zone-ID only when the token is authorized for that zone."""
+    result = dict(auth_result)
+    if not requested_zone:
+        return result
+    if _zone_override_allowed(result, requested_zone):
+        result["zone_id"] = requested_zone
+        return result
+    logger.warning(
+        "[AUTH] Rejected unauthorized zone override subject=%s requested_zone=%s",
+        result.get("subject_id"),
+        requested_zone,
+    )
+    return None
+
+
 # NEXUS_STATIC_ADMINS: comma-separated subject IDs that get admin privileges
 # in open access mode (no api_key, no auth_provider). Parsed once at import.
 # WARNING: In open access mode, identity comes from unauthenticated headers.
@@ -84,12 +117,33 @@ if _STATIC_ADMINS:
     )
 
 
+def _is_loopback(host: str | None) -> bool:
+    """Check whether a client IP is a loopback address.
+
+    Handles IPv4 (127.0.0.0/8), IPv6 (::1), IPv4-mapped IPv6
+    (::ffff:127.x.x.x), and "localhost".
+    """
+    if not host:
+        # None means no network connection info (e.g. ASGI TestClient) — treat as local
+        return True
+    if host in ("localhost", "testclient"):
+        return True
+    import ipaddress
+
+    try:
+        addr = ipaddress.ip_address(host)
+        return addr.is_loopback
+    except ValueError:
+        return False
+
+
 async def resolve_auth(
     app_state: Any,
     authorization: str | None = None,
     x_agent_id: str | None = None,
     x_nexus_subject: str | None = None,
     x_nexus_zone_id: str | None = None,
+    client_host: str | None = None,
 ) -> dict[str, Any] | None:
     """Core authentication logic — usable from both HTTP and WebSocket contexts.
 
@@ -116,6 +170,15 @@ async def resolve_auth(
 
     # No auth configured = open access
     if not getattr(_state, "api_key", None) and not getattr(_state, "auth_provider", None):
+        # Restrict open-access mode to loopback to prevent remote privilege escalation.
+        if not _is_loopback(client_host):
+            logger.warning(
+                "[AUTH] Open access request rejected from non-loopback address %s. "
+                "Configure an API key or auth provider for remote access.",
+                client_host,
+            )
+            return None
+
         # In open access mode, we still want a stable identity for permission checks.
         # Prefer explicit identity headers; otherwise, best-effort infer from sk- style keys.
         subject_type: str | None = None
@@ -165,29 +228,30 @@ async def resolve_auth(
         # Check cache first (15 min TTL) via CacheStoreABC
         _auth_cache: CacheStoreABC | None = getattr(_state, "auth_cache_store", None)
         cached_result = await _get_cached_auth(_auth_cache, token)
-        if cached_result:
+        if cached_result and cached_result.get("authenticated"):
             # Update per-request fields (zone header, agent ID, timing)
             # Safe: cached_result is already a copy from _get_cached_auth
-            if x_nexus_zone_id:
-                cached_result["zone_id"] = x_nexus_zone_id
-            cached_result["x_agent_id"] = x_agent_id
-            cached_result["_auth_time_ms"] = 0.0  # Cache hit = no auth time
-            cached_result["_auth_cached"] = True
-            return cached_result
+            request_result = _apply_zone_override(cached_result, x_nexus_zone_id)
+            if request_result is None:
+                return None
+            request_result["x_agent_id"] = x_agent_id
+            request_result["_auth_time_ms"] = 0.0  # Cache hit = no auth time
+            request_result["_auth_cached"] = True
+            return request_result
 
         # Singleflight: deduplicate concurrent provider calls (Issue #15)
         _flight_key = _auth_cache_key(token)
         if _flight_key in _auth_inflight:
             base = await _auth_inflight[_flight_key]
-            if base is None:
-                return None
-            coalesced = dict(base)
-            if x_nexus_zone_id:
-                coalesced["zone_id"] = x_nexus_zone_id
-            coalesced["x_agent_id"] = x_agent_id
-            coalesced["_auth_time_ms"] = 0.0
-            coalesced["_auth_cached"] = True
-            return coalesced
+            if base is not None:
+                coalesced = _apply_zone_override(base, x_nexus_zone_id)
+                if coalesced is None:
+                    return None
+                coalesced["x_agent_id"] = x_agent_id
+                coalesced["_auth_time_ms"] = 0.0
+                coalesced["_auth_cached"] = True
+                return coalesced
+            # Provider rejected — fall through to static key check
 
         _fut: asyncio.Future[dict[str, Any] | None] = asyncio.get_running_loop().create_future()
         _fut.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
@@ -198,36 +262,41 @@ async def resolve_auth(
             _auth_elapsed = (_time.time() - _auth_start) * 1000
             if _auth_elapsed > 10:  # Log if auth takes >10ms
                 logger.info(f"[AUTH-TIMING] provider auth took {_auth_elapsed:.1f}ms (cache miss)")
-            if result is None:
-                # Issue #16: random delay on auth failure to mitigate timing side-channel.
-                # Delay BEFORE set_result so singleflight waiters also experience it.
+            if result is None or not result.authenticated:
+                # Provider didn't recognize this token (None) or explicitly
+                # rejected it (authenticated=False).  Don't return yet —
+                # fall through to the static API key check below, matching
+                # the gRPC servicer's check order (static key first).
                 await asyncio.sleep(random.uniform(0.001, 0.005))
                 _fut.set_result(None)
-                return None
-            auth_result = {
-                "authenticated": result.authenticated,
-                "is_admin": result.is_admin,
-                "subject_type": result.subject_type,
-                "subject_id": result.subject_id,
-                "zone_id": x_nexus_zone_id or result.zone_id,
-                "inherit_permissions": result.inherit_permissions
-                if hasattr(result, "inherit_permissions")
-                else True,
-                "metadata": result.metadata if hasattr(result, "metadata") else {},
-                "agent_generation": getattr(result, "agent_generation", None),
-                "x_agent_id": x_agent_id,
-                "_auth_time_ms": _auth_elapsed,
-                "_auth_cached": False,
-            }
-            # Cache a copy without per-request fields (x_agent_id, timing)
-            cache_entry = {
-                k: v
-                for k, v in auth_result.items()
-                if k not in ("x_agent_id", "_auth_time_ms", "_auth_cached")
-            }
-            await _set_cached_auth(_auth_cache, token, cache_entry)
-            _fut.set_result(cache_entry)
-            return auth_result
+                # break out of the auth_provider block; continue to static key
+            else:
+                auth_result = {
+                    "authenticated": result.authenticated,
+                    "is_admin": result.is_admin,
+                    "subject_type": result.subject_type,
+                    "subject_id": result.subject_id,
+                    "zone_id": result.zone_id,
+                    "zone_set": list(getattr(result, "zone_set", ()) or ()),
+                    "zone_perms": [list(t) for t in getattr(result, "zone_perms", ()) or ()],
+                    "inherit_permissions": result.inherit_permissions
+                    if hasattr(result, "inherit_permissions")
+                    else True,
+                    "metadata": result.metadata if hasattr(result, "metadata") else {},
+                    "agent_generation": getattr(result, "agent_generation", None),
+                    "x_agent_id": x_agent_id,
+                    "_auth_time_ms": _auth_elapsed,
+                    "_auth_cached": False,
+                }
+                # Cache a copy without per-request fields (x_agent_id, timing)
+                cache_entry = {
+                    k: v
+                    for k, v in auth_result.items()
+                    if k not in ("x_agent_id", "_auth_time_ms", "_auth_cached")
+                }
+                await _set_cached_auth(_auth_cache, token, cache_entry)
+                _fut.set_result(cache_entry)
+                return _apply_zone_override(auth_result, x_nexus_zone_id)
         except BaseException as exc:
             _fut.set_exception(exc)
             raise
@@ -242,7 +311,9 @@ async def resolve_auth(
                 "is_admin": True,
                 "subject_type": "user",
                 "subject_id": "admin",
+                "zone_id": x_nexus_zone_id,
                 "inherit_permissions": True,  # Static admin key always inherits
+                "x_agent_id": x_agent_id,
             }
         return None
 
@@ -262,12 +333,14 @@ async def get_auth_result(
     For WebSocket endpoints (where ``Depends()`` is unsupported), call
     :func:`resolve_auth` directly with ``websocket.app.state``.
     """
+    client_host = request.client.host if request.client else None
     return await resolve_auth(
         app_state=request.app.state,
         authorization=authorization,
         x_agent_id=x_agent_id,
         x_nexus_subject=x_nexus_subject,
         x_nexus_zone_id=x_nexus_zone_id,
+        client_host=client_host,
     )
 
 
@@ -322,10 +395,18 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     if subject_type == "agent":
         agent_id = subject_id
 
-    # Handle X-Agent-ID header
+    # Handle X-Agent-ID header — only admins may impersonate arbitrary agents.
+    # Non-admin users must authenticate as the agent directly (subject_type="agent").
     if agent_id and subject_type == "user":
-        subject_type = "agent"
-        subject_id = agent_id
+        if is_admin:
+            subject_type = "agent"
+            subject_id = agent_id
+        else:
+            logger.warning(
+                "Non-admin user %s attempted agent impersonation via X-Agent-ID: %s",
+                subject_id,
+                agent_id,
+            )
 
     # Admin capabilities
     admin_capabilities = set()
@@ -344,6 +425,24 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     # and skip stale-session detection (documented limitation).
     agent_generation = auth_result.get("agent_generation")
 
+    # #3785/#3786: multi-zone tokens carry zone_perms as list-of-lists
+    # (serialized by both the gRPC path via dataclasses.asdict and the HTTP
+    # path at line 247). Convert back to the canonical tuple-of-tuples so
+    # OperationContext.__post_init__ uses it as the authoritative source and
+    # rebuilds zone_set from it instead of falling back to the single zone_id.
+    raw_zone_perms = auth_result.get("zone_perms") or []
+    zone_perms: tuple[tuple[str, str], ...] = tuple(
+        (str(zp[0]), str(zp[1])) for zp in raw_zone_perms if len(zp) == 2
+    )
+
+    # Multi-zone tokens span more than one zone. scope_params_for_zone uses
+    # zone_id to validate embedded /zone/<id>/ prefixes — if zone_id is set
+    # to the first zone, writes to any other zone in zone_perms are rejected.
+    # Use ROOT_ZONE_ID so the path passes through unmodified; the kernel routes
+    # based on the embedded /zone/<id>/ prefix and zone_set enforces access.
+    if len(zone_perms) > 1:
+        zone_id = ROOT_ZONE_ID
+
     return OperationContext(
         user_id=user_id,
         agent_id=agent_id,
@@ -354,4 +453,5 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         groups=[],
         admin_capabilities=admin_capabilities,
         agent_generation=agent_generation,
+        zone_perms=zone_perms,
     )

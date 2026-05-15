@@ -10,10 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.backends.remote import RemoteBackend
-from nexus.contracts.exceptions import (
-    RemoteConnectionError,
-)
+from nexus.backends.storage.remote import RemoteBackend
 from nexus.core.object_store import WriteResult
 
 # ---------------------------------------------------------------------------
@@ -72,13 +69,13 @@ class TestRemoteBackendRPC:
 
     def test_write_content_uses_typed_rpc(self, backend: RemoteBackend, mock_transport) -> None:
         """write_content should call transport.write_file() (typed RPC)."""
-        mock_transport.write_file.return_value = {"etag": "abc123", "size": 5}
+        mock_transport.write_file.return_value = {"content_id": "abc123", "size": 5}
         ctx = self._make_ctx("/path/to/file.txt", "path/to/file.txt")
         result = backend.write_content(b"hello", context=ctx)
 
         mock_transport.write_file.assert_called_once_with("/path/to/file.txt", b"hello")
         assert isinstance(result, WriteResult)
-        assert result.content_hash == "abc123"
+        assert result.content_id == "abc123"
         assert result.size == 5
 
     def test_read_content_uses_typed_rpc(self, backend: RemoteBackend, mock_transport) -> None:
@@ -87,7 +84,7 @@ class TestRemoteBackendRPC:
         ctx = self._make_ctx("/file.txt", "file.txt")
         result = backend.read_content("hash", context=ctx)
 
-        mock_transport.read_file.assert_called_once_with("/file.txt")
+        mock_transport.read_file.assert_called_once_with("/file.txt", content_id="hash")
         assert result == b"content"
 
     def test_delete_content_is_noop(self, backend: RemoteBackend) -> None:
@@ -108,7 +105,7 @@ class TestRemoteBackendRPC:
             ctx = self._make_ctx("/file.txt", "file.txt")
             result = backend.content_exists("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("sys_access", {"path": "/file.txt"})
+            mock_rpc.assert_called_once_with("access", {"path": "/file.txt"})
             assert result is True
 
     def test_get_content_size_calls_rpc(self, backend: RemoteBackend) -> None:
@@ -155,7 +152,7 @@ class TestRemoteBackendRPC:
             backend.mkdir("/test/dir", parents=True, exist_ok=True)
 
             mock_rpc.assert_called_once_with(
-                "sys_mkdir",
+                "mkdir",
                 {"path": "/test/dir", "parents": True, "exist_ok": True},
             )
 
@@ -199,25 +196,6 @@ class TestRemoteBackendRPC:
 
 class TestRemoteBackendLifecycle:
     """Connection lifecycle operations."""
-
-    def test_connect_uses_ping(self, backend: RemoteBackend, mock_transport) -> None:
-        """connect should call transport.ping() (typed Ping RPC)."""
-        mock_transport.ping.return_value = {"version": "0.7.2", "zone_id": "root", "uptime": 0}
-        backend.connect()
-        mock_transport.ping.assert_called_once()
-
-    def test_connect_raises_on_failure(self, backend: RemoteBackend, mock_transport) -> None:
-        """connect should raise RemoteConnectionError on transport failure."""
-        mock_transport.ping.side_effect = RemoteConnectionError(
-            "Connection failed",
-            details={"server_address": "localhost:2028"},
-        )
-        with pytest.raises(RemoteConnectionError):
-            backend.connect()
-
-    def test_disconnect_is_noop(self, backend: RemoteBackend) -> None:
-        """disconnect should be a no-op (transport lifecycle managed by factory)."""
-        backend.disconnect()  # Should not raise
 
     def test_close_is_noop(self, backend: RemoteBackend) -> None:
         """close() should be a no-op (transport lifecycle managed by factory)."""

@@ -19,9 +19,9 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.core.object_store import WriteResult
+from nexus.services.workspace.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
-from nexus.system_services.workspace.context_branch import ContextBranchService
 
 
 @pytest.fixture
@@ -43,20 +43,29 @@ class FakeCAS:
         self.store: dict[str, bytes] = {}
         self._snap_counter = 0
 
-    def read_content(self, content_hash, context=None):
-        return self.store[content_hash]
+    def read_content(self, content_id, context=None):
+        return self.store[content_id]
 
-    def write_content(self, data, context=None):
+    def write_content(self, data, content_id: str = "", *, offset: int = 0, context=None):
         h = hashlib.sha256(data).hexdigest()
         self.store[h] = data
-        return WriteResult(content_hash=h, size=len(data))
+        return WriteResult(content_id=h, size=len(data))
 
 
 class FakeWorkspaceManager:
     """Simplified WM for integration tests — uses real snapshots + CAS."""
 
     def __init__(self, session_factory, cas: FakeCAS):
-        self.metadata = MagicMock()
+        # Post-C24 the production WorkspaceManager exposes ``_kernel`` (a
+        # PyKernel handle); ``ContextBranchService`` reads via
+        # ``metastore_list_iter`` which calls ``metastore_list_paginated``
+        # so the fake must provide the same shape.
+        self._kernel = MagicMock()
+        self._kernel.metastore_list_paginated.return_value = {
+            "items": [],
+            "has_more": False,
+            "next_cursor": None,
+        }
         self.backend = cas
         self._session_factory = session_factory
         self._cas = cas
@@ -68,7 +77,7 @@ class FakeWorkspaceManager:
         manifest = WorkspaceManifest(
             entries={
                 f"file-{self._snap_counter}.txt": ManifestEntry(
-                    content_hash=f"hash-{self._snap_counter}",
+                    content_id=f"hash-{self._snap_counter}",
                     size=100 * self._snap_counter,
                     mime_type="text/plain",
                 )
@@ -97,7 +106,6 @@ class FakeWorkspaceManager:
                 file_count=manifest.file_count,
                 total_size_bytes=manifest.total_size,
                 description=description,
-                created_by=kwargs.get("created_by"),
             )
             session.add(snap)
             session.flush()

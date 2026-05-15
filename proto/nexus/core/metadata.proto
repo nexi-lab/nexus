@@ -14,8 +14,11 @@ package nexus.core;
 enum DirEntryType {
   DT_REG = 0;     // Regular file (proto3 default)
   DT_DIR = 1;     // Directory
-  DT_MOUNT = 2;   // Mount point to another zone
+  DT_MOUNT = 2;   // Mount point (VFS namespace composition)
   DT_PIPE = 3;    // Kernel IPC ring buffer (same-node, SPSC)
+  DT_STREAM = 4;  // Append-only log with offset-based non-destructive reads
+  DT_EXTERNAL_STORAGE = 5;  // Backend-managed content (OAuth/API/CLI connectors)
+  DT_LINK = 6;    // VFS-internal symlink — route() follows link_target one hop
 }
 
 // FileMetadata represents the metadata for a single file or directory in Nexus.
@@ -24,19 +27,33 @@ enum DirEntryType {
 // Timestamps are stored as ISO 8601 strings for cross-language compatibility.
 message FileMetadata {
   // Virtual path in the Nexus filesystem (e.g., "/docs/README.md").
+  // Authoritative key — backends derive any storage-specific key
+  // (relative-to-mount path, hash, etc.) from `path` + the local mount config.
   string path = 1;
-
-  // Storage backend name (e.g., "local", "s3", "gcs").
-  string backend_name = 2;
-
-  // Physical path on the backend storage.
-  string physical_path = 3;
 
   // File size in bytes.
   int64 size = 4;
 
-  // Content hash / ETag for CAS deduplication.
-  string etag = 5;
+  // Backend-defined opaque content identifier (store-and-forward).
+  //
+  // Whatever string the local backend's ``write_content`` returned at write
+  // time — the kernel stores it verbatim and forwards it back to the same
+  // backend on read. Each backend interprets the string in its own way:
+  //
+  //   - CAS backends (CasLocalBackend, S3 with CAS layout, ...) → SHA-256
+  //     hex digest of the bytes.
+  //   - PAS backends (PathLocalBackend, S3 path-style, ...) → backend-local
+  //     path of the file.
+  //   - Connector backends (OpenAI, Slack, ...) → backend-specific resource
+  //     handle (chat ID, message ID, ...).
+  //
+  // Kernel + record store + RPC must NOT inspect, parse, or compare this
+  // field by content. It is opaque. Renaming from ``etag`` (R20.18.x →
+  // store-and-forward refactor): wire format unchanged (field number 5),
+  // but semantics are no longer "ETag/SHA" — record stores that need a
+  // hash for indexing must use the deprecated ``content_hash`` SQL column
+  // gated on what the backend actually wrote (CAS-only).
+  string content_id = 5;
 
   // MIME type of the file (e.g., "text/plain").
   string mime_type = 6;
@@ -50,28 +67,45 @@ message FileMetadata {
   // Metadata version number (starts at 1).
   int32 version = 9;
 
-  // Zone ID for multi-zone deployments.
+  // Kernel namespace partition ID for multi-zone isolation (P0 invariant).
+  // Analogous to Linux sb->s_dev. Federation extends zones with Raft consensus.
   string zone_id = 10;
 
-  // User or agent ID who created/modified this version.
-  string created_by = 11;
+  reserved 11;
+  reserved "created_by";
 
-  // Owner ID for O(1) permission checks (posix_uid).
+  // Kernel posix_uid for O(1) DAC via PermissionEnforcerProtocol.check_owner().
   string owner_id = 12;
 
-  // Entry type: DT_REG (0), DT_DIR (1), or DT_MOUNT (2).
-  // SSOT for file/directory/mount distinction.
+  // Entry type: DT_REG (0), DT_DIR (1), DT_MOUNT (2), DT_PIPE (3), DT_STREAM (4).
+  // SSOT for file/directory/mount/ipc distinction.
   DirEntryType entry_type = 13;
 
-  // Target zone ID for DT_MOUNT entries. Only set when entry_type == DT_MOUNT.
-  // Contains the zone_id of the mounted zone for cross-zone path resolution.
+  // Mount target namespace (DT_MOUNT only). Kernel concept for cross-zone
+  // path resolution — federation extends with Raft consensus per zone.
   string target_zone_id = 14;
 
-  // Reference count — number of DT_MOUNT entries pointing to this zone.
-  // Follows POSIX i_nlink semantics (cf. shared_ptr reference counting):
-  //   zone create  → i_links_count = 0   (no references yet)
-  //   mount        → i_links_count++     (like link() / shared_ptr copy)
-  //   unmount      → i_links_count--     (like unlink() / shared_ptr dtor)
-  //   count == 0   → zone is destroyable (like free inode / shared_ptr delete)
-  int32 i_links_count = 15;
+  // TTL in seconds for ephemeral content (0 or unset = permanent).
+  // Routes to TTL-bucketed volumes for zero-cost expiry (Issue #3405).
+  double ttl_seconds = 15;
+
+  // `host:port` of the node that performed the most recent write of this
+  // content (overwritten on every successful write). Pure descriptive
+  // metadata — the kernel does not interpret it. Higher layers (e.g.
+  // federation) compare against the local node address to decide "did I
+  // write this, or did someone else?" and route content fetches
+  // accordingly. Empty / unset on single-node deployments where no node
+  // identity has been published.
+  string last_writer_address = 16;
+
+  // DT_LINK target — absolute or workspace-relative VFS path the link
+  // resolves to. Empty for any other entry_type. Resolution is one hop
+  // with self-loop rejection at sys_setattr time and ELOOP at route()
+  // time when target is itself DT_LINK. See KERNEL-ARCHITECTURE.md §4.5.
+  string link_target = 17;
+
+  // Monotonic per-file content generation. Starts at 1 on the first
+  // successful content write by an upgraded writer. Existing records and
+  // non-content metadata entries default to 0.
+  uint64 gen = 18;
 }

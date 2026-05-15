@@ -2,10 +2,10 @@
 //
 // Phase 1 (PR #2667): Generic Call RPC — method name + JSON payload.
 // Phase 2: Typed RPCs for content ops (native bytes, no base64 overhead)
-//          + server-side streaming for large reads + Ping health check.
+//          + Ping health check.
 //
 // Generic Call stays for 25+ service proxy methods and metadata ops.
-// Typed RPCs only for content-heavy operations (Read/Write/Delete/StreamRead).
+// Typed RPCs only for content-heavy operations (Read/Write/Delete).
 //
 // Issue #1133: Unified gRPC transport.
 // Issue #1202: gRPC for REMOTE profile.
@@ -14,7 +14,11 @@ syntax = "proto3";
 
 package nexus.grpc.vfs;
 
+import "nexus/grpc/initialize.proto";
+
 service NexusVFSService {
+  rpc Initialize(InitializeRequest) returns (InitializeResponse);
+
   // Generic dispatch RPC — method name + JSON-encoded params.
   // Server routes to the same dispatch_method() as the HTTP endpoint.
   rpc Call(CallRequest) returns (CallResponse);
@@ -23,10 +27,13 @@ service NexusVFSService {
   rpc Read(ReadRequest) returns (ReadResponse);
   rpc Write(WriteRequest) returns (WriteResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
-  rpc StreamRead(StreamReadRequest) returns (stream ReadChunk);
 
   // Health check with server metadata.
   rpc Ping(PingRequest) returns (PingResponse);
+
+  // Vectored batch read (Issue #4058). Per-request errors are reported
+  // per-item; outer Status is reserved for transport-level failures.
+  rpc BatchRead(BatchReadRequest) returns (BatchReadResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -47,28 +54,31 @@ message CallResponse {
 message ReadRequest {
   string path = 1;
   string auth_token = 2;
+  string content_id = 3;   // Opaque content identifier (hash for CAS, path for PAS) — when set, server reads content directly (no metastore lookup)
 }
 
 message ReadResponse {
   bytes content = 1;       // Raw file bytes — no base64
-  string etag = 2;
+  string content_id = 2;
   int64 size = 3;
   bool is_error = 4;
   bytes error_payload = 5; // JSON error dict (same format as CallResponse)
+  uint64 gen = 6;
 }
 
 message WriteRequest {
   string path = 1;
   bytes content = 2;       // Raw file bytes — no base64
   string auth_token = 3;
-  string etag = 4;         // Optional: CAS etag for conditional write
+  string content_id = 4;   // Optional: opaque content identifier for conditional write (If-Match)
 }
 
 message WriteResponse {
-  string etag = 1;
+  string content_id = 1;
   int64 size = 2;
   bool is_error = 3;
   bytes error_payload = 4;
+  uint64 gen = 5;
 }
 
 message DeleteRequest {
@@ -83,19 +93,7 @@ message DeleteResponse {
   bytes error_payload = 3;
 }
 
-message StreamReadRequest {
-  string path = 1;
-  string auth_token = 2;
-  int64 chunk_size = 3;    // Bytes per chunk (default 1MB server-side)
-}
-
-message ReadChunk {
-  bytes data = 1;
-  int64 offset = 2;
-  bool is_last = 3;
-  bool is_error = 4;
-  bytes error_payload = 5;
-}
+// --- Health check messages ---
 
 message PingRequest {
   string auth_token = 1;
@@ -105,4 +103,35 @@ message PingResponse {
   string version = 1;
   string zone_id = 2;
   int64 uptime_seconds = 3;
+}
+
+// --- Batch read (Issue #4058) ---
+
+message BatchReadRequest {
+  string auth_token = 1;
+  repeated BatchReadItemRequest items = 2;
+}
+
+message BatchReadItemRequest {
+  string path = 1;
+  uint64 offset = 2;
+  // proto3 `optional` so callers can distinguish "no length set"
+  // (read to EOF from offset) from `length = 0` (legitimate zero-byte
+  // EOF probe). Old clients that omitted `length` continue to read
+  // whole files; new clients can explicitly set 0 for an empty slice.
+  // (Named `length` rather than `len` so the generated Rust struct
+  // doesn't trip `clippy::len_without_is_empty`.)
+  optional uint64 length = 3;
+}
+
+message BatchReadResponse {
+  repeated BatchReadItemResponse results = 1;  // input order
+}
+
+message BatchReadItemResponse {
+  bytes content = 1;        // empty when is_error
+  bool is_error = 2;
+  bytes error_payload = 3;  // JSON RPC error dict (same as CallResponse)
+  string content_id = 4;
+  uint64 gen = 5;
 }

@@ -1,0 +1,69 @@
+// Capability discovery messages for Nexus VFS RPC.
+syntax = "proto3";
+
+package nexus.grpc.vfs;
+
+message InitializeRequest {
+  string client_name = 1;
+  string client_version = 2;
+  string protocol_version = 3;
+  string auth_token = 4;
+}
+
+message InitializeResponse {
+  string server_name = 1;
+  string server_version = 2;
+  string protocol_version = 3;
+  Capabilities capabilities = 4;
+}
+
+message Capabilities {
+  PosixCapabilities posix = 1;
+  CommandCapabilities commands = 2;
+  WorkspaceCapabilities workspace = 3;
+  map<string, BackendCapabilities> backends = 4;
+  repeated string extensions = 5;
+}
+
+message PosixCapabilities {
+  optional bool read = 1;
+  optional bool readdir = 2;
+  optional bool stat = 3;
+  optional bool write = 4;
+  optional bool unlink = 5;
+  optional bool mkdir = 6;
+  optional bool rmdir = 7;
+  optional bool rename = 8;
+  optional bool glob = 9;
+}
+
+message StringFilter {
+  repeated string allow = 1;
+  repeated string deny = 2;
+}
+
+message CommandSupport {
+  bool supported = 1;
+  StringFilter filetype = 2;
+}
+
+message CommandCapabilities {
+  CommandSupport grep = 1;
+  CommandSupport glob = 2;
+}
+
+message WorkspaceCapabilities {
+  bool snapshot = 1;
+  bool restore = 2;
+  bool watch = 3;
+}
+
+message BackendCapabilities {
+  string backend_name = 1;
+  string backend_type = 2;
+  PosixCapabilities posix = 3;
+  repeated string features = 4;
+  repeated string extensions = 5;
+  bool rust_native = 6;
+  bool external = 7;
+}

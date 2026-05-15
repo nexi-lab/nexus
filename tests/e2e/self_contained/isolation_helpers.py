@@ -22,7 +22,7 @@ class MockBackend:
     directory (state NOT shared across instances — useful for cross-brick
     isolation tests).
 
-    Returns direct values (not HandlerResponse) following the ObjectStoreABC
+    Returns direct values following the ObjectStoreABC
     contract.  Errors are raised as exceptions.
     """
 
@@ -51,7 +51,7 @@ class MockBackend:
     # ── lifecycle ──
 
     def connect(self, context=None):
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         return HandlerStatusResponse(success=True)
 
@@ -59,18 +59,18 @@ class MockBackend:
         pass
 
     def check_connection(self, context=None):
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         return HandlerStatusResponse(success=True)
 
     # ── content ops ──
 
-    def write_content(self, content, context=None):
+    def write_content(self, content, content_id: str = "", *, offset: int = 0, context=None):
         from nexus.core.object_store import WriteResult
 
         h = hashlib.sha256(content).hexdigest()
         (self._content_dir / h).write_bytes(content)
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
     def read_content(self, h, context=None):
         from nexus.contracts.exceptions import NexusFileNotFoundError
@@ -90,9 +90,6 @@ class MockBackend:
     def get_content_size(self, h, context=None):
         p = self._content_dir / h
         return p.stat().st_size if p.exists() else 0
-
-    def get_ref_count(self, h, context=None):
-        return 1 if (self._content_dir / h).exists() else 0
 
     # ── directory ops ──
 

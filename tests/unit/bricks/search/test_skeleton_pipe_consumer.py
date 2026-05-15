@@ -1,0 +1,227 @@
+"""Tests for DT_PIPE-backed skeleton indexing consumer."""
+
+import asyncio
+import contextlib
+import importlib.util
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
+
+import pytest
+
+from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.metadata import DT_PIPE
+
+if TYPE_CHECKING:
+    from nexus.bricks.search.skeleton_indexer import SkeletonIndexer
+
+_MODULE_PATH = (
+    Path(__file__).resolve().parents[4] / "src/nexus/bricks/search/skeleton_pipe_consumer.py"
+)
+_SPEC = importlib.util.spec_from_file_location(
+    "tests._skeleton_pipe_consumer_under_test",
+    _MODULE_PATH,
+)
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _MODULE
+_SPEC.loader.exec_module(_MODULE)
+SkeletonPipeConsumer = _MODULE.SkeletonPipeConsumer
+
+
+class _FakeIndexer:
+    async def index_file(self, *, path_id: str | None, virtual_path: str, zone_id: str) -> None:
+        return None
+
+    async def delete_file(self, *, path_id: str | None, virtual_path: str, zone_id: str) -> None:
+        return None
+
+
+class _RecordingIndexer:
+    def __init__(self) -> None:
+        self.indexed: list[str] = []
+        self.deleted: list[str] = []
+
+    async def index_file(self, *, path_id: str | None, virtual_path: str, zone_id: str) -> None:
+        self.indexed.append(virtual_path)
+
+    async def delete_file(self, *, path_id: str | None, virtual_path: str, zone_id: str) -> None:
+        self.deleted.append(virtual_path)
+
+
+def _indexer() -> "SkeletonIndexer":
+    return cast("SkeletonIndexer", _FakeIndexer())
+
+
+class _Kernel:
+    def __init__(self, owner: "_FakeNx") -> None:
+        self._owner = owner
+
+    def destroy_pipe(self, path: str) -> None:
+        self._owner.closed_paths.add(path)
+
+
+class _FakeNx:
+    def __init__(self) -> None:
+        self.setattr_calls: list[tuple[str, dict[str, Any]]] = []
+        self.write_calls: list[tuple[str, bytes, Any]] = []
+        self.read_contexts: list[Any] = []
+        self.read_timeouts: list[int | None] = []
+        self.closed_paths: set[str] = set()
+        self._kernel = _Kernel(self)
+
+    def sys_setattr(self, path: str, **attrs: Any) -> None:
+        self.setattr_calls.append((path, attrs))
+
+    def sys_read(
+        self,
+        path: str,
+        *,
+        context: Any | None = None,
+        timeout_ms: int | None = None,
+    ) -> bytes:
+        self.read_contexts.append(context)
+        self.read_timeouts.append(timeout_ms)
+        if path in self.closed_paths:
+            raise NexusFileNotFoundError(path)
+        return b""
+
+    def sys_write(self, path: str, data: bytes, *, context: Any | None = None) -> dict[str, Any]:
+        self.write_calls.append((path, data, context))
+        return {"path": path, "bytes_written": len(data)}
+
+
+class _SlowReadNx:
+    def sys_read(self, path: str, *, context: Any | None = None) -> bytes:
+        time.sleep(0.15)
+        return b""
+
+
+class _BlockingReadNx(_FakeNx):
+    def __init__(self) -> None:
+        super().__init__()
+        self.read_started = threading.Event()
+
+    def sys_read(
+        self,
+        path: str,
+        *,
+        context: Any | None = None,
+        timeout_ms: int | None = None,
+    ) -> bytes:
+        self.read_started.set()
+        self.read_contexts.append(context)
+        self.read_timeouts.append(timeout_ms)
+        time.sleep(0.5)
+        if path in self.closed_paths:
+            raise NexusFileNotFoundError(path)
+        return b""
+
+
+@pytest.mark.asyncio
+async def test_start_creates_vfs_dt_pipe_inode() -> None:
+    nx = _FakeNx()
+    consumer = SkeletonPipeConsumer(indexer=_indexer())
+    consumer.bind_fs(nx)
+
+    await consumer.start()
+    try:
+        assert nx.setattr_calls == [
+            (
+                "/nexus/pipes/skeleton-writes",
+                {
+                    "entry_type": DT_PIPE,
+                    "capacity": 65_536,
+                    "owner_id": "kernel",
+                    "context": consumer._pipe_context,  # noqa: SLF001
+                },
+            )
+        ]
+        assert consumer._pipe_context.is_system  # noqa: SLF001
+    finally:
+        await consumer.stop()
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_flush_uses_system_context_for_pipe_writes() -> None:
+    nx = _FakeNx()
+    consumer = SkeletonPipeConsumer(indexer=_indexer())
+    consumer.bind_fs(nx)
+
+    await consumer.start()
+    try:
+        consumer.notify_write("/docs/file.txt", "path-1", "root")
+
+        for _ in range(20):
+            if nx.write_calls:
+                break
+            await asyncio.sleep(0.01)
+
+        assert len(nx.write_calls) == 1
+        path, _data, context = nx.write_calls[0]
+        assert path == "/nexus/pipes/skeleton-writes"
+        assert context is consumer._pipe_context  # noqa: SLF001
+        assert context.is_system
+    finally:
+        await consumer.stop()
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skips_internal_pipe_paths() -> None:
+    indexer = _RecordingIndexer()
+    consumer = SkeletonPipeConsumer(indexer=cast("SkeletonIndexer", indexer))
+
+    await consumer._dispatch_single(  # noqa: SLF001
+        {
+            "type": "write",
+            "path": "/nexus/pipes/skeleton-writes",
+            "path_id": None,
+            "zone_id": "root",
+        }
+    )
+
+    assert indexer.indexed == []
+    assert indexer.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_consumer_does_not_block_event_loop_while_waiting_for_pipe() -> None:
+    consumer = SkeletonPipeConsumer(indexer=_indexer())
+    consumer.bind_fs(_SlowReadNx())
+
+    task = asyncio.create_task(consumer._consume())  # noqa: SLF001
+    started = asyncio.get_running_loop().time()
+    try:
+        await asyncio.sleep(0.01)
+        elapsed = asyncio.get_running_loop().time() - started
+        assert elapsed < 0.08
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_blocking_pipe_read_does_not_block_event_loop() -> None:
+    nx = _BlockingReadNx()
+    consumer = SkeletonPipeConsumer(indexer=_indexer())
+    consumer.bind_fs(nx)
+
+    await consumer.start()
+    try:
+
+        async def _wait_for_read() -> None:
+            while not nx.read_started.is_set():
+                await asyncio.sleep(0.01)
+
+        started_at = time.perf_counter()
+        await asyncio.wait_for(_wait_for_read(), timeout=1.0)
+        assert time.perf_counter() - started_at < 0.25
+        assert nx.read_timeouts == [0]
+    finally:
+        await consumer.stop()
+        await asyncio.sleep(0)

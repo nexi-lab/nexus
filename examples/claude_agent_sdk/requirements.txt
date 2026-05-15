@@ -1,8 +1,8 @@
 # Claude Agent SDK + Nexus Integration Requirements
 
 # Core dependencies
-nexus-ai-fs>=0.5.0
-claude-agent-sdk>=0.0.1
+nexus-ai-fs>=0.10.0
+claude-agent-sdk>=0.1.77
 
 # Note: claude-agent-sdk requires:
 # - Python 3.10+
@@ -10,4 +10,4 @@ claude-agent-sdk>=0.0.1
 # - Claude Code 2.0.0+ (install via: npm install -g @anthropic-ai/claude-code)
 
 # Optional: For development
-anthropic>=0.18.0  # Direct Anthropic API access
+anthropic>=0.100.0  # Direct Anthropic API access

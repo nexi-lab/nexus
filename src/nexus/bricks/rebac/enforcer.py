@@ -1,8 +1,6 @@
 """PermissionEnforcer — ReBAC permission enforcement for Nexus (v0.6.0+).
 
-Canonical location: nexus.bricks.rebac.enforcer (moved from services/permissions/ per
-Issue #1847 — the enforcer is a brick-level component that belongs with the
-ReBAC manager, not in the services tier).
+Canonical location: nexus.bricks.rebac.enforcer (Issue #1847).
 """
 
 import logging
@@ -13,7 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError
 
-from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
+from nexus.contracts.protocols.activity import EventKind, Result, emit
 from nexus.contracts.types import OperationContext, Permission
 
 
@@ -21,7 +20,7 @@ def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
     """Check for stale agent sessions and raise if the session is outdated.
 
     Compares the agent_generation from the JWT token (stored in context) against
-    the current generation in the agent registry (DB). A mismatch means a newer
+    the current generation in the process table. A mismatch means a newer
     session has superseded this one.
 
     Issue #1240 / #1445: Shared helper used by both sync and async enforcers.
@@ -78,8 +77,16 @@ logger = logging.getLogger(__name__)
 SEQUENTIAL_DEPTH_THRESHOLD = 3
 """Paths with depth <= this use sequential ancestor checks; deeper paths use batch."""
 
-SYSTEM_BYPASS_SCOPE = "/system/"
-"""Prefix for system-bypass write/delete operations."""
+SYSTEM_BYPASS_SCOPE = SYSTEM_PATH_PREFIX
+"""Prefix for system-bypass write/delete operations.
+
+Reuses the kernel's ``SYSTEM_PATH_PREFIX`` (contracts/constants.py).
+The legacy ``/system/`` prefix was a separate, parallel admin namespace —
+collapsed into the canonical kernel system path so the codebase has one
+"system stuff lives here" answer."""
+
+SYSTEM_BYPASS_EXTRA_PREFIXES = ("/nexus/pipes/",)
+"""Additional prefixes allowed for system write bypass (e.g. audit pipe)."""
 
 
 class PermissionEnforcer:
@@ -111,7 +118,7 @@ class PermissionEnforcer:
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
         rebac_manager: "ReBACManager | None" = None,
         entity_registry: Any = None,  # Entity registry (reserved for future use)
-        router: Any = None,  # PathRouter for backend object type resolution
+        dlc: Any = None,  # DriverLifecycleCoordinator for backend refs + routing
         # P0-4: Enhanced features
         allow_admin_bypass: bool = False,  # P0-4: Kill-switch DEFAULT OFF for production security
         allow_system_bypass: bool = True,  # P0-4: System bypass still enabled (for service operations)
@@ -125,7 +132,7 @@ class PermissionEnforcer:
         enable_hotspot_tracking: bool = True,
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         namespace_manager: "NamespaceManager | None" = None,
-        # Issue #1240: Agent registry for stale-session detection (Agent OS Phase 1)
+        # Issue #1240: Process table for stale-session detection (Agent OS Phase 1)
         agent_registry: Any = None,
     ):
         """Initialize permission enforcer.
@@ -135,7 +142,7 @@ class PermissionEnforcer:
             acl_store: Deprecated, ignored (kept for backward compatibility)
             rebac_manager: ReBAC manager for relationship-based permissions
             entity_registry: Entity registry (reserved for future use)
-            router: PathRouter for resolving backend object types (v0.5.0+)
+            dlc: DriverLifecycleCoordinator for routing + backend refs
             allow_admin_bypass: Enable admin bypass (DEFAULT: False for security)
             allow_system_bypass: Enable system bypass (for internal operations)
             audit_store: Audit store for bypass logging
@@ -150,12 +157,12 @@ class PermissionEnforcer:
         self.metadata_store = metadata_store
         self.rebac_manager: ReBACManager | None = rebac_manager
         self.entity_registry = entity_registry  # v0.5.0 ACE
-        self.router = router  # For backend object type resolution
+        self.dlc = dlc  # DLC for routing + backend refs
 
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         self.namespace_manager: NamespaceManager | None = namespace_manager
 
-        # Issue #1240: Agent registry for stale-session detection (Agent OS Phase 1)
+        # Issue #1240: Process table for stale-session detection (Agent OS Phase 1)
         self.agent_registry = agent_registry
 
         # P0-4: Enhanced features
@@ -203,6 +210,32 @@ class PermissionEnforcer:
                 DeprecationWarning,
                 stacklevel=2,
             )
+
+    def check_owner(
+        self,
+        metadata: Any,
+        context: "OperationContext",
+    ) -> bool:
+        """Kernel DAC: O(1) owner fast-path (Issue #920, #1825).
+
+        Returns True if context subject matches metadata.owner_id.
+        Moved from PermissionChecker to kernel contract so the kernel
+        can call it directly before hook dispatch.
+        """
+        if metadata is not None:
+            _owner = (
+                metadata.get("owner_id")
+                if isinstance(metadata, dict)
+                else getattr(metadata, "owner_id", None)
+            )
+            if _owner:
+                subject_id = context.subject_id or context.user_id
+                if _owner == subject_id:
+                    logger.debug(
+                        f"  -> OWNER FAST-PATH: {subject_id} owns {metadata.get('path', '?') if isinstance(metadata, dict) else getattr(metadata, 'path', '?')}, skipping ReBAC"
+                    )
+                    return True
+        return False
 
     def invalidate_cache(
         self,
@@ -278,42 +311,71 @@ class PermissionEnforcer:
             zone_id = context.zone_id
 
             # Get accessible paths via Tiger cache public API (Issue #1565)
-            accessible_paths = tiger_cache.get_accessible_paths_list(
-                subject_type=subject_type,
-                subject_id=subject_id,
-                permission="read",
-                resource_type="file",
-                zone_id=zone_id,
-            )
+            # Fix(#3709): was get_accessible_paths_list (non-existent method).
+            # Issue #3951: prefer the tri-state status variant so a transient
+            # resource_map orphan does not produce a hard False for prefixes
+            # whose only matching descendant was an unresolved int_id. Older
+            # cache implementations / test doubles that only implement the
+            # legacy get_accessible_paths() are treated as fully_resolved=True
+            # — they have no orphan-detection signal to surface.
+            _with_status = getattr(tiger_cache, "get_accessible_paths_with_status", None)
+            if _with_status is not None:
+                accessible_paths, fully_resolved = _with_status(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission="read",
+                    resource_type="file",
+                    zone_id=zone_id,
+                )
+            else:
+                accessible_paths = tiger_cache.get_accessible_paths(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission="read",
+                    resource_type="file",
+                    zone_id=zone_id,
+                )
+                fully_resolved = True
 
             if accessible_paths is None:
+                # Fix(#3709): Tiger cache miss must fail-closed (deny), not
+                # fail-open.  Returning all-True here would grant access to
+                # every directory prefix for any user whose bitmap hasn't
+                # been materialized yet.
                 logger.debug(
                     f"[BATCH-OPT] No bitmap for {subject_type}:{subject_id}, "
-                    f"returning all True for {len(prefixes)} prefixes"
+                    f"returning all False for {len(prefixes)} prefixes (fail-closed)"
                 )
-                return dict.fromkeys(prefixes, True)
-
-            if not accessible_paths:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
                 return dict.fromkeys(prefixes, False)
 
-            # Try Rust-accelerated prefix matching (Issue #1565)
-            try:
-                import nexus_fast
+            if not accessible_paths:
+                if fully_resolved:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
+                    return dict.fromkeys(prefixes, False)
+                # All-orphan: indeterminate. Drop False entries so the
+                # caller (search_service uses dict.get(prefix, True)) falls
+                # back to including the directories rather than hiding them
+                # on a transient resource_map orphan.
+                logger.debug(
+                    "[BATCH-OPT] resource_map degraded (all-orphan) for %s:%s — "
+                    "returning empty dict to defer to caller default",
+                    subject_type,
+                    subject_id,
+                )
+                return {}
 
-                results_list = nexus_fast.batch_prefix_check(accessible_paths, list(prefixes))
-                results = dict(zip(prefixes, results_list, strict=True))
-            except (ImportError, AttributeError):
-                # Python fallback (same logic, O(N×M))
-                results = {}
-                for prefix in prefixes:
-                    prefix_normalized = prefix.rstrip("/") + "/"
-                    prefix_exact = prefix.rstrip("/")
-                    results[prefix] = any(
-                        p.startswith(prefix_normalized) or p == prefix_exact
-                        for p in accessible_paths
-                    )
+            from nexus.lib.prefix_helpers import batch_paths_under_prefixes
+
+            results_list = batch_paths_under_prefixes(list(accessible_paths), list(prefixes))
+            results = dict(zip(prefixes, results_list, strict=True))
+
+            if not fully_resolved:
+                # Partial resolution: trust True (real match in resolved set),
+                # but drop False — they may flip True once orphan int_ids
+                # resolve. Caller's dict.get(prefix, True) defaults indeterminate
+                # to "include" (matches search_service.py:1027 semantics).
+                results = {k: v for k, v in results.items() if v}
 
             elapsed = (time.time() - start) * 1000
             found_count = sum(1 for v in results.values() if v)
@@ -324,7 +386,7 @@ class PermissionEnforcer:
             )
             return results
 
-        except (OperationalError, TimeoutError, OSError, RuntimeError) as e:
+        except (OperationalError, TimeoutError, OSError, RuntimeError, AttributeError) as e:
             logger.warning(
                 "[BATCH-OPT] has_accessible_descendants_batch error for "
                 "zone=%s subject=%s prefix_count=%d: %s, returning all False (fail-closed)",
@@ -337,6 +399,15 @@ class PermissionEnforcer:
             # Fail-closed: deny access on error (security-critical)
             return dict.fromkeys(prefixes, False)
 
+    def _effective_zone_perms(self, context: OperationContext) -> tuple:
+        """Return the request's effective zone_perms from context directly.
+
+        Now that zone_perms survives the Rust boundary (Phase A), the
+        context always carries the authoritative grant list. No cache
+        resurrection needed.
+        """
+        return context.zone_perms or ()
+
     def check(
         self,
         path: str,
@@ -346,7 +417,7 @@ class PermissionEnforcer:
         """Check if user has permission to perform operation on file.
 
         Permission check with scoped admin/system bypass and audit logging (P0-4):
-        1. System bypass (limited scope) - Read: any path, Write/Delete: /system/* only
+        1. System bypass (limited scope) - Read: any path, Write/Delete: /__sys__/* only
         2. Admin bypass (capability-based) - Requires capabilities and optional path allowlist
         3. ReBAC relationship check - Check permission graph
 
@@ -393,7 +464,12 @@ class PermissionEnforcer:
                     context, path, permission_str, "admin", "kill_switch_disabled"
                 )
                 # Fall through to ReBAC check instead of denying
-                return self._check_rebac(path, permission, context)
+                _r = self._check_rebac(path, permission, context)
+                if not _r:
+                    self._emit_zone_access_block(
+                        context, path, permission_str, "rebac_deny_after_bypass_disabled"
+                    )
+                return _r
 
             # P0-4: Check path-based allowlist (scoped bypass)
             if self.admin_bypass_paths and not self._path_matches_allowlist(
@@ -403,7 +479,12 @@ class PermissionEnforcer:
                     context, path, permission_str, "admin", "path_not_in_allowlist"
                 )
                 # Fall through to ReBAC check
-                return self._check_rebac(path, permission, context)
+                _r = self._check_rebac(path, permission, context)
+                if not _r:
+                    self._emit_zone_access_block(
+                        context, path, permission_str, "rebac_deny_after_path_not_in_allowlist"
+                    )
+                return _r
 
             # Import AdminCapability here to avoid circular imports
             from nexus.bricks.rebac.permissions_enhanced import AdminCapability
@@ -443,12 +524,12 @@ class PermissionEnforcer:
 
             # Check if user has EITHER the path-specific capability OR the wildcard capability
             # Wildcard capability (admin:read:*) grants access to ALL paths
-            has_capability = (
+            has_feature = (
                 required_capability in context.admin_capabilities
                 or wildcard_capability in context.admin_capabilities
             )
 
-            if not has_capability:
+            if not has_feature:
                 self._log_bypass_denied(
                     context,
                     path,
@@ -457,10 +538,44 @@ class PermissionEnforcer:
                     f"missing_capability_{required_capability}",
                 )
                 # Fall through to ReBAC check
-                return self._check_rebac(path, permission, context)
+                _r = self._check_rebac(path, permission, context)
+                if not _r:
+                    self._emit_zone_access_block(
+                        context, path, permission_str, "rebac_deny_after_missing_capability"
+                    )
+                return _r
 
             self._log_bypass(context, path, permission_str, "admin", allowed=True)
             return True
+
+        # Zone-perms authorization for multi-zone federation tokens.
+        # Now that zone_perms survives the Rust boundary (Phase A), the
+        # context always carries the authoritative grant list directly.
+        _effective_zone_perms = context.zone_perms or ()
+
+        # Only use the fast-path when the token explicitly grants named zones.
+        # zone_perms=(("root","rw"),) is the __post_init__ default, not a real grant.
+        _has_real_zone_perms = any(z != ROOT_ZONE_ID for z, _ in _effective_zone_perms)
+        if context.zone_id == ROOT_ZONE_ID and _has_real_zone_perms:
+            _zp_path_zone: str | None = None
+            if path.startswith("/zone/"):
+                parts = path[6:].split("/", 1)
+                if parts:
+                    _zp_path_zone = parts[0]
+            if _zp_path_zone and _zp_path_zone != ROOT_ZONE_ID:
+                perm_char = "w" if permission == Permission.WRITE else "r"
+                for zone, perms in _effective_zone_perms:
+                    if zone == _zp_path_zone:
+                        if perm_char in perms or "x" in perms:
+                            return True
+                        # Zone in allow-list but lacks the requested perm.
+                        self._emit_zone_access_block(
+                            context, path, permission_str, "zone_perms_insufficient"
+                        )
+                        return False
+                # Zone not in token's allow-list
+                self._emit_zone_access_block(context, path, permission_str, "zone_not_in_allowlist")
+                return False
 
         # Issue #1239: Namespace visibility check (Agent OS Phase 0)
         # Unmounted paths are invisible (404 Not Found), not denied (403 Forbidden).
@@ -480,7 +595,11 @@ class PermissionEnforcer:
         check_stale_session(self.agent_registry, context)
 
         # Normal ReBAC check
-        return self._check_rebac(path, permission, context)
+        result = self._check_rebac(path, permission, context)
+        if not result:
+            # Issue #3791: Emit ZONE_ACCESS block for the normal-flow deny.
+            self._emit_zone_access_block(context, path, permission_str, "rebac_deny")
+        return result
 
     def _check_rebac(
         self,
@@ -520,32 +639,36 @@ class PermissionEnforcer:
         object_type = "file"  # Default
         # Unscope zone-prefixed paths so object_id matches how ReBAC tuples
         # are created (non-prefixed path + zone_id field for isolation).
-        from nexus.server.path_utils import unscope_internal_path
+        from nexus.core.path_utils import unscope_internal_path
 
         object_id = unscope_internal_path(path)  # Strip /zone/{id}/ prefix
 
-        if self.router:
+        _kernel = getattr(self.dlc, "_kernel", None) if self.dlc else None
+        if _kernel is not None:
             try:
-                # Route path to backend to get object type
-                route = self.router.route(
-                    path,
-                    is_admin=context.is_admin,
-                    check_write=False,
-                )
-                # Use ObjectTypeMapper for ReBAC object type resolution
-                from nexus.bricks.rebac.object_type_mapper import ObjectTypeMapper
-
-                mapper = ObjectTypeMapper()
-                object_type = mapper.get_object_type(route.backend, route.backend_path)
-                object_id = unscope_internal_path(
-                    mapper.get_object_id(
-                        route.backend,
-                        route.backend_path,
-                        virtual_path=path,
-                        object_type=object_type,
+                _stat = _kernel.sys_stat(path, context.zone_id or ROOT_ZONE_ID)
+                if _stat is not None:
+                    backend_name = (
+                        _stat.get("backend_name", "")
+                        if isinstance(_stat, dict)
+                        else getattr(_stat, "backend_name", "")
                     )
-                )
-            except (KeyError, ValueError, AttributeError, LookupError, RuntimeError) as e:
+                    # Derive backend_path from path + mount_point (first path segment)
+                    _mp = path.strip("/").split("/")[0] if path and path != "/" else ""
+                    backend_path = path[len("/" + _mp) :].lstrip("/") if _mp else path.lstrip("/")
+                    from nexus.bricks.rebac.object_type_mapper import ObjectTypeMapper
+
+                    mapper = ObjectTypeMapper()
+                    object_type = mapper.get_object_type_by_name(backend_name, backend_path)
+                    object_id = unscope_internal_path(
+                        mapper.get_object_id_by_name(
+                            backend_name,
+                            backend_path,
+                            virtual_path=path,
+                            object_type=object_type,
+                        )
+                    )
+            except (KeyError, AttributeError, LookupError, RuntimeError) as e:
                 # If routing fails, fall back to default "file" type with virtual path
                 logger.warning(
                     "[_check_rebac] Failed to route path=%s zone=%s for object type: %s, "
@@ -790,7 +913,7 @@ class PermissionEnforcer:
 
         System bypass is limited to:
         - Read operations on any path (for auto-parse indexing)
-        - Read, write, execute, delete operations on /system/* paths only
+        - Read, write, execute, delete operations on /__sys__/* paths only
 
         Args:
             path: File path
@@ -803,12 +926,17 @@ class PermissionEnforcer:
         if permission == "read":
             return True
 
-        # For other operations, only allow /system paths
-        # Use strict matching: /system/ or exactly /system (not /systemdata, etc.)
-        if not (path.startswith(SYSTEM_BYPASS_SCOPE) or path == SYSTEM_BYPASS_SCOPE.rstrip("/")):
+        # For other operations, only allow /__sys__ paths and approved extras
+        # Use strict matching: /__sys__/ or exactly /__sys__ (not /__sys__data, etc.)
+        allowed = (
+            path.startswith(SYSTEM_BYPASS_SCOPE)
+            or path == SYSTEM_BYPASS_SCOPE.rstrip("/")
+            or any(path.startswith(p) for p in SYSTEM_BYPASS_EXTRA_PREFIXES)
+        )
+        if not allowed:
             return False
 
-        # Allow common operations on /system paths
+        # Allow common operations on /__sys__ paths
         return permission in ["write", "execute", "delete"]
 
     def _log_bypass(
@@ -850,6 +978,28 @@ class PermissionEnforcer:
         reason: str,
     ) -> None:
         """Log denied bypass attempt (P0-4)."""
+        # Issue #3791: Emit activity event for every bypass denial. Done here
+        # (not at every call site) so it covers all paths in `check()` that
+        # funnel through this method. Suppressed so emit failures never break
+        # the enforcement path.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            emit(
+                kind=EventKind.POLICY_BLOCK,
+                result=Result.BLOCKED,
+                actor_token_hash=getattr(context, "token_hash", None),
+                actor_user=getattr(context, "user_id", None),
+                actor_agent=getattr(context, "agent_id", None),
+                subject_zone=getattr(context, "zone_id", None),
+                subject_extra={
+                    "path": path,
+                    "permission": permission,
+                    "bypass_type": bypass_type,
+                    "reason": reason,
+                },
+            )
+
         if not self.audit_store:
             return
 
@@ -871,6 +1021,37 @@ class PermissionEnforcer:
         )
 
         self.audit_store.log_bypass(entry)
+
+    def _emit_zone_access_block(
+        self,
+        context: OperationContext,
+        path: str,
+        permission: str,
+        reason: str,
+    ) -> None:
+        """Issue #3791: Emit ZONE_ACCESS block event for ReBAC deny.
+
+        Centralized helper so every deny return path in `check()` /
+        `_check_rebac*` can record an activity event without duplicating
+        field extraction. Suppressed so emit failures never break
+        enforcement.
+        """
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            emit(
+                kind=EventKind.ZONE_ACCESS,
+                result=Result.BLOCKED,
+                actor_token_hash=getattr(context, "token_hash", None),
+                actor_user=getattr(context, "user_id", None),
+                actor_agent=getattr(context, "agent_id", None),
+                subject_zone=getattr(context, "zone_id", None),
+                subject_extra={
+                    "path": path,
+                    "permission": permission,
+                    "reason": reason,
+                },
+            )
 
     def _permission_to_string(self, permission: Permission) -> str:
         """Convert Permission enum to string."""
@@ -1001,6 +1182,27 @@ class PermissionEnforcer:
         ):
             return paths
 
+        # Issue #3786 / Codex Round 7 finding #3: zone_perms pre-filter for
+        # multi-zone federation tokens.  Such tokens land here as
+        # zone_id="root" (so the existing zone pre-filter is a no-op), but
+        # they are scoped to a finite allow-list of /zone/<id>/ paths.  Drop
+        # any candidate that targets a zone outside that list before the
+        # ReBAC chain runs — otherwise SearchService list/glob/grep would
+        # leak paths the underlying subject has ReBAC visibility into but
+        # the token does not.
+        _eff_perms = self._effective_zone_perms(context)
+        _real_zp = tuple((z, p) for z, p in _eff_perms if z != ROOT_ZONE_ID)
+        if context.zone_id == ROOT_ZONE_ID and _real_zp:
+            _allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
+            paths = [
+                p
+                for p in paths
+                if not p.startswith("/zone/")
+                or (p[6:].split("/", 1) and p[6:].split("/", 1)[0] in _allowed_zones)
+            ]
+            if not paths:
+                return []
+
         # Issue #1239 + #1244: Namespace pre-filter
         if self.namespace_manager is not None:
             subject = context.get_subject()
@@ -1031,7 +1233,7 @@ class PermissionEnforcer:
                 context=context,
                 cache=self._cache,
                 rebac_manager=self.rebac_manager,
-                router=self.router,
+                dlc=self.dlc,
             )
 
             filtered = run_filter_chain(filter_ctx)
@@ -1050,3 +1252,88 @@ class PermissionEnforcer:
                 result.append(path)
 
         return result
+
+    def filter_search_results(
+        self,
+        paths: list[str],
+        *,
+        user_id: str,
+        zone_id: str,
+        is_admin: bool = False,
+    ) -> list[str]:
+        """Filter search result paths by read permission via bulk check.
+
+        Unlike filter_list(), this method:
+        1. Skips the NamespaceManager pre-filter (search paths lack mount entries)
+        2. Uses compute_permissions_bulk with fresh graph (unique tuple_version)
+           to check only the N search result paths — O(N) not O(total_zone_tuples)
+
+        Performance: 1 SQL query + 1 Rust graph build + N permission checks.
+        Scales with search result count, NOT zone size.
+
+        Args:
+            paths: Absolute paths from search results
+            user_id: The authenticated user's ID
+            zone_id: Zone ID for isolation
+            is_admin: Whether the user is an admin (bypasses checks)
+
+        Returns:
+            Filtered list of paths the user can read
+        """
+        if not paths:
+            return []
+
+        # Admin bypass
+        if is_admin and self.allow_admin_bypass:
+            return paths
+
+        if self.rebac_manager is None:
+            return []  # fail-closed: no manager = no access
+
+        try:
+            return self._filter_search_bulk(paths, user_id=user_id, zone_id=zone_id)
+        except Exception:
+            logger.warning(
+                "filter_search_results failed, denying all (fail-closed)",
+                exc_info=True,
+            )
+            return []  # fail-closed
+
+    def _filter_search_bulk(
+        self,
+        paths: list[str],
+        *,
+        user_id: str,
+        zone_id: str,
+    ) -> list[str]:
+        """Check only the given paths via Rust bulk permission check.
+
+        Uses a unique tuple_version (time_ns) to force a fresh graph build,
+        bypassing the stale GRAPH_CACHE bug in compute_permissions_bulk.
+        """
+        import time as time_module
+
+        from nexus.bricks.rebac.utils.fast import check_permissions_bulk_with_fallback
+
+        assert self.rebac_manager is not None  # caller already checked
+
+        # Fetch tuples for zone (1 SQL query) — includes cross-zone for user
+        tuples = self.rebac_manager._fetch_tuples_for_zone(
+            zone_id, include_cross_zone_for_user=user_id
+        )
+        namespace_configs = self.rebac_manager._get_namespace_configs_dict()
+
+        # Build checks: [(subject, permission, object), ...]
+        subject = ("user", user_id)
+        checks = [(subject, "read", ("file", p)) for p in paths]
+
+        # Use unique tuple_version to force fresh Rust graph (bypass stale cache)
+        results = check_permissions_bulk_with_fallback(
+            checks=checks,
+            tuples=tuples,
+            namespace_configs=namespace_configs,
+            tuple_version=time_module.time_ns(),
+        )
+
+        # results is dict[(subj_type, subj_id, perm, obj_type, obj_id) -> bool]
+        return [p for p in paths if results.get(("user", user_id, "read", "file", p), False)]

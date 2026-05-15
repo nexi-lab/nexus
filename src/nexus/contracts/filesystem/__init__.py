@@ -1,8 +1,9 @@
-"""Filesystem ABC (contracts tier).
+"""Filesystem contracts (legacy re-export).
 
-Exports ``NexusFilesystemABC`` — the kernel syscall contract.
+``NexusFilesystem`` Protocol has been deleted.  The SSOT for the kernel
+API is now the Rust ``pub fn sys_*`` methods.  Use ``NexusFS`` directly::
+
+    from nexus.core.nexus_fs import NexusFS
 """
 
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
-
-__all__ = ["NexusFilesystemABC"]
+__all__: list[str] = []

@@ -66,8 +66,8 @@ class CacheSettings:
     # Dragonfly cache connection (optional - if not set, use PostgreSQL)
     dragonfly_url: str | None = field(default_factory=lambda: get_dragonfly_url())
 
-    # Backend selection: auto, dragonfly, postgres
-    cache_backend: Literal["auto", "dragonfly", "postgres"] = field(
+    # Backend selection: auto, dragonfly, postgres, inmem
+    cache_backend: Literal["auto", "dragonfly", "postgres", "inmem"] = field(
         default_factory=lambda: os.environ.get("NEXUS_CACHE_BACKEND", "auto")  # type: ignore
     )
 
@@ -145,7 +145,7 @@ class CacheSettings:
         default_factory=lambda: os.environ.get("NEXUS_CACHE_ENABLE_L1", "true").lower() == "true"
     )
     l1_cache_size: int = field(
-        default_factory=lambda: int(os.environ.get("NEXUS_CACHE_L1_SIZE", "50000"))
+        default_factory=lambda: max(2, int(os.environ.get("NEXUS_CACHE_L1_SIZE", "5000")))
     )
 
     def should_use_dragonfly(self) -> bool:
@@ -161,10 +161,10 @@ class CacheSettings:
 
     def validate(self) -> None:
         """Validate configuration."""
-        if self.cache_backend not in ("auto", "dragonfly", "postgres"):
+        if self.cache_backend not in ("auto", "dragonfly", "postgres", "inmem"):
             raise ValueError(
                 f"Invalid NEXUS_CACHE_BACKEND: {self.cache_backend}. "
-                "Must be 'auto', 'dragonfly', or 'postgres'"
+                "Must be 'auto', 'dragonfly', 'postgres', or 'inmem'."
             )
 
         if self.cache_backend == "dragonfly" and not self.dragonfly_url:

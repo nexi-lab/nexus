@@ -2,18 +2,15 @@
 
 Caching contracts:
 
-- ``CacheConfigContract`` — the 3-attribute mixin contract that CacheService
-  relies on (session_factory, zone_id, l1_only). Formerly ``CachingConnectorContract``.
-
-- ``CachingConnectorContract`` — wrapping-chain cache methods for
-  CachingBackendWrapper (get_cache_stats, clear_cache, describe).
+- ``CacheConfigContract`` — the 3-attribute contract for cache configuration
+  (session_factory, zone_id, l1_only).
 
 - ``TigerCacheProtocol`` — protocol for Tiger bitmap cache backends (cross-brick).
 
 - ``EmbeddingCacheProtocol`` — protocol for embedding vector caches (cross-brick).
 
 References:
-    - Issue #1628: Split CacheConnectorMixin into focused units
+    - Issue #1628: Cache protocol contracts
     - Issue #2362: ConnectorProtocol wrapping chains
     - Issue #2364: Consolidate duplicate top-level modules
     - docs/design/cache-layer.md
@@ -22,13 +19,13 @@ References:
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class CacheConfigContract(Protocol):
-    """Contract for connectors that support caching via CacheService.
+    """Contract for connectors that support caching configuration.
 
-    Documents the attributes that CacheService expects from its connector
-    reference. Connectors inheriting CacheConnectorMixin implicitly satisfy
-    this contract.
+    Documents the attributes that cache-aware components expect from a
+    connector reference.
 
     Attributes:
         session_factory: SQLAlchemy session factory (None for L1-only mode)
@@ -39,25 +36,6 @@ class CacheConfigContract(Protocol):
     session_factory: Any | None
     zone_id: str | None
     l1_only: bool
-
-@runtime_checkable
-class CachingConnectorContract(Protocol):
-    """Wrapping-chain cache capability protocol.
-
-    Satisfied by CachingBackendWrapper and any other wrapper that provides
-    cache introspection and management at the connector level.
-
-    Methods:
-        get_cache_stats: Return cache hit/miss/error counters.
-        clear_cache: Clear all cached entries and reset stats.
-        describe: Return the wrapper chain description string.
-    """
-
-    def get_cache_stats(self) -> dict[str, Any]: ...
-
-    def clear_cache(self) -> None: ...
-
-    def describe(self) -> str: ...
 
 @runtime_checkable
 class TigerCacheProtocol(Protocol):

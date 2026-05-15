@@ -29,8 +29,10 @@ from nexus.bricks.mcp.profiles import (
     revoke_tools_by_tuple_ids,
 )
 from nexus.bricks.mcp.server import create_mcp_server
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
+from tests.testkit.metadata import InMemoryNexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,11 @@ def rebac_engine():
 @pytest.fixture
 def rebac_manager(rebac_engine):
     """Real EnhancedReBACManager on in-memory SQLite."""
-    return EnhancedReBACManager(engine=rebac_engine, cache_ttl_seconds=1)
+    return EnhancedReBACManager(
+        engine=rebac_engine,
+        cache_ttl_seconds=1,
+        version_store=MetastoreVersionStore(InMemoryNexusFS()),
+    )
 
 
 @pytest.fixture
@@ -132,7 +138,13 @@ def _make_ctx(subject_type: str, subject_id: str) -> Mock:
 
 
 def _get_tool(server, name):
-    """Get a tool callable from the MCP server."""
+    """Get a tool callable from the MCP server (FastMCP 2.x + 3.x compat)."""
+    if hasattr(server, "_local_provider"):
+        lp = server._local_provider
+        for key, component in lp._components.items():
+            if key.startswith("tool:") and component.name == name:
+                return component
+        raise KeyError(f"tool {name!r} not registered on {server}")
     return server._tool_manager._tools[name]
 
 

@@ -1,12 +1,11 @@
-"""OAuth credential lifecycle service — pure business logic.
+"""OAuth credential lifecycle service — business logic + RPC surface.
 
-Canonical location: ``nexus.bricks.auth.oauth.credential_service`` (Issue #2281).
+Canonical location: ``nexus.bricks.auth.oauth.credential_service``.
 Extracted from ``nexus.services.oauth_service`` (Issue #8B split).
 
-This module contains the core OAuth credential management logic with
-zero dependencies on ``nexus.server``, ``nexus.core.rpc_decorator``,
-or any MCP/Klavis integration.  The services layer wraps these methods
-with ``@rpc_expose`` and adds the ``mcp_connect`` orchestration.
+This module is the single authoritative OAuth credential service.
+``@rpc_expose`` decorators live directly on the brick methods (same
+pattern as ReBACService, LLMService, MCPService).
 """
 
 import builtins
@@ -15,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
@@ -67,15 +67,14 @@ class PKCEStateStore:
 
 
 class OAuthCredentialService:
-    """Pure OAuth credential lifecycle service.
+    """OAuth credential lifecycle service with RPC surface.
 
     Handles provider discovery, authorization URLs, code exchange,
     credential listing/revocation/testing, and PKCE support.
 
-    This class contains **no** ``@rpc_expose`` decorators and **no**
-    imports from ``nexus.server`` or MCP modules.  The services layer
-    (``nexus.services.oauth_service.OAuthService``) composes this and
-    adds the RPC surface + ``mcp_connect``.
+    ``@rpc_expose`` decorators live directly on the brick (same pattern
+    as ReBACService, LLMService, MCPService).  ``mcp_connect`` lives on
+    MCPService where it belongs.
     """
 
     def __init__(
@@ -97,6 +96,7 @@ class OAuthCredentialService:
     # Public API: Provider Discovery
     # =========================================================================
 
+    @rpc_expose(name="oauth_list_providers", description="List all available OAuth providers")
     async def list_providers(
         self,
         context: "OperationContext | None" = None,  # noqa: ARG002
@@ -124,6 +124,9 @@ class OAuthCredentialService:
     # Public API: OAuth Flow
     # =========================================================================
 
+    @rpc_expose(
+        name="oauth_get_auth_url", description="Get OAuth authorization URL for any provider"
+    )
     async def get_auth_url(
         self,
         provider: str,
@@ -143,6 +146,9 @@ class OAuthCredentialService:
             provider_instance, provider, state
         )
 
+    @rpc_expose(
+        name="oauth_exchange_code", description="Exchange OAuth authorization code for tokens"
+    )
     async def exchange_code(
         self,
         provider: str,
@@ -198,7 +204,12 @@ class OAuthCredentialService:
         created_by = current_user_id or user_email
 
         provider_name = provider_instance.provider_name
-        credential.user_email = user_email
+        # OAuthCredential is a frozen dataclass — in-place assignment raises
+        # FrozenInstanceError.  Use ``dataclasses.replace`` to build a new
+        # credential with the resolved user_email attached.
+        import dataclasses as _dc
+
+        credential = _dc.replace(credential, user_email=user_email)
 
         try:
             credential_id = await token_manager.store_credential(
@@ -231,6 +242,7 @@ class OAuthCredentialService:
     # Public API: Credential Management
     # =========================================================================
 
+    @rpc_expose(name="oauth_list_credentials", description="List all OAuth credentials")
     async def list_credentials(
         self,
         provider: str | None = None,
@@ -275,6 +287,7 @@ class OAuthCredentialService:
         )
         return result
 
+    @rpc_expose(name="oauth_revoke_credential", description="Revoke OAuth credential")
     async def revoke_credential(
         self,
         provider: str,
@@ -308,6 +321,54 @@ class OAuthCredentialService:
             logger.error(f"Failed to revoke credential: {e}")
             raise ValueError(f"Failed to revoke credential: {e}") from e
 
+    async def delete_credentials(
+        self,
+        provider: str,
+        user_email: str,
+        zone_id: str | None = None,
+    ) -> bool:
+        """Mark the legacy credential as revoked in the token store.
+
+        Called by OldStoreAdapter.delete() during `auth migrate --finalize`
+        (#3741) to persist deletion to the underlying database rather than
+        only removing the in-memory snapshot.
+
+        Uses revoke (soft-delete) because the token manager has no hard-delete
+        path; revoked rows are filtered from all live reads automatically.
+
+        Returns True if the credential was found and revoked, False if absent.
+        """
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        token_manager = self._get_token_manager()
+        if token_manager is None:
+            return False
+
+        effective_zone = zone_id if zone_id and zone_id != "root" else ROOT_ZONE_ID
+        try:
+            success = await token_manager.revoke_credential(
+                provider=provider,
+                user_email=user_email,
+                zone_id=effective_zone,
+            )
+            if success:
+                logger.info(
+                    "delete_credentials: revoked legacy credential %s/%s (zone=%s) (#3741)",
+                    provider,
+                    user_email,
+                    effective_zone,
+                )
+            return bool(success)
+        except Exception as exc:
+            logger.warning(
+                "delete_credentials: failed to revoke %s/%s: %s (#3741)",
+                provider,
+                user_email,
+                exc,
+            )
+            return False
+
+    @rpc_expose(name="oauth_test_credential", description="Test OAuth credential validity")
     async def test_credential(
         self,
         provider: str,

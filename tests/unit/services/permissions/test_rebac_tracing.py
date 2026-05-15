@@ -20,6 +20,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac import rebac_tracing
 from nexus.bricks.rebac.rebac_tracing import (
     ATTR_BATCH_ALLOWED,

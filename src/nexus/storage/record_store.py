@@ -48,6 +48,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _handle_asyncpg_protocol_error(ctx: Any) -> None:
+    """Mark asyncpg.InternalClientError as a disconnect so the pool discards the conn.
+
+    Backports SQLAlchemy #13241 (unreleased as of 2.0.49) and addresses issue #3807.
+    asyncpg raises InternalClientError ("got result for unknown protocol state N" or
+    "cannot switch to state X; another operation (Y) is in progress") when a query
+    races with task cancellation or a server-side session termination. SQLAlchemy's
+    asyncpg dialect does not classify these as disconnects, so the poisoned
+    connection is returned to the pool and the next checkout cascades into either
+    a hang or the same error. Setting ``is_disconnect = True`` forces pool
+    invalidation and a fresh connect on next checkout.
+    """
+    try:
+        import asyncpg
+    except ImportError:
+        return
+
+    if isinstance(ctx.original_exception, asyncpg.InternalClientError):
+        ctx.is_disconnect = True
+
+
 class RecordStoreABC(ABC):
     """Abstract base class for relational data storage (the "Truth" pillar).
 
@@ -208,7 +229,9 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                          When None, uses _build_pool_kwargs defaults (30 primary, 10 with replica).
         """
         from sqlalchemy import create_engine, event
+        from sqlalchemy.engine import make_url
         from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
 
         # Resolve database URL
         _resolved = self._resolve_db_url(db_url, db_path)
@@ -234,6 +257,9 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         engine_kwargs: dict[str, Any] = {}
         if not self._is_postgresql:
             engine_kwargs["connect_args"] = {"check_same_thread": False}
+            url = make_url(self.database_url)
+            if url.database in (None, "", ":memory:"):
+                engine_kwargs["poolclass"] = StaticPool
         else:
             _default_pool = (
                 pool_size if pool_size is not None else (10 if self._has_read_replica else 20)
@@ -278,6 +304,11 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         self._async_engine: Any = None
         self._async_session_factory_instance: Any = None
         self._async_init_lock = threading.Lock()
+        # Issue #3775: set after aclose() to block lazy re-creation of async
+        # engines via the factory property — otherwise a stale consumer
+        # holding ``record_store.async_session_factory`` would silently
+        # rebuild a fresh asyncpg pool that nothing later disposes.
+        self._async_closed: bool = False
 
         # Read replica engine/session (Issue #725)
         self._read_engine: Any = None
@@ -315,8 +346,17 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         # Create tables (skip in production when Alembic is SSOT)
         if create_tables:
             from nexus.storage.models import Base
+            from nexus.storage.schema_invariants import ensure_postgres_schema_invariants
+            from nexus.storage.zone_bootstrap import ensure_root_zone
 
             Base.metadata.create_all(self._engine)
+            ensure_postgres_schema_invariants(self._engine)
+            # Issue #3897: every install must contain zones.root before
+            # the first create_api_key call (writes api_key_zones with
+            # FK to zones). Alembic's migration handles persistent
+            # installs; this covers create_all paths used by CLI tooling,
+            # tests, and `nexus hub` flows.
+            ensure_root_zone(self.session_factory)
 
         logger.info(
             "SQLAlchemyRecordStore initialized: %s (read_replica=%s)",
@@ -358,6 +398,90 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         if is_async:
             kwargs["pool_use_lifo"] = True
         return kwargs
+
+    @staticmethod
+    def _build_async_pool_kwargs(
+        *,
+        prefix: str = "NEXUS_DB",
+        default_pool_size: int = 20,
+        default_max_overflow: int = 30,
+    ) -> dict[str, Any]:
+        """Pool kwargs for the asyncpg engine.
+
+        Uses ``NullPool`` to eliminate the class of cross-event-loop corruption
+        bugs (issues #3807, #3775): with asyncpg, a cached Connection is tied
+        to the event loop that opened it. Reusing that connection from a
+        different loop (PortalRunner vs uvicorn vs SearchDaemon) triggers
+        ``Future attached to a different loop`` errors, which poison the pool.
+        NullPool opens a fresh connection on the current loop per checkout and
+        closes it on return, so state never leaks across loops.
+
+        Trade-off: without pool_size / max_overflow, bursty async traffic can
+        open up to one connection per concurrent request. Operators must
+        size PostgreSQL's ``max_connections`` (and any upstream pooler like
+        PgBouncer) to at least ``threadpool_size × replicas + headroom``.
+        Under-provisioning manifests as ``asyncpg.TooManyConnectionsError``
+        — observable in logs/metrics and fixable by raising PG limits or
+        opting into the bounded pool below. The previous behaviour (pool
+        corruption under cancellation) was silent.
+
+        Override with ``<prefix>_ASYNC_USE_POOL=1`` to restore the pooled
+        queue (for single-loop deployments where the overhead matters). The
+        primary engine's toggle is ``NEXUS_DB_ASYNC_USE_POOL``; the
+        read-replica's is ``NEXUS_READ_REPLICA_ASYNC_USE_POOL``. The primary
+        toggle is also honoured as a fallback so existing deployments that
+        only set ``NEXUS_DB_ASYNC_USE_POOL`` behave unchanged.
+
+        Pool-size / max-overflow / recycle are read from ``<prefix>_POOL_*``
+        when pooled mode is active.
+        """
+        _truthy = ("1", "true", "yes")
+        _falsy = ("0", "false", "no", "")
+        # Prefix-specific toggle takes precedence. Only consult the legacy
+        # global toggle when the prefix-specific one is genuinely absent,
+        # so operators can explicitly disable pooled mode on the replica
+        # with ``NEXUS_READ_REPLICA_ASYNC_USE_POOL=0`` even if
+        # ``NEXUS_DB_ASYNC_USE_POOL=1`` is set. Whitespace is stripped.
+        _prefix_raw = os.environ.get(f"{prefix}_ASYNC_USE_POOL")
+        if _prefix_raw is not None:
+            _val = _prefix_raw.strip().lower()
+            if _val in _truthy:
+                _use_pool = True
+            elif _val in _falsy:
+                _use_pool = False
+            else:
+                # Present but invalid — fail closed to the safe default.
+                logger.warning(
+                    "%s_ASYNC_USE_POOL=%r is not a recognized boolean "
+                    "(expected 1/0/true/false/yes/no); defaulting to NullPool.",
+                    prefix,
+                    _prefix_raw,
+                )
+                _use_pool = False
+        else:
+            _global_val = os.environ.get("NEXUS_DB_ASYNC_USE_POOL", "").strip().lower()
+            _use_pool = _global_val in _truthy
+        if _use_pool:
+            return SQLAlchemyRecordStore._build_pool_kwargs(
+                prefix=prefix,
+                is_async=True,
+                default_pool_size=default_pool_size,
+                default_max_overflow=default_max_overflow,
+            )
+        from sqlalchemy.pool import NullPool
+
+        return {"poolclass": NullPool}
+
+    @staticmethod
+    def _attach_asyncpg_protocol_error_handler(engine: Any) -> None:
+        """Attach a handle_error listener that invalidates on asyncpg protocol errors.
+
+        Must be attached to a sync Engine (or an AsyncEngine's ``sync_engine``).
+        Paired with :func:`_handle_asyncpg_protocol_error` above.
+        """
+        from sqlalchemy import event
+
+        event.listen(engine, "handle_error", _handle_asyncpg_protocol_error)
 
     @staticmethod
     def _attach_plan_cache_mode_listener(engine: Any) -> None:
@@ -423,10 +547,25 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         to ``create_async_engine`` so that connection creation goes through the
         custom factory (e.g. Cloud SQL Python Connector).
         """
+        # Issue #3775: enforce sentinel even on the cache-hit path. After
+        # aclose() the cached factory still references the disposed engine,
+        # which would lazily rebuild a fresh pool on next checkout.
+        if self._async_closed:
+            raise RuntimeError(
+                "SQLAlchemyRecordStore.async_session_factory accessed "
+                "after aclose(); the async engine has been disposed. "
+                "Construct a new RecordStore for further async use."
+            )
         if self._async_session_factory_instance is None:
             with self._async_init_lock:
                 # Double-check after acquiring lock
                 if self._async_session_factory_instance is None:
+                    if self._async_closed:
+                        raise RuntimeError(
+                            "SQLAlchemyRecordStore.async_session_factory accessed "
+                            "after aclose(); the async engine has been disposed. "
+                            "Construct a new RecordStore for further async use."
+                        )
                     from sqlalchemy.ext.asyncio import (
                         AsyncSession,
                         async_sessionmaker,
@@ -438,9 +577,8 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     engine_kwargs: dict[str, Any] = {}
                     if "postgresql" in async_url:
                         engine_kwargs.update(
-                            self._build_pool_kwargs(
+                            self._build_async_pool_kwargs(
                                 prefix="NEXUS_DB",
-                                is_async=True,
                                 default_pool_size=10 if self._has_read_replica else 20,
                                 default_max_overflow=10 if self._has_read_replica else 30,
                             )
@@ -455,15 +593,40 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     # Set plan_cache_mode on async engine for PostgreSQL
                     if self._is_postgresql:
                         self._attach_plan_cache_mode_listener(self._async_engine.sync_engine)
+                        # Issue #3807: force pool discard on asyncpg InternalClientError
+                        self._attach_asyncpg_protocol_error_handler(self._async_engine.sync_engine)
 
                     self._async_session_factory_instance = async_sessionmaker(
                         self._async_engine, class_=AsyncSession, expire_on_commit=False
                     )
                     pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+                    _poolclass = engine_kwargs.get("poolclass")
+                    _strategy = (
+                        _poolclass.__name__
+                        if _poolclass is not None
+                        else (str(pool_info) if pool_info else "default")
+                    )
+                    _is_pg = "postgresql" in async_url
+                    if _strategy == "NullPool" and _is_pg:
+                        _advisory = (
+                            " NullPool opens a fresh connection per checkout to prevent "
+                            "cross-event-loop corruption (#3807); ensure PostgreSQL "
+                            "max_connections covers peak concurrent async traffic."
+                        )
+                    elif _is_pg and pool_info:
+                        _advisory = (
+                            " Pooled mode active (NEXUS_DB_ASYNC_USE_POOL=1); "
+                            "connections may be reused across event loops — "
+                            "monitor for asyncpg InternalClientError under burst load (#3807)."
+                        )
+                    else:
+                        _advisory = ""
                     logger.info(
-                        "Async session factory initialized: %s (pool=%s)",
+                        "Async session factory initialized: %s (strategy=%s, pool_kwargs=%s).%s",
                         async_url.split("@")[-1],
-                        pool_info or "default",
+                        _strategy,
+                        pool_info or "{}",
+                        _advisory,
                     )
 
         return self._async_session_factory_instance
@@ -503,10 +666,24 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         if not self._has_read_replica:
             return self.async_session_factory
 
+        # Issue #3775: enforce sentinel even on the cache-hit path. After
+        # aclose() the cached factory still references the disposed engine.
+        if self._async_closed:
+            raise RuntimeError(
+                "SQLAlchemyRecordStore.async_read_session_factory accessed "
+                "after aclose(); the async read engine has been disposed. "
+                "Construct a new RecordStore for further async use."
+            )
         if self._async_read_session_factory_instance is None:
             with self._async_read_init_lock:
                 # Double-check after acquiring lock
                 if self._async_read_session_factory_instance is None:
+                    if self._async_closed:
+                        raise RuntimeError(
+                            "SQLAlchemyRecordStore.async_read_session_factory accessed "
+                            "after aclose(); the async read engine has been disposed. "
+                            "Construct a new RecordStore for further async use."
+                        )
                     from sqlalchemy.ext.asyncio import (
                         AsyncSession,
                         async_sessionmaker,
@@ -515,9 +692,8 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
                     assert self._read_replica_url is not None  # guarded by _has_read_replica
                     async_url = self._to_async_url(self._read_replica_url)
-                    engine_kwargs = self._build_pool_kwargs(
+                    engine_kwargs = self._build_async_pool_kwargs(
                         prefix="NEXUS_READ_REPLICA",
-                        is_async=True,
                         default_pool_size=20,
                         default_max_overflow=25,
                     )
@@ -530,15 +706,26 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     # Set plan_cache_mode on async read replica engine for PostgreSQL
                     if self._is_postgresql:
                         self._attach_plan_cache_mode_listener(self._async_read_engine.sync_engine)
+                        # Issue #3807: force pool discard on asyncpg InternalClientError
+                        self._attach_asyncpg_protocol_error_handler(
+                            self._async_read_engine.sync_engine
+                        )
 
                     self._async_read_session_factory_instance = async_sessionmaker(
                         self._async_read_engine, class_=AsyncSession, expire_on_commit=False
                     )
                     pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+                    _poolclass = engine_kwargs.get("poolclass")
+                    _strategy = (
+                        _poolclass.__name__
+                        if _poolclass is not None
+                        else (str(pool_info) if pool_info else "default")
+                    )
                     logger.info(
-                        "Async read session factory initialized: %s (pool=%s)",
+                        "Async read session factory initialized: %s (strategy=%s, pool_kwargs=%s).",
                         async_url.split("@")[-1],
-                        pool_info or "default",
+                        _strategy,
+                        pool_info or "{}",
                     )
 
         return self._async_read_session_factory_instance
@@ -578,13 +765,39 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         )
 
     def close(self) -> None:
-        """Close all engines and release connections."""
+        """Close engines and release connections (Issue #3775).
+
+        Async engines disposed best-effort via ``sync_engine.dispose()``. This
+        is correct for sync-only callers (CLI, tests) whose async engine —
+        if ever initialized — was created on a sync thread with no live
+        event loop. It is **not** correct when ``close()`` runs on a worker
+        thread while asyncpg connections are bound to a *different* live loop;
+        that path produces ``RuntimeError: Future attached to a different
+        loop``. Callers who own such an engine must use :meth:`aclose` from
+        the engine's origin loop instead — see ``NexusFS.adispose_async_engines``.
+
+        On dispose failure the reference is preserved (not nulled), so the
+        caller can attempt explicit recovery via ``aclose`` rather than
+        silently leaking the pool.
+        """
         self._engine.dispose()
+
+        # Async engines: best-effort sync dispose. Preserve refs on failure
+        # so the caller can recover via aclose() — never null a live engine
+        # we did not actually dispose.
         if self._async_engine is not None:
-            # Async engine dispose is sync-safe in SQLAlchemy 2.0+
-            self._async_engine.sync_engine.dispose()
-            self._async_engine = None
-            self._async_session_factory_instance = None
+            try:
+                self._async_engine.sync_engine.dispose()
+            except Exception:
+                logger.warning(
+                    "Sync dispose of async engine failed in close(); engine "
+                    "reference preserved. Use aclose() from the engine's "
+                    "origin loop to release connections.",
+                    exc_info=True,
+                )
+            else:
+                self._async_engine = None
+                self._async_session_factory_instance = None
 
         # Dispose read replica engines (Issue #725)
         if self._read_engine is not None:
@@ -592,8 +805,54 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             self._read_engine = None
             self._read_session_factory_instance = None
         if self._async_read_engine is not None:
-            self._async_read_engine.sync_engine.dispose()
-            self._async_read_engine = None
-            self._async_read_session_factory_instance = None
+            try:
+                self._async_read_engine.sync_engine.dispose()
+            except Exception:
+                logger.warning(
+                    "Sync dispose of async read engine failed in close(); "
+                    "engine reference preserved. Use aclose() from the "
+                    "engine's origin loop to release connections.",
+                    exc_info=True,
+                )
+            else:
+                self._async_read_engine = None
+                self._async_read_session_factory_instance = None
 
         logger.info("SQLAlchemyRecordStore closed")
+
+    async def aclose(self) -> None:
+        """Dispose async engines on the current loop (Issue #3775).
+
+        Disposes only the async engines — leaves sync engines and the store
+        usable so that close-callback flush paths (e.g. write observer
+        ``flush_sync`` registered via ``NexusFS._close_callbacks``) can still
+        write through the sync ``session_factory`` after this returns. The
+        caller must subsequently invoke :meth:`close` to dispose sync engines
+        once those callbacks have run.
+
+        Sets ``_async_closed = True`` so subsequent property access raises
+        rather than silently rebuilding a pool that nothing will dispose.
+        SQLAlchemy ``Engine.dispose()`` only clears the pool — the engine
+        remains usable and would lazily build a fresh pool on next checkout.
+
+        The async engine references are **retained** (not nulled) after
+        dispose so that ``close()`` can re-dispose them if any retained
+        ``async_sessionmaker`` reference checked out a connection between
+        ``aclose`` and the final ``close``. (External consumers that cached
+        the factory from before aclose can still call into the engine; the
+        sentinel only protects fresh property accesses.)
+
+        Must be awaited from the same loop that created the async engine
+        (typically the loop that first accessed ``async_session_factory``);
+        calling from a different loop reproduces the original cross-loop bug.
+        """
+        # Set the sentinel first so that even a dispose failure leaves the
+        # store unable to silently re-create a new pool via the property.
+        self._async_closed = True
+        if self._async_engine is not None:
+            await self._async_engine.dispose()
+            # Retain ref — close() will re-dispose to catch reopened pools.
+        if self._async_read_engine is not None:
+            await self._async_read_engine.dispose()
+
+        logger.info("SQLAlchemyRecordStore async engines disposed")

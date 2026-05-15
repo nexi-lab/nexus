@@ -1,0 +1,6 @@
+[
+  {"timestamp_ns":0,"op":"read","path":"/shared/model.bin","offset":0,"length":65536,"parallel_group":"readers-1"},
+  {"timestamp_ns":0,"op":"read","path":"/shared/model.bin","offset":0,"length":65536,"parallel_group":"readers-1"},
+  {"timestamp_ns":0,"op":"read","path":"/shared/model.bin","offset":0,"length":65536,"parallel_group":"readers-1"},
+  {"timestamp_ns":0,"op":"read","path":"/shared/model.bin","offset":0,"length":65536,"parallel_group":"readers-1"}
+]

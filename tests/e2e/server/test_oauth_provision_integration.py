@@ -11,13 +11,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nexus import LocalBackend
+from nexus import CASLocalBackend
 from nexus.bricks.auth.oauth.crypto import OAuthCrypto
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
@@ -31,11 +30,11 @@ def record_store(tmp_path):
 
 
 @pytest.fixture
-def nx(tmp_path, record_store):
+async def nx(tmp_path, record_store):
     """Create NexusFS instance for testing."""
     nx_instance = create_nexus_fs(
-        backend=LocalBackend(tmp_path),
-        metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
+        backend=CASLocalBackend(tmp_path),
+        metadata_store=str(tmp_path / "raft-metadata"),
         record_store=record_store,
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=True, allow_admin_bypass=True),
@@ -57,8 +56,8 @@ def admin_context():
 
 @pytest.fixture
 def oauth_crypto():
-    """Create OAuthCrypto instance for testing."""
-    return OAuthCrypto()
+    """Create OAuthCrypto instance for testing with an ephemeral key."""
+    return OAuthCrypto(encryption_key=OAuthCrypto.generate_key())
 
 
 class TestOAuthProvisionIntegration:

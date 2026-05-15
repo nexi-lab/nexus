@@ -2,89 +2,100 @@
 
 Tests cover batch optimization methods:
 - _batch_get_versions() for GCS and S3
-- _bulk_download_blobs() for parallel downloads
+- _bulk_download() for parallel downloads
 - _batch_write_to_cache() for bulk cache writes
 - _batch_read_from_backend() integration
 - batch_read_content() native implementations for GCS and S3 (#1626)
 """
 
+from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from nexus.backends.backend import Backend
-from nexus.backends.base_blob_connector import BaseBlobStorageConnector
-from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.backends.base.backend import Backend
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
 from nexus.core.object_store import WriteResult
 
 
-class MockBlobConnector(BaseBlobStorageConnector, CacheConnectorMixin):
+class InMemoryTransport:
+    """Minimal in-memory Transport for tests."""
+
+    transport_name = "memory"
+
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+        self.download_count: int = 0
+
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
+        self.files[key] = data
+        return None
+
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+        self.download_count += 1
+        if key not in self.files:
+            raise FileNotFoundError(f"Blob not found: {key}")
+        return self.files[key], version_id
+
+    def remove(self, key: str) -> None:
+        self.files.pop(key, None)
+
+    def exists(self, key: str) -> bool:
+        return key in self.files
+
+    def get_size(self, key: str) -> int:
+        return len(self.files.get(key, b""))
+
+    def list_keys(self, prefix: str = "", delimiter: str = "/") -> tuple[list[str], list[str]]:
+        keys = [k for k in self.files if k.startswith(prefix)]
+        return keys, []
+
+    def copy_key(self, src_key: str, dst_key: str) -> None:
+        if src_key in self.files:
+            self.files[dst_key] = self.files[src_key]
+
+    def create_dir(self, key: str) -> None:
+        self.files[key] = b""
+
+    def stream(
+        self, key: str, chunk_size: int = 8192, version_id: str | None = None
+    ) -> Iterator[bytes]:
+        data, _ = self.fetch(key, version_id)
+        for i in range(0, len(data), chunk_size):
+            yield data[i : i + chunk_size]
+
+
+class MockBlobConnector(PathAddressingEngine):
     """Mock blob connector for testing batch operations."""
 
-    name = "test_blob_backend"  # Class attribute for abstract property
-
     def __init__(self, session_factory):
+        transport = InMemoryTransport()
+        super().__init__(transport, backend_name="test_blob_backend")
         self.session_factory = session_factory
-        self.prefix = ""
-        self.files = {}  # blob_path -> content
-        self.versions = {}  # blob_path -> version_id
-        self.download_count = 0  # Track individual download calls
+        self.versions: dict[str, str] = {}
 
-    def _get_blob_path(self, backend_path: str) -> str:
-        """Convert backend path to blob path."""
-        return backend_path
+    @property
+    def files(self) -> dict[str, bytes]:
+        """Proxy to transport.files for test manipulation."""
+        return self._transport.files
 
-    def _download_blob(
-        self, blob_path: str, version_id: str | None = None
-    ) -> tuple[bytes, str | None]:
-        """Download single blob."""
-        self.download_count += 1
-        if blob_path not in self.files:
-            raise FileNotFoundError(f"Blob not found: {blob_path}")
-        # Return content and version (use provided version_id or generate one)
-        file_version = version_id or self.versions.get(blob_path, "v1")
-        return self.files[blob_path], file_version
+    @files.setter
+    def files(self, value: dict[str, bytes]) -> None:
+        self._transport.files = value
 
-    def _delete_blob(self, blob_path: str) -> None:
-        """Delete blob."""
-        if blob_path in self.files:
-            del self.files[blob_path]
+    @property
+    def download_count(self) -> int:
+        """Proxy to transport.download_count for test assertions."""
+        return self._transport.download_count
 
-    def _upload_blob(self, blob_path: str, content: bytes, content_type: str = None) -> None:
-        """Upload blob."""
-        self.files[blob_path] = content
+    @download_count.setter
+    def download_count(self, value: int) -> None:
+        self._transport.download_count = value
 
     def get_version(self, path: str, context: OperationContext | None = None) -> str | None:
         """Get version for a file."""
         return self.versions.get(path)
-
-    def _list_files_recursive(
-        self, path: str, context: OperationContext | None = None
-    ) -> list[str]:
-        """List files recursively."""
-        return list(self.files.keys())
-
-    def _blob_exists(self, blob_path: str) -> bool:
-        """Check if blob exists."""
-        return blob_path in self.files
-
-    def _get_blob_size(self, blob_path: str) -> int:
-        """Get blob size."""
-        return len(self.files.get(blob_path, b""))
-
-    def _list_blobs(self, prefix: str = "") -> list[str]:
-        """List all blobs with prefix."""
-        return [path for path in self.files if path.startswith(prefix)]
-
-    def _copy_blob(self, source_blob_path: str, dest_blob_path: str) -> None:
-        """Copy blob."""
-        if source_blob_path in self.files:
-            self.files[dest_blob_path] = self.files[source_blob_path]
-
-    def _create_directory_marker(self, blob_path: str) -> None:
-        """Create directory marker."""
-        pass  # Not needed for tests
 
 
 class TestBatchGetVersions:
@@ -162,10 +173,10 @@ class TestBatchGetVersions:
 
 
 class TestBulkDownloadBlobs:
-    """Test _bulk_download_blobs() method."""
+    """Test _bulk_download() method."""
 
-    def test_bulk_download_calls_download_blob(self, tmp_path: Path):
-        """Test that bulk download calls _download_blob() for each file (DRY principle)."""
+    def test_bulk_download_calls_download(self, tmp_path: Path):
+        """Test that bulk download calls _download() for each file (DRY principle)."""
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
@@ -187,14 +198,10 @@ class TestBulkDownloadBlobs:
         backend.download_count = 0
 
         # Call bulk download
-        result = backend._bulk_download_blobs(
-            ["blob1.txt", "blob2.txt", "blob3.txt"], max_workers=2
-        )
+        result = backend._bulk_download(["blob1.txt", "blob2.txt", "blob3.txt"], max_workers=2)
 
-        # Verify _download_blob() was called for each file
-        assert backend.download_count == 3, (
-            "_bulk_download_blobs should call _download_blob() for each file"
-        )
+        # Verify _download() was called for each file
+        assert backend.download_count == 3, "_bulk_download should call _download() for each file"
 
         # Verify all files downloaded
         assert len(result) == 3
@@ -222,9 +229,7 @@ class TestBulkDownloadBlobs:
         }
 
         # Call bulk download
-        result = backend._bulk_download_blobs(
-            ["blob1.txt", "blob2.txt", "blob3.txt"], max_workers=2
-        )
+        result = backend._bulk_download(["blob1.txt", "blob2.txt", "blob3.txt"], max_workers=2)
 
         # Should return successful downloads only
         assert len(result) == 2
@@ -247,159 +252,10 @@ class TestBulkDownloadBlobs:
         backend = MockBlobConnector(SessionLocal)
 
         # Call with empty list
-        result = backend._bulk_download_blobs([], max_workers=2)
+        result = backend._bulk_download([], max_workers=2)
 
         # Should return empty dict
         assert result == {}
-
-
-class TestBatchWriteToCache:
-    """Test batch_write_to_cache() method."""
-
-    def test_batch_write_multiple_entries(self, tmp_path: Path):
-        """Test batch writing multiple cache entries in single transaction."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from nexus.storage.models import Base
-
-        db_path = tmp_path / "test.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        SessionLocal = sessionmaker(bind=engine)
-
-        backend = MockBlobConnector(SessionLocal)
-
-        # Prepare entries for batch write
-        entries = [
-            {
-                "path": "/test/file1.txt",
-                "content": b"content1",
-                "content_text": "content1",
-                "content_type": "full",
-                "backend_version": "v1",
-            },
-            {
-                "path": "/test/file2.txt",
-                "content": b"content2",
-                "content_text": "content2",
-                "content_type": "full",
-                "backend_version": "v2",
-            },
-            {
-                "path": "/test/file3.txt",
-                "content": b"content3",
-                "content_text": "content3",
-                "content_type": "full",
-                "backend_version": "v3",
-            },
-        ]
-
-        # Mock path_id lookup
-        with patch.object(backend, "_get_path_ids_bulk") as mock_path_ids:
-            mock_path_ids.return_value = {
-                "/test/file1.txt": "path1",
-                "/test/file2.txt": "path2",
-                "/test/file3.txt": "path3",
-            }
-
-            # Call batch write
-            result = backend.batch_write_to_cache(entries)
-
-            # Verify all entries written (cache_id is "" in disk-only mode)
-            assert len(result) == 3
-            assert all(entry.content_hash for entry in result)
-
-    def test_batch_write_empty_list(self, tmp_path: Path):
-        """Test batch write with empty list."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from nexus.storage.models import Base
-
-        db_path = tmp_path / "test.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        SessionLocal = sessionmaker(bind=engine)
-
-        backend = MockBlobConnector(SessionLocal)
-
-        # Call with empty list
-        result = backend.batch_write_to_cache([])
-
-        # Should return empty list
-        assert result == []
-
-
-class TestBatchReadFromBackend:
-    """Test batch_read_from_backend() integration."""
-
-    def test_batch_read_uses_bulk_download(self, tmp_path: Path):
-        """Test that batch read uses _bulk_download_blobs() for blob connectors."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from nexus.storage.models import Base
-
-        db_path = tmp_path / "test.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        SessionLocal = sessionmaker(bind=engine)
-
-        backend = MockBlobConnector(SessionLocal)
-        backend.files = {
-            "file1.txt": b"content1",
-            "file2.txt": b"content2",
-            "file3.txt": b"content3",
-        }
-
-        # Mock _bulk_download_blobs to verify it's called
-        with patch.object(
-            backend, "_bulk_download_blobs", wraps=backend._bulk_download_blobs
-        ) as mock_bulk:
-            # Call batch read
-            result = backend.batch_read_from_backend(["file1.txt", "file2.txt", "file3.txt"])
-
-            # Verify bulk download was called
-            assert mock_bulk.called, "batch_read_from_backend should use _bulk_download_blobs"
-
-            # Verify all files read
-            assert len(result) == 3
-            assert result["file1.txt"] == b"content1"
-            assert result["file2.txt"] == b"content2"
-            assert result["file3.txt"] == b"content3"
-
-    def test_batch_read_performance_benefit(self, tmp_path: Path):
-        """Test that batch read is significantly faster than sequential."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from nexus.storage.models import Base
-
-        db_path = tmp_path / "test.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        SessionLocal = sessionmaker(bind=engine)
-
-        backend = MockBlobConnector(SessionLocal)
-
-        # Create 50 test files
-        for i in range(50):
-            backend.files[f"file{i}.txt"] = b"content"
-
-        # Reset download count
-        backend.download_count = 0
-
-        # Call batch read
-        paths = [f"file{i}.txt" for i in range(50)]
-        result = backend.batch_read_from_backend(paths)
-
-        # Verify all files read
-        assert len(result) == 50
-
-        # Verify _download_blob was called for each file
-        # (but in parallel, not sequential)
-        assert backend.download_count == 50
 
 
 # === GCS batch_read_content tests (#1626) ===
@@ -421,67 +277,66 @@ class MockGCSBackend(Backend):
     def name(self) -> str:
         return "gcs"
 
-    def write_content(self, content, context=None) -> WriteResult:
+    def write_content(
+        self, content, content_id: str = "", *, offset: int = 0, context=None
+    ) -> WriteResult:
         from nexus.core.hash_fast import hash_content
 
         h = hash_content(content)
         self._content[h] = content
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
-    def read_content(self, content_hash, context=None) -> bytes:
+    def read_content(self, content_id, context=None) -> bytes:
         self.read_count += 1
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return self._content[content_hash]
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return self._content[content_id]
 
     def batch_read_content(
-        self, content_hashes, context=None, *, contexts=None
+        self, content_ids, context=None, *, contexts=None
     ) -> dict[str, bytes | None]:
         """Use the same parallel logic as GCSBackend."""
-        if not content_hashes:
+        if not content_ids:
             return {}
 
         result: dict[str, bytes | None] = {}
 
-        if len(content_hashes) == 1:
+        if len(content_ids) == 1:
             try:
-                data = self.read_content(content_hashes[0], context=context)
-                return {content_hashes[0]: data}
+                data = self.read_content(content_ids[0], context=context)
+                return {content_ids[0]: data}
             except (NexusFileNotFoundError, BackendError):
-                return {content_hashes[0]: None}
+                return {content_ids[0]: None}
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        max_workers = min(self.batch_read_workers, len(content_hashes))
+        max_workers = min(self.batch_read_workers, len(content_ids))
 
-        def read_one(content_hash: str) -> tuple[str, bytes | None]:
+        def read_one(content_id: str) -> tuple[str, bytes | None]:
             try:
-                data = self.read_content(content_hash, context=context)
-                return (content_hash, data)
+                data = self.read_content(content_id, context=context)
+                return (content_id, data)
             except (NexusFileNotFoundError, BackendError):
-                return (content_hash, None)
+                return (content_id, None)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(read_one, h): h for h in content_hashes}
+            futures = {executor.submit(read_one, h): h for h in content_ids}
             for future in as_completed(futures):
                 hash_key, file_content = future.result()
                 result[hash_key] = file_content
 
         return result
 
-    def delete_content(self, content_hash, context=None) -> None:
-        self._content.pop(content_hash, None)
+    def delete_content(self, content_id, context=None) -> None:
+        self._content.pop(content_id, None)
 
-    def content_exists(self, content_hash, context=None) -> bool:
-        return content_hash in self._content
+    def content_exists(self, content_id, context=None) -> bool:
+        return content_id in self._content
 
-    def get_content_size(self, content_hash, context=None) -> int:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return len(self._content[content_hash])
-
-    def get_ref_count(self, content_hash, context=None) -> int:
-        return 1
+    def get_content_size(self, content_id, context=None) -> int:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return len(self._content[content_id])
 
     def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
         pass
@@ -499,9 +354,9 @@ class TestGCSBatchReadContent:
     def test_basic_batch_read(self):
         """Test reading multiple CAS objects in parallel."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"file1").content_hash
-        h2 = backend.write_content(b"file2").content_hash
-        h3 = backend.write_content(b"file3").content_hash
+        h1 = backend.write_content(b"file1").content_id
+        h2 = backend.write_content(b"file2").content_id
+        h3 = backend.write_content(b"file3").content_id
 
         result = backend.batch_read_content([h1, h2, h3])
 
@@ -512,7 +367,7 @@ class TestGCSBatchReadContent:
     def test_partial_failures_return_none(self):
         """Test missing hashes return None, not exceptions."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"exists").content_hash
+        h1 = backend.write_content(b"exists").content_id
         fake_hash = "a" * 64
 
         result = backend.batch_read_content([h1, fake_hash])
@@ -528,7 +383,7 @@ class TestGCSBatchReadContent:
     def test_single_item_skips_thread_pool(self):
         """Test single-item optimization (no ThreadPoolExecutor overhead)."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"single").content_hash
+        h1 = backend.write_content(b"single").content_id
 
         result = backend.batch_read_content([h1])
 
@@ -540,7 +395,7 @@ class TestGCSBatchReadContent:
         backend = MockGCSBackend()
         hashes = []
         for i in range(20):
-            h = backend.write_content(f"content{i}".encode()).content_hash
+            h = backend.write_content(f"content{i}".encode()).content_id
             hashes.append(h)
 
         backend.read_count = 0
@@ -553,7 +408,7 @@ class TestGCSBatchReadContent:
     def test_deduplication(self):
         """Test requesting same hash multiple times."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"dedup").content_hash
+        h1 = backend.write_content(b"dedup").content_id
 
         result = backend.batch_read_content([h1, h1, h1])
 
@@ -565,7 +420,7 @@ class TestGCSBatchReadContent:
 # === S3 batch_read_content tests (#1626) ===
 
 
-class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
+class MockS3ConnectorForBatch(PathAddressingEngine):
     """Mock S3-like connector for testing batch_read_content with per-file contexts.
 
     Simulates path-based access where each file needs its own OperationContext.
@@ -574,47 +429,21 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
     batch_read_workers: int = 4  # Low for tests
 
     def __init__(self) -> None:
-        self.bucket_name = "test-bucket"
-        self.prefix = ""
-        self.versioning_enabled = False
-        self.files: dict[str, bytes] = {}  # blob_path -> content
+        transport = InMemoryTransport()
+        super().__init__(transport, backend_name="s3_connector", bucket_name="test-bucket")
         self.read_count: int = 0
         self.session_factory = None
 
     @property
-    def name(self) -> str:
-        return "s3_connector"
+    def files(self) -> dict[str, bytes]:
+        """Proxy to transport.files for test manipulation."""
+        return self._transport.files
 
-    def _upload_blob(self, blob_path, content, content_type="") -> str:
-        self.files[blob_path] = content
-        return "mock-version"
+    @files.setter
+    def files(self, value: dict[str, bytes]) -> None:
+        self._transport.files = value
 
-    def _download_blob(self, blob_path, version_id=None) -> tuple[bytes, str | None]:
-        if blob_path not in self.files:
-            raise NexusFileNotFoundError(blob_path)
-        return self.files[blob_path], "v1"
-
-    def _delete_blob(self, blob_path) -> None:
-        self.files.pop(blob_path, None)
-
-    def _blob_exists(self, blob_path) -> bool:
-        return blob_path in self.files
-
-    def _get_blob_size(self, blob_path) -> int:
-        return len(self.files.get(blob_path, b""))
-
-    def _list_blobs(self, prefix="", delimiter="/") -> tuple[list[str], list[str]]:
-        keys = [k for k in self.files if k.startswith(prefix)]
-        return keys, []
-
-    def _create_directory_marker(self, blob_path) -> None:
-        pass
-
-    def _copy_blob(self, source_path, dest_path) -> None:
-        if source_path in self.files:
-            self.files[dest_path] = self.files[source_path]
-
-    def read_content(self, content_hash, context=None) -> bytes:
+    def read_content(self, content_id, context=None) -> bytes:
         """S3-style read that requires context.backend_path."""
         self.read_count += 1
         if not context or not context.backend_path:
@@ -622,42 +451,42 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
                 "S3 connector requires backend_path",
                 backend=self.name,
             )
-        blob_path = self._get_blob_path(context.backend_path)
-        if blob_path not in self.files:
+        blob_path = self._get_key_path(context.backend_path)
+        if blob_path not in self._transport.files:
             raise NexusFileNotFoundError(blob_path)
-        return self.files[blob_path]
+        return self._transport.files[blob_path]
 
     def batch_read_content(
-        self, content_hashes, context=None, *, contexts=None
+        self, content_ids, context=None, *, contexts=None
     ) -> dict[str, bytes | None]:
         """S3-style batch read with per-file contexts (mirrors S3ConnectorBackend)."""
-        if not content_hashes:
+        if not content_ids:
             return {}
 
         result: dict[str, bytes | None] = {}
 
-        if len(content_hashes) == 1:
-            ctx = contexts.get(content_hashes[0], context) if contexts else context
+        if len(content_ids) == 1:
+            ctx = contexts.get(content_ids[0], context) if contexts else context
             try:
-                data = self.read_content(content_hashes[0], context=ctx)
-                return {content_hashes[0]: data}
+                data = self.read_content(content_ids[0], context=ctx)
+                return {content_ids[0]: data}
             except (NexusFileNotFoundError, BackendError):
-                return {content_hashes[0]: None}
+                return {content_ids[0]: None}
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        max_workers = min(self.batch_read_workers, len(content_hashes))
+        max_workers = min(self.batch_read_workers, len(content_ids))
 
-        def read_one(content_hash: str) -> tuple[str, bytes | None]:
-            ctx = contexts.get(content_hash, context) if contexts else context
+        def read_one(content_id: str) -> tuple[str, bytes | None]:
+            ctx = contexts.get(content_id, context) if contexts else context
             try:
-                data = self.read_content(content_hash, context=ctx)
-                return (content_hash, data)
+                data = self.read_content(content_id, context=ctx)
+                return (content_id, data)
             except (NexusFileNotFoundError, BackendError):
-                return (content_hash, None)
+                return (content_id, None)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(read_one, h): h for h in content_hashes}
+            futures = {executor.submit(read_one, h): h for h in content_ids}
             for future in as_completed(futures):
                 hash_key, file_content = future.result()
                 result[hash_key] = file_content
@@ -833,7 +662,7 @@ class TestBatchReadContentContextsParam:
     def test_backward_compat_no_contexts(self):
         """Test that batch_read_content still works without contexts param."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"compat").content_hash
+        h1 = backend.write_content(b"compat").content_id
 
         # Call without contexts (backward compatible)
         result = backend.batch_read_content([h1])

@@ -10,6 +10,7 @@ from nexus.bricks.auth.constants import (
     HMAC_SALT,
     PERSONAL_EMAIL_DOMAINS,
     RESERVED_ZONE_IDS,
+    get_hmac_secret,
 )
 from nexus.bricks.auth.protocol import AuthBrickProtocol
 from nexus.bricks.auth.types import AuthConfig, AuthResult
@@ -24,6 +25,7 @@ __all__ = [
     "API_KEY_PREFIX",
     "API_KEY_MIN_LENGTH",
     "HMAC_SALT",
+    "get_hmac_secret",
     "PERSONAL_EMAIL_DOMAINS",
     "RESERVED_ZONE_IDS",
 ]

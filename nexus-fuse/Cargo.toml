@@ -6,12 +6,20 @@ description = "High-performance FUSE client for Nexus filesystem"
 license = "Apache-2.0"
 repository = "https://github.com/nexi-lab/nexus"
 
+# Stand-alone single-package workspace so cargo doesn't traverse upward into
+# the parent Cargo.toml — required when the crate is checked out inside a
+# git worktree that lives under the parent repo (e.g., .claude/worktrees/*).
+[workspace]
+
 [dependencies]
 # FUSE filesystem
-fuser = "0.14"
+fuser = "0.17"
 
-# HTTP client for Nexus server communication (rustls for fast compilation)
-reqwest = { version = "0.11", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+# HTTP client for Nexus server communication (rustls for fast compilation).
+# Async-only: the blocking feature was dropped in #4056 so every request
+# rides the shared hyper connection pool / HTTP keep-alive instead of
+# spinning a fresh current-thread runtime per call.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -21,7 +29,7 @@ serde_json = "1"
 clap = { version = "4", features = ["derive", "env"] }
 
 # Caching
-lru = "0.12"
+lru = "0.18"
 
 # Logging
 log = "0.4"
@@ -29,16 +37,19 @@ env_logger = "0.11"
 
 # Error handling
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 
 # Base64 for content encoding
 base64 = "0.22"
 
-# SQLite for persistent caching
-rusqlite = { version = "0.31", features = ["bundled"] }
+# Hybrid DRAM + filesystem cache for file content
+foyer = "0.22.3"
+
+# Compact cache record encoding
+bincode = "1.3"
 
 # Home directory for cache location
-dirs = "5"
+dirs = "6"
 
 # URL encoding
 urlencoding = "2"
@@ -50,7 +61,15 @@ chrono = "0.4"
 libc = "0.2"
 
 # Async runtime for Unix socket IPC daemon
-tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal"] }
+# `sync` is required for tokio::sync::Semaphore used by the hydration
+# bounded-parallel fetcher (#4055 R9). `time` is required for tokio
+# scheduling primitives used by foyer's hybrid cache.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal", "sync", "time"] }
+
+# Passthrough path matching and stable backing-file keys
+globset = "0.4"
+sha2 = "0.10"
+hex = "0.4"
 
 [dev-dependencies]
 # Mocking HTTP requests for tests
@@ -62,15 +81,33 @@ tokio = { version = "1", features = ["rt", "macros"] }
 # URL parsing
 url = "2.5"
 
+# Temporary directories for cache tests
+tempfile = "3"
+
+# Benchmark-only baseline for issue #4053 acceptance comparison
+rusqlite = { version = "0.39", features = ["bundled"] }
+
 # Test coverage (optional, for CI)
 # Run with: cargo tarpaulin --out Html
 # Or: cargo llvm-cov --html
 
 # Benchmarking (will add benchmark file later)
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "fuse_operations"
+harness = false
+
+[[bench]]
+name = "cache_backends"
+harness = false
+
+[[bench]]
+name = "concurrent_read"
+harness = false
+
+[[bench]]
+name = "passthrough_read"
 harness = false
 
 [profile.release]

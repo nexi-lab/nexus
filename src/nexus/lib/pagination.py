@@ -1,12 +1,15 @@
-"""Cursor-based pagination utilities for Nexus APIs (Issue #937).
+"""Cursor encoding/decoding and response envelope helpers for brick pagination.
 
-This module provides utilities for implementing cursor-based (keyset) pagination,
-enabling efficient traversal of large datasets at 1M+ file scale.
+Issue #937: tamper-resistant, URL-safe cursor tokens.
+Issue #3701: shared offset/limit envelope builder for grep/glob/list
+responses so transports (MCP, HTTP) emit the same shape.
 
-Key features:
-- O(log n) performance for any page depth (vs O(n) for OFFSET)
-- Tamper-resistant cursors with filter hash validation
-- URL-safe Base64 encoding for cursor tokens
+Kernel pagination primitives (PaginatedResult, paginate_iter) live in
+``nexus.core.pagination``.
+
+This module must stay cross-brick safe (zero imports from
+``nexus.bricks.*``) because MCP, search, and HTTP routers all depend
+on it.
 """
 
 import base64
@@ -17,6 +20,82 @@ from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Offset/limit response envelope (#3701)
+# =============================================================================
+
+
+def build_paginated_list_response(
+    *,
+    items: list[Any],
+    total: int,
+    offset: int,
+    limit: int,
+    extras: dict[str, Any] | None = None,
+    has_more: bool | None = None,
+) -> dict[str, Any]:
+    """Build a canonical paginated list envelope.
+
+    Used by grep/glob/list transports that return a list of items with
+    classic offset/limit pagination. Prior to #3701 this shape was
+    duplicated across MCP ``nexus_grep``/``nexus_glob`` and would have
+    been re-duplicated again when the HTTP grep/glob endpoints landed.
+
+    Args:
+        items: The slice to return (already paginated — this helper
+            does NOT paginate for you).
+        total: Total number of items in the full result set, *before*
+            pagination was applied. May be a lower bound when the
+            caller fetched via a sentinel approach (see ``has_more``).
+        offset: The offset at which ``items`` starts in the full set.
+        limit: The limit that was requested for this page.
+        extras: Optional extra fields to merge into the envelope. Used
+            to carry transport-specific additions such as ``stale_count``
+            or ``truncated_by_permissions``. Collisions with core keys
+            are deliberate escape hatches — extras win.
+        has_more: Explicit override for the ``has_more`` field. Use
+            this when ``total`` is a lower bound (sentinel-style fetch)
+            rather than the true total, so the caller can set
+            ``has_more`` independently. Defaults to ``offset + limit <
+            total`` when not provided. Flagged by Codex adversarial
+            review of #3701: fetching ``limit + offset`` and treating
+            the length as the true total silently reports
+            ``has_more=False`` on the first page of a large result set
+            if the SearchService cap happens to match.
+
+    Returns:
+        ``{total, count, offset, items, has_more, next_offset, ...}``
+
+    Conventions:
+        * Envelopes are **additive-only**: new fields must be optional so
+          existing clients tolerating unknown keys continue to work.
+        * ``count`` is ``len(items)``, which may differ from ``limit`` on
+          the final page.
+        * ``has_more`` is ``True`` iff there are items after the current
+          page. When the caller can detect this independently (e.g. via
+          a sentinel fetch of ``limit + 1``), pass it explicitly.
+          Otherwise it defaults to ``offset + limit < total``.
+    """
+    if has_more is None:
+        has_more = (offset + limit) < total
+    envelope: dict[str, Any] = {
+        "total": total,
+        "count": len(items),
+        "offset": offset,
+        "items": items,
+        "has_more": has_more,
+        "next_offset": offset + limit if has_more else None,
+    }
+    if extras:
+        envelope.update(extras)
+    return envelope
+
+
+# =============================================================================
+# Cursor encoding (#937)
+# =============================================================================
 
 
 class CursorError(Exception):
@@ -54,10 +133,6 @@ def encode_cursor(
 
     Returns:
         URL-safe base64-encoded cursor string
-
-    Example:
-        >>> cursor = encode_cursor("/files/doc999.txt", "uuid-123", {"prefix": "/files/"})
-        >>> # Returns: "eyJwIjoiL2ZpbGVzL2RvYzk5OS50eHQiLCJpIjoidXVpZC0xMjMiLCJoIjoiYWJjMTIzIn0="
     """
     filters_hash = _hash_filters(filters)
     data = {
@@ -86,24 +161,20 @@ def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
 
     Raises:
         CursorError: If cursor is malformed, expired, or filters changed
-
-    Example:
-        >>> data = decode_cursor(cursor, {"prefix": "/files/"})
-        >>> print(data.path)  # "/files/doc999.txt"
     """
     try:
-        # Decode base64
         json_bytes = base64.urlsafe_b64decode(cursor.encode("ascii"))
         data = json.loads(json_bytes.decode("utf-8"))
     except (ValueError, json.JSONDecodeError) as e:
         logger.debug(f"Failed to decode cursor: {e}")
         raise CursorError(f"Malformed cursor: {e}") from e
 
-    # Validate required fields
+    if not isinstance(data, dict):
+        raise CursorError("Malformed cursor: expected JSON object")
+
     if "p" not in data or "h" not in data:
         raise CursorError("Cursor missing required fields")
 
-    # Validate filters hash to detect tampering or query parameter changes
     expected_hash = _hash_filters(filters)
     if data["h"] != expected_hash:
         raise CursorError(
@@ -119,17 +190,6 @@ def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
 
 
 def _hash_filters(filters: dict[str, Any]) -> str:
-    """Create deterministic hash of filter parameters.
-
-    Used to detect if client changed query parameters between pages,
-    which would invalidate the cursor position.
-
-    Args:
-        filters: Dictionary of filter parameters
-
-    Returns:
-        16-character hex hash (truncated SHA-256)
-    """
-    # Sort keys for deterministic ordering
+    """Create deterministic hash of filter parameters."""
     canonical = json.dumps(filters, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]

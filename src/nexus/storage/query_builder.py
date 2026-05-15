@@ -46,10 +46,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM ready_work_items"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [
@@ -57,15 +59,13 @@ class WorkQueryBuilder:
                     "path_id": row[0],
                     "zone_id": row[1],
                     "virtual_path": row[2],
-                    "backend_id": row[3],
-                    "physical_path": row[4],
-                    "file_type": row[5],
-                    "size_bytes": row[6],
-                    "content_hash": row[7],
-                    "created_at": row[8],
-                    "updated_at": row[9],
-                    "status": json.loads(row[10]) if row[10] else None,
-                    "priority": json.loads(row[11]) if row[11] else None,
+                    "file_type": row[3],
+                    "size_bytes": row[4],
+                    "content_id": row[5],
+                    "created_at": row[6],
+                    "updated_at": row[7],
+                    "status": json.loads(row[8]) if row[8] else None,
+                    "priority": json.loads(row[9]) if row[9] else None,
                 }
                 for row in rows
             ]
@@ -92,10 +92,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM pending_work_items"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [
@@ -103,15 +105,13 @@ class WorkQueryBuilder:
                     "path_id": row[0],
                     "zone_id": row[1],
                     "virtual_path": row[2],
-                    "backend_id": row[3],
-                    "physical_path": row[4],
-                    "file_type": row[5],
-                    "size_bytes": row[6],
-                    "content_hash": row[7],
-                    "created_at": row[8],
-                    "updated_at": row[9],
-                    "status": json.loads(row[10]) if row[10] else None,
-                    "priority": json.loads(row[11]) if row[11] else None,
+                    "file_type": row[3],
+                    "size_bytes": row[4],
+                    "content_id": row[5],
+                    "created_at": row[6],
+                    "updated_at": row[7],
+                    "status": json.loads(row[8]) if row[8] else None,
+                    "priority": json.loads(row[9]) if row[9] else None,
                 }
                 for row in rows
             ]
@@ -138,10 +138,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM blocked_work_items"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [
@@ -149,16 +151,14 @@ class WorkQueryBuilder:
                     "path_id": row[0],
                     "zone_id": row[1],
                     "virtual_path": row[2],
-                    "backend_id": row[3],
-                    "physical_path": row[4],
-                    "file_type": row[5],
-                    "size_bytes": row[6],
-                    "content_hash": row[7],
-                    "created_at": row[8],
-                    "updated_at": row[9],
-                    "status": json.loads(row[10]) if row[10] else None,
-                    "priority": json.loads(row[11]) if row[11] else None,
-                    "blocker_count": row[12],
+                    "file_type": row[3],
+                    "size_bytes": row[4],
+                    "content_id": row[5],
+                    "created_at": row[6],
+                    "updated_at": row[7],
+                    "status": json.loads(row[8]) if row[8] else None,
+                    "priority": json.loads(row[9]) if row[9] else None,
+                    "blocker_count": row[10],
                 }
                 for row in rows
             ]
@@ -185,10 +185,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM in_progress_work"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [
@@ -196,14 +198,13 @@ class WorkQueryBuilder:
                     "path_id": row[0],
                     "zone_id": row[1],
                     "virtual_path": row[2],
-                    "backend_id": row[3],
-                    "file_type": row[4],
-                    "size_bytes": row[5],
-                    "created_at": row[6],
-                    "updated_at": row[7],
-                    "status": json.loads(row[8]) if row[8] else None,
-                    "worker_id": json.loads(row[9]) if row[9] else None,
-                    "started_at": json.loads(row[10]) if row[10] else None,
+                    "file_type": row[3],
+                    "size_bytes": row[4],
+                    "created_at": row[5],
+                    "updated_at": row[6],
+                    "status": json.loads(row[7]) if row[7] else None,
+                    "worker_id": json.loads(row[8]) if row[8] else None,
+                    "started_at": json.loads(row[9]) if row[9] else None,
                 }
                 for row in rows
             ]
@@ -230,10 +231,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM work_by_priority"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [
@@ -241,14 +244,13 @@ class WorkQueryBuilder:
                     "path_id": row[0],
                     "zone_id": row[1],
                     "virtual_path": row[2],
-                    "backend_id": row[3],
-                    "file_type": row[4],
-                    "size_bytes": row[5],
-                    "created_at": row[6],
-                    "updated_at": row[7],
-                    "status": json.loads(row[8]) if row[8] else None,
-                    "priority": json.loads(row[9]) if row[9] else None,
-                    "tags": json.loads(row[10]) if row[10] else None,
+                    "file_type": row[3],
+                    "size_bytes": row[4],
+                    "created_at": row[5],
+                    "updated_at": row[6],
+                    "status": json.loads(row[7]) if row[7] else None,
+                    "priority": json.loads(row[8]) if row[8] else None,
+                    "tags": json.loads(row[9]) if row[9] else None,
                 }
                 for row in rows
             ]

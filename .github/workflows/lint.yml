@@ -7,6 +7,9 @@ on:
     branches: [main, develop]
   merge_group:
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -23,7 +26,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -32,7 +35,18 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
+
+      - name: Build Rust extensions
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: dev
+          rust-cache-shared-key: "rust-lint-py"
+          output-dir: dist
+          github-token: ${{ github.token }}
+
+      - name: Install Rust extensions
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: |
@@ -68,7 +82,7 @@ jobs:
       - name: Set up Python (for PyO3 crates)
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Install Python dev headers
         run: sudo apt-get update && sudo apt-get install -y python3-dev
@@ -83,48 +97,63 @@ jobs:
         with:
           shared-key: "rust-lint"
           workspaces: |
-            rust/nexus_tasks
-            rust/nexus_core
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_wal
-
-      - name: Install protobuf compiler
-        run: sudo apt-get install -y protobuf-compiler
+            rust/lib
+            rust/kernel
+            rust/raft
+            rust/profiles/cluster
+            rust/nexus-cdylib
 
       - name: Check Rust formatting
         run: |
-          for crate in nexus_tasks nexus_core nexus_pyo3 nexus_raft nexus_wal; do
+          # Phase 0: nexus-cdylib joins the fmt loop alongside the other
+          # workspace crates.  Phase 4 (full): cluster moved to
+          # `profiles/cluster` (deployment-profile binary folder).
+          for crate in lib kernel raft profiles/cluster nexus-cdylib; do
             echo "::group::fmt $crate"
-            cd rust/$crate && cargo fmt --check && cd ../..
+            cd rust/$crate && cargo fmt --check && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
           done
 
       - name: Run Clippy
         run: |
-          for crate in nexus_tasks nexus_core nexus_pyo3 nexus_wal; do
+          for crate in lib kernel; do
             echo "::group::clippy $crate"
-            cd rust/$crate && cargo clippy -- -D warnings && cd ../..
+            cd rust/$crate && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
           done
-          echo "::group::clippy nexus_raft (all-features)"
-          cd rust/nexus_raft && cargo clippy --all-features -- -D warnings && cd ../..
+          echo "::group::clippy raft (all-features)"
+          cd rust/raft && cargo clippy --all-features -- -D warnings && cd "$GITHUB_WORKSPACE"
+          echo "::endgroup::"
+          echo "::group::clippy cluster"
+          cd rust/profiles/cluster && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
+          echo "::endgroup::"
+          # Phase 0: nexus-cdylib pulls everything together — clippy
+          # runs against the full transitive build to catch any
+          # extension-module unification surprises.
+          echo "::group::clippy nexus-cdylib"
+          cd rust/nexus-cdylib && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
 
       - name: Run Rust tests
         env:
           PYO3_PYTHON: python3
         run: |
-          for crate in nexus_tasks nexus_core nexus_pyo3 nexus_wal; do
+          for crate in lib kernel; do
             echo "::group::test $crate"
-            cd rust/$crate && cargo test && cd ../..
+            cd rust/$crate && cargo test && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
           done
-          echo "::group::test nexus_raft (all-features)"
-          cd rust/nexus_raft && cargo test --all-features && cd ../..
+          echo "::group::test raft (all-features)"
+          cd rust/raft && cargo test --all-features && cd "$GITHUB_WORKSPACE"
+          echo "::endgroup::"
+          echo "::group::test cluster"
+          cd rust/profiles/cluster && cargo test && cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
 
-      - name: Verify WASM compilation (nexus_core)
+      - name: Verify WASM compilation (lib)
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo check --target wasm32-unknown-unknown -p nexus_core
+          # Phase A renamed `library` → `lib`. The default-features
+          # build of `lib` is the WASM-clean surface; PyO3 wrappers
+          # under `lib::python` sit behind the optional `python` feature.
+          cargo check --target wasm32-unknown-unknown -p lib --no-default-features

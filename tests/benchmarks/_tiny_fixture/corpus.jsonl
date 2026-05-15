@@ -1,0 +1,5 @@
+{"id": "doc1", "path": "/bench/a.txt", "text": "the quick brown fox jumps over the lazy dog"}
+{"id": "doc2", "path": "/bench/b.txt", "text": "machine learning is a subset of artificial intelligence"}
+{"id": "doc3", "path": "/bench/c.txt", "text": "Python is a popular programming language for data science"}
+{"id": "doc4", "path": "/bench/d.txt", "text": "search engines use indexing for fast retrieval of documents"}
+{"id": "doc5", "path": "/bench/e.txt", "text": "vector databases enable semantic search using embeddings"}

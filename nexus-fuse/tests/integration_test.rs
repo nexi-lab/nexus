@@ -5,7 +5,6 @@
 //! Requires: Nexus server running on localhost:2026
 
 use nexus_fuse::client::NexusClient;
-use nexus_fuse::error::NexusClientError;
 
 #[test]
 #[ignore] // Run with: cargo test -- --ignored --nocapture
@@ -13,12 +12,8 @@ fn test_e2e_with_live_server() {
     println!("\n🧪 Starting E2E test with live Nexus server...\n");
 
     // Create client
-    let client = NexusClient::new(
-        "http://localhost:2026",
-        "sk-test-key-123",
-        None,
-    )
-    .expect("Failed to create client");
+    let client = NexusClient::new("http://localhost:2026", "sk-test-key-123", None)
+        .expect("Failed to create client");
 
     println!("✓ Client created");
 

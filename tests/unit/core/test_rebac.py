@@ -14,12 +14,17 @@ Tests cover:
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.domain import Entity, NamespaceConfig
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
+from tests.testkit.metadata import InMemoryNexusFS
 
 
 @pytest.fixture
@@ -37,6 +42,7 @@ def rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=300,  # 5 minutes for normal tests
         max_depth=10,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()
@@ -49,6 +55,7 @@ def rebac_manager_fast_cache(engine):
         engine=engine,
         cache_ttl_seconds=1,  # 1 second for cache expiration tests
         max_depth=10,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()
@@ -222,53 +229,6 @@ def test_caching(rebac_manager):
         Entity("group", "eng-team"),
     )
     assert cached is True
-
-
-def test_cache_invalidation_on_write(rebac_manager):
-    """Test that L1/L2 cache is invalidated when tuples for the same subject-object pair are added.
-
-    Write path: rebac_write → invalidate_zone_graph_cache (clears L1/L2)
-                            → Tiger Cache write-through (separate layer)
-    The L1/L2 check cache is invalidated on write; the next rebac_check repopulates it.
-    """
-    # Create initial relationship
-    rebac_manager.rebac_write(
-        subject=("agent", "alice"),
-        relation="viewer-of",
-        object=("file", "file123"),
-    )
-
-    # Check and cache result
-    result = rebac_manager.rebac_check(
-        subject=("agent", "alice"),
-        permission="viewer-of",
-        object=("file", "file123"),
-    )
-    assert result is True
-
-    # Add another relationship for same subject-object pair
-    # This invalidates the L1/L2 check cache for the affected zone
-    rebac_manager.rebac_write(
-        subject=("agent", "alice"),
-        relation="editor-of",
-        object=("file", "file123"),
-    )
-
-    # L1/L2 check cache is invalidated after write — returns None
-    cached = rebac_manager._get_cached_check(
-        Entity("agent", "alice"),
-        "viewer-of",
-        Entity("file", "file123"),
-    )
-    assert cached is None  # Cache invalidated on write
-
-    # Next rebac_check repopulates the cache
-    result = rebac_manager.rebac_check(
-        subject=("agent", "alice"),
-        permission="viewer-of",
-        object=("file", "file123"),
-    )
-    assert result is True
 
 
 def test_write_invalidates_then_check_repopulates(rebac_manager):
@@ -549,9 +509,9 @@ def test_cleanup_expired_cache(rebac_manager_fast_cache):
         # Advance time by 2 seconds to expire the cache (TTL is 1 second)
         frozen_time.tick(delta=timedelta(seconds=2))
 
-        # Cleanup expired cache
+        # Cleanup expired cache (L2 SQL cache removed — always returns 0)
         removed = rebac_manager_fast_cache.cleanup_expired_cache()
-        assert removed > 0
+        assert removed == 0
 
 
 def test_delete_nonexistent_tuple(rebac_manager):
@@ -871,6 +831,7 @@ def enhanced_rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()

@@ -1,0 +1,115 @@
+[package]
+name = "kernel"
+version = "0.10.0"
+edition = "2021"
+
+[lib]
+# Kernel is rlib-only. The Python cdylib (`nexus_runtime.so`) lives in
+# `rust/nexus-cdylib/`, depends on this rlib plus its peers, and owns
+# the `#[pymodule]` envelope. This cycle-breaks
+# `<peer-crate> → kernel` (compile dep) ↔ `kernel → <peer-crate>`
+# (cdylib registration) — the latter sits wholly inside `nexus-cdylib`.
+name = "kernel"
+crate-type = ["rlib"]
+
+[dependencies]
+contracts = { workspace = true }
+# `lib` carries both algorithm wrappers (under `python` feature) and
+# the gRPC transport primitives (under `transport` feature: TLS,
+# connection pool, peer addressing, TOFU trust store, PeerBlobClient
+# trait). Kernel needs both.
+lib = { workspace = true, features = ["transport"] }
+# Kernel depends on `contracts` and `shared/` only; the dep direction
+# is one-way `services -> kernel`. AgentRegistry is the kernel SSOT at
+# `crate::core::agents::registry`. Raft depends on kernel for
+# `kernel::abc::MetaStore`,
+# `kernel::hal::distributed_coordinator::DistributedCoordinator`, etc.
+# Raft state-machine impls (zone_meta_store) live in the raft crate
+# alongside the `RaftDistributedCoordinator` trait impl.
+# `extension-module` lives on the `nexus-cdylib` pyo3 dep only — Cargo
+# unifies pyo3 features at link time, so all transitive users see the
+# cdylib-correct linkage. rlibs must NOT enable it themselves (would
+# break `cargo test` on the rlib alone, and pollutes other consumers).
+pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ahash = { workspace = true }
+regex = { workspace = true }
+memchr = { workspace = true }
+globset = { workspace = true }
+blake3 = { workspace = true }
+fastcdc = { workspace = true }
+string-interner = { workspace = true }
+roaring = { workspace = true }
+encoding_rs = "0.8.35"
+rayon = "1.11"
+bloomfilter = "3.0"
+libc = "0.2"
+memmap2 = "0.9.9"
+tempfile = "3"
+dashmap = "6.1"
+parking_lot = "0.12"
+hashlink = "0.9"
+redb = "4"
+uuid = { version = "1", features = ["v4"] }
+lru = "0.18"
+simdutf8 = "0.1"
+simsimd = "6"
+crc32fast = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tonic-prost = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros", "process", "io-util"] }
+futures = "0.3"
+tracing = "0.1"
+reqwest = { version = "0.13", features = ["json", "stream", "rustls"], default-features = false, optional = true }
+hmac = { version = "0.13", optional = true }
+sha2 = { version = "0.11", optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+base64 = "0.22"
+bytes = "1"
+mimalloc = { workspace = true, optional = true }
+
+[features]
+# Keep direct `cargo test -p kernel` pure-Rust by default. The Python
+# wheel cdylib explicitly enables `py-hook-adapters` and `python`.
+default = ["mimalloc", "connectors"]
+mimalloc = ["dep:mimalloc"]
+connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
+# Python binding support (PyO3). Enables #[pyclass]/#[pymethods] on kernel
+# types, generated_kernel_abi_pyo3 module, and Python service registry.
+# Off by default — `nexus-cdylib` enables it explicitly. Pure Rust consumers
+# (e.g. `nexus-cluster` via raft) never need this.
+python = ["dep:pyo3", "lib/python"]
+# Python hook/resolver adapters for the Python wheel runtime (POST hooks still
+# use PyInterceptHookAdapter). Pure Rust tests and consumers keep this disabled.
+py-hook-adapters = ["python"]
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+# Vendored protoc binary so kernel build works on any host without a
+# system-wide protobuf-compiler install. Tier-1 platforms (linux/macos/windows
+# × x86_64/aarch64) all covered by the pre-compiled binary the crate ships.
+protoc-bin-vendored = "3"
+
+[dev-dependencies]
+criterion = "0.8"
+rcgen = { version = "0.14", features = ["pem", "x509-parser"] }  # Self-signed CAs for federation_client tests
+tempfile = "3"
+
+[[bench]]
+name = "prefix_bench"
+harness = false
+
+[[bench]]
+name = "ops_registry_bench"
+harness = false
+
+[[bench]]
+name = "read_batch"
+harness = false
+
+[[bench]]
+name = "write_coalescing"
+harness = false

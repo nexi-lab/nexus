@@ -14,10 +14,32 @@ from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
+# Known FileMetadata field names (generated from proto).
+# Used by from_json() to strip unknown keys from external dicts.
+_KNOWN_FIELDS: frozenset[str] = frozenset(
+    {
+        "path",
+        "size",
+        "content_id",
+        "mime_type",
+        "created_at",
+        "modified_at",
+        "version",
+        "zone_id",
+        "owner_id",
+        "entry_type",
+        "target_zone_id",
+        "ttl_seconds",
+        "last_writer_address",
+        "link_target",
+        "gen",
+    }
+)
+
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
-
-from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -42,20 +64,19 @@ def _utcnow_naive() -> datetime:
 
 PROTO_TO_SQL: dict[str, str | None] = {
     "path": "virtual_path",
-    "backend_name": "backend_id",
-    "physical_path": "physical_path",
     "size": "size_bytes",
-    "etag": "content_hash",
+    "content_id": "content_id",
     "mime_type": "file_type",
     "created_at": "created_at",
     "modified_at": "updated_at",
     "version": "current_version",
+    "gen": None,  # Rust/metastore generation, not persisted in FilePathModel
     "zone_id": "zone_id",
     "created_by": None,  # TODO(#1246): Add to FilePathModel
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
     "owner_id": "posix_uid",
-    "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
+    "last_writer_address": None,  # SQL backend (FilePathModel) doesn't currently persist last writer; add a column when needed.
 }
 
 
@@ -75,20 +96,20 @@ class MetadataMapper:
 
         return metadata_pb2.FileMetadata(
             path=metadata.path,
-            backend_name=metadata.backend_name,
-            physical_path=metadata.physical_path or "",
             size=metadata.size,
-            etag=metadata.etag or "",
+            content_id=metadata.content_id or "",
             mime_type=metadata.mime_type or "",
             created_at=metadata.created_at.isoformat() if metadata.created_at else "",
             modified_at=metadata.modified_at.isoformat() if metadata.modified_at else "",
             version=metadata.version,
             zone_id=metadata.zone_id or "",
-            created_by=metadata.created_by or "",
             owner_id=metadata.owner_id or "",
             entry_type=metadata_pb2.DirEntryType.Name(metadata.entry_type),
             target_zone_id=metadata.target_zone_id or "",
-            i_links_count=metadata.i_links_count,
+            ttl_seconds=metadata.ttl_seconds,
+            last_writer_address=metadata.last_writer_address or "",
+            link_target=metadata.link_target or "",
+            gen=metadata.gen,
         )
 
     @staticmethod
@@ -107,20 +128,20 @@ class MetadataMapper:
 
         return FileMetadata(
             path=proto.path,
-            backend_name=proto.backend_name,
-            physical_path=proto.physical_path or proto.path,
             size=proto.size,
-            etag=proto.etag or None,
+            content_id=proto.content_id or None,
             mime_type=proto.mime_type or None,
             created_at=created_at,
             modified_at=modified_at,
             version=proto.version,
             zone_id=proto.zone_id or None,
-            created_by=proto.created_by or None,
             owner_id=proto.owner_id or None,
             entry_type=proto.entry_type,
             target_zone_id=proto.target_zone_id or None,
-            i_links_count=proto.i_links_count,
+            ttl_seconds=proto.ttl_seconds,
+            last_writer_address=proto.last_writer_address or None,
+            link_target=proto.link_target or None,
+            gen=proto.gen,
         )
 
     # -- JSON serialization (GENERATED) -------------------------------------
@@ -130,20 +151,20 @@ class MetadataMapper:
         """Convert FileMetadata to JSON-serializable dict."""
         return {
             "path": metadata.path,
-            "backend_name": metadata.backend_name,
-            "physical_path": metadata.physical_path,
             "size": metadata.size,
-            "etag": metadata.etag,
+            "content_id": metadata.content_id,
             "mime_type": metadata.mime_type,
             "created_at": metadata.created_at.isoformat() if metadata.created_at else None,
             "modified_at": metadata.modified_at.isoformat() if metadata.modified_at else None,
             "version": metadata.version,
             "zone_id": metadata.zone_id,
-            "created_by": metadata.created_by,
             "owner_id": metadata.owner_id,
             "entry_type": metadata.entry_type,
             "target_zone_id": metadata.target_zone_id,
-            "i_links_count": metadata.i_links_count,
+            "ttl_seconds": metadata.ttl_seconds,
+            "last_writer_address": metadata.last_writer_address,
+            "link_target": metadata.link_target,
+            "gen": metadata.gen,
         }
 
     @staticmethod
@@ -156,6 +177,9 @@ class MetadataMapper:
             is_dir = obj.pop("is_directory")
             if "entry_type" not in obj:
                 obj["entry_type"] = 1 if is_dir else 0
+
+        # Strip unknown keys (forward compatibility with older/newer proto versions)
+        obj = {k: v for k, v in obj.items() if k in _KNOWN_FIELDS}
 
         if obj.get("created_at"):
             obj["created_at"] = datetime.fromisoformat(obj["created_at"])
@@ -177,10 +201,8 @@ class MetadataMapper:
         """
         values: dict[str, Any] = {
             "virtual_path": metadata.path,
-            "backend_id": metadata.backend_name or "local",
-            "physical_path": metadata.physical_path or metadata.path,
             "size_bytes": metadata.size or 0,
-            "content_hash": metadata.etag,
+            "content_id": metadata.content_id,
             "file_type": metadata.mime_type,
             "created_at": _to_naive(metadata.created_at) or _utcnow_naive(),
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
@@ -195,10 +217,8 @@ class MetadataMapper:
     def to_file_path_update_values(metadata: FileMetadata) -> dict[str, Any]:
         """Convert FileMetadata to dict for UPDATE operations."""
         return {
-            "backend_id": metadata.backend_name,
-            "physical_path": metadata.physical_path,
             "size_bytes": metadata.size or 0,
-            "content_hash": metadata.etag,
+            "content_id": metadata.content_id,
             "file_type": metadata.mime_type,
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
         }

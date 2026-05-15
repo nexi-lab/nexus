@@ -20,8 +20,8 @@ Usage::
     from nexus.factory import create_nexus_fs
 
     nx = create_nexus_fs(
-        backend=LocalBackend(root_path="./data"),
-        metadata_store=RaftMetadataStore.embedded("./raft"),
+        backend=CASLocalBackend(root_path="./data"),
+        metadata_store="./metadata.redb",
         record_store=SQLAlchemyRecordStore(db_path="./db.sqlite"),
         permissions=PermissionConfig(enforce=False),
     )
@@ -35,7 +35,12 @@ Usage::
         backend=backend,
         router=my_router,
     )
-    nx = NexusFS(backend=backend, metadata_store=metadata_store, services=services)
+    nx = create_nexus_fs(
+        backend=backend,
+        metadata_store=metadata_store,
+        record_store=record_store,
+        services=services,
+    )
 """
 
 # Public API
@@ -46,26 +51,27 @@ from nexus.factory._boot_context import _BootContext
 from nexus.factory._bricks import _boot_dependent_bricks
 from nexus.factory._bricks import _boot_independent_bricks as _boot_brick_services
 from nexus.factory._helpers import (
-    _FACTORY_BRICKS,
-    _FACTORY_SKIP,
     _make_gate,
-    _register_factory_bricks,
     _safe_create,
 )
 from nexus.factory._kernel import _boot_kernel_services
-from nexus.factory._memory import create_memory_service
 from nexus.factory._metadata_export import create_metadata_export_service
 from nexus.factory._record_store import create_record_store
-from nexus.factory._system import _boot_system_services
-from nexus.factory._wired import _boot_wired_services
-from nexus.factory.adapters import _NexusFSFileReader, _WorkflowLifecycleAdapter
+from nexus.factory._system import _boot_pre_kernel_services
+from nexus.factory._wired import _boot_post_kernel_services
+from nexus.factory.adapters import _DaemonSkeletonBM25, _NexusFSFileReader
 from nexus.factory.orchestrator import create_nexus_fs, create_nexus_services
 from nexus.factory.wallet import WalletProvisioner
+
+# Backward compatibility aliases (must follow imports)
+_boot_services = _boot_pre_kernel_services
+_boot_system_services = _boot_pre_kernel_services
+_boot_core_services = _boot_pre_kernel_services
+_boot_wired_services = _boot_post_kernel_services
 
 __all__ = [
     "create_nexus_fs",
     "create_nexus_services",
     "create_record_store",
-    "create_memory_service",
     "create_metadata_export_service",
 ]

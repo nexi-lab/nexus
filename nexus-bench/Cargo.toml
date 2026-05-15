@@ -1,0 +1,22 @@
+[package]
+name = "nexus-bench"
+version = "0.1.0"
+edition = "2021"
+description = "Trace replay benchmark harness for Nexus filesystem workloads"
+license = "Apache-2.0"
+repository = "https://github.com/nexi-lab/nexus"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[workspace]

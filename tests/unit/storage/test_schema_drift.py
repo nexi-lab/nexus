@@ -21,20 +21,20 @@ from nexus.storage.models import FilePathModel
 PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     # Proto field -> FilePathModel column (None = not in SQL, by design)
     "path": "virtual_path",
-    "backend_name": "backend_id",
-    "physical_path": "physical_path",
     "size": "size_bytes",
-    "etag": "content_hash",
+    "content_id": "content_id",
     "mime_type": "file_type",
     "created_at": "created_at",
     "modified_at": "updated_at",
     "version": "current_version",
+    "gen": None,  # Rust/metastore generation, not persisted in FilePathModel
     "zone_id": "zone_id",
-    "created_by": None,  # TODO(#1246): Add to FilePathModel
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # DT_MOUNT target, not in SQL
+    "link_target": None,  # DT_LINK target — VFS-internal, not persisted in SQL
     "owner_id": "posix_uid",
-    "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
+    "ttl_seconds": None,  # Storage-layer TTL routing, not persisted in SQL (#3405)
+    "last_writer_address": None,  # Federation routing hint, not persisted in SQL
 }
 
 # Fields that exist in FilePathModel but NOT in FileMetadata (PG-only concerns)
@@ -42,7 +42,7 @@ SQL_ONLY_FIELDS: set[str] = {
     "path_id",
     "accessed_at",
     "deleted_at",
-    "indexed_content_hash",
+    "indexed_content_id",
     "last_indexed_at",
     "locked_by",
 }
@@ -129,26 +129,21 @@ class TestRoundtripConsistency:
         now = datetime(2026, 2, 10, 12, 0, 0)
         metadata = FileMetadata(
             path="/zone1/docs/readme.md",
-            backend_name="s3",
-            physical_path="/bucket/abc123",
             size=2048,
-            etag="sha256-xyz789",
+            content_id="sha256-xyz789",
             mime_type="text/markdown",
             created_at=now,
             modified_at=now,
             version=3,
             zone_id="zone1",
-            created_by="agent-1",
             owner_id="user-42",
         )
 
         values = self._metadata_to_file_path_values(metadata)
 
         assert values["virtual_path"] == "/zone1/docs/readme.md"
-        assert values["backend_id"] == "s3"
-        assert values["physical_path"] == "/bucket/abc123"
         assert values["size_bytes"] == 2048
-        assert values["content_hash"] == "sha256-xyz789"
+        assert values["content_id"] == "sha256-xyz789"
         assert values["file_type"] == "text/markdown"
         assert values["zone_id"] == "zone1"
         assert values["posix_uid"] == "user-42"
@@ -157,10 +152,8 @@ class TestRoundtripConsistency:
         """None optional fields should map to sensible defaults."""
         metadata = FileMetadata(
             path="/test/file.txt",
-            backend_name="",
-            physical_path="",
             size=0,
-            etag=None,
+            content_id=None,
             mime_type=None,
             created_at=None,
             modified_at=None,
@@ -170,23 +163,27 @@ class TestRoundtripConsistency:
 
         values = self._metadata_to_file_path_values(metadata)
 
-        assert values["backend_id"] == "local"  # default
-        assert values["physical_path"] == "/test/file.txt"  # fallback to path
-        assert values["content_hash"] is None
+        assert values["content_id"] is None
         assert values["file_type"] is None
         assert values["zone_id"] == ROOT_ZONE_ID  # default
         assert values["posix_uid"] is None
 
     def test_fields_not_yet_in_sql_are_documented(self) -> None:
-        """created_by and entry_type are in proto but not yet in SQL.
+        """Proto fields that are deliberately not persisted in SQL.
 
-        This test documents the gap and will fail when we add the columns,
-        reminding us to update the mapping.
+        Documents the intentional gap; will fail if a new field appears
+        without an explicit mapping decision.
         """
         none_mapped = {k for k, v in PROTO_TO_SQL_FIELD_MAP.items() if v is None}
-        # These are the expected gaps — update this when columns are added
-        assert none_mapped == {"created_by", "entry_type", "target_zone_id", "i_links_count"}, (
-            f"Expected only created_by, entry_type, target_zone_id, and i_links_count to be unmapped, "
-            f"but got: {none_mapped}. "
-            f"Did you add a column to FilePathModel? Update PROTO_TO_SQL_FIELD_MAP."
+        expected = {
+            "entry_type",
+            "target_zone_id",
+            "link_target",
+            "ttl_seconds",
+            "last_writer_address",
+            "gen",
+        }
+        assert none_mapped == expected, (
+            f"Expected SQL-excluded fields {expected}, got {none_mapped}. "
+            f"Did you add/remove a proto field? Update PROTO_TO_SQL_FIELD_MAP."
         )

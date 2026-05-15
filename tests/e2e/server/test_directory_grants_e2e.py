@@ -20,9 +20,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 pytestmark = pytest.mark.quarantine
@@ -89,41 +89,42 @@ def add_migration_tables(engine):
 
 
 @pytest.fixture
-def nexus_fs_with_tiger(db_with_migrations, tmp_path):
+async def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     """Create NexusFS instance with Tiger Cache and directory grants enabled."""
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
 
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_path))
+    backend = CASLocalBackend(root_path=str(storage_path))
 
     # Create NexusFS with Tiger Cache enabled
     nx = create_nexus_fs(
         backend=backend,
-        metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
+        metadata_store=str(tmp_path / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=str(db_with_migrations)),
         permissions=PermissionConfig(enforce=True, enable_tiger_cache=True),
         is_admin=True,  # Allow admin operations by default
     )
 
     # Add migration tables after NexusFS creates its database
-    if hasattr(nx, "_rebac_manager") and nx._rebac_manager:
-        engine = nx._rebac_manager.engine
+    _rebac_mgr = nx.service("rebac_manager")
+    if _rebac_mgr is not None:
+        engine = _rebac_mgr.engine
         add_migration_tables(engine)
         # Connect the metadata store to ReBAC manager for directory expansion
-        nx._rebac_manager.set_metadata_store(nx.metadata)
+        _rebac_mgr.set_metadata_store(nx.metadata)
 
     # Create admin context for tests
     admin_context = OperationContext(
         user_id="admin",
         groups=["admins"],
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
         is_admin=True,
     )
-    nx._default_context = admin_context
+    nx._init_cred = admin_context
 
     yield nx
 
@@ -141,15 +142,15 @@ class TestDirectoryGrantExpansion:
         directory_path = "/workspace/project/"
 
         # Grant read permission on the directory
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="reader",
             object=("file", directory_path),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Check that the grant was recorded in tiger_directory_grants
-        with nx._rebac_manager.engine.connect() as conn:
+        with nx.service("rebac_manager").engine.connect() as conn:
             result = conn.execute(
                 text(
                     """
@@ -164,7 +165,8 @@ class TestDirectoryGrantExpansion:
         # Should have recorded the grant (even though directory is empty)
         assert len(grants) >= 0  # Grant recording depends on directory detection
 
-    def test_grant_expands_to_existing_files(self, nexus_fs_with_tiger):
+    @pytest.mark.asyncio
+    async def test_grant_expands_to_existing_files(self, nexus_fs_with_tiger):
         """Test that granting permission on directory expands to all existing files.
 
         Note: Tiger Cache is only enabled for PostgreSQL. With SQLite, the expansion
@@ -178,7 +180,7 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user_id="admin",
             groups=["admins"],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
 
@@ -189,25 +191,28 @@ class TestDirectoryGrantExpansion:
             "/workspace/project/subdir/file3.txt",
         ]
         for path in files:
-            nx.sys_write(path, f"content of {path}", context=ctx)
+            nx.write(path, f"content of {path}", context=ctx)
 
-        # Verify files exist
-        listed = nx.metadata.list(prefix="/workspace/project/", recursive=True, zone_id="root")
+        # Verify files exist (kernel.metastore_list is single-zone and
+        # ignores recursive — both flags match the proxy semantics)
+        listed = nx._kernel.metastore_list_paginated("/workspace/project/", True, 100000, None)[
+            "items"
+        ]
         assert len(listed) == 3, f"Expected 3 files, got {len(listed)}"
 
         # Grant read permission on the directory
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/workspace/project/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Give a moment for expansion to complete
         time.sleep(0.2)
 
         # Check if Tiger Cache is available (PostgreSQL only)
-        tiger_cache = getattr(nx._rebac_manager, "_tiger_cache", None)
+        tiger_cache = getattr(nx.service("rebac_manager"), "_tiger_cache", None)
         if tiger_cache is not None:
             # Tiger Cache is available - verify bitmap was populated
             bitmap = tiger_cache.get_bitmap(
@@ -223,7 +228,8 @@ class TestDirectoryGrantExpansion:
             # Tiger Cache not available (SQLite) - skip bitmap checks
             pytest.skip("Tiger Cache requires PostgreSQL - skipping bitmap verification")
 
-    def test_new_file_inherits_directory_permission(self, nexus_fs_with_tiger):
+    @pytest.mark.asyncio
+    async def test_new_file_inherits_directory_permission(self, nexus_fs_with_tiger):
         """Test that creating a new file inherits permissions from ancestor directory grants.
 
         Note: Requires PostgreSQL for Tiger Cache. Skip if not available.
@@ -231,7 +237,7 @@ class TestDirectoryGrantExpansion:
         nx = nexus_fs_with_tiger
 
         # Check if Tiger Cache is available (PostgreSQL only)
-        tiger_cache = getattr(nx._rebac_manager, "_tiger_cache", None)
+        tiger_cache = getattr(nx.service("rebac_manager"), "_tiger_cache", None)
         if tiger_cache is None:
             pytest.skip("Tiger Cache requires PostgreSQL - skipping new file inheritance test")
 
@@ -240,32 +246,33 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user_id="admin",
             groups=["admins"],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
 
         # First grant permission on the directory
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "charlie"),
             relation="reader",
             object=("file", "/workspace/shared/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Now create a new file in that directory
         new_file = "/workspace/shared/newfile.txt"
-        nx.sys_write(new_file, "new content", context=ctx)
+        nx.write(new_file, "new content", context=ctx)
 
         # The new file should inherit the permission via Tiger Cache
-        has_access = nx.rebac_check(
+        has_access = nx.service("rebac").rebac_check_sync(
             subject=("user", "charlie"),
             permission="read",
             object=("file", new_file),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert has_access, "Charlie should have read access to newly created file"
 
-    def test_move_file_updates_permissions(self, nexus_fs_with_tiger):
+    @pytest.mark.asyncio
+    async def test_move_file_updates_permissions(self, nexus_fs_with_tiger):
         """Test that moving a file updates permissions based on new location.
 
         Note: Requires PostgreSQL for Tiger Cache. Skip if not available.
@@ -273,7 +280,7 @@ class TestDirectoryGrantExpansion:
         nx = nexus_fs_with_tiger
 
         # Check if Tiger Cache is available (PostgreSQL only)
-        tiger_cache = getattr(nx._rebac_manager, "_tiger_cache", None)
+        tiger_cache = getattr(nx.service("rebac_manager"), "_tiger_cache", None)
         if tiger_cache is None:
             pytest.skip("Tiger Cache requires PostgreSQL - skipping move permission test")
 
@@ -282,38 +289,38 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user_id="admin",
             groups=["admins"],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
 
         # Create two directories with different grants
         # Directory A: alice has read
         # Directory B: bob has read
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="reader",
             object=("file", "/dir_a/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/dir_b/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Create file in dir_a
-        nx.sys_write("/dir_a/moveme.txt", "content", context=ctx)
+        nx.write("/dir_a/moveme.txt", "content", context=ctx)
 
         # Wait for expansion
         time.sleep(0.2)
 
         # Verify alice has access via Tiger Cache
-        assert nx.rebac_check(
+        assert nx.service("rebac").rebac_check_sync(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/dir_a/moveme.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         ), "Alice should have access to file in dir_a"
 
         # Move file to dir_b
@@ -323,11 +330,11 @@ class TestDirectoryGrantExpansion:
         time.sleep(0.2)
 
         # After move: bob should gain access
-        has_bob_access = nx.rebac_check(
+        has_bob_access = nx.service("rebac").rebac_check_sync(
             subject=("user", "bob"),
             permission="read",
             object=("file", "/dir_b/moveme.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert has_bob_access, "Bob should have access after file moved to dir_b"
 
@@ -473,7 +480,8 @@ class TestDirectoryGrantWorker:
 class TestTigerCacheIntegration:
     """Integration tests for Tiger Cache with directory grants."""
 
-    def test_bitmap_contains_expanded_files(self, nexus_fs_with_tiger):
+    @pytest.mark.asyncio
+    async def test_bitmap_contains_expanded_files(self, nexus_fs_with_tiger):
         """Test that Tiger Cache bitmap contains all expanded file IDs."""
         nx = nexus_fs_with_tiger
 
@@ -484,21 +492,21 @@ class TestTigerCacheIntegration:
             "/cache_test/c.txt",
         ]
         for path in files:
-            nx.sys_write(path, f"content of {path}")
+            nx.write(path, f"content of {path}")
 
         # Grant permission on directory
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "diana"),
             relation="reader",
             object=("file", "/cache_test/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Wait for expansion
         time.sleep(0.1)
 
         # Check Tiger Cache bitmap directly
-        tiger_cache = getattr(nx._rebac_manager, "_tiger_cache", None)
+        tiger_cache = getattr(nx.service("rebac_manager"), "_tiger_cache", None)
         if tiger_cache:
             bitmap = tiger_cache.get_bitmap(
                 subject_type="user",

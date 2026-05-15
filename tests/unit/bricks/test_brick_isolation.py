@@ -15,9 +15,6 @@ _BRICK_MODULES = [
     "nexus.bricks.delegation.models",
     "nexus.bricks.delegation.errors",
     "nexus.bricks.delegation.derivation",
-    "nexus.bricks.reputation.errors",
-    "nexus.bricks.reputation.reputation_math",
-    "nexus.bricks.reputation.reputation_records",
     "nexus.bricks.snapshot.errors",
     "nexus.bricks.snapshot.registry",
     # ReBAC brick (Issue #2179)
@@ -46,10 +43,12 @@ def test_brick_does_not_import_forbidden_modules(brick_module: str) -> None:
     # Snapshot sys.modules before import
     pre_import = set(sys.modules.keys())
 
-    # Import the brick module (may already be cached; reload to be safe)
-    if brick_module in sys.modules:
-        importlib.reload(sys.modules[brick_module])
-    else:
+    # Import the brick module if not yet loaded.
+    # IMPORTANT: Do NOT use importlib.reload() — it re-executes module code,
+    # creating new class objects for @dataclass(slots=True) classes (e.g.
+    # NamespaceMount).  This breaks isinstance() checks in other tests that
+    # captured references to the original class at import time.
+    if brick_module not in sys.modules:
         importlib.import_module(brick_module)
 
     # Check which new modules were loaded

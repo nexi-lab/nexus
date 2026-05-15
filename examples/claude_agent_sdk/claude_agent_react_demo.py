@@ -51,7 +51,7 @@ def connect_to_nexus(tenant_id: str = "claude-agent-demo", agent_id: str = "reac
         agent_id: Agent identifier for tracking
 
     Returns:
-        NexusFilesystem instance
+        NexusFS instance
     """
     # Check if using remote server
     server_url = os.getenv("NEXUS_SERVER_URL")
@@ -85,7 +85,7 @@ def create_nexus_tools(nx):
     Tools are bundled into an in-process MCP server.
 
     Args:
-        nx: NexusFilesystem instance
+        nx: NexusFS instance
 
     Returns:
         MCP server with Nexus tools
@@ -220,7 +220,7 @@ def create_nexus_tools(nx):
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
             nx.sys_write(path, content_bytes)
 
-            if nx.sys_access(path):
+            if await nx.access(path):
                 text = f"Successfully wrote {len(content_bytes)} bytes to {path}"
             else:
                 text = f"Error: Failed to write file {path}"
@@ -408,7 +408,7 @@ async def run_demo():
         # Check if any files were created
         try:
             # Look for the expected output file
-            if nx.sys_access("/reports/async-patterns.md"):
+            if await nx.access("/reports/async-patterns.md"):
                 print("\n📄 Report generated: /reports/async-patterns.md")
 
                 # Show a preview

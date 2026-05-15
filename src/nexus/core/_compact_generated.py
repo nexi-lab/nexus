@@ -69,40 +69,38 @@ class CompactFileMetadata:
     """
 
     path_id: int
-    backend_name_id: int
-    physical_path_id: int
     size: int
-    etag_id: int
+    content_id_intern: int
     mime_type_id: int
     created_at: str | None
     modified_at: str | None
     version: int
     zone_id_intern: int
-    created_by_id: int
     owner_id_intern: int
     entry_type: int
     target_zone_id_intern: int
-    i_links_count: int
+    last_writer_address_id: int
+    link_target_id: int
+    gen: int
 
     @classmethod
     def from_file_metadata(cls, m: FileMetadata) -> CompactFileMetadata:
         """Create CompactFileMetadata from FileMetadata."""
         return cls(
             path_id=_intern(m.path),
-            backend_name_id=_intern(m.backend_name),
-            physical_path_id=_intern(m.physical_path),
             size=m.size,
-            etag_id=_intern(m.etag),
+            content_id_intern=_intern(m.content_id),
             mime_type_id=_intern(m.mime_type),
             created_at=m.created_at.isoformat() if m.created_at else None,
             modified_at=m.modified_at.isoformat() if m.modified_at else None,
             version=m.version,
             zone_id_intern=_intern(m.zone_id),
-            created_by_id=_intern(m.created_by),
             owner_id_intern=_intern(m.owner_id),
             entry_type=m.entry_type,
             target_zone_id_intern=_intern(m.target_zone_id),
-            i_links_count=m.i_links_count,
+            last_writer_address_id=_intern(m.last_writer_address),
+            link_target_id=_intern(m.link_target),
+            gen=m.gen,
         )
 
     def to_file_metadata(self) -> FileMetadata:
@@ -111,20 +109,19 @@ class CompactFileMetadata:
 
         return FileMetadata(
             path=_resolve_required(self.path_id),
-            backend_name=_resolve_required(self.backend_name_id),
-            physical_path=_resolve_required(self.physical_path_id),
             size=self.size,
-            etag=_resolve(self.etag_id),
+            content_id=_resolve(self.content_id_intern),
             mime_type=_resolve(self.mime_type_id),
             created_at=datetime.fromisoformat(self.created_at) if self.created_at else None,
             modified_at=datetime.fromisoformat(self.modified_at) if self.modified_at else None,
             version=self.version,
             zone_id=_resolve(self.zone_id_intern),
-            created_by=_resolve(self.created_by_id),
             owner_id=_resolve(self.owner_id_intern),
             entry_type=self.entry_type,
             target_zone_id=_resolve(self.target_zone_id_intern),
-            i_links_count=self.i_links_count,
+            last_writer_address=_resolve(self.last_writer_address_id),
+            link_target=_resolve(self.link_target_id),
+            gen=self.gen,
         )
 
 

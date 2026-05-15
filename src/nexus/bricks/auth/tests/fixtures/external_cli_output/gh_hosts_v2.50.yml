@@ -1,0 +1,12 @@
+github.com:
+  users:
+    testuser:
+      oauth_token: gho_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx50
+    workuser:
+      oauth_token: gho_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy50
+  git_protocol: https
+enterprise.corp.com:
+  users:
+    corpuser:
+      oauth_token: gho_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz50
+  git_protocol: https

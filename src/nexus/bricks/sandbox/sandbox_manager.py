@@ -329,6 +329,20 @@ class SandboxManager:
         if self._router is not None and agent_id:
             self._router.record_execution(agent_id, provider_name, escalated=escalated)
 
+        # Emit EXEC activity event for agent self-observability (issue #4081).
+        # Lazy import avoids module-load cycles; execution_time is seconds → ms.
+        # CRITICAL: Emit BEFORE update_metadata so observability fires even if metadata
+        # persistence fails (e.g., transient store errors).
+        from nexus.contracts.protocols.activity import EventKind, Result, emit
+
+        emit(
+            kind=EventKind.EXEC,
+            result=Result.OK if result.exit_code == 0 else Result.BLOCKED,
+            actor_agent=agent_id,
+            latency_ms=round(result.execution_time * 1000),
+            meta={"cmd": code, "exit_code": result.exit_code},
+        )
+
         # Update last_active_at and expires_at
         now = datetime.now(UTC)
         self._repository.update_metadata(

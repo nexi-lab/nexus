@@ -49,7 +49,7 @@ class NegativeCache(Protocol):
 
 
 class BloomNegativeCache:
-    """Bloom filter-based negative cache using nexus_fast.BloomFilter.
+    """Bloom filter-based negative cache using nexus_runtime.BloomFilter.
 
     Space-efficient probabilistic set membership testing. False positives
     are possible (a path may appear absent when it exists), but false
@@ -78,7 +78,7 @@ class BloomNegativeCache:
 class NullNegativeCache:
     """No-op negative cache — always reports cache miss.
 
-    Used when the Bloom filter backend (nexus_fast) is not available.
+    Used when the Bloom filter backend (nexus_runtime) is not available.
     All lookups miss, so callers always proceed to the server RPC.
     """
 
@@ -96,33 +96,30 @@ def create_negative_cache(
     capacity: int = 100_000,
     fp_rate: float = 0.01,
 ) -> NegativeCache:
-    """Create a NegativeCache, preferring Bloom filter if available.
-
-    Tries to create a BloomNegativeCache backed by nexus_fast.BloomFilter.
-    Falls back to NullNegativeCache if nexus_fast is not installed.
+    """Create a NegativeCache backed by nexus_runtime.BloomFilter.
 
     Args:
         capacity: Maximum number of entries the Bloom filter can hold.
         fp_rate: Target false-positive rate (0.01 = 1%).
 
     Returns:
-        A NegativeCache instance (Bloom or Null).
+        A BloomNegativeCache instance.
     """
-    try:
-        from nexus_fast import BloomFilter
+    # RUST_FALLBACK: BloomFilter (optional — returns None if stale/absent binary)
+    from nexus._rust_compat import BloomFilter
 
-        bloom = BloomFilter(capacity, fp_rate)
-        cache = BloomNegativeCache(bloom)
+    if BloomFilter is None:
         logger.debug(
-            "Negative cache initialized: capacity=%d, fp_rate=%s, memory=%d bytes",
-            capacity,
-            fp_rate,
-            cache.memory_bytes,
+            "BloomFilter unavailable (stale or absent nexus_runtime) — using no-op negative cache"
         )
-        return cache
-    except ImportError:
-        logger.debug("nexus_fast not available, negative cache disabled")
         return NullNegativeCache()
-    except Exception as e:
-        logger.warning("Failed to initialize negative cache: %s", e)
-        return NullNegativeCache()
+
+    bloom = BloomFilter(capacity, fp_rate)
+    cache = BloomNegativeCache(bloom)
+    logger.debug(
+        "Negative cache initialized: capacity=%d, fp_rate=%s, memory=%d bytes",
+        capacity,
+        fp_rate,
+        cache.memory_bytes,
+    )
+    return cache

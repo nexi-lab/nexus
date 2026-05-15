@@ -9,9 +9,9 @@ import sys
 from typing import TYPE_CHECKING, Any, cast
 
 import click
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -39,68 +39,184 @@ def _add_health_check_route(mcp_server: Any) -> None:
             """Health check endpoint for Docker and monitoring."""
             return JSONResponse({"status": "healthy", "service": "nexus-mcp"})
 
-        console.print("[green]✓ Health check endpoint enabled (/health)[/green]")
+        console.print("[nexus.success]✓ Health check endpoint enabled (/health)[/nexus.success]")
 
     except Exception as e:
-        console.print(f"[yellow]Warning: Failed to add health check route: {e}[/yellow]")
+        console.print(
+            f"[nexus.warning]Warning: Failed to add health check route: {e}[/nexus.warning]"
+        )
 
 
-def _add_api_key_middleware(mcp_server: Any) -> None:
-    """Add HTTP middleware to extract API keys from headers.
+def _extract_bearer_token(request: "Request") -> str | None:
+    """Pull an API key from ``X-Nexus-API-Key`` or ``Authorization: Bearer``."""
+    api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get("x-nexus-api-key")
+    if api_key:
+        return api_key
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header[7:]
+    return None
 
-    This middleware extracts the API key from the X-Nexus-API-Key header
-    and sets it in the request context for use by MCP tools.
 
-    Args:
-        mcp_server: FastMCP server instance
+class _APIKeyMiddleware(BaseHTTPMiddleware):
+    """Extract API key from HTTP headers into request contextvar.
+
+    Defined at module level so it can be passed to
+    ``mcp.run(middleware=[Middleware(_APIKeyMiddleware)])``.
+    FastMCP's ``http_app()`` returns a fresh Starlette app on each
+    call, so middleware added after the fact is lost.
+
+    Hub opt-in (#3784): when ``NEXUS_MCP_REQUIRE_BEARER=true``, missing
+    bearer is rejected with 401 BEFORE the tool layer can fall back to
+    an ambient ``_default_nx`` connection seeded with ``NEXUS_API_KEY``
+    / profile credentials. This prevents unauthenticated requests from
+    executing as the frontend's ambient identity on two-service hub
+    deployments. ``/health`` is always allowed through so container
+    healthchecks keep working. ``/metrics`` is also allowed through so
+    Prometheus can scrape the opt-in hub metrics endpoint (#3873).
     """
-    try:
-        from starlette.middleware.base import BaseHTTPMiddleware
+
+    async def dispatch(self, request: "Request", call_next: Any) -> "Response":
+        import os
 
         from nexus.bricks.mcp import reset_request_api_key, set_request_api_key
 
-        class APIKeyMiddleware(BaseHTTPMiddleware):
-            """Middleware to extract API key from HTTP headers."""
+        api_key = _extract_bearer_token(request)
 
-            async def dispatch(self, request: "Request", call_next: Any) -> "Response":
-                # Extract API key from header (try both formats)
-                api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get(
-                    "x-nexus-api-key"
-                )
+        # Fail-closed when the deployment opts into hub-frontend mode.
+        require_bearer = os.environ.get("NEXUS_MCP_REQUIRE_BEARER", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if require_bearer and not api_key and request.url.path not in {"/health", "/metrics"}:
+            from starlette.responses import JSONResponse
 
-                # Also support Authorization header format: "Bearer <api-key>"
-                if not api_key:
-                    auth_header = request.headers.get("Authorization") or request.headers.get(
-                        "authorization"
-                    )
-                    if auth_header and auth_header.startswith("Bearer "):
-                        api_key = auth_header[7:]  # Remove "Bearer " prefix
+            return cast(
+                "Response",
+                JSONResponse(
+                    {"error": "missing_bearer_token"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Bearer realm="nexus-hub"'},
+                ),
+            )
 
-                # Set API key in context if present
-                token = None
-                if api_key:
-                    token = set_request_api_key(api_key)
+        token = set_request_api_key(api_key) if api_key else None
+        try:
+            response = await call_next(request)
+            return cast("Response", response)
+        finally:
+            if token is not None:
+                reset_request_api_key(token)
 
-                try:
-                    # Process request
-                    response = await call_next(request)
-                    return cast("Response", response)
-                finally:
-                    # Clean up context
-                    if token is not None:
-                        reset_request_api_key(token)
 
-        # Add middleware to the underlying Starlette app
-        # FastMCP's http_app is a method that returns the Starlette application
-        if hasattr(mcp_server, "http_app"):
-            app = mcp_server.http_app()
-            app.add_middleware(APIKeyMiddleware)
-            console.print("[green]✓ API key middleware enabled (X-Nexus-API-Key header)[/green]")
-        else:
-            console.print("[yellow]Warning: http_app not available, middleware not added[/yellow]")
+def _reject_embedded_hub_mode(transport: str, remote_url: str | None = None) -> None:
+    """Refuse ``nexus mcp serve --transport http`` in embedded hub mode (#3784).
 
+    "Embedded hub" = ``NEXUS_DATABASE_URL`` set AND no remote URL
+    resolvable from ``--remote-url``, ``NEXUS_URL``, or the active
+    profile, on an HTTP transport. This configuration would accept
+    bearer tokens but run every tool call against the ambient local
+    ``NexusFS`` — no per-token identity, no zone isolation, no
+    connection to the hub's Postgres auth layer in the tool path.
+
+    The supported hub deployment is the two-service design in
+    ``docker-compose.hub.yml``: an ``nexusd`` RPC server plus a thin
+    ``nexus mcp serve --url http://nexus:2026`` frontend. The frontend
+    opens a per-request remote ``NexusFS`` with the client's bearer
+    and the RPC server's ``DatabaseAPIKeyAuth`` enforces identity/zone
+    on every call.
+
+    We fail closed at startup so operators see a clear error instead of
+    silently getting an unsafe deployment. Launches that provide the
+    remote URL via any supported channel (``--remote-url`` CLI flag,
+    ``NEXUS_URL`` env, active profile) are allowed through — those are
+    the two-service-safe shapes we actually want people to use.
+    """
+    import os
+
+    # stdio is single-user (no network) and safe. Every other transport
+    # (http, sse, and any future network transport) accepts bearer
+    # tokens from multiple clients, so the same guard applies (#3784
+    # round 10: SSE was previously skipped here and silently fell back
+    # to the ambient NexusFS).
+    if transport == "stdio":
+        return
+    if not os.environ.get("NEXUS_DATABASE_URL"):
+        return
+
+    # Resolve the effective remote URL the same way `_async_serve` will
+    # — CLI flag first, then env, then active profile — so a safe
+    # remote frontend launched as
+    # `nexus --profile hub mcp serve --transport http` is not
+    # false-rejected. `get_filesystem` reads the profile from
+    # ``ctx.obj['profile']`` (set by the root `nexus` command), so we
+    # do the same here.
+    if remote_url:
+        return
+    if os.environ.get("NEXUS_URL"):
+        return
+    try:
+        from nexus.cli.config import resolve_connection
+
+        profile_name = None
+        try:
+            ctx = click.get_current_context(silent=True)
+            if ctx is not None and ctx.obj:
+                profile_name = ctx.obj.get("profile")
+        except RuntimeError:
+            pass
+
+        resolved = resolve_connection(
+            remote_url=None,
+            remote_api_key=None,
+            profile_name=profile_name,
+        )
+        if getattr(resolved, "is_remote", False):
+            return
+    except Exception:
+        # If profile resolution itself is broken, fall through to the
+        # fail-closed error below — that's safer than masking a missing
+        # remote URL with an unrelated exception.
+        pass
+
+    raise click.ClickException(
+        "Embedded hub mode (NEXUS_DATABASE_URL set + no remote URL + "
+        "--transport http) is not supported: tool calls would run under "
+        "ambient local identity without per-token zone isolation. "
+        "Use the two-service hub deployment instead: run `nexusd` as the "
+        "RPC server and point this MCP frontend at it with "
+        "`--remote-url http://<nexus-host>:2026` or NEXUS_URL=…. "
+        "See docker-compose.hub.yml and docs/hub-deploy.md."
+    )
+
+
+def _build_http_middleware() -> list[Any]:
+    """Build the Starlette middleware list for MCP HTTP transport (#3779).
+
+    Order (outermost → innermost):
+      1. RateLimit — short-circuit with 429 before any work
+      2. AuditLog  — emit structured record per request
+      3. APIKey    — set ``_request_api_key`` contextvar for tool handlers
+    """
+    from starlette.middleware import Middleware
+
+    from nexus.bricks.mcp.middleware_audit import MCPAuditLogMiddleware
+    from nexus.bricks.mcp.middleware_ratelimit import build_rate_limit_middleware
+
+    items: list[Any] = []
+    try:
+        items.append(build_rate_limit_middleware())
     except Exception as e:
-        console.print(f"[yellow]Warning: Failed to add API key middleware: {e}[/yellow]")
+        console.print(
+            f"[nexus.warning]Warning: Failed to build rate-limit middleware: {e}[/nexus.warning]"
+        )
+    items.append(Middleware(MCPAuditLogMiddleware))
+    items.append(Middleware(_APIKeyMiddleware))
+    console.print(
+        "[nexus.success]✓ MCP HTTP middleware chain: APIKey → AuditLog → RateLimit[/nexus.success]"
+    )
+    return items
 
 
 @click.group(name="mcp")
@@ -178,7 +294,8 @@ def serve(
     host: str,
     port: int,
     api_key: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Start Nexus MCP server.
 
@@ -222,10 +339,107 @@ def serve(
         nexus mcp serve --url http://localhost:2026 --api-key YOUR_KEY
         # Or via environment:
         NEXUS_URL=http://localhost:2026 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
-
-        # Use with local backend
-        nexus mcp serve --data-dir ./my-data
     """
+    import asyncio
+    import os
+
+    # Resolve the effective remote URL/api_key once — same logic
+    # ``get_filesystem`` uses — and thread the resolved values into
+    # both the startup guard and the MCP server. For profile-only
+    # launches (e.g. `nexus --profile hub mcp serve`), this promotes
+    # the profile's URL into the `remote_url` passed to
+    # `create_mcp_server`, so per-request bearer tokens actually build
+    # per-request remote connections instead of falling through to an
+    # ambient `_default_nx` (#3784 round 7 fix).
+    resolved_remote_url = remote_url
+    resolved_remote_api_key = remote_api_key
+    try:
+        from nexus.cli.config import resolve_connection
+
+        profile_name = None
+        try:
+            ctx = click.get_current_context(silent=True)
+            if ctx is not None and ctx.obj:
+                profile_name = ctx.obj.get("profile")
+        except RuntimeError:
+            pass
+
+        resolved = resolve_connection(
+            remote_url=remote_url or os.environ.get("NEXUS_URL"),
+            remote_api_key=remote_api_key or os.environ.get("NEXUS_API_KEY"),
+            profile_name=profile_name,
+        )
+        if getattr(resolved, "is_remote", False):
+            resolved_remote_url = resolved.url or resolved_remote_url
+            resolved_remote_api_key = resolved.api_key or resolved_remote_api_key
+    except Exception:
+        # Fall through with the raw CLI-passed values — downstream
+        # paths handle None/empty safely (stdio single-user mode).
+        pass
+
+    # Fail-closed: refuse unsupported embedded-hub configuration before
+    # we open a port (#3784). Pass the resolved URL so a profile-only
+    # remote frontend is not false-rejected.
+    _reject_embedded_hub_mode(transport, remote_url=resolved_remote_url)
+
+    # When transport=http resolves a remote URL AND an ambient api_key
+    # (from --api-key, NEXUS_API_KEY, or a profile), the MCP server's
+    # `_default_nx` connection is seeded with that key — so missing
+    # bearer silently executes as the profile identity. Auto-promote
+    # NEXUS_MCP_REQUIRE_BEARER=true for that shape so unauthenticated
+    # requests hit a 401 at the middleware instead. Operators who
+    # intentionally want the ambient-identity fallback (e.g. a trusted
+    # single-tenant sidecar) can opt out with
+    # NEXUS_MCP_ALLOW_AMBIENT_KEY=true (#3784 round 8).
+    if (
+        transport in ("http", "sse")
+        and resolved_remote_url
+        and resolved_remote_api_key
+        and os.environ.get("NEXUS_MCP_ALLOW_AMBIENT_KEY", "").lower() not in ("1", "true", "yes")
+        and os.environ.get("NEXUS_MCP_REQUIRE_BEARER", "").lower() not in ("1", "true", "yes")
+    ):
+        os.environ["NEXUS_MCP_REQUIRE_BEARER"] = "true"
+        console.print(
+            "[nexus.warning]⚠ Auto-enabled NEXUS_MCP_REQUIRE_BEARER=true — remote "
+            "URL + ambient API key detected. Set NEXUS_MCP_ALLOW_AMBIENT_KEY=true to "
+            "opt out.[/nexus.warning]"
+        )
+
+    # FastMCP's .run(transport="http") starts its own event loop via anyio.run
+    # and cannot be called from inside an already-running asyncio loop. Split
+    # async setup (connects, creates server, installs middleware) from the
+    # synchronous transport run.
+    mcp_server = asyncio.run(
+        _async_serve(
+            transport,
+            host,
+            port,
+            api_key,
+            resolved_remote_url,
+            resolved_remote_api_key,
+        )
+    )
+    if mcp_server is None:
+        return
+    if transport == "stdio":
+        mcp_server.run(transport="stdio")
+    elif transport in ("http", "sse"):
+        # Middleware MUST be passed at run() time — FastMCP's http_app() returns
+        # a new Starlette instance on every call, so post-hoc add_middleware
+        # is lost (#3779 integration fix).
+        mcp_server.run(
+            transport=transport, host=host, port=port, middleware=_build_http_middleware()
+        )
+
+
+async def _async_serve(
+    transport: str,
+    host: str,
+    port: int,
+    api_key: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> Any:
     try:
         # Check if fastmcp is installed
         try:
@@ -255,21 +469,10 @@ def serve(
         # Get filesystem instance
         log_msg("Initializing Nexus MCP server...")
 
-        # Check if using remote URL
-        if backend_config.remote_url:
-            log_msg(f"  Remote URL: {backend_config.remote_url}")
-            if api_key:
-                log_msg(f"  API Key: {'*' * 8}")
-            nx = None
-            remote_url = backend_config.remote_url
-        else:
-            log_msg(f"  Backend: {backend_config.backend}")
-            if backend_config.backend == "gcs":
-                log_msg(f"  GCS Bucket: {backend_config.gcs_bucket}")
-            else:
-                log_msg(f"  Data Dir: {backend_config.data_dir}")
-            nx = get_filesystem(backend_config)
-            remote_url = None
+        log_msg(f"  Remote URL: {remote_url}")
+        if api_key:
+            log_msg(f"  API Key: {'*' * 8}")
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         log_msg(f"  Transport: {transport}")
 
@@ -282,7 +485,7 @@ def serve(
             console.print()
 
             # Display available tools
-            console.print("[bold cyan]Available Tools:[/bold cyan]")
+            console.print("[bold nexus.value]Available Tools:[/bold nexus.value]")
             tools = [
                 "nexus_read_file",
                 "nexus_write_file",
@@ -294,52 +497,108 @@ def serve(
                 "nexus_glob",
                 "nexus_grep",
                 "nexus_semantic_search",
+                "nexus_resolve_context",
                 "nexus_store_memory",
                 "nexus_query_memory",
                 "nexus_list_workflows",
                 "nexus_execute_workflow",
             ]
             for tool in tools:
-                console.print(f"  • [cyan]{tool}[/cyan]")
+                console.print(f"  • [nexus.value]{tool}[/nexus.value]")
 
             console.print()
-            console.print("[bold cyan]Resources:[/bold cyan]")
-            console.print("  • [cyan]nexus://files/{{path}}[/cyan] - Browse files")
+            console.print("[bold nexus.value]Resources:[/bold nexus.value]")
+            console.print("  • [nexus.path]nexus://files/{{path}}[/nexus.path] - Browse files")
 
             console.print()
-            console.print("[bold cyan]Prompts:[/bold cyan]")
-            console.print("  • [cyan]file_analysis_prompt[/cyan] - Analyze a file")
-            console.print("  • [cyan]search_and_summarize_prompt[/cyan] - Search and summarize")
+            console.print("[bold nexus.value]Prompts:[/bold nexus.value]")
+            console.print("  • [nexus.value]file_analysis_prompt[/nexus.value] - Analyze a file")
+            console.print(
+                "  • [nexus.value]search_and_summarize_prompt[/nexus.value] - Search and summarize"
+            )
 
             console.print()
-            console.print(f"[yellow]Starting HTTP server on http://{host}:{port}[/yellow]")
+            console.print(
+                f"[nexus.warning]Starting HTTP server on http://{host}:{port}[/nexus.warning]"
+            )
             console.print()
 
-            console.print("[green]Starting MCP server...[/green]")
-            console.print("[yellow]Press Ctrl+C to stop[/yellow]")
+            console.print("[nexus.success]Starting MCP server...[/nexus.success]")
+            console.print("[nexus.warning]Press Ctrl+C to stop[/nexus.warning]")
             console.print()
+
+        # Build manifest resolver callable if available (Issue #2984)
+        manifest_resolve_fn = None
+        if nx is not None:
+            _raw_resolver = getattr(nx, "manifest_resolver", None)
+            if _raw_resolver is not None:
+                try:
+                    from nexus.factory.manifest_adapter import build_manifest_resolve_fn
+
+                    manifest_resolve_fn = build_manifest_resolve_fn(_raw_resolver, nx)
+                except Exception:
+                    pass  # Graceful degradation — tool returns "unavailable"
 
         # Create and run MCP server
-        mcp_server = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
+        mcp_server = await create_mcp_server(
+            nx=nx,
+            remote_url=remote_url,
+            api_key=api_key,
+            manifest_resolver=manifest_resolve_fn,
+        )
 
-        # Add HTTP middleware and routes (for http/sse transports)
+        # Add custom HTTP routes (health check). Middleware is installed at
+        # mcp.run() time in the outer ``serve()`` caller via
+        # ``_build_http_middleware()`` — FastMCP's http_app() returns a fresh
+        # Starlette instance per call, so post-hoc add_middleware is lost.
         if transport in ["http", "sse"]:
-            # Add health check route (already added in create_mcp_server, but ensure it's there)
             _add_health_check_route(mcp_server)
-            _add_api_key_middleware(mcp_server)
+            try:
+                from nexus.bricks.mcp.metrics import install_metrics_route
 
-        # Run with appropriate transport
-        if transport == "stdio":
-            mcp_server.run(transport="stdio")
-        elif transport == "http":
-            mcp_server.run(transport="http", host=host, port=port)
-        elif transport == "sse":
-            mcp_server.run(transport="sse", host=host, port=port)
+                if install_metrics_route(mcp_server):
+                    log_msg("  Metrics: /metrics enabled")
+            except Exception as e:
+                log_msg(f"Warning: Failed to add metrics route: {e}")
+
+        return mcp_server
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]MCP server stopped by user[/yellow]")
+        console.print("\n[nexus.warning]MCP server stopped by user[/nexus.warning]")
+        return None
     except Exception as e:
         handle_error(e)
+        return None
+
+
+@mcp.command(name="export-tools")
+def export_tools_cmd() -> None:
+    """Export CLI commands as MCP tool definitions (JSON Schema).
+
+    Walks the Click command tree and outputs MCP-compatible tool
+    definitions for every leaf command.  Each tool has a name,
+    description, and inputSchema suitable for use with the Model
+    Context Protocol.
+
+    Examples:
+        # Pretty-print to terminal
+        nexus mcp export-tools
+
+        # Pipe to file (auto-compact JSON)
+        nexus mcp export-tools > tools.json
+
+        # Filter with jq
+        nexus mcp export-tools | jq '.[].name'
+    """
+    import json
+
+    from nexus.cli.export_tools import walk_click_tree
+    from nexus.cli.main import main as cli_root
+
+    tools = walk_click_tree(cli_root, prefix="nexus")
+
+    indent = 2 if sys.stdout.isatty() else None
+    click.echo(json.dumps(tools, indent=indent, default=str))
 
 
 def register_commands(cli: click.Group) -> None:

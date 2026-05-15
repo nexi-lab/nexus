@@ -307,6 +307,24 @@ describe("NexusPay methods", () => {
       }));
       await expect(pay.transferBatch(bigBatch)).rejects.toThrow(NexusPayError);
     });
+
+    it("validates every transfer recipient", async () => {
+      await expect(
+        pay.transferBatch([
+          { to: "alice", amount: "1.00" },
+          { to: "", amount: "2.00" },
+        ]),
+      ).rejects.toThrow(NexusPayError);
+    });
+
+    it("validates every transfer amount", async () => {
+      await expect(
+        pay.transferBatch([
+          { to: "alice", amount: "1.00" },
+          { to: "bob", amount: "0" },
+        ]),
+      ).rejects.toThrow(NexusPayError);
+    });
   });
 
   // =========================================================================
@@ -390,6 +408,11 @@ describe("NexusPay methods", () => {
       );
       await expect(pay.commit("res_001")).rejects.toThrow(ReservationError);
     });
+
+    it("validates reservationId is not empty", async () => {
+      await expect(pay.commit("")).rejects.toThrow(NexusPayError);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
   });
 
   // =========================================================================
@@ -411,6 +434,11 @@ describe("NexusPay methods", () => {
         jsonResponse({ detail: "Already released" }, 409),
       );
       await expect(pay.release("res_001")).rejects.toThrow(ReservationError);
+    });
+
+    it("validates reservationId is not empty", async () => {
+      await expect(pay.release("")).rejects.toThrow(NexusPayError);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 

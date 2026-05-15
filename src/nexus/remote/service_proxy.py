@@ -1,6 +1,6 @@
 """Universal service proxy for REMOTE deployment profile.
 
-Fills kernel service slots with RPC forwarders — like an NFS client module
+Fills service slots with RPC forwarders — like an NFS client module
 filling VFS inode_operations with RPC stubs. Any method call is forwarded
 to the server via the transport-agnostic ``call_rpc`` callback.
 
@@ -63,11 +63,17 @@ class RemoteServiceProxy:
             raise AttributeError(name)
 
         # Lazy import to avoid circular dependency at module load
+        from nexus.remote.method_registry import METHOD_REGISTRY
         from nexus.remote.rpc_proxy import RPCProxyBase
 
         def rpc_forwarder(*args: Any, **kwargs: Any) -> Any:
-            # Map positional args to keyword args using ABC signature
+            # Server exposes async @rpc_expose methods; client-side sync
+            # wrappers append "_sync" — strip suffix for RPC dispatch.
             rpc_name = name
+            if rpc_name.endswith("_sync"):
+                rpc_name = rpc_name[:-5]
+
+            # Map positional args to keyword args using ABC signature
             if args:
                 param_names = RPCProxyBase._get_param_names(rpc_name)
                 for i, val in enumerate(args):
@@ -78,17 +84,32 @@ class RemoteServiceProxy:
             kwargs.pop("context", None)
             kwargs.pop("_context", None)
 
-            # Server exposes async @rpc_expose methods; client-side sync
-            # wrappers append "_sync" — strip suffix for RPC dispatch.
-            if rpc_name.endswith("_sync"):
-                rpc_name = rpc_name[:-5]
+            # Extract timeout hint for gRPC transport deadline override.
+            # The timeout value stays in kwargs (sent as RPC param to server)
+            # AND is used as gRPC read_timeout so the channel doesn't kill
+            # long-running calls like ACP agent invocations.
+            read_timeout = kwargs.get("timeout")
 
-            return self._call_rpc(rpc_name, kwargs or None)
+            result = self._call_rpc(rpc_name, kwargs or None, read_timeout=read_timeout)
+
+            # Apply response_key extraction from METHOD_REGISTRY (#3731).
+            # Without this, methods like grep/glob return the server's
+            # dict wrapper ({"results": [...]}) instead of the unwrapped
+            # list that callers expect. This matches the unwrapping that
+            # RPCProxyBase._dispatch_rpc() does for the main NexusFS proxy.
+            spec = METHOD_REGISTRY.get(rpc_name)
+            if spec and spec.response_key and isinstance(result, dict):
+                return result.get(spec.response_key, result)
+
+            return result
 
         # Preserve method name for debugging
         rpc_forwarder.__name__ = name
         rpc_forwarder.__qualname__ = f"RemoteServiceProxy.{name}"
         return rpc_forwarder
+
+    def close(self) -> None:
+        """No-op close — REMOTE proxies have no local resources to release."""
 
     def __repr__(self) -> str:
         name = object.__getattribute__(self, "_service_name")

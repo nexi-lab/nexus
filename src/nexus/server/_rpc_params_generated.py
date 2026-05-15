@@ -14,48 +14,49 @@ from typing import Any
 
 __all__ = [
     "AccessShareLinkParams",
-    "AceAddFeedbackParams",
-    "AceCompleteTrajectoryParams",
-    "AceCreatePlaybookParams",
-    "AceGetEffectiveScoreParams",
-    "AceGetPlaybookParams",
-    "AceGetTrajectoryFeedbackParams",
-    "AceLogTrajectoryStepParams",
-    "AceMarkForRelearningParams",
-    "AceQueryPlaybooksParams",
-    "AceQueryTrajectoriesParams",
-    "AceStartTrajectoryParams",
     "AddMountParams",
     "AgentHeartbeatParams",
     "AgentListByZoneParams",
     "AgentTransitionParams",
     "AppendParams",
+    "AuditExportParams",
+    "AuditListParams",
     "BackfillDirectoryIndexParams",
-    "CancelSyncJobParams",
-    "CancelTaskParams",
     "CreateShareLinkParams",
     "DeleteAgentParams",
-    "DeleteBulkParams",
+    "DeleteBatchParams",
     "DeleteConnectorParams",
     "DeleteSavedMountParams",
     "DeprovisionUserParams",
     "DiffVersionsParams",
     "EditParams",
+    "EventsReplayParams",
     "ExistsBatchParams",
+    "FederationClientWhoamiParams",
+    "FederationClusterInfoParams",
+    "FederationCreateZoneParams",
+    "FederationExportZoneParams",
+    "FederationImportZoneParams",
+    "FederationJoinParams",
+    "FederationListZonesParams",
+    "FederationMountParams",
+    "FederationRemoveZoneParams",
+    "FederationShareParams",
+    "FederationUnmountParams",
+    "FlushWriteObserverParams",
     "GetAgentParams",
-    "GetEtagParams",
-    "GetMemoryInfoParams",
+    "GetContentIdParams",
     "GetMountParams",
     "GetShareLinkAccessLogsParams",
     "GetShareLinkParams",
-    "GetSyncJobParams",
-    "GetTaskParams",
-    "GetTaskStatsParams",
     "GetTopLevelMountsParams",
     "GetVersionParams",
     "GetWorkspaceInfoParams",
     "GlobBatchParams",
     "GlobParams",
+    "GovernanceAlertsParams",
+    "GovernanceRingsParams",
+    "GovernanceStatusParams",
     "GrepParams",
     "HasMountParams",
     "ListAgentsParams",
@@ -64,14 +65,12 @@ __all__ = [
     "ListMountsParams",
     "ListOutgoingSharesParams",
     "ListParams",
-    "ListQueueTasksParams",
-    "ListRegisteredMemoriesParams",
     "ListSavedMountsParams",
     "ListShareLinksParams",
-    "ListSyncJobsParams",
     "ListVersionsParams",
     "ListWorkspacesParams",
     "LoadMountParams",
+    "LoadWorkspaceConfigParams",
     "MCPConnectParams",
     "MCPListMountsParams",
     "MCPListToolsParams",
@@ -87,8 +86,13 @@ __all__ = [
     "OAuthListProvidersParams",
     "OAuthRevokeCredentialParams",
     "OAuthTestCredentialParams",
+    "PayBalanceParams",
+    "PayHistoryParams",
+    "PayTransferParams",
     "ProvisionUserParams",
+    "ReadBatchParams",
     "ReadBulkParams",
+    "ReauthMountParams",
     "RebacCheckParams",
     "RebacCreateParams",
     "RebacDeleteParams",
@@ -97,47 +101,31 @@ __all__ = [
     "RebacListObjectsParams",
     "RebacListTuplesParams",
     "RegisterAgentParams",
-    "RegisterMemoryParams",
     "RegisterWorkspaceParams",
     "RemoveMountParams",
-    "RenameBulkParams",
+    "RenameBatchParams",
     "RevokeShareByIdParams",
     "RevokeShareLinkParams",
     "RevokeShareParams",
     "RollbackParams",
     "SaveMountParams",
     "SemanticSearchIndexParams",
+    "SemanticSearchParams",
     "ShareWithUserParams",
-    "SkillsDiscoverParams",
-    "SkillsExportParams",
-    "SkillsGetPromptContextParams",
-    "SkillsImportParams",
-    "SkillsLoadParams",
-    "SkillsShareParams",
-    "SkillsSubscribeParams",
-    "SkillsUnshareParams",
-    "SkillsUnsubscribeParams",
-    "SkillsValidateZipParams",
     "SnapshotBeginParams",
     "SnapshotCommitParams",
+    "SnapshotCreateParams",
+    "SnapshotGetParams",
+    "SnapshotListEntriesParams",
+    "SnapshotListParams",
+    "SnapshotRestoreParams",
     "SnapshotRollbackParams",
     "StatBulkParams",
     "StatParams",
-    "SubmitTaskParams",
-    "SyncMountAsyncParams",
-    "SyncMountParams",
-    "SysAccessParams",
-    "SysIsDirectoryParams",
-    "SysMkdirParams",
-    "SysReaddirParams",
-    "SysRenameParams",
-    "SysRmdirParams",
-    "SysStatParams",
-    "SysUnlinkParams",
-    "SysWriteParams",
-    "UnregisterMemoryParams",
+    "SysWatchParams",
     "UnregisterWorkspaceParams",
     "UpdateAgentParams",
+    "UpdateMountParams",
     "UpdateWorkspaceParams",
     "WorkspaceDiffParams",
     "WorkspaceLogParams",
@@ -158,122 +146,12 @@ class AccessShareLinkParams:
 
 
 @dataclass
-class AceAddFeedbackParams:
-    """Parameters for ace_add_feedback(): Add feedback to a completed trajectory."""
-
-    trajectory_id: str
-    feedback_type: str
-    score: float | None = None
-    source: str | None = None
-    message: str | None = None
-    metrics: dict | None = None
-    context: dict | None = None
-
-
-@dataclass
-class AceCompleteTrajectoryParams:
-    """Parameters for ace_complete_trajectory(): Complete a trajectory with outcome."""
-
-    trajectory_id: str
-    status: str
-    success_score: float | None = None
-    error_message: str | None = None
-    context: dict | None = None
-
-
-@dataclass
-class AceCreatePlaybookParams:
-    """Parameters for ace_create_playbook(): Create a new playbook."""
-
-    name: str
-    description: str | None = None
-    scope: str = "agent"
-    context: dict | None = None
-
-
-@dataclass
-class AceGetEffectiveScoreParams:
-    """Parameters for ace_get_effective_score(): Get effective score for a trajectory."""
-
-    trajectory_id: str
-    strategy: str = "latest"
-    context: dict | None = None
-
-
-@dataclass
-class AceGetPlaybookParams:
-    """Parameters for ace_get_playbook(): Get playbook details."""
-
-    playbook_id: str
-    context: dict | None = None
-
-
-@dataclass
-class AceGetTrajectoryFeedbackParams:
-    """Parameters for ace_get_trajectory_feedback(): Get all feedback for a trajectory."""
-
-    trajectory_id: str
-    context: dict | None = None
-
-
-@dataclass
-class AceLogTrajectoryStepParams:
-    """Parameters for ace_log_trajectory_step(): Log a step in an execution trajectory."""
-
-    trajectory_id: str
-    step_type: str
-    description: str
-    result: Any = None
-    context: dict | None = None
-
-
-@dataclass
-class AceMarkForRelearningParams:
-    """Parameters for ace_mark_for_relearning(): Mark trajectory for re-learning."""
-
-    trajectory_id: str
-    reason: str
-    priority: int = 5
-    context: dict | None = None
-
-
-@dataclass
-class AceQueryPlaybooksParams:
-    """Parameters for ace_query_playbooks(): Query playbooks."""
-
-    scope: str | None = None
-    limit: int = 50
-    context: dict | None = None
-
-
-@dataclass
-class AceQueryTrajectoriesParams:
-    """Parameters for ace_query_trajectories(): Query execution trajectories."""
-
-    task_type: str | None = None
-    status: str | None = None
-    limit: int = 50
-    context: dict | None = None
-
-
-@dataclass
-class AceStartTrajectoryParams:
-    """Parameters for ace_start_trajectory(): Start tracking a new execution trajectory for ACE learning."""
-
-    task_description: str
-    task_type: str | None = None
-    context: dict | None = None
-
-
-@dataclass
 class AddMountParams:
     """Parameters for add_mount(): Add a dynamic backend mount to the filesystem."""
 
     mount_point: str
     backend_type: str
     backend_config: dict[str, Any]
-    readonly: bool = False
-    io_profile: str = "balanced"
 
 
 @dataclass
@@ -281,6 +159,7 @@ class AgentHeartbeatParams:
     """Parameters for agent_heartbeat(): Record a heartbeat for an active agent."""
 
     agent_id: str
+    context: dict | None = None
 
 
 @dataclass
@@ -289,6 +168,7 @@ class AgentListByZoneParams:
 
     zone_id: str
     state: str | None = None
+    context: dict | None = None
 
 
 @dataclass
@@ -298,6 +178,7 @@ class AgentTransitionParams:
     agent_id: str
     target_state: str
     expected_generation: int | None = None
+    context: dict | None = None
 
 
 @dataclass
@@ -311,25 +192,32 @@ class AppendParams:
 
 
 @dataclass
+class AuditExportParams:
+    """Parameters for audit_export() method."""
+
+    fmt: str = "json"
+    since: str | None = None
+    until: str | None = None
+
+
+@dataclass
+class AuditListParams:
+    """Parameters for audit_list() method."""
+
+    since: str | None = None
+    until: str | None = None
+    agent_id: str | None = None
+    action: str | None = None
+    limit: int = 50
+    cursor: str | None = None
+
+
+@dataclass
 class BackfillDirectoryIndexParams:
     """Parameters for backfill_directory_index(): Backfill sparse directory index from existing files."""
 
     prefix: str = "/"
     zone_id: str | None = None
-
-
-@dataclass
-class CancelSyncJobParams:
-    """Parameters for cancel_sync_job(): Cancel a running sync job."""
-
-    job_id: str
-
-
-@dataclass
-class CancelTaskParams:
-    """Parameters for cancel_task(): Cancel a pending or running task."""
-
-    task_id: int
 
 
 @dataclass
@@ -345,14 +233,14 @@ class CreateShareLinkParams:
 
 @dataclass
 class DeleteAgentParams:
-    """Parameters for delete_agent(): Delete a registered agent (v0.5.0)."""
+    """Parameters for delete_agent(): Delete a registered agent."""
 
     agent_id: str
 
 
 @dataclass
-class DeleteBulkParams:
-    """Parameters for delete_bulk(): Delete multiple files or directories in a single operation."""
+class DeleteBatchParams:
+    """Parameters for delete_batch(): Delete multiple files or directories in a single operation."""
 
     paths: list[str]
     recursive: bool = False
@@ -412,6 +300,16 @@ class EditParams:
 
 
 @dataclass
+class EventsReplayParams:
+    """Parameters for events_replay() method."""
+
+    since: str | None = None
+    event_type: str | None = None
+    path: str | None = None
+    limit: int = 50
+
+
+@dataclass
 class ExistsBatchParams:
     """Parameters for exists_batch(): Check existence of multiple paths in a single call (Issue #859)."""
 
@@ -419,22 +317,129 @@ class ExistsBatchParams:
 
 
 @dataclass
+class FederationClientWhoamiParams:
+    """Parameters for federation_client_whoami(): Return the caller's zone grants for federation handshake."""
+
+    pass
+
+
+@dataclass
+class FederationClusterInfoParams:
+    """Parameters for federation_cluster_info() method."""
+
+    zone_id: str
+
+
+@dataclass
+class FederationCreateZoneParams:
+    """Parameters for federation_create_zone() method."""
+
+    zone_id: str
+
+
+@dataclass
+class FederationExportZoneParams:
+    """Parameters for federation_export_zone(): Export a raft-backed zone to a .nexus bundle on the server's"""
+
+    zone_id: str
+    output_path: str
+    include_content: bool = True
+    include_permissions: bool = True
+    include_embeddings: bool = False
+    include_deleted: bool = False
+    path_prefix: str | None = None
+    sign: bool = False
+    strip_credentials: bool = False
+    after_time: str | None = None
+    before_time: str | None = None
+    include_mounts: bool = False
+
+
+@dataclass
+class FederationImportZoneParams:
+    """Parameters for federation_import_zone(): Import a zone bundle from the server's filesystem."""
+
+    bundle_path: str
+    target_zone: str | None = None
+    conflict: str = "skip"
+    preserve_timestamps: bool = True
+    import_permissions: bool = True
+    path_prefix_remap: dict[str, str] | None = None
+    force: bool = False
+    rebuild_embeddings: bool = False
+    injections: dict[str, str] | None = None
+    require_no_placeholders: bool = True
+    restore_mounts: bool = True
+    mount_overrides: dict[str, dict[str, str]] | None = None
+
+
+@dataclass
+class FederationJoinParams:
+    """Parameters for federation_join(): Join a zone advertised by a peer at `remote_path` and mount"""
+
+    peer_addr: str
+    remote_path: str
+    local_path: str
+
+
+@dataclass
+class FederationListZonesParams:
+    """Parameters for federation_list_zones() method."""
+
+    pass
+
+
+@dataclass
+class FederationMountParams:
+    """Parameters for federation_mount(): Mount ``target_zone`` at ``path`` (global VFS) inside"""
+
+    parent_zone: str
+    path: str
+    target_zone: str
+    source: str | None = None
+
+
+@dataclass
+class FederationRemoveZoneParams:
+    """Parameters for federation_remove_zone() method."""
+
+    zone_id: str
+    force: bool = False
+
+
+@dataclass
+class FederationShareParams:
+    """Parameters for federation_share(): Publish `local_path`'s subtree as a standalone federation zone."""
+
+    local_path: str
+    zone_id: str | None = None
+
+
+@dataclass
+class FederationUnmountParams:
+    """Parameters for federation_unmount() method."""
+
+    parent_zone: str
+    path: str
+
+
+@dataclass
+class FlushWriteObserverParams:
+    """Parameters for flush_write_observer(): Flush the write observer so pending version/audit records are committed."""
+
+    pass
+
+
+@dataclass
 class GetAgentParams:
-    """Parameters for get_agent(): Get information about a registered agent (v0.5.0)."""
+    """Parameters for get_agent(): Get information about a registered agent."""
 
     agent_id: str
 
 
 @dataclass
-class GetEtagParams:
-    """Parameters for get_etag(): Get content hash for HTTP If-None-Match checks."""
-
-    path: str
-
-
-@dataclass
-class GetMemoryInfoParams:
-    """Parameters for get_memory_info(): Get information about a registered memory."""
+class GetContentIdParams:
+    """Parameters for get_content_id(): Get content hash for HTTP If-None-Match checks."""
 
     path: str
 
@@ -459,27 +464,6 @@ class GetShareLinkAccessLogsParams:
 
     link_id: str
     limit: int = 100
-
-
-@dataclass
-class GetSyncJobParams:
-    """Parameters for get_sync_job(): Get the status and progress of a sync job."""
-
-    job_id: str
-
-
-@dataclass
-class GetTaskParams:
-    """Parameters for get_task(): Get task status and details."""
-
-    task_id: int
-
-
-@dataclass
-class GetTaskStatsParams:
-    """Parameters for get_task_stats(): Get queue statistics."""
-
-    pass
 
 
 @dataclass
@@ -511,6 +495,7 @@ class GlobParams:
     pattern: str
     path: str = "/"
     context: Any = None
+    files: list[str] | None = None
 
 
 @dataclass
@@ -523,8 +508,30 @@ class GlobBatchParams:
 
 
 @dataclass
+class GovernanceAlertsParams:
+    """Parameters for governance_alerts() method."""
+
+    severity: str | None = None
+    limit: int = 50
+
+
+@dataclass
+class GovernanceRingsParams:
+    """Parameters for governance_rings() method."""
+
+    pass
+
+
+@dataclass
+class GovernanceStatusParams:
+    """Parameters for governance_status() method."""
+
+    pass
+
+
+@dataclass
 class GrepParams:
-    """Parameters for grep(): Search file contents using regex patterns."""
+    """Parameters for grep(): Public grep entry point with activity-event instrumentation (#3791)."""
 
     pattern: str
     path: str = "/"
@@ -533,6 +540,11 @@ class GrepParams:
     max_results: int = 100
     search_mode: str = "auto"
     context: Any = None
+    before_context: int = 0
+    after_context: int = 0
+    invert_match: bool = False
+    files: list[str] | None = None
+    block_type: str | None = None
 
 
 @dataclass
@@ -557,7 +569,7 @@ class ListParams:
 
 @dataclass
 class ListAgentsParams:
-    """Parameters for list_agents(): List all registered agents (v0.5.0)."""
+    """Parameters for list_agents(): List all registered agents."""
 
     pass
 
@@ -604,23 +616,6 @@ class ListOutgoingSharesParams:
 
 
 @dataclass
-class ListQueueTasksParams:
-    """Parameters for list_queue_tasks(): List tasks with optional filters."""
-
-    task_type: str | None = None
-    status: int | None = None
-    limit: int = 50
-    offset: int = 0
-
-
-@dataclass
-class ListRegisteredMemoriesParams:
-    """Parameters for list_registered_memories(): List all registered memory paths."""
-
-    pass
-
-
-@dataclass
 class ListSavedMountsParams:
     """Parameters for list_saved_mounts(): List mount configurations saved in the database."""
 
@@ -635,15 +630,6 @@ class ListShareLinksParams:
     path: str | None = None
     include_revoked: bool = False
     include_expired: bool = False
-
-
-@dataclass
-class ListSyncJobsParams:
-    """Parameters for list_sync_jobs(): List sync jobs with optional filters."""
-
-    mount_point: str | None = None
-    status: str | None = None
-    limit: int = 50
 
 
 @dataclass
@@ -665,6 +651,13 @@ class LoadMountParams:
     """Parameters for load_mount(): Load a saved mount configuration and activate it."""
 
     mount_point: str
+
+
+@dataclass
+class LoadWorkspaceConfigParams:
+    """Parameters for load_workspace_config(): Load workspaces from configuration."""
+
+    workspaces: list[dict] | None = None
 
 
 @dataclass
@@ -799,6 +792,33 @@ class OAuthTestCredentialParams:
 
 
 @dataclass
+class PayBalanceParams:
+    """Parameters for pay_balance() method."""
+
+    agent_id: str | None = None
+
+
+@dataclass
+class PayHistoryParams:
+    """Parameters for pay_history() method."""
+
+    since: str | None = None
+    limit: int = 50
+    cursor: str | None = None
+
+
+@dataclass
+class PayTransferParams:
+    """Parameters for pay_transfer() method."""
+
+    to: str
+    amount: str
+    memo: str = ""
+    method: str = "auto"
+    from_agent: str = "anonymous"
+
+
+@dataclass
 class ProvisionUserParams:
     """Parameters for provision_user(): Provision a new user with all default resources (Issue #820)."""
 
@@ -811,7 +831,15 @@ class ProvisionUserParams:
     api_key_name: str | None = None
     api_key_expires_at: str | None = None
     create_agents: bool = True
-    import_skills: bool = True
+    import_skills: bool = False
+
+
+@dataclass
+class ReadBatchParams:
+    """Parameters for read_batch(): Read multiple files in a single round-trip for improved performance."""
+
+    paths: list[str]
+    partial: bool = False
 
 
 @dataclass
@@ -824,16 +852,23 @@ class ReadBulkParams:
 
 
 @dataclass
+class ReauthMountParams:
+    """Parameters for reauth_mount(): Refresh or rotate OAuth credentials for a mounted connector."""
+
+    mount_point: str
+    provider: str | None = None
+    user_email: str | None = None
+
+
+@dataclass
 class RebacCheckParams:
-    """Parameters for rebac_check(): Check if subject has permission on object (Issue #1081)."""
+    """Parameters for rebac_check(): Check if subject has permission on object."""
 
     subject: tuple[str, str]
     permission: str
     object: tuple[str, str]
     context: Any = None
     zone_id: str | None = None
-    consistency_mode: str | None = None
-    min_revision: int | None = None
 
     def __post_init__(self) -> None:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
@@ -936,7 +971,7 @@ class RebacListTuplesParams:
 
 @dataclass
 class RegisterAgentParams:
-    """Parameters for register_agent(): Register an AI agent (v0.5.0)."""
+    """Parameters for register_agent(): Register an AI agent."""
 
     agent_id: str
     name: str
@@ -945,21 +980,6 @@ class RegisterAgentParams:
     metadata: dict | None = None
     capabilities: list[str] | None = None
     context: dict | None = None
-
-
-@dataclass
-class RegisterMemoryParams:
-    """Parameters for register_memory(): Register a directory as a memory."""
-
-    path: str
-    name: str | None = None
-    description: str | None = None
-    created_by: str | None = None
-    tags: list[str] | None = None
-    metadata: dict[str, Any] | None = None
-    session_id: str | None = None
-    ttl: str | None = None
-    context: Any | None = None
 
 
 @dataclass
@@ -985,8 +1005,8 @@ class RemoveMountParams:
 
 
 @dataclass
-class RenameBulkParams:
-    """Parameters for rename_bulk(): Rename/move multiple files in a single operation."""
+class RenameBatchParams:
+    """Parameters for rename_batch(): Rename/move multiple files in a single operation."""
 
     renames: list[tuple[str, str]]
 
@@ -1044,11 +1064,20 @@ class SaveMountParams:
     mount_point: str
     backend_type: str
     backend_config: dict[str, Any]
-    readonly: bool = False
-    io_profile: str = "balanced"
     owner_user_id: str | None = None
     zone_id: str | None = None
     description: str | None = None
+
+
+@dataclass
+class SemanticSearchParams:
+    """Parameters for semantic_search(): Public semantic-search entry point with activity-event instrumentation (#3791)."""
+
+    query: str
+    path: str = "/"
+    limit: int = 10
+    filters: dict[str, Any] | None = None
+    search_mode: str = "semantic"
 
 
 @dataclass
@@ -1076,112 +1105,56 @@ class ShareWithUserParams:
 
 
 @dataclass
-class SkillsDiscoverParams:
-    """Parameters for skills_discover(): RPC wrapper for discover()."""
-
-    filter: str = "all"
-    context: Any | None = None
-
-
-@dataclass
-class SkillsExportParams:
-    """Parameters for skills_export(): Export a skill to .skill (ZIP) format."""
-
-    skill_path: str | None = None
-    skill_name: str | None = None
-    output_path: str | None = None
-    format: str = "generic"
-    include_dependencies: bool = False
-    context: Any | None = None
-
-
-@dataclass
-class SkillsGetPromptContextParams:
-    """Parameters for skills_get_prompt_context(): RPC wrapper for get_prompt_context()."""
-
-    max_skills: int = 50
-    context: Any | None = None
-
-
-@dataclass
-class SkillsImportParams:
-    """Parameters for skills_import(): Import a skill from .skill (ZIP) format."""
-
-    source_path: str | None = None
-    zip_bytes: bytes | str | None = None
-    zip_data: str | None = None
-    target_path: str | None = None
-    allow_overwrite: bool = False
-    context: Any | None = None
-    tier: str | None = None
-
-
-@dataclass
-class SkillsLoadParams:
-    """Parameters for skills_load(): RPC wrapper for load()."""
-
-    skill_path: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsShareParams:
-    """Parameters for skills_share(): RPC wrapper for share()."""
-
-    skill_path: str
-    share_with: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsSubscribeParams:
-    """Parameters for skills_subscribe(): RPC wrapper for subscribe()."""
-
-    skill_path: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsUnshareParams:
-    """Parameters for skills_unshare(): RPC wrapper for unshare()."""
-
-    skill_path: str
-    unshare_from: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsUnsubscribeParams:
-    """Parameters for skills_unsubscribe(): RPC wrapper for unsubscribe()."""
-
-    skill_path: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsValidateZipParams:
-    """Parameters for skills_validate_zip(): Validate a .skill (ZIP) package without importing it."""
-
-    source_path: str | None = None
-    zip_bytes: bytes | str | None = None
-    zip_data: str | None = None
-    context: Any | None = None
-
-
-@dataclass
 class SnapshotBeginParams:
-    """Parameters for snapshot_begin(): Begin a transactional snapshot for the specified paths."""
+    """Parameters for snapshot_begin(): Begin a transactional snapshot."""
 
-    paths: list[str]
     agent_id: str | None = None
-    zone_id: str = "root"
+    zone_id: str | None = None
+    description: str | None = None
+    ttl_seconds: int = 3600
 
 
 @dataclass
 class SnapshotCommitParams:
-    """Parameters for snapshot_commit(): Commit a snapshot — changes become permanent."""
+    """Parameters for snapshot_commit() method."""
 
-    snapshot_id: str
+    transaction_id: str
+
+
+@dataclass
+class SnapshotCreateParams:
+    """Parameters for snapshot_create() method."""
+
+    description: str | None = None
+    ttl_seconds: int = 3600
+
+
+@dataclass
+class SnapshotGetParams:
+    """Parameters for snapshot_get() method."""
+
+    transaction_id: str
+
+
+@dataclass
+class SnapshotListParams:
+    """Parameters for snapshot_list() method."""
+
+    pass
+
+
+@dataclass
+class SnapshotListEntriesParams:
+    """Parameters for snapshot_list_entries() method."""
+
+    transaction_id: str
+
+
+@dataclass
+class SnapshotRestoreParams:
+    """Parameters for snapshot_restore() method."""
+
+    txn_id: str
 
 
 @dataclass
@@ -1207,137 +1180,12 @@ class StatBulkParams:
 
 
 @dataclass
-class SubmitTaskParams:
-    """Parameters for submit_task(): Submit a task to the durable queue."""
-
-    task_type: str
-    params_json: str = "{}"
-    priority: int = 2
-    max_retries: int = 3
-
-
-@dataclass
-class SyncMountParams:
-    """Parameters for sync_mount(): Sync metadata and content from connector backend(s) to Nexus database."""
-
-    mount_point: str | None = None
-    path: str | None = None
-    recursive: bool = True
-    dry_run: bool = False
-    sync_content: bool = True
-    include_patterns: list[str] | None = None
-    exclude_patterns: list[str] | None = None
-    generate_embeddings: bool = False
-    full_sync: bool = False
-
-
-@dataclass
-class SyncMountAsyncParams:
-    """Parameters for sync_mount_async(): Start an async sync job for a mount point."""
-
-    mount_point: str
-    path: str | None = None
-    recursive: bool = True
-    dry_run: bool = False
-    sync_content: bool = True
-    include_patterns: list[str] | None = None
-    exclude_patterns: list[str] | None = None
-    generate_embeddings: bool = False
-
-
-@dataclass
-class SysAccessParams:
-    """Parameters for sys_access(): Check if a file or directory exists."""
+class SysWatchParams:
+    """Parameters for sys_watch(): Wait for file changes (inotify(7)). Returns FileEvent dict or None on timeout."""
 
     path: str
-
-
-@dataclass
-class SysIsDirectoryParams:
-    """Parameters for sys_is_directory(): Check if path is a directory (explicit or implicit)."""
-
-    path: str
-
-
-@dataclass
-class SysMkdirParams:
-    """Parameters for sys_mkdir(): Create a directory (parents=True for mkdir -p)."""
-
-    path: str
-    parents: bool = False
-    exist_ok: bool = False
-
-
-@dataclass
-class SysReaddirParams:
-    """Parameters for sys_readdir(): List directory entries (POSIX readdir(3))."""
-
-    path: str = "/"
-    recursive: bool = True
-    details: bool = False
-    show_parsed: bool = True
-    context: Any = None
-    limit: int | None = None
-    cursor: str | None = None
-
-
-@dataclass
-class SysRenameParams:
-    """Parameters for sys_rename(): Rename/move a file by updating its path in metadata."""
-
-    old_path: str
-    new_path: str
-
-
-@dataclass
-class SysRmdirParams:
-    """Parameters for sys_rmdir(): Remove a directory (recursive=True for rm -rf)."""
-
-    path: str
+    timeout: float = 30.0
     recursive: bool = False
-    subject: tuple[str, str] | None = None
-    zone_id: str | None = None
-    agent_id: str | None = None
-    is_admin: bool | None = None
-
-    def __post_init__(self) -> None:
-        """Convert lists to tuples (JSON deserializes tuples as lists)."""
-        if isinstance(self.subject, list):
-            object.__setattr__(self, "subject", tuple(self.subject))
-
-
-@dataclass
-class SysStatParams:
-    """Parameters for sys_stat(): Get file metadata without reading content (FUSE getattr)."""
-
-    path: str
-
-
-@dataclass
-class SysUnlinkParams:
-    """Parameters for sys_unlink(): Delete a file or memory."""
-
-    path: str
-
-
-@dataclass
-class SysWriteParams:
-    """Parameters for sys_write(): Write content to a file with optional optimistic concurrency control."""
-
-    path: str
-    content: bytes | str
-    if_match: str | None = None
-    if_none_match: bool = False
-    force: bool = False
-    lock: bool = False
-    lock_timeout: float = 30.0
-
-
-@dataclass
-class UnregisterMemoryParams:
-    """Parameters for unregister_memory(): Unregister a memory (does NOT delete files)."""
-
-    path: str
 
 
 @dataclass
@@ -1349,13 +1197,21 @@ class UnregisterWorkspaceParams:
 
 @dataclass
 class UpdateAgentParams:
-    """Parameters for update_agent(): Update an existing agent's configuration (v0.5.1)."""
+    """Parameters for update_agent(): Update an existing agent's configuration."""
 
     agent_id: str
     name: str | None = None
     description: str | None = None
     metadata: dict | None = None
     context: dict | None = None
+
+
+@dataclass
+class UpdateMountParams:
+    """Parameters for update_mount(): Update a mount's backend configuration without removing it."""
+
+    mount_point: str
+    backend_config: dict[str, Any]
 
 
 @dataclass
@@ -1406,7 +1262,7 @@ class WorkspaceSnapshotParams:
 
 @dataclass
 class WriteBatchParams:
-    """Parameters for write_batch(): Write multiple files in a single transaction for improved performance."""
+    """Parameters for write_batch(): Write multiple files in a single round-trip for improved performance."""
 
     files: list[tuple[str, bytes]]
 
@@ -1418,48 +1274,49 @@ class WriteBatchParams:
 
 METHOD_PARAMS: dict[str, type] = {
     "access_share_link": AccessShareLinkParams,
-    "ace_add_feedback": AceAddFeedbackParams,
-    "ace_complete_trajectory": AceCompleteTrajectoryParams,
-    "ace_create_playbook": AceCreatePlaybookParams,
-    "ace_get_effective_score": AceGetEffectiveScoreParams,
-    "ace_get_playbook": AceGetPlaybookParams,
-    "ace_get_trajectory_feedback": AceGetTrajectoryFeedbackParams,
-    "ace_log_trajectory_step": AceLogTrajectoryStepParams,
-    "ace_mark_for_relearning": AceMarkForRelearningParams,
-    "ace_query_playbooks": AceQueryPlaybooksParams,
-    "ace_query_trajectories": AceQueryTrajectoriesParams,
-    "ace_start_trajectory": AceStartTrajectoryParams,
     "add_mount": AddMountParams,
     "agent_heartbeat": AgentHeartbeatParams,
     "agent_list_by_zone": AgentListByZoneParams,
     "agent_transition": AgentTransitionParams,
     "append": AppendParams,
+    "audit_export": AuditExportParams,
+    "audit_list": AuditListParams,
     "backfill_directory_index": BackfillDirectoryIndexParams,
-    "cancel_sync_job": CancelSyncJobParams,
-    "cancel_task": CancelTaskParams,
     "create_share_link": CreateShareLinkParams,
     "delete_agent": DeleteAgentParams,
-    "delete_bulk": DeleteBulkParams,
+    "delete_batch": DeleteBatchParams,
     "delete_connector": DeleteConnectorParams,
     "delete_saved_mount": DeleteSavedMountParams,
     "deprovision_user": DeprovisionUserParams,
     "diff_versions": DiffVersionsParams,
     "edit": EditParams,
+    "events_replay": EventsReplayParams,
     "exists_batch": ExistsBatchParams,
+    "federation_client_whoami": FederationClientWhoamiParams,
+    "federation_cluster_info": FederationClusterInfoParams,
+    "federation_create_zone": FederationCreateZoneParams,
+    "federation_export_zone": FederationExportZoneParams,
+    "federation_import_zone": FederationImportZoneParams,
+    "federation_join": FederationJoinParams,
+    "federation_list_zones": FederationListZonesParams,
+    "federation_mount": FederationMountParams,
+    "federation_remove_zone": FederationRemoveZoneParams,
+    "federation_share": FederationShareParams,
+    "federation_unmount": FederationUnmountParams,
+    "flush_write_observer": FlushWriteObserverParams,
     "get_agent": GetAgentParams,
-    "get_etag": GetEtagParams,
-    "get_memory_info": GetMemoryInfoParams,
+    "get_content_id": GetContentIdParams,
     "get_mount": GetMountParams,
     "get_share_link": GetShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
-    "get_sync_job": GetSyncJobParams,
-    "get_task": GetTaskParams,
-    "get_task_stats": GetTaskStatsParams,
     "get_top_level_mounts": GetTopLevelMountsParams,
     "get_version": GetVersionParams,
     "get_workspace_info": GetWorkspaceInfoParams,
     "glob": GlobParams,
     "glob_batch": GlobBatchParams,
+    "governance_alerts": GovernanceAlertsParams,
+    "governance_rings": GovernanceRingsParams,
+    "governance_status": GovernanceStatusParams,
     "grep": GrepParams,
     "has_mount": HasMountParams,
     "list": ListParams,
@@ -1468,14 +1325,12 @@ METHOD_PARAMS: dict[str, type] = {
     "list_incoming_shares": ListIncomingSharesParams,
     "list_mounts": ListMountsParams,
     "list_outgoing_shares": ListOutgoingSharesParams,
-    "list_queue_tasks": ListQueueTasksParams,
-    "list_registered_memories": ListRegisteredMemoriesParams,
     "list_saved_mounts": ListSavedMountsParams,
     "list_share_links": ListShareLinksParams,
-    "list_sync_jobs": ListSyncJobsParams,
     "list_versions": ListVersionsParams,
     "list_workspaces": ListWorkspacesParams,
     "load_mount": LoadMountParams,
+    "load_workspace_config": LoadWorkspaceConfigParams,
     "make_private": MakePrivateParams,
     "make_public": MakePublicParams,
     "mcp_connect": MCPConnectParams,
@@ -1491,8 +1346,13 @@ METHOD_PARAMS: dict[str, type] = {
     "oauth_list_providers": OAuthListProvidersParams,
     "oauth_revoke_credential": OAuthRevokeCredentialParams,
     "oauth_test_credential": OAuthTestCredentialParams,
+    "pay_balance": PayBalanceParams,
+    "pay_history": PayHistoryParams,
+    "pay_transfer": PayTransferParams,
     "provision_user": ProvisionUserParams,
+    "read_batch": ReadBatchParams,
     "read_bulk": ReadBulkParams,
+    "reauth_mount": ReauthMountParams,
     "rebac_check": RebacCheckParams,
     "rebac_create": RebacCreateParams,
     "rebac_delete": RebacDeleteParams,
@@ -1501,47 +1361,31 @@ METHOD_PARAMS: dict[str, type] = {
     "rebac_list_objects": RebacListObjectsParams,
     "rebac_list_tuples": RebacListTuplesParams,
     "register_agent": RegisterAgentParams,
-    "register_memory": RegisterMemoryParams,
     "register_workspace": RegisterWorkspaceParams,
     "remove_mount": RemoveMountParams,
-    "rename_bulk": RenameBulkParams,
+    "rename_batch": RenameBatchParams,
     "revoke_share": RevokeShareParams,
     "revoke_share_by_id": RevokeShareByIdParams,
     "revoke_share_link": RevokeShareLinkParams,
     "rollback": RollbackParams,
     "save_mount": SaveMountParams,
+    "semantic_search": SemanticSearchParams,
     "semantic_search_index": SemanticSearchIndexParams,
     "share_with_user": ShareWithUserParams,
-    "skills_discover": SkillsDiscoverParams,
-    "skills_export": SkillsExportParams,
-    "skills_get_prompt_context": SkillsGetPromptContextParams,
-    "skills_import": SkillsImportParams,
-    "skills_load": SkillsLoadParams,
-    "skills_share": SkillsShareParams,
-    "skills_subscribe": SkillsSubscribeParams,
-    "skills_unshare": SkillsUnshareParams,
-    "skills_unsubscribe": SkillsUnsubscribeParams,
-    "skills_validate_zip": SkillsValidateZipParams,
     "snapshot_begin": SnapshotBeginParams,
     "snapshot_commit": SnapshotCommitParams,
+    "snapshot_create": SnapshotCreateParams,
+    "snapshot_get": SnapshotGetParams,
+    "snapshot_list": SnapshotListParams,
+    "snapshot_list_entries": SnapshotListEntriesParams,
+    "snapshot_restore": SnapshotRestoreParams,
     "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
     "stat_bulk": StatBulkParams,
-    "submit_task": SubmitTaskParams,
-    "sync_mount": SyncMountParams,
-    "sync_mount_async": SyncMountAsyncParams,
-    "sys_access": SysAccessParams,
-    "sys_is_directory": SysIsDirectoryParams,
-    "sys_mkdir": SysMkdirParams,
-    "sys_readdir": SysReaddirParams,
-    "sys_rename": SysRenameParams,
-    "sys_rmdir": SysRmdirParams,
-    "sys_stat": SysStatParams,
-    "sys_unlink": SysUnlinkParams,
-    "sys_write": SysWriteParams,
-    "unregister_memory": UnregisterMemoryParams,
+    "sys_watch": SysWatchParams,
     "unregister_workspace": UnregisterWorkspaceParams,
     "update_agent": UpdateAgentParams,
+    "update_mount": UpdateMountParams,
     "update_workspace": UpdateWorkspaceParams,
     "workspace_diff": WorkspaceDiffParams,
     "workspace_log": WorkspaceLogParams,

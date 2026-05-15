@@ -458,7 +458,7 @@ class NexusPay:
             raise NexusPayError("SchedulerService not configured")
 
         from nexus.contracts.constants import TIER_ALIASES
-        from nexus.services.protocols.scheduler import AgentRequest
+        from nexus.contracts.protocols.scheduler import AgentRequest
 
         tier = TIER_ALIASES.get(priority)
         if tier is None:

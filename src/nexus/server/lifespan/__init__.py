@@ -10,12 +10,16 @@ Each initializer function:
 """
 
 import asyncio
+import ctypes
+import gc
 import logging
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
 from nexus.server.lifespan.services_container import LifespanServices
+from nexus.server.lifespan.zone_runners import shutdown_zone_runners
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -52,7 +56,7 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
 
         version = _get_version("nexus-ai-fs")
     except Exception:
-        pass
+        version = "unknown"
 
     disabled = sorted(ALL_BRICK_NAMES - enabled)
 
@@ -124,6 +128,83 @@ def _wire_query_observer(_app: "FastAPI", svc: LifespanServices) -> None:
         logger.info("QueryObserverComponent registration skipped: %s", exc)
 
 
+def _apply_boot_tweaks() -> None:
+    """Apply Python-level memory hygiene at lifespan startup (Issue #3997).
+
+    Must be called before the first thread is spawned and before any heavy
+    module is imported, so the new stack size and GC threshold take effect
+    for everything that follows.
+
+    - threading.stack_size(1 << 20): cap pthread stack 8 MB -> 1 MB
+      (~250 MB VmData savings over 32 threads, near-zero RSS impact).
+    - gc.set_threshold(50_000, 10): fewer GC pauses (~20% latency win).
+      Python 3.14 reduced GC to two generations; the obsolete third
+      threshold is ignored (gc.get_threshold() returns 0 for it).
+    """
+    threading.stack_size(1 << 20)
+    gc.set_threshold(50_000, 10)
+
+
+async def _idle_trimmer() -> None:
+    """Background task: every 60s, gc.collect() + malloc_trim(0) (Issue #3997).
+
+    Releases freed heap pages back to the kernel during long-running idle
+    periods. Glibc-only (no-op on musl/Alpine).
+    """
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        _probe = libc.malloc_trim  # raises AttributeError if symbol missing
+    except (OSError, AttributeError):
+        logger.info("malloc_trim unavailable, idle trimmer disabled")
+        return
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            gc.collect()
+            libc.malloc_trim(0)
+        except Exception:
+            logger.exception("idle_trimmer iteration failed")
+
+
+async def _flush_write_buffer_for_shutdown(app: "FastAPI") -> None:
+    """Drain buffered file writes before slower service teardown starts."""
+    nexus_fs = getattr(app.state, "nexus_fs", None)
+    if nexus_fs is None:
+        logger.debug("Shutdown write buffer flush skipped: no NexusFS on app.state")
+        return
+
+    kernel = getattr(nexus_fs, "_kernel", None)
+    flush = getattr(kernel, "flush_write_buffer", None) if kernel is not None else None
+    if flush is None:
+        flush = getattr(nexus_fs, "flush_write_buffer", None)
+    if flush is None:
+        logger.debug("Shutdown write buffer flush skipped: no flush method available")
+        return
+
+    dirty_count = getattr(kernel, "write_buffer_dirty_count", None) if kernel is not None else None
+    dirty_before = dirty_count() if dirty_count is not None else None
+    try:
+        if kernel is not None and getattr(kernel, "flush_write_buffer", None) is not None:
+            result = flush(None, None)
+        else:
+            loop = asyncio.get_running_loop()
+            zone_id = getattr(nexus_fs, "_zone_id", None)
+            result = await loop.run_in_executor(None, flush, None, zone_id)
+        dirty_after = dirty_count() if dirty_count is not None else None
+        logger.info(
+            "Shutdown write buffer flush completed: flushed=%s failed=%s dirty_before=%s "
+            "dirty_after=%s errors=%s",
+            getattr(result, "flushed", None),
+            getattr(result, "failed", None),
+            dirty_before,
+            dirty_after,
+            getattr(result, "errors", None),
+        )
+    except Exception:
+        logger.exception("Shutdown write buffer flush failed")
+
+
 @asynccontextmanager
 async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     """Application lifespan manager.
@@ -131,21 +212,24 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     Calls domain-specific initializers during startup and tears them
     down in reverse order during shutdown.
     """
-    from nexus.grpc.server import shutdown_grpc, startup_grpc
-    from nexus.server.lifespan.bricks import shutdown_bricks, startup_bricks
-    from nexus.server.lifespan.ipc import shutdown_ipc, startup_ipc
+    from nexus.server.lifespan.approvals import shutdown_approvals, startup_approvals
     from nexus.server.lifespan.observability import (
         shutdown_observability,
         startup_observability,
     )
     from nexus.server.lifespan.permissions import startup_permissions
     from nexus.server.lifespan.realtime import shutdown_realtime, startup_realtime
-    from nexus.server.lifespan.search import startup_search
+    from nexus.server.lifespan.search import shutdown_search, startup_search
     from nexus.server.lifespan.services import shutdown_services, startup_services
     from nexus.server.lifespan.uploads import startup_uploads
 
     # Collect all background tasks for clean shutdown
     bg_tasks: list[asyncio.Task] = []
+
+    # Issue #3997: apply boot-time memory hygiene before any thread spawn or
+    # heavy import. Must run before svc init since LifespanServices.from_app
+    # may touch threadpool state.
+    _apply_boot_tweaks()
 
     # Extract typed service container once
     svc = LifespanServices.from_app(app)
@@ -159,7 +243,15 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         if tracker is not None:
             tracker.complete(phase)
 
-    # --- Startup (order matters: observability first, then core, then services) ---
+    # --- Startup (order matters: bootstrap first, then observability, then services) ---
+
+    # NexusFS lifecycle Phase 3: start async tasks owned by NexusFS
+    nx = getattr(app.state, "nexus_fs", None)
+    if nx is not None and hasattr(nx, "bootstrap"):
+        # bootstrap() calls asyncio.run() internally via PyO3 run_coro, which
+        # raises RuntimeError if called from within a running event loop (Python
+        # 3.10+). Running in a thread executor gives it a loop-free context.
+        await asyncio.get_event_loop().run_in_executor(None, nx.bootstrap)
 
     await startup_observability(app, svc)
     # Re-extract observability_registry after startup_observability writes it
@@ -189,25 +281,37 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     bg_tasks.extend(await startup_services(app, svc))
     _done(StartupPhase.SERVICES)
 
-    bg_tasks.extend(await startup_bricks(app, svc))
-    _done(StartupPhase.BRICKS)
-
     bg_tasks.extend(await startup_uploads(app, svc))
     _done(StartupPhase.UPLOADS)
 
-    bg_tasks.extend(await startup_ipc(app, svc))
-    _done(StartupPhase.IPC)
+    # Approvals brick — feature-flag-gated by NEXUS_APPROVALS_ENABLED.
+    # When disabled (the default), this is a near-no-op that attaches
+    # `app.state.policy_gate = None` so MCP egress / hub zone-access hooks
+    # treat the absent gate as "approvals disabled" by contract.
+    bg_tasks.extend(await startup_approvals(app, svc))
 
-    bg_tasks.extend(await startup_grpc(app, svc))
+    # IPC lifespan hook + StartupPhase.IPC deleted in Phase M of the
+    # parallel-layers PR — `nexus.bricks.ipc` removed; PR #3912 ships
+    # the Rust replacement.
+
     _done(StartupPhase.GRPC)
 
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
     _wire_query_observer(app, svc)
 
+    # Issue #3997: idle trimmer + freeze boot-time heap.
+    # gc.freeze() moves all currently-tracked objects to a permanent generation
+    # so they are not scanned by future GC cycles. Must run AFTER all warmup
+    # imports/services have completed.
+    bg_tasks.append(asyncio.create_task(_idle_trimmer(), name="idle_trimmer"))
+    gc.freeze()
+
     yield
 
     # --- Shutdown (reverse order) ---
     logger.info("Shutting down FastAPI Nexus server...")
+
+    await _flush_write_buffer_for_shutdown(app)
 
     # Cancel all background tasks first
     for task in bg_tasks:
@@ -218,22 +322,44 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
         logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
-    await shutdown_grpc(app, svc)
-    await shutdown_ipc(app, svc)
-    await shutdown_bricks(app, svc)
+    await shutdown_approvals(app, svc)
+    await shutdown_search(app, svc)
     await shutdown_services(app, svc)
     await shutdown_realtime(app, svc)
+    await shutdown_zone_runners(app, svc)
 
-    # Close NexusFS kernel
-    if app.state.nexus_fs and hasattr(app.state.nexus_fs, "close"):
-        app.state.nexus_fs.close()
+    # Stop durable invalidation stream (Issue #3396) — before NexusFS close
+    _durable = getattr(app.state, "durable_stream", None)
+    if _durable is not None:
+        await _durable.stop()
+        logger.debug("Durable invalidation stream stopped")
 
-    # Shutdown CacheBrick (Issue #1524)
-    if app.state.cache_brick:
-        try:
-            await app.state.cache_brick.stop()
-            logger.info("CacheBrick stopped")
-        except Exception as e:
-            logger.warning("Error shutting down CacheBrick: %s", e, exc_info=True)
+    # Close NexusFS kernel (sync shutdown for PersistentService + hooks).
+    # aclose() calls the PyO3 service lifecycle shim, which uses asyncio.run()
+    # for Python BackgroundService coroutines; run it outside this active loop.
+    if app.state.nexus_fs:
+        import inspect
+
+        # Issue #3775: dispose async DB engines on the lifespan loop *before*
+        # dispatching aclose to a worker thread. Async engines hold asyncpg
+        # connections bound to this loop; disposing them from another thread
+        # raises "Future attached to a different loop".
+        adispose = getattr(app.state.nexus_fs, "adispose_async_engines", None)
+        if adispose is not None:
+            try:
+                await adispose()
+            except Exception:
+                logger.debug("adispose_async_engines failed", exc_info=True)
+
+        close_fn = getattr(app.state.nexus_fs, "aclose", None)
+        if close_fn is None:
+            close_fn = getattr(app.state.nexus_fs, "close", None)
+        if close_fn is not None:
+            if inspect.iscoroutinefunction(close_fn):
+                await close_fn()
+            else:
+                await asyncio.get_running_loop().run_in_executor(None, close_fn)
+
+    # CacheBrick stop is now handled by coordinator via aclose() (enlisted as BackgroundService)
 
     await shutdown_observability(app, svc)

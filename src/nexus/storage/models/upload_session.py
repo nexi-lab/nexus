@@ -13,6 +13,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
+_UPLOAD_METADATA_STATE_VERSION = 1
+
 
 class UploadSessionModel(Base):
     """Persistent storage for chunked upload sessions.
@@ -55,7 +57,7 @@ class UploadSessionModel(Base):
 
     # Progress
     parts_received: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    content_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -72,9 +74,7 @@ class UploadSessionModel(Base):
 
     def to_session_dict(self) -> dict[str, Any]:
         """Convert to dict compatible with UploadSession.from_dict()."""
-        metadata: dict[str, str] = {}
-        if self.metadata_json:
-            metadata = json.loads(self.metadata_json)
+        metadata, parts = self._decode_metadata_state(self.metadata_json)
 
         return {
             "upload_id": self.upload_id,
@@ -91,13 +91,17 @@ class UploadSessionModel(Base):
             "backend_upload_id": self.backend_upload_id,
             "backend_name": self.backend_name,
             "parts_received": self.parts_received,
-            "content_hash": self.content_hash,
+            "parts": parts,
+            "content_id": self.content_id,
         }
 
     @classmethod
     def from_upload_session(cls, session: Any) -> "UploadSessionModel":
         """Create model from an UploadSession dataclass."""
-        metadata_json = json.dumps(session.metadata) if session.metadata else None
+        metadata_json = cls.encode_metadata_state(
+            session.metadata,
+            getattr(session, "parts", ()),
+        )
         return cls(
             upload_id=session.upload_id,
             target_path=session.target_path,
@@ -113,7 +117,44 @@ class UploadSessionModel(Base):
             backend_upload_id=session.backend_upload_id,
             backend_name=session.backend_name,
             parts_received=session.parts_received,
-            content_hash=session.content_hash,
+            content_id=session.content_id,
+        )
+
+    @classmethod
+    def encode_metadata_state(
+        cls,
+        metadata: dict[str, str] | None,
+        parts: tuple[dict[str, Any], ...] | list[dict[str, Any]] | None,
+    ) -> str:
+        """Encode tus metadata plus server-owned part state into one legacy column."""
+        return json.dumps(
+            {
+                "_nexus_upload_state_version": _UPLOAD_METADATA_STATE_VERSION,
+                "metadata": metadata or {},
+                "parts": [dict(part) for part in (parts or ())],
+            },
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _decode_metadata_state(raw: str | None) -> tuple[dict[str, str], list[dict[str, Any]]]:
+        if not raw:
+            return {}, []
+
+        payload = json.loads(raw)
+        if (
+            isinstance(payload, dict)
+            and payload.get("_nexus_upload_state_version") == _UPLOAD_METADATA_STATE_VERSION
+        ):
+            metadata = payload.get("metadata") or {}
+            parts = payload.get("parts") or []
+        else:
+            metadata = payload if isinstance(payload, dict) else {}
+            parts = []
+
+        return (
+            {str(key): str(value) for key, value in metadata.items()},
+            [dict(part) for part in parts if isinstance(part, dict)],
         )
 
     def __repr__(self) -> str:

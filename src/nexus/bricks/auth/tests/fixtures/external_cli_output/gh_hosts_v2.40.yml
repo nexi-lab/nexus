@@ -1,0 +1,4 @@
+github.com:
+  oauth_token: gho_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx40
+  user: testuser
+  git_protocol: https

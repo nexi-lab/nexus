@@ -12,27 +12,16 @@ def _start_background_services(system: dict[str, Any]) -> None:
     Deferred from tier construction so that all services are wired before
     any background I/O begins.
 
-    Issue #2193: deferred_permission_buffer and write_observer moved from
-    kernel dict to system dict (they are now system-tier services).
+    DeferredPermissionBuffer and EventDeliveryWorker implement
+    BackgroundService and are auto-started by the Rust kernel's
+    service_start_all() at bootstrap(). No manual start needed here.
 
     Args:
-        system: System services dict from ``_boot_system_services()``.
+        system: Services dict from ``_boot_system_services()``.
     """
-    # Deferred Permission Buffer (former kernel tier, now system tier)
-    dpb = system.get("deferred_permission_buffer")
-    if dpb is not None and hasattr(dpb, "start"):
-        dpb.start()
-        logger.debug("[BOOT:BG] DeferredPermissionBuffer started")
-
-    # Write Observer — PipedRecordStoreWriteObserver.start() is async,
-    # called from server lifespan after PipeManager injection (Issue #809).
-    # RecordStoreWriteObserver (SQLite fallback) has no start().
-
-    # Event Delivery Worker (system tier)
-    dw = system.get("delivery_worker")
-    if dw is not None and hasattr(dw, "start"):
-        dw.start()
-        logger.debug("[BOOT:BG] EventDeliveryWorker started")
+    # Write Observer — RecordStoreWriteObserver (OBSERVE-phase) has no
+    # start(). It is registered via hook_spec at factory enlist time.
+    # The sync RecordStoreWriteObserver (SQLite fallback) also has no start().
 
     # Zone Lifecycle — load Terminating zones from DB (Issue #2061)
     zl = system.get("zone_lifecycle")

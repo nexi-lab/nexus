@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from nexus.server.path_utils import unscope_internal_path
+from nexus.core.path_utils import unscope_internal_path
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.manager import ReBACManager
@@ -37,7 +37,7 @@ class FilterContext:
     context: "OperationContext"
     cache: "PermissionCacheCoordinator"
     rebac_manager: "ReBACManager"
-    router: Any = None
+    dlc: Any = None
 
 
 @dataclass
@@ -132,14 +132,6 @@ class HierarchyPreFilterStrategy:
 
         subject = ctx.subject
 
-        # Multi-level hierarchy: if too many parents, check top-level first
-        if len(unique_parents) > 200:
-            unique_parents = self._top_level_prune(unique_parents, subject, ctx)
-            if not unique_parents:
-                # All top-level dirs denied
-                ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
-                return FilterResult(allowed=[], remaining=[], short_circuit=True)
-
         # Batch check unique parent directories
         parent_checks = [
             (subject, "read", ("file", unscope_internal_path(parent))) for parent in unique_parents
@@ -173,54 +165,14 @@ class HierarchyPreFilterStrategy:
                 f"{len(kept)} paths (skipped {skipped} under denied parents)"
             )
 
-            if not accessible_parents and len(remaining) > 100:
-                ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
+            # Do NOT mark bitmap complete on empty results — parent grants
+            # may exist but not resolve in bulk mode (e.g., viewer role).
+            # if not accessible_parents and len(remaining) > 100:
+            #     ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
 
             return FilterResult(allowed=[], remaining=kept)
 
         return FilterResult(allowed=[], remaining=remaining)
-
-    def _top_level_prune(
-        self,
-        unique_parents: list[str],
-        subject: tuple[str, str],
-        ctx: FilterContext,
-    ) -> list[str]:
-        """Check top-level dirs first to quickly eliminate large subtrees."""
-        top_level_dirs: set[str] = set()
-        for parent in unique_parents:
-            parts = parent.strip("/").split("/")
-            if parts and parts[0]:
-                top_level_dirs.add("/" + parts[0])
-
-        top_level_checks = [
-            (subject, "read", ("file", unscope_internal_path(d))) for d in top_level_dirs
-        ]
-        top_level_results = ctx.rebac_manager.rebac_check_bulk(
-            top_level_checks, zone_id=ctx.zone_id
-        )
-
-        denied_top_level = {
-            d
-            for d, check in zip(top_level_dirs, top_level_checks, strict=False)
-            if not top_level_results.get(check, False)
-        }
-
-        if denied_top_level:
-            filtered_parents = []
-            for parent in unique_parents:
-                top = "/" + parent.strip("/").split("/")[0] if parent != "/" else "/"
-                if top not in denied_top_level:
-                    filtered_parents.append(parent)
-
-            logger.info(
-                f"[HIERARCHY-TOPLEVEL] {len(denied_top_level)}/{len(top_level_dirs)} "
-                f"top-level dirs denied, reduced parents: "
-                f"{len(unique_parents)} -> {len(filtered_parents)}"
-            )
-            return filtered_parents
-
-        return unique_parents
 
 
 # =============================================================================
@@ -231,6 +183,15 @@ class HierarchyPreFilterStrategy:
 class ZonePreFilterStrategy:
     """Skip paths belonging to other zones."""
 
+    @staticmethod
+    def _extract_zone_id(path: str) -> str | None:
+        """Return the zone id from supported internal zone prefixes."""
+        for prefix in ("/zone/", "/zones/"):
+            if path.startswith(prefix):
+                zone_id = path[len(prefix) :].split("/", 1)[0]
+                return zone_id or None
+        return None
+
     def apply(self, ctx: FilterContext, remaining: list[str]) -> FilterResult:
         if not remaining:
             return FilterResult()
@@ -238,11 +199,10 @@ class ZonePreFilterStrategy:
         kept: list[str] = []
         skipped = 0
         for path in remaining:
-            if path.startswith("/zones/"):
-                path_parts = path.split("/")
-                if len(path_parts) >= 3 and path_parts[2] != ctx.zone_id:
-                    skipped += 1
-                    continue
+            path_zone_id = self._extract_zone_id(path)
+            if path_zone_id is not None and path_zone_id != ctx.zone_id:
+                skipped += 1
+                continue
             kept.append(path)
 
         if skipped:
@@ -267,21 +227,10 @@ class BulkReBACStrategy:
             return FilterResult()
 
         subject = ctx.subject
+
         checks = []
         for path in remaining:
-            obj_type = "file"
-            if ctx.router and not path.startswith("/workspace"):
-                try:
-                    route = ctx.router.route(
-                        path,
-                        is_admin=ctx.context.is_admin,
-                    )
-                    # RouteResult no longer has .namespace — use mount_point as obj_type hint
-                    if route.mount_point and route.mount_point != "/":
-                        obj_type = route.mount_point.strip("/").split("/")[0]
-                except (KeyError, ValueError, AttributeError, LookupError) as e:
-                    logger.debug("Route resolution failed for path %s: %s", path, e)
-            checks.append((subject, "read", (obj_type, unscope_internal_path(path))))
+            checks.append((subject, "read", ("file", unscope_internal_path(path))))
 
         # Retry-once on transient I/O failures only
         try:
@@ -303,8 +252,11 @@ class BulkReBACStrategy:
             if results.get(check, False)
         ]
 
-        # If bulk found 0 additional paths from a large set, mark bitmap complete
-        if not allowed and len(remaining) > 100:
+        # Only mark bitmap complete when bulk found SOME results from a large set.
+        # An empty result may indicate parent-level grants that aren't resolved
+        # in bulk mode — marking empty as "complete" would block fallback on
+        # subsequent requests and deny all access incorrectly.
+        if allowed and len(remaining) > 100:
             ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
 
         return FilterResult(allowed=allowed, remaining=[], short_circuit=True)

@@ -8,19 +8,18 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 
 try:
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
+    import nexus_runtime  # noqa: F401
 
-    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
-    _raft_available = True
+    _kernel_available = True
 except Exception:
-    _raft_available = False
+    _kernel_available = False
 
-pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
+pytestmark = pytest.mark.skipif(not _kernel_available, reason="Kernel runtime not available")
 
 
 def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
@@ -32,8 +31,8 @@ def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
     backend_path.mkdir(exist_ok=True)
     db_path = tmp_path / "metadata"
 
-    backend = LocalBackend(str(backend_path))
-    metadata_store = RaftMetadataStore.embedded(str(db_path))
+    backend = CASLocalBackend(str(backend_path))
+    metadata_store = str(db_path)
     record_store = SQLAlchemyRecordStore(db_path=str(tmp_path / "nexus.db"))
 
     return create_nexus_fs(
@@ -52,64 +51,51 @@ class TestNexusFSServiceComposition:
         fs = _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify all services are instantiated
-        assert hasattr(fs, "version_service"), "VersionService not instantiated"
-        assert hasattr(fs, "rebac_service"), "ReBACService not instantiated"
-        assert hasattr(fs, "mount_service"), "MountService not instantiated"
-        assert hasattr(fs, "mcp_service"), "MCPService not instantiated"
-        assert hasattr(fs, "llm_service"), "LLMService not instantiated"
-        assert hasattr(fs, "oauth_service"), "OAuthService not instantiated"
-        assert hasattr(fs, "skill_service"), "SkillService not instantiated"
-        assert hasattr(fs, "search_service"), "SearchService not instantiated"
-        assert hasattr(fs, "share_link_service"), "ShareLinkService not instantiated"
-        assert hasattr(fs, "events_service"), "EventsService not instantiated"
+        assert fs.service("version_service") is not None, "VersionService not instantiated"
+        assert fs.service("rebac") is not None, "ReBACService not instantiated"
+        assert fs.service("mount") is not None, "MountService not instantiated"
+        assert fs.service("mcp") is not None, "MCPService not instantiated"
+        assert fs.service("oauth") is not None, "OAuthService not instantiated"
+        assert fs.service("search") is not None, "SearchService not instantiated"
+        assert fs.service("share_link") is not None, "ShareLinkService not instantiated"
 
         # Verify services are not None
-        assert fs.version_service is not None
-        assert fs.rebac_service is not None
-        assert fs.mount_service is not None
-        assert fs.mcp_service is not None
-        assert fs.llm_service is not None
-        assert fs.oauth_service is not None
-        assert fs.skill_service is not None
-        assert fs.search_service is not None
-        assert fs.share_link_service is not None
-        assert fs.events_service is not None
+        assert fs.service("version_service") is not None
+        assert fs.service("rebac") is not None
+        assert fs.service("mount") is not None
+        assert fs.service("mcp") is not None
+        assert fs.service("oauth") is not None
+        assert fs.service("search") is not None
+        assert fs.service("share_link") is not None
 
     def test_service_dependencies_correct(self, tmp_path: Path):
         """Test that services receive correct dependencies."""
         fs = _make_fs(tmp_path)
 
-        # VersionService dependencies (injected by _make_fs, mimicking factory)
-        assert fs.version_service.metadata == fs.metadata
-        assert fs.version_service.cas == fs.router.route("/").backend
+        # VersionService dependencies (may be proxy-wrapped after Rust kernel init)
+        assert fs.service("version_service").metadata is not None
 
-        # ReBACService should have rebac_manager
-        assert fs.rebac_service._rebac_manager == fs._rebac_manager
+        # ReBACService should have a rebac_manager (may be proxy-wrapped)
+        assert fs.service("rebac")._rebac_manager is not None
+        assert fs.service("rebac_manager") is not None
 
-        # MountService should have router and mount_manager
-        assert fs.mount_service.router == fs.router
-        assert fs.mount_service.mount_manager == fs.mount_manager
+        # MountService should have kernel and dlc
+        assert fs.service("mount")._dlc is not None
+        assert fs.service("mount").mount_manager == fs.service("mount_manager")
 
         # Services that take filesystem should have it
-        assert fs.mcp_service._filesystem == fs
-        assert fs.llm_service.nexus_fs == fs
-        # SkillService is directly instantiated
-        assert fs.skill_service is not None
+        assert fs.service("mcp")._filesystem == fs
+        # SearchService should hold the kernel handle (post-W3 the
+        # ``metadata`` field was deleted; services hold ``self._kernel``).
+        assert fs.service("search")._kernel == fs._kernel
+        assert fs.service("search")._permission_enforcer == fs.service("permission_enforcer")
 
-        # SearchService should have metadata and permission_enforcer
-        assert fs.search_service.metadata == fs.metadata
-        assert fs.search_service._permission_enforcer == fs._permission_enforcer
-
-        # ShareLinkService should have gateway
-        assert fs.share_link_service._gw is not None
-
-        # EventsService should have backend
-        assert fs.events_service._backend == fs.router.route("/").backend
+        # ShareLinkService should have nexus_fs reference
+        assert fs.service("share_link")._nexus_fs is not None
 
     def test_version_service_delegation(self, tmp_path: Path):
         """Test that VersionService is available on NexusFS."""
         fs = _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify version_service exists and is not None
-        assert hasattr(fs, "version_service"), "VersionService not instantiated"
-        assert fs.version_service is not None
+        assert fs.service("version_service") is not None, "VersionService not instantiated"

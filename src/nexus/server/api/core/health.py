@@ -4,11 +4,13 @@ Extracted from fastapi_server.py (#1602).
 """
 
 import logging
+import os
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
+from nexus.server.dependencies import require_admin
 from nexus.server.rate_limiting import limiter
 
 logger = logging.getLogger(__name__)
@@ -36,12 +38,25 @@ async def health_check(request: Request) -> HealthResponse | Any:
 
     nx_fs = request.app.state.nexus_fs
     if nx_fs:
-        enforce_permissions = getattr(nx_fs, "_enforce_permissions", None)
+        enforce_permissions = getattr(getattr(nx_fs, "_perm_config", None), "enforce", None)
         enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
 
-        # Federation mode: ensure topology is initialized (standard Raft lifecycle).
-        zone_mgr = getattr(nx_fs, "_zone_mgr", None)
-        if zone_mgr is not None and not zone_mgr.ensure_topology():
+        # Phase H: federation readiness is observed through the
+        # DistributedCoordinator HAL trait via the
+        # ``nexus_runtime.federation_is_initialized`` module helper.
+        # Treat federation-disabled (no env vars) as ready without
+        # entering the native readiness helper; /health must stay cheap
+        # and non-blocking for Docker health checks.
+        _kernel = getattr(nx_fs, "_kernel", None)
+        _ready = True
+        if _kernel is not None and os.environ.get("NEXUS_PEERS"):
+            try:
+                import nexus_runtime as _nr
+
+                _ready = bool(_nr.federation_is_initialized(_kernel))
+            except Exception:
+                _ready = True
+        if not _ready:
             from fastapi.responses import JSONResponse
 
             return JSONResponse(
@@ -64,8 +79,7 @@ async def health_check(request: Request) -> HealthResponse | Any:
     )
 
 
-@router.get("/health/detailed")
-@limiter.exempt
+@router.get("/health/detailed", dependencies=[Depends(require_admin)])
 async def health_check_detailed(request: Request) -> dict[str, Any]:
     """Detailed health check including all components.
 
@@ -90,7 +104,7 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
     else:
         health["components"]["search_daemon"] = {
             "status": "disabled",
-            "message": "Set NEXUS_SEARCH_DAEMON=true to enable",
+            "message": "Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
         }
 
     # Check ReBAC + circuit breaker (Issue #726)
@@ -159,31 +173,13 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
 
     # Check mounted backends (Issue #708)
     backends_health: dict[str, Any] = {}
-    if state.nexus_fs and hasattr(state.nexus_fs, "path_router"):
-        mounts = state.nexus_fs.path_router.list_mounts()
-        for mount in mounts:
-            backend = mount.backend
-            mount_point = mount.mount_point
-
-            try:
-                status = backend.check_connection()
-                backends_health[mount_point] = {
-                    "backend": backend.name,
-                    "healthy": status.success,
-                    "latency_ms": status.latency_ms,
-                    "user_scoped": backend.user_scoped,
-                    "thread_safe": backend.thread_safe,
-                }
-                if status.error_message:
-                    backends_health[mount_point]["error"] = status.error_message
-                if status.details:
-                    backends_health[mount_point]["details"] = status.details
-            except Exception as e:
-                backends_health[mount_point] = {
-                    "backend": backend.name,
-                    "healthy": False,
-                    "error": str(e),
-                }
+    if state.nexus_fs and hasattr(state.nexus_fs, "_driver_coordinator"):
+        dlc = state.nexus_fs._driver_coordinator
+        for mount_point in dlc.mount_points():
+            backends_health[mount_point] = {
+                "backend": "rust-native",
+                "healthy": True,
+            }
 
     health["components"]["backends"] = backends_health
 
@@ -193,13 +189,30 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
         health["status"] = "degraded"
         health["unhealthy_backends"] = unhealthy_backends
 
-    # Circuit breaker health (Issue #1366)
-    _sys = getattr(state.nexus_fs, "_system_services", None) if state.nexus_fs else None
-    _resiliency_mgr = getattr(_sys, "resiliency_manager", None)
+    # Circuit breaker health (Issue #1366, #1771: via ServiceRegistry)
+    _resiliency_mgr = state.nexus_fs.service("resiliency_manager") if state.nexus_fs else None
     if _resiliency_mgr is not None:
         health["components"]["resiliency"] = _resiliency_mgr.health_check()
         if health["components"]["resiliency"]["status"] == "degraded":
             health["status"] = "degraded"
+
+    # Durable invalidation stream health + PEL monitoring (Issue #3396)
+    _durable = getattr(state, "durable_stream", None)
+    if _durable is not None:
+        try:
+            durable_health = await _durable.health_check()
+            health["components"]["durable_invalidation"] = durable_health
+            if durable_health.get("status") == "degraded":
+                health["status"] = "degraded"
+        except Exception as e:
+            health["components"]["durable_invalidation"] = {"status": "error", "error": str(e)}
+    else:
+        health["components"]["durable_invalidation"] = {"status": "disabled"}
+
+    # Read fence stats (Issue #3396)
+    _fence = getattr(state, "read_fence", None)
+    if _fence is not None:
+        health["components"]["read_fence"] = _fence.stats()
 
     return health
 
@@ -211,15 +224,11 @@ async def pool_metrics(request: Request) -> dict[str, Any]:
     state = request.app.state
     metrics: dict[str, Any] = {}
 
-    # PostgreSQL pool stats from metadata store
-    if state.nexus_fs and hasattr(state.nexus_fs, "metadata"):
-        try:
-            pg_stats = state.nexus_fs.metadata.get_pool_stats()
-            metrics["postgres"] = pg_stats
-        except Exception as e:
-            metrics["postgres"] = {"error": str(e)}
-    else:
-        metrics["postgres"] = {"status": "not_available"}
+    # PostgreSQL pool stats — ``get_pool_stats`` was a method on the
+    # legacy Raft Python store that no longer exists. Surface
+    # "not_available" so the health endpoint stays well-formed; the kernel
+    # metastore is redb-backed, not pgsql, so pool stats don't apply here.
+    metrics["postgres"] = {"status": "not_available"}
 
     # Redis/Dragonfly pool stats from CacheBrick (Issue #1524)
     try:

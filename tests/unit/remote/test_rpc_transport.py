@@ -11,11 +11,13 @@ from unittest.mock import MagicMock, patch
 import grpc
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     RemoteConnectionError,
     RemoteTimeoutError,
 )
+from nexus.grpc import initialize_pb2
 from nexus.lib.rpc_codec import encode_rpc_message
 
 # ---------------------------------------------------------------------------
@@ -84,7 +86,31 @@ class TestRPCTransportCallRPC:
     """call_rpc success and error paths."""
 
     def test_success_returns_decoded_result(self, transport) -> None:
-        """Successful call returns decoded payload."""
+        """Successful call extracts 'result' key from server response."""
+        mock_response = MagicMock()
+        mock_response.is_error = False
+        # Server wraps results as {"result": <actual>}
+        mock_response.payload = encode_rpc_message({"result": {"key": "value"}})
+        transport._mock_stub.Call.return_value = mock_response
+
+        result = transport.call_rpc("sys_read", {"path": "/file.txt"})
+
+        assert result == {"key": "value"}
+        transport._mock_stub.Call.assert_called_once()
+
+    def test_success_extracts_list_result(self, transport) -> None:
+        """Server response with list result is unwrapped correctly."""
+        mock_response = MagicMock()
+        mock_response.is_error = False
+        mock_response.payload = encode_rpc_message({"result": [{"path": "/a.txt", "size": 10}]})
+        transport._mock_stub.Call.return_value = mock_response
+
+        result = transport.call_rpc("list", {"path": "/"})
+
+        assert result == [{"path": "/a.txt", "size": 10}]
+
+    def test_success_fallback_when_no_result_key(self, transport) -> None:
+        """Response without 'result' key returns full dict (backwards compat)."""
         mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.payload = encode_rpc_message({"key": "value"})
@@ -93,7 +119,6 @@ class TestRPCTransportCallRPC:
         result = transport.call_rpc("sys_read", {"path": "/file.txt"})
 
         assert result == {"key": "value"}
-        transport._mock_stub.Call.assert_called_once()
 
     def test_is_error_raises_nexus_error(self, transport) -> None:
         """is_error=True should raise via _handle_rpc_error."""
@@ -149,7 +174,7 @@ class TestRPCTransportCallRPC:
         mock_response.payload = encode_rpc_message({})
         transport._mock_stub.Call.return_value = mock_response
 
-        transport.call_rpc("sys_access")
+        transport.call_rpc("access")
 
         # Verify the Call was made (params encoded as {})
         transport._mock_stub.Call.assert_called_once()
@@ -179,7 +204,7 @@ class TestRPCTransportCallRPC:
 
 
 class TestRPCTransportTypedMethods:
-    """Typed RPC methods: read_file, write_file, delete_file, stream_read, ping."""
+    """Typed RPC methods: read_file, write_file, delete_file, ping."""
 
     def test_read_file_success(self, transport) -> None:
         """read_file returns raw bytes from ReadResponse.content."""
@@ -209,32 +234,34 @@ class TestRPCTransportTypedMethods:
             transport.read_file("/missing.txt")
 
     def test_write_file_success(self, transport) -> None:
-        """write_file returns etag/size dict from WriteResponse."""
+        """write_file returns content_id/size/gen dict from WriteResponse."""
         mock_response = MagicMock()
         mock_response.is_error = False
-        mock_response.etag = "sha256-abc"
+        mock_response.content_id = "sha256-abc"
         mock_response.size = 100
+        mock_response.gen = 7
         transport._mock_stub.Write.return_value = mock_response
 
         result = transport.write_file("/file.txt", b"x" * 100)
 
-        assert result == {"etag": "sha256-abc", "size": 100}
+        assert result == {"content_id": "sha256-abc", "size": 100, "gen": 7}
         request = transport._mock_stub.Write.call_args[0][0]
         assert request.path == "/file.txt"
         assert request.content == b"x" * 100
 
-    def test_write_file_with_etag(self, transport) -> None:
-        """write_file passes etag for conditional write."""
+    def test_write_file_with_content_id(self, transport) -> None:
+        """write_file passes content_id for conditional write."""
         mock_response = MagicMock()
         mock_response.is_error = False
-        mock_response.etag = "sha256-new"
+        mock_response.content_id = "sha256-new"
         mock_response.size = 5
+        mock_response.gen = 8
         transport._mock_stub.Write.return_value = mock_response
 
-        transport.write_file("/file.txt", b"hello", etag="sha256-old")
+        transport.write_file("/file.txt", b"hello", content_id="sha256-old")
 
         request = transport._mock_stub.Write.call_args[0][0]
-        assert request.etag == "sha256-old"
+        assert request.content_id == "sha256-old"
 
     def test_delete_file_success(self, transport) -> None:
         """delete_file returns True on success."""
@@ -262,33 +289,11 @@ class TestRPCTransportTypedMethods:
         request = transport._mock_stub.Delete.call_args[0][0]
         assert request.recursive is True
 
-    def test_stream_read_assembles_chunks(self, transport) -> None:
-        """stream_read assembles multiple ReadChunks into bytes."""
-        chunk1 = MagicMock(data=b"aaa", is_error=False)
-        chunk2 = MagicMock(data=b"bbb", is_error=False)
-        chunk3 = MagicMock(data=b"ccc", is_error=False, is_last=True)
-        transport._mock_stub.StreamRead.return_value = iter([chunk1, chunk2, chunk3])
-
-        result = transport.stream_read("/big-file.bin", chunk_size=3)
-
-        assert result == b"aaabbbccc"
-
-    def test_stream_read_error_chunk(self, transport) -> None:
-        """stream_read raises on error chunk."""
-        error_chunk = MagicMock(
-            is_error=True,
-            error_payload=encode_rpc_message({"code": -32000, "message": "File not found"}),
-        )
-        transport._mock_stub.StreamRead.return_value = iter([error_chunk])
-
-        with pytest.raises(NexusFileNotFoundError):
-            transport.stream_read("/missing.bin")
-
     def test_ping_success(self, transport) -> None:
         """ping returns version/zone_id/uptime dict."""
         mock_response = MagicMock()
         mock_response.version = "0.7.2"
-        mock_response.zone_id = "root"
+        mock_response.zone_id = ROOT_ZONE_ID
         mock_response.uptime_seconds = 3600
         transport._mock_stub.Ping.return_value = mock_response
 
@@ -319,7 +324,7 @@ class TestRPCTransportLifecycle:
         """health_check delegates to ping()."""
         mock_response = MagicMock()
         mock_response.version = "0.7.2"
-        mock_response.zone_id = "root"
+        mock_response.zone_id = ROOT_ZONE_ID
         mock_response.uptime_seconds = 0
         transport._mock_stub.Ping.return_value = mock_response
 
@@ -340,3 +345,113 @@ class TestRPCTransportLifecycle:
         """close() should close the gRPC channel."""
         transport.close()
         transport._mock_channel.close.assert_called_once()
+
+
+class TestRPCTransportInitialize:
+    def test_initialize_defaults_client_identity(self, transport) -> None:
+        transport._mock_stub.Initialize.return_value = initialize_pb2.InitializeResponse(
+            server_name="nexus",
+            server_version="0.10.0",
+            protocol_version="0.1.0",
+        )
+
+        transport.initialize()
+
+        request = transport._mock_stub.Initialize.call_args[0][0]
+        assert request.client_name == "nexus-python"
+        assert request.client_version == "unknown"
+        assert request.protocol_version == "0.1.0"
+        assert request.auth_token == "test-token"
+
+    def test_initialize_success_caches_response(self, transport) -> None:
+        response = initialize_pb2.InitializeResponse(
+            server_name="nexus",
+            server_version="0.10.0",
+            protocol_version="0.1.0",
+            capabilities=initialize_pb2.Capabilities(
+                posix=initialize_pb2.PosixCapabilities(read=True, write=True),
+                workspace=initialize_pb2.WorkspaceCapabilities(snapshot=True),
+                extensions=["x-nexus:test"],
+            ),
+        )
+        response.capabilities.commands.grep.supported = True
+        response.capabilities.commands.grep.filetype.allow.append("text/plain")
+        backend = response.capabilities.backends["/"]
+        backend.backend_name = "local"
+        backend.backend_type = "local"
+        backend.posix.read = True
+        backend.posix.write = False
+        backend.features.append("directory_listing")
+        transport._mock_stub.Initialize.return_value = response
+
+        result = transport.initialize(client_name="pytest", client_version="0.0")
+
+        assert result["server_name"] == "nexus"
+        assert result["capabilities"]["posix"]["write"] is True
+        assert result["capabilities"]["commands"]["grep"]["supported"] is True
+        assert result["capabilities"]["commands"]["grep"]["filetype"]["allow"] == ["text/plain"]
+        assert result["capabilities"]["workspace"]["snapshot"] is True
+        assert result["capabilities"]["backends"]["/"]["backend_name"] == "local"
+        assert result["capabilities"]["backends"]["/"]["posix"]["read"] is True
+        assert result["capabilities"]["extensions"] == ["x-nexus:test"]
+        assert transport.capabilities == result["capabilities"]
+
+    def test_initialize_absent_capabilities_do_not_fabricate_denials(self, transport) -> None:
+        transport._mock_stub.Initialize.return_value = initialize_pb2.InitializeResponse(
+            server_name="nexus",
+            server_version="0.10.0",
+            protocol_version="0.1.0",
+        )
+
+        result = transport.initialize(client_name="pytest", client_version="0.0")
+
+        assert result is not None
+        assert result["capabilities"] == {}
+        assert transport.capabilities == {}
+
+    def test_initialize_absent_capability_sections_stay_absent(self, transport) -> None:
+        response = initialize_pb2.InitializeResponse(
+            server_name="nexus",
+            server_version="0.10.0",
+            protocol_version="0.1.0",
+            capabilities=initialize_pb2.Capabilities(),
+        )
+        response.capabilities.backends["/"].backend_name = "legacy"
+        transport._mock_stub.Initialize.return_value = response
+
+        result = transport.initialize(client_name="pytest", client_version="0.0")
+
+        assert result is not None
+        assert "posix" not in result["capabilities"]
+        assert "commands" not in result["capabilities"]
+        assert "workspace" not in result["capabilities"]
+        assert "posix" not in result["capabilities"]["backends"]["/"]
+
+    def test_initialize_partial_posix_preserves_missing_keys_after_wire_round_trip(
+        self, transport
+    ) -> None:
+        response = initialize_pb2.InitializeResponse(
+            server_name="nexus",
+            server_version="0.10.0",
+            protocol_version="0.1.0",
+            capabilities=initialize_pb2.Capabilities(
+                posix=initialize_pb2.PosixCapabilities(read=True),
+            ),
+        )
+        parsed = initialize_pb2.InitializeResponse()
+        parsed.ParseFromString(response.SerializeToString())
+        transport._mock_stub.Initialize.return_value = parsed
+
+        result = transport.initialize(client_name="pytest", client_version="0.0")
+
+        assert result is not None
+        assert result["capabilities"]["posix"] == {"read": True}
+
+    def test_initialize_unimplemented_returns_none_for_old_server(self, transport) -> None:
+        rpc_error = grpc.RpcError()
+        rpc_error.code = lambda: grpc.StatusCode.UNIMPLEMENTED
+        rpc_error.details = lambda: "Method not found"
+        transport._mock_stub.Initialize.side_effect = rpc_error
+
+        assert transport.initialize(client_name="pytest", client_version="0.0") is None
+        assert transport.capabilities is None

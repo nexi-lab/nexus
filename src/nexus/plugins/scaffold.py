@@ -215,10 +215,9 @@ class {class_name}(NexusPlugin):
 
     async def hello_command(self, name: str = "World") -> None:
         """Example command."""
-        from rich.console import Console
+        from nexus.cli.theme import console
 
-        console = Console()
-        console.print(f"[green]Hello, {{name}}! From {name} plugin.[/green]")
+        console.print(f"[nexus.success]Hello, {{name}}! From {name} plugin.[/nexus.success]")
 '''
 
     if plugin_type == "storage":
@@ -226,7 +225,7 @@ class {class_name}(NexusPlugin):
 
     # Storage backend methods — implement these for a storage plugin:
     #
-    # from nexus.backends.backend import Backend
+    # from nexus.backends.base.backend import Backend
     #
     # class MyBackend(Backend):
     #     async def write_content(self, hash_str: str, data: bytes) -> None: ...

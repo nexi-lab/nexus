@@ -91,8 +91,8 @@ async def main_async():
 
     # Clean workspace
     with contextlib.suppress(Exception):
-        nx.sys_rmdir(workspace, recursive=True)
-    nx.sys_mkdir(workspace, parents=True)
+        await nx.sys_rmdir(workspace, recursive=True)
+    nx.mkdir(workspace, parents=True)
 
     # ===== Register Workflow =====
     print("=" * 70)

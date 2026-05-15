@@ -1,11 +1,11 @@
-"""Backend contract tests -- parametrized across MockBackend and LocalBackend (Issue #1601)."""
+"""Backend contract tests -- parametrized across MockBackend and CASLocalBackend (Issue #1601)."""
 
 import hashlib
 from typing import Any
 
 import pytest
 
-from nexus.backends.backend import Backend
+from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from nexus.core.protocols.connector import (
@@ -30,38 +30,37 @@ class _MockBackend(Backend):
     def _hash(self, content: bytes) -> str:
         return hashlib.sha256(content).hexdigest()
 
-    def write_content(self, content: bytes, context: Any = None) -> WriteResult:
-        content_hash = self._hash(content)
-        if content_hash in self._content:
-            self._ref_counts[content_hash] += 1
+    def write_content(
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
+    ) -> WriteResult:
+        content_id = self._hash(content)
+        if content_id in self._content:
+            self._ref_counts[content_id] += 1
         else:
-            self._content[content_hash] = content
-            self._ref_counts[content_hash] = 1
-        return WriteResult(content_hash=content_hash, size=len(content))
+            self._content[content_id] = content
+            self._ref_counts[content_id] = 1
+        return WriteResult(content_id=content_id, size=len(content))
 
-    def read_content(self, content_hash: str, context: Any = None) -> bytes:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return self._content[content_hash]
+    def read_content(self, content_id: str, context: Any = None) -> bytes:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return self._content[content_id]
 
-    def delete_content(self, content_hash: str, context: Any = None) -> None:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        self._ref_counts[content_hash] -= 1
-        if self._ref_counts[content_hash] <= 0:
-            del self._content[content_hash]
-            del self._ref_counts[content_hash]
+    def delete_content(self, content_id: str, context: Any = None) -> None:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        self._ref_counts[content_id] -= 1
+        if self._ref_counts[content_id] <= 0:
+            del self._content[content_id]
+            del self._ref_counts[content_id]
 
-    def content_exists(self, content_hash: str, context: Any = None) -> bool:
-        return content_hash in self._content
+    def content_exists(self, content_id: str, context: Any = None) -> bool:
+        return content_id in self._content
 
-    def get_content_size(self, content_hash: str, context: Any = None) -> int:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return len(self._content[content_hash])
-
-    def get_ref_count(self, content_hash: str, context: Any = None) -> int:
-        return self._ref_counts.get(content_hash, 0)
+    def get_content_size(self, content_id: str, context: Any = None) -> int:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return len(self._content[content_id])
 
     def mkdir(
         self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
@@ -98,9 +97,9 @@ def mock_backend() -> _MockBackend:
 
 @pytest.fixture()
 def local_backend(tmp_path: Any) -> Backend:
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
 
-    return LocalBackend(root_path=str(tmp_path / "nexus-data"))
+    return CASLocalBackend(root_path=str(tmp_path / "nexus-data"))
 
 
 @pytest.fixture(params=["mock", "local"])
@@ -109,9 +108,9 @@ def backend(request: Any, tmp_path: Any) -> Backend:
     if request.param == "mock":
         return _MockBackend()
     elif request.param == "local":
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
-        return LocalBackend(root_path=str(tmp_path / "nexus-data"))
+        return CASLocalBackend(root_path=str(tmp_path / "nexus-data"))
     raise ValueError(f"Unknown backend: {request.param}")
 
 
@@ -123,51 +122,42 @@ class TestBackendContract:
     def test_write_then_read_roundtrip(self, backend: Backend) -> None:
         content = b"hello world"
         write_result = backend.write_content(content)
-        content_hash = write_result.content_hash
-        assert content_hash is not None
-        data = backend.read_content(content_hash)
+        content_id = write_result.content_id
+        assert content_id is not None
+        data = backend.read_content(content_id)
         assert data == content
 
     def test_content_exists_after_write(self, backend: Backend) -> None:
         content = b"test exists"
-        content_hash = backend.write_content(content).content_hash
-        assert content_hash is not None
-        assert backend.content_exists(content_hash) is True
+        content_id = backend.write_content(content).content_id
+        assert content_id is not None
+        assert backend.content_exists(content_id) is True
 
     def test_content_not_exists_for_unknown(self, backend: Backend) -> None:
         assert backend.content_exists("0" * 64) is False
 
     def test_delete_removes_content(self, backend: Backend) -> None:
         content = b"delete me"
-        content_hash = backend.write_content(content).content_hash
-        assert content_hash is not None
-        backend.delete_content(content_hash)
-        assert backend.content_exists(content_hash) is False
+        content_id = backend.write_content(content).content_id
+        assert content_id is not None
+        backend.delete_content(content_id)
+        assert backend.content_exists(content_id) is False
 
     def test_write_is_idempotent(self, backend: Backend) -> None:
         """CAS: writing same content twice returns same hash."""
         content = b"idempotent data"
         result1 = backend.write_content(content)
         result2 = backend.write_content(content)
-        assert result1.content_hash is not None
-        assert result2.content_hash is not None
-        assert result1.content_hash == result2.content_hash
+        assert result1.content_id is not None
+        assert result2.content_id is not None
+        assert result1.content_id == result2.content_id
 
     def test_get_content_size_correct(self, backend: Backend) -> None:
         content = b"measure me"
-        content_hash = backend.write_content(content).content_hash
-        assert content_hash is not None
-        size = backend.get_content_size(content_hash)
+        content_id = backend.write_content(content).content_id
+        assert content_id is not None
+        size = backend.get_content_size(content_id)
         assert size == len(content)
-
-    def test_get_ref_count_after_writes(self, backend: Backend) -> None:
-        content = b"ref counting"
-        backend.write_content(content)
-        content_hash = backend.write_content(content).content_hash  # Second write
-        assert content_hash is not None
-        ref_count = backend.get_ref_count(content_hash)
-        assert ref_count is not None
-        assert ref_count >= 2
 
     def test_read_nonexistent_content_fails(self, backend: Backend) -> None:
         with pytest.raises((NexusFileNotFoundError, BackendError)):
@@ -180,7 +170,7 @@ class TestBackendContract:
 
     def test_batch_read_partial_missing(self, backend: Backend) -> None:
         content = b"batch test"
-        real_hash = backend.write_content(content).content_hash
+        real_hash = backend.write_content(content).content_id
         assert real_hash is not None
         fake_hash = "c" * 64
         results = backend.batch_read_content([real_hash, fake_hash])
@@ -211,11 +201,8 @@ class TestBackendContract:
     # -- Capability Flags --
 
     def test_capability_flags_are_booleans(self, backend: Backend) -> None:
-        assert isinstance(backend.user_scoped, bool)
         assert isinstance(backend.is_connected, bool)
-        assert isinstance(backend.is_passthrough, bool)
         assert isinstance(backend.has_root_path, bool)
-        assert isinstance(backend.has_token_manager, bool)
 
     def test_name_returns_string(self, backend: Backend) -> None:
         assert isinstance(backend.name, str)
@@ -223,14 +210,8 @@ class TestBackendContract:
 
     # -- Connection Lifecycle --
 
-    def test_connect_returns_status(self, backend: Backend) -> None:
-        assert backend.connect().success is True
-
     def test_check_connection_returns_status(self, backend: Backend) -> None:
         assert isinstance(backend.check_connection().success, bool)
-
-    def test_disconnect_does_not_raise(self, backend: Backend) -> None:
-        backend.disconnect()  # Should not raise
 
     # -- Protocol Conformance --
 
@@ -250,13 +231,13 @@ class TestBackendContract:
         backend.write_content(b"ctx test", context=None)
 
     def test_read_with_context(self, backend: Backend) -> None:
-        content_hash = backend.write_content(b"ctx read", context=None).content_hash
-        assert content_hash is not None
-        backend.read_content(content_hash, context=None)
+        content_id = backend.write_content(b"ctx read", context=None).content_id
+        assert content_id is not None
+        backend.read_content(content_id, context=None)
 
 
-class TestLocalBackendSpecific:
-    """LocalBackend-specific tests not covered by contract."""
+class TestCASLocalBackendSpecific:
+    """CASLocalBackend-specific tests not covered by contract."""
 
     def test_local_has_root_path(self, local_backend: Backend) -> None:
         assert local_backend.has_root_path is True

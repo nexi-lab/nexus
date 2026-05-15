@@ -10,6 +10,8 @@ import json
 import os
 import socket
 import subprocess
+import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +48,8 @@ class FileMetadata:
 
     size: int
     is_directory: bool
-    etag: str | None = None
+    gen: int = 0
+    content_id: str | None = None
     modified_at: str | None = None
 
 
@@ -84,6 +87,7 @@ class RustFUSEClient:
         self.sock: socket.socket | None = None
         self.request_id = 0
         self._restart_count = 0
+        self._lock = threading.Lock()
 
         self._start_daemon()
         self._connect()
@@ -165,6 +169,30 @@ class RustFUSEClient:
             "Rust daemon started", socket_path=self.socket_path, pid=self.daemon_process.pid
         )
 
+        # Issue #4055 R3: drain daemon stderr into Python logs so async
+        # cache_warm results, panics, and other log lines surface to
+        # operators. Without this the stderr pipe can block when its OS
+        # buffer fills, AND any daemon-side observability is invisible
+        # to callers (especially with fire-and-forget hydration where the
+        # RPC returns before the work finishes).
+        if self.daemon_process.stderr is not None:
+            import threading as _threading
+
+            def _drain_stderr() -> None:
+                assert self.daemon_process is not None
+                stream = self.daemon_process.stderr
+                if stream is None:
+                    return
+                for raw in iter(stream.readline, ""):
+                    line = raw.rstrip()
+                    if line:
+                        logger.info("[nexus-fuse-daemon] %s", line)
+                stream.close()
+
+            _threading.Thread(
+                target=_drain_stderr, name="nexus-fuse-daemon-stderr", daemon=True
+            ).start()
+
         # Wait a bit for socket to be ready
         for _ in range(50):  # 5 seconds max
             if self.socket_path.exists():
@@ -174,7 +202,15 @@ class RustFUSEClient:
             raise RuntimeError(f"Socket not created: {self.socket_path}")
 
     def _connect(self) -> None:
-        """Connect to Rust daemon via Unix socket."""
+        """Connect to Rust daemon via Unix socket.
+
+        FUSE is POSIX-only (no Windows kernel module exists); the
+        platform check both documents the constraint and lets mypy's
+        Windows stubs (which omit ``socket.AF_UNIX``) skip the True
+        branch.
+        """
+        if sys.platform == "win32":
+            raise RuntimeError("Rust FUSE client is POSIX-only")
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(str(self.socket_path))
         logger.info("Connected to Rust daemon", socket_path=self.socket_path)
@@ -240,6 +276,9 @@ class RustFUSEClient:
     def _send_request(self, method: str, params: dict) -> dict:
         """Send JSON-RPC request to Rust daemon.
 
+        Thread-safe: serializes all requests through a lock so concurrent
+        FUSE threads cannot interleave sendall()/recv() on the shared socket.
+
         Issue 2A: Automatically reconnects if daemon has died.
         Issue 3B: Uses 64KB recv buffer for better large-file performance.
 
@@ -253,66 +292,67 @@ class RustFUSEClient:
         Raises:
             RuntimeError: If request fails after reconnect attempts
         """
-        # Issue 2A: Check daemon health before sending
-        if not self._is_daemon_alive():
-            self._reconnect()
+        with self._lock:
+            # Issue 2A: Check daemon health before sending
+            if not self._is_daemon_alive():
+                self._reconnect()
 
-        self.request_id += 1
-        request = {
-            "jsonrpc": "2.0",
-            "id": self.request_id,
-            "method": method,
-            "params": params,
-        }
+            self.request_id += 1
+            request = {
+                "jsonrpc": "2.0",
+                "id": self.request_id,
+                "method": method,
+                "params": params,
+            }
 
-        request_json = json.dumps(request) + "\n"
-        if not self.sock:
-            raise RuntimeError("Not connected to daemon")
-
-        try:
-            self.sock.sendall(request_json.encode())
-
-            # Issue 3B: Receive response with larger buffer (64KB vs old 4KB)
-            response_data = b""
-            while True:
-                chunk = self.sock.recv(_RECV_BUFFER_SIZE)
-                if not chunk:
-                    raise RuntimeError("Connection closed by daemon")
-                response_data += chunk
-                if b"\n" in response_data:
-                    break
-        except (ConnectionError, BrokenPipeError, OSError) as e:
-            # Issue 2A: Connection lost — try reconnecting and retrying once
-            logger.warning(f"Daemon connection lost during {method}: {e}")
-            self._reconnect()
-
-            # Retry the request on the new connection
+            request_json = json.dumps(request) + "\n"
             if not self.sock:
-                raise RuntimeError("Reconnection failed") from e
-            self.sock.sendall(request_json.encode())
+                raise RuntimeError("Not connected to daemon")
 
-            response_data = b""
-            while True:
-                chunk = self.sock.recv(_RECV_BUFFER_SIZE)
-                if not chunk:
-                    raise RuntimeError("Connection closed after reconnect") from None
-                response_data += chunk
-                if b"\n" in response_data:
-                    break
+            try:
+                self.sock.sendall(request_json.encode())
 
-        response = json.loads(response_data.decode())
+                # Issue 3B: Receive response with larger buffer (64KB vs old 4KB)
+                response_data = b""
+                while True:
+                    chunk = self.sock.recv(_RECV_BUFFER_SIZE)
+                    if not chunk:
+                        raise RuntimeError("Connection closed by daemon")
+                    response_data += chunk
+                    if b"\n" in response_data:
+                        break
+            except (ConnectionError, BrokenPipeError, OSError) as e:
+                # Issue 2A: Connection lost — try reconnecting and retrying once
+                logger.warning(f"Daemon connection lost during {method}: {e}")
+                self._reconnect()
 
-        # Reset restart counter on successful request
-        self._restart_count = 0
+                # Retry the request on the new connection
+                if not self.sock:
+                    raise RuntimeError("Reconnection failed") from e
+                self.sock.sendall(request_json.encode())
 
-        # Check for errors
-        if "error" in response:
-            error = response["error"]
-            error_errno = error.get("data", {}).get("errno", 5)  # Default to EIO
-            raise OSError(error_errno, error["message"])
+                response_data = b""
+                while True:
+                    chunk = self.sock.recv(_RECV_BUFFER_SIZE)
+                    if not chunk:
+                        raise RuntimeError("Connection closed after reconnect") from None
+                    response_data += chunk
+                    if b"\n" in response_data:
+                        break
 
-        result: dict[Any, Any] = response.get("result", {})
-        return result
+            response = json.loads(response_data.decode())
+
+            # Reset restart counter on successful request
+            self._restart_count = 0
+
+            # Check for errors
+            if "error" in response:
+                error = response["error"]
+                error_errno = error.get("data", {}).get("errno", 5)  # Default to EIO
+                raise OSError(error_errno, error["message"])
+
+            result: dict[Any, Any] = response.get("result", {})
+            return result
 
     def sys_read(self, path: str) -> bytes:
         """Read file contents.
@@ -373,11 +413,12 @@ class RustFUSEClient:
         return FileMetadata(
             size=result.get("size", 0),
             is_directory=result.get("is_directory", False),
-            etag=result.get("etag"),
+            gen=result.get("gen", 0),
+            content_id=result.get("content_id"),
             modified_at=result.get("modified_at"),
         )
 
-    def sys_mkdir(self, path: str) -> None:
+    def mkdir(self, path: str) -> None:
         """Create directory.
 
         Args:
@@ -402,7 +443,7 @@ class RustFUSEClient:
         """
         self._send_request("rename", {"old_path": old_path, "new_path": new_path})
 
-    def sys_access(self, path: str) -> bool:
+    def access(self, path: str) -> bool:
         """Check if path exists.
 
         Args:
@@ -414,6 +455,37 @@ class RustFUSEClient:
         result = self._send_request("exists", {"path": path})
         exists_value: bool = result["exists"]
         return exists_value
+
+    def cache_warm(
+        self,
+        workspace_root: str,
+        *,
+        threshold_bytes: int | None = None,
+        budget_bytes: int | None = None,
+        concurrency: int | None = None,
+        wait: bool = True,
+    ) -> dict[str, Any]:
+        """Trigger eager cache hydration via the Rust daemon (Issue #4055).
+
+        Args:
+            wait: When True (default), block until hydration completes and
+                return the full `HydrateStats` dict (admitted_count, admitted_bytes,
+                skipped_warm, skipped_size, skipped_budget, failed, duration_ms).
+                When False, the daemon spawns hydration on a detached tokio
+                task and the RPC returns immediately with `{"started": true}`
+                — used by the FUSE-mount production trigger so the foreground
+                RPC socket isn't held for the whole hydration window.
+        """
+        params: dict[str, Any] = {"workspace_root": workspace_root}
+        if threshold_bytes is not None:
+            params["threshold_bytes"] = threshold_bytes
+        if budget_bytes is not None:
+            params["budget_bytes"] = budget_bytes
+        if concurrency is not None:
+            params["concurrency"] = concurrency
+        if not wait:
+            params["wait"] = False
+        return self._send_request("cache_warm", params)
 
     def close(self) -> None:
         """Close connection and shutdown daemon."""

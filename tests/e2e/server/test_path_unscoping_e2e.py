@@ -19,27 +19,29 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.testkit.auth import TEST_CONTEXT
 
 
 @pytest.fixture
-def nexus_fs_local(tmp_path: Path):
-    """Create a real NexusFS with RaftMetadataStore."""
+async def nexus_fs_local(tmp_path: Path):
+    """Create a real NexusFS with RaftMetadataStore via factory."""
     storage_path = tmp_path / "storage"
     storage_path.mkdir()
-    backend = LocalBackend(root_path=storage_path)
+    backend = CASLocalBackend(root_path=storage_path)
     raft_dir = str(tmp_path / "raft-metadata")
-    metadata_store = RaftMetadataStore.embedded(raft_dir)
+    metadata_store = raft_dir
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / 'records.db'}")
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
         permissions=PermissionConfig(enforce=False),
+        init_cred=TEST_CONTEXT,
     )
     yield nx
     nx.close()
@@ -100,7 +102,7 @@ class TestZoneScopedPathUnscopingE2E:
     then verifies RPC responses strip the internal prefixes.
     """
 
-    def _write_zone_scoped_file(
+    async def _write_zone_scoped_file(
         self,
         nexus_fs: NexusFS,
         zone_id: str,
@@ -114,7 +116,7 @@ class TestZoneScopedPathUnscopingE2E:
         /zone/{zone_id}/user:{user_id}/{resource_path}
         """
         internal_path = f"/zone/{zone_id}/user:{user_id}/{resource_path}"
-        nexus_fs.sys_write(internal_path, content)
+        nexus_fs.write(internal_path, content)
 
     def test_list_strips_zone_prefix_from_provisioned_paths(
         self, rpc_client: TestClient, nexus_fs_local: NexusFS
@@ -232,12 +234,13 @@ class TestTenantPrefixUnscopingE2E:
     Directly inserts metadata with /tenant: prefix to simulate legacy data.
     """
 
-    def test_list_strips_tenant_prefix(
+    @pytest.mark.asyncio
+    async def test_list_strips_tenant_prefix(
         self, rpc_client: TestClient, nexus_fs_local: NexusFS
     ) -> None:
         """Legacy /tenant:default/... paths get stripped by list()."""
         # Write using legacy tenant-prefixed path
-        nexus_fs_local.sys_write(
+        nexus_fs_local.write(
             "/tenant:default/connector/gcs_demo/auto-test.txt",
             b"test data",
         )

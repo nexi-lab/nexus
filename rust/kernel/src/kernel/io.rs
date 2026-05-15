@@ -24,9 +24,7 @@ use crate::lock_manager::{LockManager, LockMode};
 use crate::meta_store::{FileMetadata, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 
 use super::{
-    validate_path_fast,
-    write_buffer::{DirtyWrite, DirtyWriteKey, DirtyWriteRoute, FlushSelection},
-    FlushWriteBufferResult, Kernel, KernelError, OpMetadataResult, OperationContext, StatResult,
+    validate_path_fast, Kernel, KernelError, OpMetadataResult, OperationContext, StatResult,
     SysCatResult, SysCopyResult, SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult,
     SysUnlinkResult, SysWriteResult,
 };
@@ -296,7 +294,10 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
-        let _ = self.flush_due_write_buffer();
+        // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
+        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
+            return self.handle_xattr_read(rest);
+        }
 
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
@@ -377,16 +378,6 @@ impl Kernel {
         {
             Some(meta) => meta,
             None => {
-                if let Some(data) = self.write_buffer.get_dirty_bytes(path, &ctx.zone_id) {
-                    return Ok(SysReadResult {
-                        data: Some(data),
-                        post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                        content_id: None,
-                        gen: 1,
-                        entry_type: DT_REG,
-                        stream_next_offset: None,
-                    });
-                }
                 // MetaStore miss → try backend directly (all backend types
                 // uniformly).
                 if let Some(data) = route
@@ -527,17 +518,6 @@ impl Kernel {
         // Content identifier: CAS backends use content_id (hash). Path-addressed
         // backends derive their physical path from `path - mount_prefix`
         // inside the backend itself; the kernel always passes the content_id.
-        if let Some(data) = self.write_buffer.get_dirty_bytes(path, &ctx.zone_id) {
-            return Ok(SysReadResult {
-                data: Some(data),
-                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_id: entry.content_id.clone(),
-                gen: entry.gen.saturating_add(1),
-                entry_type: DT_REG,
-                stream_next_offset: None,
-            });
-        }
-
         let content_id = match entry.content_id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => id,
             None => return Err(not_found()),
@@ -742,7 +722,6 @@ struct WriteCommitInput<'a> {
     content: &'a [u8],
     offset: u64,
     route: &'a crate::vfs_router::RouteResult,
-    old_metadata: Option<Option<FileMetadata>>,
 }
 
 impl Kernel {
@@ -815,7 +794,11 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
-        let _ = self.flush_due_write_buffer();
+        // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
+        // Short-circuits to metastore set_file_metadata without hooks/routing.
+        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
+            return self.handle_xattr_write(rest, content);
+        }
 
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
@@ -986,69 +969,6 @@ impl Kernel {
             }
         }
 
-        let policy = self.write_buffer.policy_for(path);
-        if policy.enabled() && route.backend.is_some() {
-            let lock_handle = self.lock_manager.blocking_acquire(
-                path,
-                LockMode::Write,
-                self.vfs_lock_timeout_ms(),
-            );
-            if lock_handle == 0 {
-                return miss();
-            }
-
-            let old_entry = entry.clone();
-            let dirty_key = DirtyWriteKey::new(path, &ctx.zone_id);
-            let base_content =
-                match if offset == 0 || self.write_buffer.contains_dirty_key(&dirty_key) {
-                    Ok(Vec::new())
-                } else {
-                    self.load_buffered_write_base(path, ctx, &route, old_entry.as_ref())
-                } {
-                    Ok(content) => content,
-                    Err(err) => {
-                        self.lock_manager.do_release(lock_handle);
-                        return Err(err);
-                    }
-                };
-            let now_ms = Self::now_ms_u64();
-            let merge_result = self.write_buffer.merge_write_with_base_and_context(
-                dirty_key,
-                DirtyWriteRoute::from_route(path, &route),
-                ctx.clone(),
-                old_entry.clone(),
-                base_content,
-                effective_content,
-                offset,
-                policy.clone(),
-                now_ms,
-            );
-
-            self.lock_manager.do_release(lock_handle);
-
-            let size = merge_result.map_err(KernelError::IOError)?;
-            if policy.byte_budget > 0 && size >= policy.byte_budget {
-                self.flush_write_buffer(Some(path), Some(&ctx.zone_id))?;
-            }
-
-            return Ok(SysWriteResult {
-                hit: true,
-                content_id: old_entry.as_ref().and_then(|e| e.content_id.clone()),
-                post_hook_needed: false,
-                version: old_entry.as_ref().map(|e| e.version + 1).unwrap_or(1),
-                gen: old_entry
-                    .as_ref()
-                    .map(|e| e.gen.saturating_add(1))
-                    .unwrap_or(1),
-                size: size as u64,
-                is_new: old_entry.is_none(),
-                old_content_id: old_entry.as_ref().and_then(|e| e.content_id.clone()),
-                old_size: old_entry.as_ref().map(|e| e.size),
-                old_version: old_entry.as_ref().map(|e| e.version),
-                old_modified_at_ms: old_entry.as_ref().and_then(|e| e.modified_at_ms),
-            });
-        }
-
         // 4. VFS lock (blocking write lock)
         let lock_handle =
             self.lock_manager
@@ -1063,7 +983,6 @@ impl Kernel {
             content: effective_content,
             offset,
             route: &route,
-            old_metadata: None,
         });
 
         self.lock_manager.do_release(lock_handle);
@@ -1071,47 +990,10 @@ impl Kernel {
         result
     }
 
-    fn load_buffered_write_base(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        route: &crate::vfs_router::RouteResult,
-        old_entry: Option<&FileMetadata>,
-    ) -> Result<Vec<u8>, KernelError> {
-        let backend = route
-            .backend
-            .as_ref()
-            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
-        if let Some(content_id) = old_entry
-            .and_then(|e| e.content_id.as_deref())
-            .filter(|content_id| !content_id.is_empty())
-        {
-            return backend.read_content(content_id, ctx).map_err(|err| {
-                KernelError::BackendError(format!(
-                    "buffered partial base read({path}, {content_id}): {err:?}"
-                ))
-            });
-        }
-
-        backend
-            .read_content(&route.backend_path, ctx)
-            .map_err(|err| match err {
-                crate::abc::object_store::StorageError::NotFound(_) => {
-                    KernelError::FileNotFound(path.to_string())
-                }
-                other => KernelError::BackendError(format!(
-                    "buffered partial direct base read({path}, {}): {other:?}",
-                    route.backend_path
-                )),
-            })
-    }
-
     fn commit_old_metadata(&self, input: &WriteCommitInput<'_>) -> Option<FileMetadata> {
-        match &input.old_metadata {
-            Some(old_metadata) => old_metadata.clone(),
-            None => self
-                .with_metastore_route(input.route, |ms| ms.get(input.path).ok().flatten())
-                .flatten(),
+        {
+            self.with_metastore_route(input.route, |ms| ms.get(input.path).ok().flatten())
+                .flatten()
         }
     }
 
@@ -1301,152 +1183,6 @@ impl Kernel {
         result
     }
 
-    pub fn flush_due_write_buffer(&self) -> Result<FlushWriteBufferResult, KernelError> {
-        let now = Self::now_ms_u64();
-        let due = self.write_buffer.due_dirty(now);
-        let mut total = FlushWriteBufferResult::default();
-        for dirty in due {
-            Self::merge_flush_result(&mut total, self.flush_dirty_entry(dirty, false));
-        }
-        Self::finish_flush_result(total)
-    }
-
-    pub fn flush_write_buffer(
-        &self,
-        path: Option<&str>,
-        zone_id: Option<&str>,
-    ) -> Result<FlushWriteBufferResult, KernelError> {
-        let selection = FlushSelection {
-            path: path.map(str::to_string),
-            zone_id: zone_id.map(str::to_string),
-        };
-        let mut result = FlushWriteBufferResult::default();
-        for dirty in self.write_buffer.selected_dirty(&selection) {
-            Self::merge_flush_result(&mut result, self.flush_dirty_entry(dirty, false));
-        }
-        Self::finish_flush_result(result)
-    }
-
-    pub(crate) fn flush_write_buffer_locked_path(
-        &self,
-        path: &str,
-        zone_id: &str,
-    ) -> Result<FlushWriteBufferResult, KernelError> {
-        let mut result = FlushWriteBufferResult::default();
-        let key = DirtyWriteKey::new(path, zone_id);
-        if let Some(dirty) = self.write_buffer.get_dirty(&key) {
-            Self::merge_flush_result(&mut result, self.flush_dirty_entry(dirty, true));
-        }
-        Self::finish_flush_result(result)
-    }
-
-    pub(crate) fn flush_write_buffer_locked_prefix(
-        &self,
-        path: &str,
-        zone_id: &str,
-    ) -> Result<FlushWriteBufferResult, KernelError> {
-        // Caller must hold a write lock on `path`. LockManager write locks
-        // conflict with descendants, so an ancestor directory lock fences
-        // child writes while this prefix drain is in progress.
-        let selection = FlushSelection {
-            path: Some(path.to_string()),
-            zone_id: Some(zone_id.to_string()),
-        };
-        let mut result = FlushWriteBufferResult::default();
-        for dirty in self.write_buffer.selected_dirty(&selection) {
-            Self::merge_flush_result(&mut result, self.flush_dirty_entry(dirty, true));
-        }
-        Self::finish_flush_result(result)
-    }
-
-    fn flush_dirty_entry(
-        &self,
-        dirty: DirtyWrite,
-        lock_already_held: bool,
-    ) -> FlushWriteBufferResult {
-        let mut result = FlushWriteBufferResult::default();
-
-        let mut lock_handle = 0;
-        if !lock_already_held {
-            lock_handle = self.lock_manager.blocking_acquire(
-                &dirty.key.path,
-                LockMode::Write,
-                self.vfs_lock_timeout_ms(),
-            );
-            if lock_handle == 0 {
-                result.failed += 1;
-                result
-                    .errors
-                    .push(format!("vfs write lock timeout: {}", dirty.key.path));
-                return result;
-            }
-        }
-
-        if !self.write_buffer.claim_dirty_generation(&dirty) {
-            if lock_handle > 0 {
-                self.lock_manager.do_release(lock_handle);
-            }
-            return result;
-        }
-
-        let route = dirty.route.to_route_result();
-        let commit = self.commit_write_through(WriteCommitInput {
-            path: &dirty.key.path,
-            ctx: &dirty.context,
-            content: &dirty.content,
-            offset: 0,
-            route: &route,
-            old_metadata: Some(dirty.old_metadata.clone()),
-        });
-
-        match commit {
-            Ok(write) if write.hit => {
-                if self.write_buffer.remove_if_generation_matches(&dirty) {
-                    result.flushed += 1;
-                }
-            }
-            Ok(_) => {
-                result.failed += 1;
-                result
-                    .errors
-                    .push(format!("{}: buffered write commit missed", dirty.key.path));
-                self.write_buffer.unclaim_dirty_generation(&dirty);
-            }
-            Err(err) => {
-                result.failed += 1;
-                result.errors.push(format!("{}: {err:?}", dirty.key.path));
-                self.write_buffer.unclaim_dirty_generation(&dirty);
-            }
-        }
-        if lock_handle > 0 {
-            self.lock_manager.do_release(lock_handle);
-        }
-        result
-    }
-
-    fn merge_flush_result(total: &mut FlushWriteBufferResult, one: FlushWriteBufferResult) {
-        total.flushed += one.flushed;
-        total.failed += one.failed;
-        total.errors.extend(one.errors);
-    }
-
-    fn finish_flush_result(
-        result: FlushWriteBufferResult,
-    ) -> Result<FlushWriteBufferResult, KernelError> {
-        if result.failed > 0 {
-            return Err(KernelError::IOError(result.errors.join("; ")));
-        }
-        Ok(result)
-    }
-
-    fn flush_dirty_path_if_present(&self, path: &str, zone_id: &str) -> Result<(), KernelError> {
-        let key = DirtyWriteKey::new(path, zone_id);
-        if self.write_buffer.contains_dirty_key(&key) {
-            self.flush_write_buffer(Some(path), Some(zone_id))?;
-        }
-        Ok(())
-    }
-
     // ── sys_stat ───────────────────────────────────────────────────────
 
     /// Rust syscall: get file metadata (pure Rust, no GIL).
@@ -1488,10 +1224,6 @@ impl Kernel {
                     .map(StatResult::from);
             }
         };
-        if self.flush_dirty_path_if_present(path, zone_id).is_err() {
-            return None;
-        }
-
         // 3.5. Mount-point synthesis (federation cross-zone mount).
         // When ``backend_path`` is empty the routed path IS the mount
         // point itself. For federation mounts (where the parent zone's
@@ -1749,19 +1481,7 @@ impl Kernel {
 
             match meta {
                 Some(e) => e,
-                None => {
-                    let dirty_key = DirtyWriteKey::new(path, &ctx.zone_id);
-                    if self.write_buffer.contains_dirty_key(&dirty_key) {
-                        self.flush_write_buffer(Some(path), Some(&ctx.zone_id))?;
-                    }
-                    match self
-                        .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
-                        .flatten()
-                    {
-                        Some(e) => e,
-                        None => return miss(0),
-                    }
-                }
+                None => return miss(0),
             }
         };
 
@@ -1834,13 +1554,6 @@ impl Kernel {
                 .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms());
         if lock_handle == 0 {
             return miss(entry.entry_type);
-        }
-
-        if entry.entry_type == DT_REG {
-            if let Err(err) = self.flush_write_buffer_locked_path(path, &ctx.zone_id) {
-                self.lock_manager.do_release(lock_handle);
-                return Err(err);
-            }
         }
 
         // 6. Atomic metastore delete + dcache evict (metadata-first ordering).
@@ -1962,8 +1675,6 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        self.flush_write_buffer(Some(old_path), Some(&ctx.zone_id))?;
-
         // 3. Sorted VFS lock acquire (deadlock-free: min(old,new) first)
         let (first, second) = if old_path <= new_path {
             (old_path, new_path)
@@ -1998,11 +1709,6 @@ impl Kernel {
         if first != second && lock2 == 0 {
             release_locks(&self.lock_manager, lock1, lock2);
             return miss();
-        }
-
-        if let Err(err) = self.flush_write_buffer_locked_prefix(old_path, &ctx.zone_id) {
-            release_locks(&self.lock_manager, lock1, lock2);
-            return Err(err);
         }
 
         // 4. Existence check: get old metadata — use full VFS paths (R20.3 contract).
@@ -2287,9 +1993,6 @@ impl Kernel {
             Ok(r) => r,
             Err(_) => return miss(),
         };
-        self.flush_dirty_path_if_present(src_path, &ctx.zone_id)?;
-        self.flush_dirty_path_if_present(dst_path, &ctx.zone_id)?;
-
         // 3. Get source metadata via the routed metastore (internal
         //    cache fast path) — full VFS paths (R20.3 contract).
         let src_meta: FileMetadata = match self
@@ -2838,8 +2541,6 @@ impl Kernel {
         // 2. Route (check write access)
         let route = self.vfs_router.route(path, &ctx.zone_id)?;
 
-        self.flush_write_buffer(Some(path), Some(&ctx.zone_id))?;
-
         // 3. Get metadata (per-mount or global) — full path
         let entry_type = self
             .with_metastore(&route.mount_point, |ms| {
@@ -2861,11 +2562,6 @@ impl Kernel {
                 .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms());
         if lock_handle == 0 {
             return miss();
-        }
-
-        if let Err(err) = self.flush_write_buffer_locked_prefix(path, &ctx.zone_id) {
-            self.lock_manager.do_release(lock_handle);
-            return Err(err);
         }
 
         // 4. Check children (per-mount or global) — full-path prefix
@@ -2952,9 +2648,6 @@ impl Kernel {
             Ok(r) => r,
             Err(_) => return false,
         };
-        if self.flush_dirty_path_if_present(path, zone_id).is_err() {
-            return false;
-        }
         self.with_metastore_route(&route, |ms| ms.exists(path).unwrap_or(false))
             .unwrap_or(false)
     }
@@ -3499,13 +3192,6 @@ impl Kernel {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
-        if self
-            .flush_write_buffer(Some(normalized), Some(zone_id))
-            .is_err()
-        {
-            return Vec::new();
-        }
-
         let global_prefix = if normalized == contracts::VFS_ROOT {
             contracts::VFS_ROOT.to_string()
         } else {

@@ -403,12 +403,6 @@ impl Kernel {
                     .as_ref()
                     .and_then(|b| b.read_content(&route.backend_path, ctx).ok())
                 {
-                    // §4057: emit prefetch hint after successful DT_REG read.
-                    {
-                        let size = data.len() as u32;
-                        let sink = self.prefetch_sink.read().clone();
-                        sink.on_read(path, offset, size);
-                    }
                     return Ok(SysReadResult {
                         data: Some(data),
                         post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
@@ -619,12 +613,6 @@ impl Kernel {
             Some(data) => {
                 self.file_cache
                     .put(file_key, data.clone(), expected_fingerprint.clone(), None);
-                // §4057: emit prefetch hint after successful DT_REG read.
-                {
-                    let size = data.len() as u32;
-                    let sink = self.prefetch_sink.read().clone();
-                    sink.on_read(path, offset, size);
-                }
                 Ok(SysReadResult {
                     data: Some(data),
                     post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
@@ -746,14 +734,6 @@ impl Kernel {
             );
         }
 
-        // §4057: emit prefetch hint after successful remote DT_REG fetch.
-        // Remote fetch returns the entire blob, not an offset slice, so
-        // we report offset 0.
-        {
-            let size = data.len() as u32;
-            let sink = self.prefetch_sink.read().clone();
-            sink.on_read(path, 0, size);
-        }
         Ok(SysReadResult {
             data: Some(data),
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,

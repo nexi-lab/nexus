@@ -135,11 +135,6 @@ fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     // `nexus_runtime.install_transport_wiring(kernel)` once after
     // federation env vars are read.
     transport::python::register(m)?;
-    // Adaptive prefetcher (issue #4057) — `PrefetchEngine` pyclass
-    // drives per-fh read-ahead from the Python shim. The engine
-    // takes a Python callable as its RangeReader, so registration
-    // here is just `add_class` — no companion `python::register`.
-    m.add_class::<nexus_prefetch::pyo3_bindings::PyPrefetchEngine>()?;
     // ManagedAgentService boot install — Python wheel deployment
     // wires sudocode-runtime as the runtime body via the
     // `SpawnTask` DI trait. ManagedAgentService is the single

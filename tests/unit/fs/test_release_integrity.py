@@ -203,7 +203,7 @@ class TestConcurrentMetastore:
         # includes those — assert file entries >= expected.
         verify = create_kernel(db_path)
         items = verify.metastore_list_paginated("/", True, 100000, None)["items"]
-        file_entries = [it for it in items if not it.get("is_directory", False)]
+        file_entries = [it for it in items if not getattr(it, "is_directory", False)]
         assert len(file_entries) == n_threads * n_ops
 
 

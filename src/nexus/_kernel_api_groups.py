@@ -92,7 +92,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "cas_exists",
         "cas_is_chunked",
         "cas_read",
-        "cas_read_range",
         "cas_size",
         "cas_write",
         "cas_write_partial",

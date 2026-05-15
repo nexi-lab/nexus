@@ -99,13 +99,8 @@ class IOHandler:
         original_path = file_info["path"]
         view_type = file_info["view_type"]
 
-        # Readahead buffer check FIRST — the Rust prefetcher must
-        # observe every read to detect access patterns and serve
-        # subsequent hits.  Doing this before `try_rust(sys_read)`
-        # ensures the engine sees the read stream even when Rust
-        # delegation handles the miss path; doing it after would
-        # short-circuit the observation entirely (Issue #4057
-        # adversarial review round 7 finding #1).
+        # Readahead buffer check FIRST — must happen before try_rust(sys_read)
+        # so the readahead manager observes every read for pattern detection.
         if ctx.readahead and view_type is None:
             prefetched = ctx.readahead.on_read(fh, original_path, offset, size)
             if prefetched is not None:

@@ -95,10 +95,6 @@ class ReadaheadConfig:
     warm_l2_cache: bool = True  # Also store prefetched data in L2 SSD cache
     max_blocks_per_trigger: int = DEFAULT_MAX_BLOCKS_PER_TRIGGER  # Parallel prefetch count
     prefetch_on_open: bool = DEFAULT_PREFETCH_ON_OPEN  # Start prefetching on file open
-    # Pattern detector for the Rust prefetch engine — one of
-    # "sequential" (default), "stride", or "trend" (Leap ATC'20
-    # majority-trend).  Ignored when `use_rust_engine=False`.
-    rust_detector: str = "sequential"
 
     @classmethod
     def from_dict(cls, config: dict[str, Any]) -> "ReadaheadConfig":
@@ -121,7 +117,6 @@ class ReadaheadConfig:
                 "readahead_max_blocks", DEFAULT_MAX_BLOCKS_PER_TRIGGER
             ),
             prefetch_on_open=config.get("readahead_prefetch_on_open", DEFAULT_PREFETCH_ON_OPEN),
-            rust_detector=config.get("readahead_rust_detector", "sequential"),
         )
 
 
@@ -562,8 +557,6 @@ class ReadaheadManager:
         local_disk_cache: "LocalDiskCache | None" = None,
         content_hash_func: Callable[[str], str | None] | None = None,
         zone_id: str | None = None,
-        *,
-        use_rust_engine: bool = False,
     ):
         """Initialize readahead manager.
 
@@ -573,10 +566,6 @@ class ReadaheadManager:
             local_disk_cache: Optional L2 cache for persistent prefetch
             content_hash_func: Function to get content hash for a path
             zone_id: Zone ID for multi-zone cache isolation
-            use_rust_engine: If True, route on_open/on_read/on_release to the
-                Rust ``nexus_runtime.PrefetchEngine`` when available.  Falls
-                back to the Python implementation on import or construction
-                failure.  Defaults to False (Python path) for safety.
         """
         self._config = config
         self._read_func = read_func
@@ -619,43 +608,6 @@ class ReadaheadManager:
             f"max_blocks={config.max_blocks_per_trigger}, prefetch_on_open={config.prefetch_on_open}"
         )
 
-        # Optionally route to the Rust PrefetchEngine.  The Python state
-        # above is still constructed so that fallback (e.g. engine build
-        # failure) remains a no-op switch.
-        self._rust_engine = None
-        if use_rust_engine:
-            try:
-                # PrefetchEngine is added by rust/nexus-prefetch/src/pyo3_bindings.rs
-                # (Issue #4057).  The stub at stubs/nexus_runtime/__init__.pyi
-                # declares the symbol explicitly so mypy resolves the import.
-                from nexus_runtime import PrefetchEngine as _RustEngine
-
-                self._rust_engine = _RustEngine(
-                    read_func,
-                    config.block_size,
-                    config.initial_window,
-                    config.max_window,
-                    config.prefetch_workers,
-                    1024,  # queue_capacity
-                    config.max_blocks_per_trigger,
-                    config.sequential_tolerance,
-                    config.min_sequential_count,
-                    config.rust_detector,
-                    2000,  # shutdown_timeout_ms
-                    config.buffer_pool_mb * 1024 * 1024,
-                )
-                logger.info("[READAHEAD] Routing to Rust PrefetchEngine")
-            except ImportError:
-                logger.warning(
-                    "[READAHEAD] nexus_runtime.PrefetchEngine unavailable, falling back to Python"
-                )
-                self._rust_engine = None
-            except Exception as e:
-                logger.warning(
-                    f"[READAHEAD] Failed to build PrefetchEngine (falling back to Python): {e}"
-                )
-                self._rust_engine = None
-
     def on_open(
         self,
         fh: int,
@@ -674,9 +626,6 @@ class ReadaheadManager:
             file_size: Optional file size (for smarter prefetch decisions)
         """
         if self._shutdown:
-            return
-        if self._rust_engine is not None:
-            self._rust_engine.on_open(fh, path, file_size)
             return
 
         if not self._config.enabled or not self._config.prefetch_on_open:
@@ -750,9 +699,6 @@ class ReadaheadManager:
         """
         if self._shutdown:
             return None
-        if self._rust_engine is not None:
-            result: bytes | None = self._rust_engine.on_read(fh, offset, size)
-            return result
 
         if not self._config.enabled:
             return None
@@ -811,9 +757,6 @@ class ReadaheadManager:
         """
         if self._shutdown:
             return
-        if self._rust_engine is not None:
-            self._rust_engine.on_release(fh)
-            return
 
         with self._sessions_lock:
             session = self._sessions.pop(fh, None)
@@ -846,24 +789,11 @@ class ReadaheadManager:
     def invalidate_path(self, path: str) -> None:
         """Invalidate all prefetch state for a path.
 
-        Called on write/delete operations.  Drops *both* the Python-side
-        buffer pool/futures AND the Rust engine's per-fh buffers for
-        this path, so the Rust path can never serve stale prefetched
-        bytes after a mutation (Issue #4057 adversarial review #1).
+        Called on write/delete operations.
 
         Args:
             path: File path to invalidate
         """
-        # Rust engine drop first — if both paths happen to be active
-        # (transition during config-change), order doesn't matter, but
-        # we want the Rust drop to happen unconditionally on every
-        # invalidation since `on_read` consults the Rust buffer first.
-        if self._rust_engine is not None:
-            try:
-                self._rust_engine.invalidate_path(path)
-            except Exception as e:
-                logger.warning(f"[READAHEAD] Rust invalidate_path failed: {e}")
-
         self._buffer_pool.invalidate_path(path)
 
         # Cancel pending prefetches for this path
@@ -1067,20 +997,6 @@ class ReadaheadManager:
     def shutdown(self) -> None:
         """Shutdown readahead manager."""
         self._shutdown = True
-
-        # Tear down the Rust engine first (release the GIL inside Rust
-        # while the tokio runtime drains).  After this returns, the
-        # `_rust_engine` reference is cleared so subsequent on_read /
-        # on_open / on_release / invalidate_path calls fall through to
-        # the Python path (or no-op if the executor is also gone).
-        # Without this, the engine's tokio worker threads outlive the
-        # Python ReadaheadManager (Issue #4057 adversarial review #3).
-        if self._rust_engine is not None:
-            try:
-                self._rust_engine.shutdown()
-            except Exception as e:
-                logger.warning(f"[READAHEAD] Rust engine shutdown failed: {e}")
-            self._rust_engine = None
 
         # Cancel pending futures
         with self._futures_lock:

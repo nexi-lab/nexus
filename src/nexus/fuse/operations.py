@@ -11,7 +11,6 @@ Hybrid Python/Rust mode (--use-rust):
 
 import asyncio
 import logging
-import os
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -228,7 +227,6 @@ class NexusFUSEOperations(Operations):
                     local_disk_cache=local_disk_cache,
                     content_hash_func=lambda path: get_content_hash(self._ctx, path),
                     zone_id=get_zone_id(self._ctx),
-                    use_rust_engine=os.environ.get("NEXUS_PREFETCH_RUST", "1") != "0",
                 )
                 logger.info(
                     f"[FUSE] Readahead enabled: buffer={readahead_config.buffer_pool_mb}MB, "
@@ -404,11 +402,7 @@ class NexusFUSEOperations(Operations):
         return self._io.release(path, fh)
 
     def destroy(self, _path: str) -> None:
-        """FUSE unmount hook — tear down the readahead manager so the
-        Rust prefetcher's Tokio runtime + workers exit cleanly instead
-        of leaking past the mount.  Issue #4057 adversarial review
-        round 10 finding #2.
-        """
+        """FUSE unmount hook — tear down the readahead manager."""
         readahead = self._ctx.readahead
         if readahead is None:
             return

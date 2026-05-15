@@ -9,9 +9,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use kernel::abc::object_store::{
-    ObjectStore, ObjectStorePosixCapabilities, StorageError, WriteResult,
-};
+use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
 
 ///
 /// Mounts an external local folder into Nexus. Files remain at original
@@ -84,10 +82,6 @@ impl LocalConnectorBackend {
 impl ObjectStore for LocalConnectorBackend {
     fn name(&self) -> &str {
         "local_connector"
-    }
-
-    fn posix_capabilities(&self) -> ObjectStorePosixCapabilities {
-        ObjectStorePosixCapabilities::writable()
     }
 
     fn write_content(

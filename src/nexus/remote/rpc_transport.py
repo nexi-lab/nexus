@@ -20,11 +20,9 @@ from __future__ import annotations
 
 import logging
 import re as _re
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import grpc
-from google.protobuf.message import Message as ProtobufMessage
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -36,8 +34,6 @@ from nexus.contracts.exceptions import (
     RemoteConnectionError,
     RemoteTimeoutError,
 )
-from nexus.grpc import initialize_pb2
-from nexus.grpc.capability_discovery import PROTOCOL_VERSION
 from nexus.grpc.defaults import build_channel_options
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
@@ -174,8 +170,6 @@ class RPCTransport:
         self._auth_token = auth_token or ""
         self._timeout = timeout
         self._connect_timeout = connect_timeout
-        self.capabilities: dict[str, Any] | None = None
-
         if tls_config is not None:
             root_ca = peer_ca_pem if peer_ca_pem is not None else tls_config.ca_pem
             creds = grpc.ssl_channel_credentials(
@@ -221,150 +215,6 @@ class RPCTransport:
 
         # Reuse BaseRemoteNexusFS error handling (static method access)
         self._error_handler = BaseRemoteNexusFS()
-
-    # ------------------------------------------------------------------
-    # Initialize / capability discovery
-    # ------------------------------------------------------------------
-
-    def _posix_to_dict(self, posix: Any) -> dict[str, bool]:
-        """Convert POSIX capability fields to a stable dict."""
-        keys = ("read", "readdir", "stat", "write", "unlink", "mkdir", "rmdir", "rename", "glob")
-        if isinstance(posix, Mapping):
-            return {key: bool(value) for key, value in posix.items() if key in keys}
-        payload: dict[str, bool] = {}
-        for key in keys:
-            if isinstance(posix, ProtobufMessage):
-                try:
-                    if not posix.HasField(key):
-                        continue
-                except ValueError:
-                    pass
-            elif not hasattr(posix, key):
-                continue
-            payload[key] = bool(getattr(posix, key))
-        return payload
-
-    def _message_field(self, message: Any, field: str) -> Any | None:
-        if message is None:
-            return None
-        if isinstance(message, ProtobufMessage):
-            try:
-                if not message.HasField(field):
-                    return None
-            except ValueError:
-                return None
-        value = getattr(message, field, None)
-        return value if value is not None else None
-
-    def _string_filter_to_dict(self, string_filter: Any) -> dict[str, list[str]]:
-        return {
-            "allow": [str(value) for value in getattr(string_filter, "allow", [])],
-            "deny": [str(value) for value in getattr(string_filter, "deny", [])],
-        }
-
-    def _command_support_to_dict(self, command: Any) -> dict[str, Any]:
-        payload: dict[str, Any] = {"supported": bool(getattr(command, "supported", False))}
-        filetype = self._message_field(command, "filetype")
-        if filetype is not None:
-            payload["filetype"] = self._string_filter_to_dict(filetype)
-        return payload
-
-    def _commands_to_dict(self, commands: Any) -> dict[str, Any]:
-        payload: dict[str, Any] = {}
-        for name in ("grep", "glob"):
-            command = self._message_field(commands, name)
-            if command is not None:
-                payload[name] = self._command_support_to_dict(command)
-        return payload
-
-    def _workspace_to_dict(self, workspace: Any) -> dict[str, bool]:
-        return {
-            "snapshot": bool(getattr(workspace, "snapshot", False)),
-            "restore": bool(getattr(workspace, "restore", False)),
-            "watch": bool(getattr(workspace, "watch", False)),
-        }
-
-    def _backend_to_dict(self, backend: Any) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "backend_name": str(getattr(backend, "backend_name", "")),
-            "backend_type": str(getattr(backend, "backend_type", "")),
-            "features": [str(value) for value in getattr(backend, "features", [])],
-            "extensions": [str(value) for value in getattr(backend, "extensions", [])],
-            "rust_native": bool(getattr(backend, "rust_native", False)),
-            "external": bool(getattr(backend, "external", False)),
-        }
-        posix = self._message_field(backend, "posix")
-        if posix is not None:
-            payload["posix"] = self._posix_to_dict(posix)
-        return payload
-
-    def _capabilities_to_dict(self, capabilities: Any) -> dict[str, Any]:
-        if capabilities is None:
-            return {}
-        payload: dict[str, Any] = {}
-        posix = self._message_field(capabilities, "posix")
-        if posix is not None:
-            payload["posix"] = self._posix_to_dict(posix)
-        commands = self._message_field(capabilities, "commands")
-        if commands is not None:
-            payload["commands"] = self._commands_to_dict(commands)
-        workspace = self._message_field(capabilities, "workspace")
-        if workspace is not None:
-            payload["workspace"] = self._workspace_to_dict(workspace)
-        backends = getattr(capabilities, "backends", {})
-        backend_items: Any
-        if isinstance(backends, Mapping):
-            backend_items = backends.items()
-        else:
-            backend_items = getattr(backends, "items", lambda: [])()
-        backend_payload = {
-            str(path): self._backend_to_dict(backend) for path, backend in backend_items
-        }
-        if backend_payload:
-            payload["backends"] = backend_payload
-        extensions = [str(value) for value in getattr(capabilities, "extensions", [])]
-        if extensions:
-            payload["extensions"] = extensions
-        return payload
-
-    def _initialize_response_to_dict(self, response: Any) -> dict[str, Any]:
-        return {
-            "server_name": str(getattr(response, "server_name", "")),
-            "server_version": str(getattr(response, "server_version", "")),
-            "protocol_version": str(getattr(response, "protocol_version", "")),
-            "capabilities": self._capabilities_to_dict(
-                self._message_field(response, "capabilities")
-            ),
-        }
-
-    def initialize(
-        self,
-        *,
-        client_name: str = "nexus-python",
-        client_version: str = "unknown",
-    ) -> dict[str, Any] | None:
-        """Discover server protocol and capability support.
-
-        ``UNIMPLEMENTED`` means the server predates the handshake endpoint; keep
-        legacy behavior by allowing remote operations without client-side gating.
-        """
-        request = initialize_pb2.InitializeRequest(
-            client_name=client_name,
-            client_version=client_version,
-            protocol_version=PROTOCOL_VERSION,
-            auth_token=self._auth_token,
-        )
-        try:
-            response = self._stub.Initialize(request, timeout=self._connect_timeout)
-        except grpc.RpcError as exc:
-            if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
-                self.capabilities = None
-                return None
-            self._raise_transport_error(exc, self._connect_timeout, "Initialize")
-
-        payload = self._initialize_response_to_dict(response)
-        self.capabilities = payload["capabilities"]
-        return payload
 
     # ------------------------------------------------------------------
     # RPC call

@@ -10,9 +10,7 @@
 
 use std::sync::Arc;
 
-use kernel::abc::object_store::{
-    ObjectStore, ObjectStorePosixCapabilities, StorageError, WriteResult,
-};
+use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
 use kernel::rpc_transport::RpcTransport;
 
 /// ObjectStore backed by a remote Nexus server via gRPC.
@@ -66,10 +64,6 @@ fn to_server_path(zone_path: &str, backend_path: &str) -> String {
 impl ObjectStore for RemoteBackend {
     fn name(&self) -> &str {
         "remote"
-    }
-
-    fn posix_capabilities(&self) -> ObjectStorePosixCapabilities {
-        ObjectStorePosixCapabilities::writable()
     }
 
     fn read_content(

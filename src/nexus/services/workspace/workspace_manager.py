@@ -145,10 +145,6 @@ class WorkspaceManager:
             zone_id=zone_id,
         )
 
-        flush = getattr(self._kernel, "flush_write_buffer", None)
-        if flush is not None:
-            flush(workspace_path, zone_id or self.zone_id)
-
         # Ensure workspace_path ends with / for prefix matching
         workspace_prefix = workspace_path if workspace_path.endswith("/") else workspace_path + "/"
 

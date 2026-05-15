@@ -14,11 +14,7 @@ syntax = "proto3";
 
 package nexus.grpc.vfs;
 
-import "nexus/grpc/initialize.proto";
-
 service NexusVFSService {
-  rpc Initialize(InitializeRequest) returns (InitializeResponse);
-
   // Generic dispatch RPC — method name + JSON-encoded params.
   // Server routes to the same dispatch_method() as the HTTP endpoint.
   rpc Call(CallRequest) returns (CallResponse);

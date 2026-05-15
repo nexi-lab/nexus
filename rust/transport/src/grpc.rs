@@ -9,7 +9,7 @@
 //! | -------------------------------- | ---------------------------------------- |
 //! | `Read`/`Write`/`Delete`/`Ping`   | Pure Rust → `Kernel::sys_*`              |
 //! | `BatchRead`                      | Pure Rust → `Kernel::sys_read` (batch)   |
-//! | `Initialize` / `Call`            | Stubbed (`Unimplemented`)                |
+//! | `Call`                           | Stubbed (`Unimplemented`)                |
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,8 +24,8 @@ use crate::TlsConfig;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest, CallResponse,
-    DeleteRequest, DeleteResponse, InitializeRequest, InitializeResponse, PingRequest,
-    PingResponse, ReadRequest, ReadResponse, WriteRequest, WriteResponse,
+    DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse,
+    WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -75,8 +75,8 @@ impl Drop for VfsGrpcHandle {
 
 /// Core VFS service implementation — pure Rust.
 ///
-/// Auth is delegated to `Arc<dyn AuthProvider>`.  `Initialize` and
-/// `Call` RPCs return `Unimplemented`.
+/// Auth is delegated to `Arc<dyn AuthProvider>`.  `Call` RPC returns
+/// `Unimplemented`.
 #[derive(Clone)]
 pub(crate) struct VfsServiceImpl {
     pub(crate) kernel: Arc<Kernel>,
@@ -119,13 +119,6 @@ impl VfsServiceImpl {
 
 #[tonic::async_trait]
 impl NexusVfsService for VfsServiceImpl {
-    async fn initialize(
-        &self,
-        _req: Request<InitializeRequest>,
-    ) -> Result<Response<InitializeResponse>, Status> {
-        Err(Status::unimplemented("Initialize RPC is not supported"))
-    }
-
     async fn read(&self, req: Request<ReadRequest>) -> Result<Response<ReadResponse>, Status> {
         let req = req.into_inner();
         let ctx = match self.resolve_context(&req.auth_token) {

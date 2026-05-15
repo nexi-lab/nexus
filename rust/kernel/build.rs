@@ -14,15 +14,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
-        .compile_protos(
-            &[
-                "../../proto/nexus/grpc/initialize.proto",
-                "../../proto/nexus/grpc/vfs/vfs.proto",
-            ],
-            &["../../proto"],
-        )?;
+        .compile_protos(&["../../proto/nexus/grpc/vfs/vfs.proto"], &["../../proto"])?;
 
-    println!("cargo:rerun-if-changed=../../proto/nexus/grpc/initialize.proto");
     println!("cargo:rerun-if-changed=../../proto/nexus/grpc/vfs/vfs.proto");
     Ok(())
 }

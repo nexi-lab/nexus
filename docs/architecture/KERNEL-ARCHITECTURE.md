@@ -243,21 +243,6 @@ Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` patte
 
 See `syscall-design.md` for the full per-syscall primitive matrix.
 
-### Write Coalescing Buffer
-
-DT_REG writes can use a kernel-owned write-back buffer. The default strict policy
-preserves write-through metadata and backend visibility. Opt-in latency policy
-coalesces repeated writes to the same file and makes the entry eligible for flush
-after 1 second of write-idle time, or forces a synchronous flush when the dirty
-entry reaches 4 MiB.
-
-Reads check dirty entries before backend reads, so callers read their own buffered
-writes. `flush_write_buffer`, `fsync`, `sync`, `NexusFS.close`, and workspace
-snapshot creation force backend and metastore commit. Non-strict modes acknowledge
-writes before backend durability; due flushes run opportunistically on later
-read/write syscalls or explicit barriers, so idle dirty bytes remain at risk until
-one of those flush points commits them.
-
 ### 2.3 Tier 2 Convenience Methods
 
 Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFilesystem`:

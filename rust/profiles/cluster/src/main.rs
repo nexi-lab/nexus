@@ -418,7 +418,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
 
     // Build VFS gRPC service as tonic Routes — co-hosted on the raft
     // port via ZoneManager. Uses NoAuth (mTLS is the boundary).
-    let vfs_auth: Arc<dyn services::auth::AuthProvider> = Arc::new(services::auth::NoAuth);
+    let vfs_auth: Arc<dyn transport::auth::AuthProvider> = Arc::new(transport::auth::NoAuth);
     let vfs_routes = transport::grpc::build_vfs_routes(
         Arc::clone(&kernel),
         vfs_auth,

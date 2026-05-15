@@ -1,4 +1,4 @@
-//! `services::auth` — Rust-native authentication providers.
+//! `transport::auth` — Rust-native authentication providers.
 //!
 //! | Provider     | Use case                           |
 //! |--------------|------------------------------------|
@@ -7,6 +7,11 @@
 //!
 //! The trait is consumed by `transport::grpc::VfsServiceImpl` via
 //! `Arc<dyn AuthProvider>`, so the gRPC server has zero PyO3 coupling.
+//! Lives in `transport` (not `services`) because auth is a property of
+//! the network surface: it sits between the wire and the kernel, gates
+//! token-bearing requests, and is consumed only by the gRPC server. The
+//! `services` crate is post-syscall hooks (audit / agents / tasks) and
+//! has no reason to know about bearer tokens.
 
 use std::sync::Arc;
 

@@ -1,7 +1,7 @@
 //! Rust-native gRPC server for `NexusVFSService`.
 //!
 //! Owns the :2028 socket via tonic. Auth is handled by
-//! `services::auth::AuthProvider` (pure Rust).
+//! `transport::auth::AuthProvider` (pure Rust).
 //!
 //! Per-RPC architecture:
 //!
@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use services::auth::AuthProvider;
+use crate::auth::AuthProvider;
 use tokio::sync::oneshot;
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -130,7 +130,7 @@ impl VfsServiceImpl {
     pub(crate) fn for_test(kernel: Arc<Kernel>) -> Self {
         Self {
             kernel,
-            auth: Arc::new(services::auth::ApiKeyAuth::new("test-key")),
+            auth: Arc::new(crate::auth::ApiKeyAuth::new("test-key")),
             server_started_at: Instant::now(),
             server_version: Arc::from("test"),
             started_secs: Arc::new(AtomicU64::new(0)),

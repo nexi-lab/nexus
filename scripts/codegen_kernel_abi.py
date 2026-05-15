@@ -918,6 +918,7 @@ def generate_stubs(
         "simd",
         "trigram",
         "grpc",
+        "grpc_bridge",
     ]
 
     for mod_name in MODULE_ORDER:

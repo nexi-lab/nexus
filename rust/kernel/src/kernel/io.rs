@@ -1508,8 +1508,45 @@ impl Kernel {
             return Some(stat);
         }
 
-        // 3. Route
-        let route = self.vfs_router.route(path, zone_id).ok()?;
+        // 3. Route — try VFS routing; fall back to global metastore
+        //    for paths outside any mount (e.g. /settings/* config entries).
+        let route = match self.vfs_router.route(path, zone_id) {
+            Ok(r) => r,
+            Err(_) => {
+                // No mount covers this path — check global metastore directly.
+                // This is the read-side counterpart of setattr_update's global
+                // metastore fallback (same path create_nexus_fs settings boot uses).
+                return self.metastore_get(path).ok().flatten().map(|entry| {
+                    let is_dir = entry.entry_type == DT_DIR || entry.entry_type == DT_MOUNT;
+                    StatResult {
+                        path: entry.path.clone(),
+                        size: entry.size,
+                        content_id: entry.content_id.clone(),
+                        mime_type: entry
+                            .mime_type
+                            .as_deref()
+                            .unwrap_or(if is_dir {
+                                "inode/directory"
+                            } else {
+                                "application/octet-stream"
+                            })
+                            .to_string(),
+                        is_directory: is_dir,
+                        entry_type: entry.entry_type,
+                        mode: if is_dir { 0o755 } else { 0o644 },
+                        version: entry.version,
+                        gen: entry.gen,
+                        zone_id: entry.zone_id.clone(),
+                        created_at_ms: entry.created_at_ms,
+                        modified_at_ms: entry.modified_at_ms,
+                        last_writer_address: entry.last_writer_address.clone(),
+                        lock: None,
+                        link_target: entry.link_target.clone(),
+                        owner_id: entry.owner_id.clone(),
+                    }
+                });
+            }
+        };
         if self.flush_dirty_path_if_present(path, zone_id).is_err() {
             return None;
         }

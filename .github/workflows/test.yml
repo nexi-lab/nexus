@@ -79,7 +79,7 @@ jobs:
           echo "  1. Exposed via @rpc_expose decorator, OR"
           echo "  2. Explicitly excluded in INTERNAL_ONLY_METHODS"
           echo ""
-          uv run pytest tests/unit/server/test_rpc_parity.py -v
+          uv run --no-sync pytest tests/unit/server/test_rpc_parity.py -v
 
   # Build Rust extensions once per OS, share wheels with downstream jobs
   build-rust:
@@ -159,19 +159,19 @@ jobs:
 
       - name: Verify Rust extensions
         run: |
-          uv run python -c "import nexus_runtime; print('nexus_runtime OK')"
+          uv run --no-sync python -c "import nexus_runtime; print('nexus_runtime OK')"
           # R20.18.6 deleted the ZoneManager / ZoneHandle pyclass shells;
           # Python drives zones via Kernel's zone_* methods now. Smoke
           # test the surviving raft-bound pyclass (Metastore) + the
           # kernel's own entry points.
-          uv run python -c "from nexus_runtime import PyMetaStore, PyKernel; print('raft bindings OK')"
+          uv run --no-sync python -c "from nexus_runtime import PyMetaStore, PyKernel; print('raft bindings OK')"
         shell: bash
 
       - name: Run unit tests
         timeout-minutes: 30
         run: |
           start=$(date +%s)
-          uv run python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
+          uv run --no-sync python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
             --timeout=60 --timeout-method=signal -p no:cacheprovider \
             --cov=nexus --cov-report=term-missing --cov-report=xml
           status=$?
@@ -194,7 +194,7 @@ jobs:
 
       - name: Verify benchmark collection
         run: |
-          uv run pytest tests/benchmarks/ --collect-only -q -o "addopts="
+          uv run --no-sync pytest tests/benchmarks/ --collect-only -q -o "addopts="
         if: matrix.os == 'ubuntu-latest'
 
   e2e-self-contained:
@@ -264,7 +264,7 @@ jobs:
           # ini option dumps a Python + native stack trace from every thread
           # if a test hangs > 60s — when the suite stalls, the log shows the
           # exact frame stuck (PR #3890 hunt for an inter-file hang).
-          uv run python -Xfaulthandler -m pytest tests/e2e/self_contained/ -v \
+          uv run --no-sync python -Xfaulthandler -m pytest tests/e2e/self_contained/ -v \
             --timeout=120 --timeout-method=signal \
             -o faulthandler_timeout=60 -o addopts=
         # 30 min budget = pre-build (~3 min warm cache, ~10 min cold) +
@@ -324,14 +324,14 @@ jobs:
 
       - name: Run PostgreSQL e2e tests
         run: |
-          uv run pytest tests/e2e/postgres/ --ignore=tests/e2e/postgres/migrations -v --timeout=120 -o "addopts="
+          uv run --no-sync pytest tests/e2e/postgres/ --ignore=tests/e2e/postgres/migrations -v --timeout=120 -o "addopts="
         timeout-minutes: 10
 
       - name: Run auth envelope-encryption tests (#3803)
         env:
           TEST_POSTGRES_URL: postgresql+psycopg2://nexus_test:nexus_test@localhost:5432/nexus_test
         run: |
-          uv run pytest \
+          uv run --no-sync pytest \
             src/nexus/bricks/auth/tests/test_envelope.py \
             src/nexus/bricks/auth/tests/test_envelope_contract.py \
             src/nexus/bricks/auth/tests/test_postgres_envelope_integration.py \
@@ -389,7 +389,7 @@ jobs:
 
       - name: Run Redis e2e tests
         run: |
-          uv run pytest tests/e2e/redis/ -v --timeout=120 -o "addopts="
+          uv run --no-sync pytest tests/e2e/redis/ -v --timeout=120 -o "addopts="
         timeout-minutes: 10
 
   e2e-docker:
@@ -428,7 +428,7 @@ jobs:
 
       - name: Run Docker e2e tests
         run: |
-          uv run pytest tests/e2e/docker/ -v --timeout=180 -o "addopts="
+          uv run --no-sync pytest tests/e2e/docker/ -v --timeout=180 -o "addopts="
         timeout-minutes: 15
 
   e2e-nats:
@@ -474,7 +474,7 @@ jobs:
 
       - name: Run NATS e2e tests
         run: |
-          uv run pytest tests/e2e/nats/ -v --timeout=120 -o "addopts="
+          uv run --no-sync pytest tests/e2e/nats/ -v --timeout=120 -o "addopts="
         timeout-minutes: 10
 
   # ── nexus-fs standalone package validation ─────────────────────────────
@@ -699,7 +699,7 @@ jobs:
 
       - name: Run migration tests (SQLite)
         run: |
-          uv run pytest tests/e2e/postgres/migrations/ -v -o "addopts="
+          uv run --no-sync pytest tests/e2e/postgres/migrations/ -v -o "addopts="
 
   migration-test-pg:
     name: Migration Tests (PostgreSQL)
@@ -754,7 +754,7 @@ jobs:
 
       - name: Run migration tests (PostgreSQL)
         run: |
-          uv run pytest tests/e2e/postgres/migrations/ -v -o "addopts="
+          uv run --no-sync pytest tests/e2e/postgres/migrations/ -v -o "addopts="
 
   # ---------------------------------------------------------------------------
   # Skip-pass jobs: satisfy required checks on doc-only PRs where

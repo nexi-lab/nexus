@@ -1266,6 +1266,53 @@ impl PyKernel {
         })
     }
 
+    /// Tier 2 batch write: create-or-overwrite per-item (composes write()).
+    #[pyo3(signature = (items, ctx))]
+    fn write_batch<'py>(
+        &self,
+        py: Python<'py>,
+        items: Vec<(String, Vec<u8>)>,
+        ctx: &PyOperationContext,
+    ) -> PyResult<Vec<PySysWriteResult>> {
+        use crate::kernel::convenience::KernelConvenience;
+        let rust_ctx = ctx.to_rust();
+        let results = py.detach(|| self.inner.write_batch(&items, &rust_ctx));
+        Ok(results
+            .into_iter()
+            .map(|r| {
+                let r = match r {
+                    Ok(r) => r,
+                    Err(_) => crate::kernel::SysWriteResult {
+                        hit: false,
+                        content_id: None,
+                        post_hook_needed: false,
+                        version: 0,
+                        gen: 0,
+                        size: 0,
+                        is_new: false,
+                        old_content_id: None,
+                        old_size: None,
+                        old_version: None,
+                        old_modified_at_ms: None,
+                    },
+                };
+                PySysWriteResult {
+                    hit: r.hit,
+                    content_id: r.content_id,
+                    post_hook_needed: r.post_hook_needed,
+                    version: r.version,
+                    gen: r.gen,
+                    size: r.size,
+                    is_new: r.is_new,
+                    old_content_id: r.old_content_id,
+                    old_size: r.old_size,
+                    old_version: r.old_version,
+                    old_modified_at_ms: r.old_modified_at_ms,
+                }
+            })
+            .collect())
+    }
+
     #[pyo3(signature = (path, zone_id="root"))]
     fn get_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
         use crate::kernel::convenience::KernelConvenience;

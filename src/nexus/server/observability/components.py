@@ -101,33 +101,3 @@ class QueryObserverComponent:
             return False
         health = self._subsystem.health_check()
         return health.get("status") == "ok"
-
-
-class WriteBufferComponent:
-    """Lifecycle component for write observer shutdown.
-
-    The write observer is started in server lifespan (not by this component).
-    This component manages its graceful shutdown during server teardown.
-
-    Issue #809: RecordStoreWriteObserver (OBSERVE-phase) replaces WriteBuffer.
-    Shutdown is now handled by _shutdown_pipe_consumers in services.py.
-    This component is kept for observability registry health reporting.
-    """
-
-    def __init__(self, write_observer: Any) -> None:
-        self._wo = write_observer
-        self._started = False
-
-    @property
-    def name(self) -> str:
-        return "write-buffer"
-
-    async def start(self) -> None:
-        self._started = True
-
-    async def shutdown(self, timeout_ms: int = 5000) -> None:
-        _ = timeout_ms  # Shutdown handled by _shutdown_pipe_consumers (Issue #809)
-        self._started = False
-
-    def is_healthy(self) -> bool:
-        return self._started

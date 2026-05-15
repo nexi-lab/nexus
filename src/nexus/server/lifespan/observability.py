@@ -58,15 +58,12 @@ def _make_stop(mod: str, fn: str) -> Callable[[], Any]:
     return _stop
 
 
-def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
+def create_registry() -> ObservabilityRegistry:
     """Create and populate the observability registry.
 
     Registration order = startup order (dependencies first).
-
-    Args:
-        write_observer: Optional write observer instance for WriteBufferComponent.
     """
-    from nexus.server.observability.components import FunctionPairComponent, WriteBufferComponent
+    from nexus.server.observability.components import FunctionPairComponent
 
     registry = ObservabilityRegistry()
     env = os.environ.get("NEXUS_ENV", "dev")
@@ -84,19 +81,14 @@ def create_registry(*, write_observer: Any = None) -> ObservabilityRegistry:
             required=False,
         )
 
-    # WriteBuffer (Issue #1370) — managed shutdown, started by factory
-    if write_observer is not None:
-        registry.register("write-buffer", WriteBufferComponent(write_observer), required=False)
-
     # QueryObserver registered later after factory creates the subsystem
 
     return registry
 
 
-async def startup_observability(app: "FastAPI", svc: "LifespanServices") -> None:
+async def startup_observability(app: "FastAPI", _svc: "LifespanServices") -> None:
     """Initialize all observability subsystems via the registry."""
-    write_observer = svc.write_observer
-    registry = create_registry(write_observer=write_observer)
+    registry = create_registry()
     statuses = await registry.start_all()
     app.state.observability_registry = registry
 

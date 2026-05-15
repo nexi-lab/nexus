@@ -13,7 +13,7 @@ pub mod write_coalescing;
 
 pub use constants::{
     env, is_system_path, BLAKE3_EMPTY, LOCKS_PATH_PREFIX, MAX_GRPC_MESSAGE_BYTES, ROOT_ZONE_ID,
-    SHARE_REGISTRY_PREFIX, SYSTEM_PATH_PREFIX, VFS_ROOT, XATTR_PATH_PREFIX,
+    SHARE_REGISTRY_PREFIX, SYSTEM_PATH_PREFIX, VFS_ROOT,
 };
 pub use lock_state::{
     HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState, Locks,

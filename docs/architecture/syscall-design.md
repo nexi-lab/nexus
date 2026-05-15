@@ -232,6 +232,7 @@ Tier 2 convenience (not kernel syscalls):
 - `access` → Tier 2 (derives from `sys_stat`)
 - `is_directory` → Tier 2 (derives from `sys_stat`)
 - `rmdir` → Tier 2 (delegates to `sys_unlink`)
+- `get_xattr(path, key)` / `set_xattr(path, key, value)` / `get_xattr_bulk(paths, key)` → Tier 2 (Rust `KernelConvenience` trait, direct metastore — no hooks, no permission gate)
 - `glob` → Tier 2 (composes `sys_readdir` + filter). Search-tier logic (PR #3921)
 - `grep` → Tier 2 (composes `sys_readdir` + `sys_read` + regex). Search-tier logic (PR #3921)
 
@@ -470,3 +471,4 @@ collapse is a **refactoring** that changes the boundary, not the logic.
 | §7.3, §7.6 | 2026-04-23 | §7 collapse roadmap fully completed: `_backend_read` deleted, sys_write metadata in Rust, PIPE/STREAM dispatched in Rust, advisory locks in Rust, connectors via gRPC. All "Remaining" items → Done (#1817, #1960). |
 | §6.1 | 2026-04-26 | Rust/Python boundary status: hook dispatch (2+N crossings), service lifecycle (4 crossings, stdlib-only), zero-crossing syscalls, pure Rust pillar dispatch. Eliminated: sys_write IPC pre-check (redundant metadata.get), sys_stat py.import("datetime") → chrono. |
 | §2, §4, §5 | 2026-05-07 | sys_setattr: DT_REG create (upsert) + content_id/size/version/created_at_ms/owner_id params. sys_stat: owner_id in StatResult. sys_write: file-must-exist contract. glob/grep: Tier 2 convenience (search-tier, PR #3921). Tier 1 surface: 8 syscalls (read, write, stat, setattr, unlink, rename, copy, readdir). |
+| §5 | 2026-05-15 | Delete `/__xattr__/` path intercept from sys_read/sys_write — redundant with Tier 2 `get_xattr`/`set_xattr` (KernelConvenience). Document xattr as Tier 2 convenience. |

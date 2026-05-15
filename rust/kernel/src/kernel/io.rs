@@ -298,11 +298,6 @@ impl Kernel {
 
         let _ = self.flush_due_write_buffer();
 
-        // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
-        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
-            return self.handle_xattr_read(rest);
-        }
-
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
             return Err(not_found());
@@ -341,10 +336,6 @@ impl Kernel {
         let not_found = || KernelError::FileNotFound(path.to_string());
 
         validate_path_fast(path)?;
-
-        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
-            return self.handle_xattr_read(rest);
-        }
 
         if self.trie.lookup(path).is_some() {
             return Err(not_found());
@@ -825,12 +816,6 @@ impl Kernel {
         validate_path_fast(path)?;
 
         let _ = self.flush_due_write_buffer();
-
-        // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
-        // Short-circuits to metastore set_file_metadata without hooks/routing.
-        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
-            return self.handle_xattr_write(rest, content);
-        }
 
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
@@ -3690,87 +3675,6 @@ impl Kernel {
             next_cursor,
             has_more,
         }
-    }
-
-    // ── Xattr virtual path handlers ──────────────────────────────────
-
-    /// Parse `rest` = `"{key}/{actual_path}"` from an `/__xattr__/` read,
-    /// route to the correct per-mount metastore, and return the value.
-    fn handle_xattr_read(&self, rest: &str) -> Result<SysReadResult, KernelError> {
-        let (key, actual_path) = Self::parse_xattr_rest(rest)?;
-        let route = self
-            .vfs_router
-            .route(actual_path, contracts::ROOT_ZONE_ID)
-            .map_err(|_| KernelError::FileNotFound(actual_path.to_string()))?;
-        let value = self
-            .with_metastore_route(&route, |ms| ms.get_file_metadata(actual_path, key))
-            .ok_or_else(|| KernelError::IOError("no metastore wired".into()))?
-            .map_err(|e| {
-                KernelError::IOError(format!("xattr read({actual_path}, {key}): {e:?}"))
-            })?;
-        match value {
-            Some(v) => Ok(SysReadResult {
-                data: Some(v.into_bytes()),
-                post_hook_needed: false,
-                content_id: None,
-                gen: 0,
-                entry_type: DT_REG,
-                stream_next_offset: None,
-            }),
-            None => Err(KernelError::FileNotFound(format!(
-                "xattr {key} not found on {actual_path}"
-            ))),
-        }
-    }
-
-    /// Parse `rest` = `"{key}/{actual_path}"` from an `/__xattr__/` write,
-    /// route to the correct per-mount metastore, and set the value.
-    fn handle_xattr_write(
-        &self,
-        rest: &str,
-        content: &[u8],
-    ) -> Result<SysWriteResult, KernelError> {
-        let (key, actual_path) = Self::parse_xattr_rest(rest)?;
-        let value = std::str::from_utf8(content)
-            .map_err(|e| KernelError::IOError(format!("xattr value not utf-8: {e}")))?
-            .to_string();
-        let route = self
-            .vfs_router
-            .route(actual_path, contracts::ROOT_ZONE_ID)
-            .map_err(|_| KernelError::FileNotFound(actual_path.to_string()))?;
-        self.with_metastore_route(&route, |ms| ms.set_file_metadata(actual_path, key, value))
-            .ok_or_else(|| KernelError::IOError("no metastore wired".into()))?
-            .map_err(|e| {
-                KernelError::IOError(format!("xattr write({actual_path}, {key}): {e:?}"))
-            })?;
-        Ok(SysWriteResult {
-            hit: true,
-            content_id: None,
-            post_hook_needed: false,
-            version: 0,
-            gen: 0,
-            size: content.len() as u64,
-            is_new: false,
-            old_content_id: None,
-            old_size: None,
-            old_version: None,
-            old_modified_at_ms: None,
-        })
-    }
-
-    /// Split `"key/rest/of/path"` into `("key", "/rest/of/path")`.
-    fn parse_xattr_rest(rest: &str) -> Result<(&str, &str), KernelError> {
-        let idx = rest.find('/').ok_or_else(|| {
-            KernelError::InvalidPath("xattr path must be /__xattr__/{key}/{path}".into())
-        })?;
-        let key = &rest[..idx];
-        let actual_path = &rest[idx..]; // includes leading '/'
-        if key.is_empty() || actual_path.len() < 2 {
-            return Err(KernelError::InvalidPath(
-                "xattr path must be /__xattr__/{key}/{path}".into(),
-            ));
-        }
-        Ok((key, actual_path))
     }
 }
 

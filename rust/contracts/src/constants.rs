@@ -56,12 +56,6 @@ pub fn is_system_path(path: &str) -> bool {
     path.starts_with(SYSTEM_PATH_PREFIX)
 }
 
-/// Kernel-reserved virtual path prefix for xattr (extended attribute)
-/// access via syscalls. `sys_read("/__xattr__/{key}/{path}")` reads the
-/// xattr `key` from `path`; `sys_write("/__xattr__/{key}/{path}", value)`
-/// sets it. Routed internally — never hits backends or hooks.
-pub const XATTR_PATH_PREFIX: &str = "/__xattr__/";
-
 /// Kernel-reserved virtual path prefix for advisory lock enumeration.
 /// `readdir("/__sys__/locks")` enumerates active advisory locks via
 /// `LockManager::list_locks` — admin-only, analogous to `/proc/locks`.

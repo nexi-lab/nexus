@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import sys
+import threading
 import types
 from typing import Any
 
@@ -46,3 +48,37 @@ async def test_scope_crud_mutation_stays_on_current_loop(monkeypatch: pytest.Mon
 
     assert result == ("/docs", "ok")
     assert calls == [(daemon, "eng", "/docs")]
+
+
+@pytest.mark.asyncio
+async def test_search_with_zone_stays_on_daemon_owner_loop() -> None:
+    from nexus.bricks.search.daemon import SearchDaemon
+    from nexus.runtime.zone_runner import ZoneRegistry
+
+    daemon = SearchDaemon.__new__(SearchDaemon)
+    daemon._owner_loop = asyncio.get_running_loop()
+    daemon._zone_registry = ZoneRegistry()
+    seen: list[tuple[asyncio.AbstractEventLoop, int, str | None]] = []
+
+    async def fake_search_on_current_loop(
+        query: str,
+        *,
+        search_type: str,
+        limit: int,
+        path_filter: str | None,
+        alpha: float,
+        fusion_method: str,
+        zone_id: str | None,
+    ) -> list[str]:
+        seen.append((asyncio.get_running_loop(), threading.get_ident(), zone_id))
+        return [query, search_type, str(limit), str(path_filter), str(alpha), fusion_method]
+
+    daemon._search_on_current_loop = fake_search_on_current_loop
+
+    try:
+        result = await daemon.search("sku", zone_id="default")
+    finally:
+        daemon._zone_registry.stop_all()
+
+    assert result == ["sku", "hybrid", "10", "None", "0.5", "rrf"]
+    assert seen == [(daemon._owner_loop, threading.get_ident(), "default")]

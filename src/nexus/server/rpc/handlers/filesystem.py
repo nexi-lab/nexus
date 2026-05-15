@@ -7,7 +7,6 @@ All sync handlers are wrapped with ``to_thread_with_timeout`` by the dispatch
 layer — they MUST NOT call async code directly.
 """
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -124,6 +123,24 @@ async def handle_semantic_search_index(
     # readiness signal for explicit RPC indexing.
     daemon = getattr(search, "_search_daemon", None)
     if daemon is not None and getattr(daemon, "_indexing_pipeline", None) is not None:
+        run_on_owner_loop = getattr(daemon, "_run_on_owner_loop", None)
+        if callable(run_on_owner_loop):
+            import asyncio
+
+            owner_loop = getattr(daemon, "_owner_loop", None)
+            current_loop = asyncio.get_running_loop()
+            if (
+                owner_loop is not None
+                and owner_loop is not current_loop
+                and owner_loop.is_running()
+                and not owner_loop.is_closed()
+            ):
+
+                async def _rerun_on_owner_loop() -> dict[str, Any]:
+                    return await handle_semantic_search_index(nexus_fs, params, _context)
+
+                return cast(dict[str, Any], await run_on_owner_loop(_rerun_on_owner_loop))
+
         context = _context
         zone_id = getattr(context, "zone_id", None) or "root"
 

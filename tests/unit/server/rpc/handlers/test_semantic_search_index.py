@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from types import SimpleNamespace
 from typing import Any
@@ -37,16 +38,27 @@ class _Daemon:
     def __init__(self) -> None:
         self._indexing_pipeline = object()
         self._async_session = _Session
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
         self.indexed: list[tuple[list[dict[str, Any]], str | None]] = []
+        self.index_loops: list[asyncio.AbstractEventLoop] = []
 
     async def index_documents(
         self, documents: list[dict[str, Any]], *, zone_id: str | None = None
     ) -> int:
+        self.index_loops.append(asyncio.get_running_loop())
         self.indexed.append((documents, zone_id))
         return len(documents)
 
     async def delete_documents(self, _ids: list[str], *, zone_id: str | None = None) -> int:
         return 0
+
+    async def _run_on_owner_loop(self, work: Any) -> Any:
+        owner_loop = self._owner_loop
+        current_loop = asyncio.get_running_loop()
+        if owner_loop is None or owner_loop is current_loop:
+            return await work()
+        submitted = asyncio.run_coroutine_threadsafe(work(), owner_loop)
+        return await asyncio.wrap_future(submitted)
 
 
 class _SearchService:
@@ -101,3 +113,36 @@ async def test_semantic_search_index_uses_daemon_pipeline_without_legacy_backend
             "root",
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_index_runs_daemon_work_on_owner_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nexus.runtime.zone_runner import ZoneRunner
+
+    monkeypatch.setattr("nexus.factory._semantic_search._resolve_parse_fn", lambda _nx: None)
+    monkeypatch.setattr(
+        "nexus.factory.adapters._apply_parse_transform_with_status",
+        lambda _nx, _path, raw, *, parse_fn, content_id: (raw.decode(), "plain"),
+    )
+    monkeypatch.setitem(sys.modules, "sqlalchemy", SimpleNamespace(text=lambda sql: sql))
+
+    owner_loop = asyncio.get_running_loop()
+    daemon = _Daemon()
+    daemon._owner_loop = owner_loop
+    runner = ZoneRunner("root")
+
+    try:
+        result = await runner.call(
+            lambda: handle_semantic_search_index(
+                _NexusFs(_SearchService(daemon)),
+                SimpleNamespace(path="/workspace/demo", recursive=True),
+                SimpleNamespace(zone_id="root"),
+            )
+        )
+    finally:
+        runner.stop()
+
+    assert result["total_files"] == 1
+    assert daemon.index_loops == [owner_loop]

@@ -265,6 +265,7 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 | Half | Examples | Addressing |
 |------|----------|-----------|
 | **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*`. `glob`/`grep` are search-tier convenience (PR #3921), composing `sys_readdir` + filter/regex |
+| **Xattr** (extended attributes) | `get_xattr(path, key)`, `set_xattr(path, key, value)`, `get_xattr_bulk(paths, key)` | Direct metastore `get_file_metadata`/`set_file_metadata` — no hooks, no routing, no permission gate. Rust `KernelConvenience` trait |
 | **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
 The HDFS half bypasses path resolution and metadata lookup — CAS is a driver

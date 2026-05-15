@@ -141,6 +141,11 @@ def _resolve_module_path(mod_name: str) -> Path | None:
         peer_nested = peer_root / mod_name / "mod.rs"
         if peer_nested.exists():
             return peer_nested
+        # Sub-module: `python/grpc_bridge.rs` registered via
+        # `grpc_bridge::PyVfsGrpcServerHandle` in python/mod.rs.
+        peer_python = peer_root / "python" / f"{mod_name}.rs"
+        if peer_python.exists():
+            return peer_python
     return None
 
 

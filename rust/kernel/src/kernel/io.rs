@@ -2849,6 +2849,24 @@ impl Kernel {
             }
         }
 
+        // OBSERVE-phase dispatch (§11 OBSERVE): queue FileWrite per
+        // successfully committed item. Fires after lock release, matching
+        // the single-write sys_write dispatch pattern.
+        for (i, req) in reqs.iter().enumerate() {
+            if let Some(Ok(ref r)) = results.get(i) {
+                if r.hit {
+                    self.dispatch_mutation(FileEventType::FileWrite, &req.path, ctx, |ev| {
+                        ev.size = Some(r.size);
+                        ev.content_id = r.content_id.clone();
+                        ev.version = Some(r.version);
+                        ev.gen = Some(r.gen);
+                        ev.is_new = r.is_new;
+                        ev.old_content_id = r.old_content_id.clone();
+                    });
+                }
+            }
+        }
+
         results
     }
 

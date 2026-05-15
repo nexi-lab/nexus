@@ -690,45 +690,6 @@ rejected at `sys_setattr` time.
 
 See the sudowork integration design doc (`sudowork/docs/tech/nexus-integration-architecture.md`) for the A2A messaging conventions that consume DT_LINK.
 
-### 4.6 Prefetch — `nexus-prefetch` Crate
-
-Issue #4057. Adaptive read-ahead engine replacing the Python
-`ReadaheadManager`. New crate at `rust/nexus-prefetch/` with:
-
-- **Pluggable detector trait** (`Detector`) and three impls:
-  - `SequentialDetector` — forward-sequential reads with tolerance.
-  - `StrideDetector` — fixed-delta strided access (3-observation confirm).
-  - `MajorityTrendDetector` — Leap ATC'20 sliding-window majority delta.
-- **Per-file-handle state** (`Session`) with doubling readahead window
-  (initial 512 KiB, capped at 2 GiB per acceptance) and per-fh
-  prefetch buffer.
-- **Backpressure-aware worker pool** — bounded `tokio::sync::mpsc`
-  with drop-on-full semantics; metric `dropped_backpressure` exported.
-- **`RangeReader` trait** decouples the engine from any specific
-  backend. The kernel ships one adapter:
-  - `KernelRangeReader` (`rust/kernel/src/prefetch_adapter.rs`) —
-    wraps `Arc<dyn ObjectStore>` so the engine issues range GETs
-    through `ObjectStore::read_range` (added in this issue with a
-    default slice impl; `CasLocalBackend` and `PathLocalBackend`
-    override for native seek+read).
-- **`PrefetchHintSink` trait** (`rust/kernel/src/prefetch_hint.rs`)
-  with a `NullSink` default — the kernel's `sys_read` DT_REG path
-  invokes `prefetch_sink.on_read(path, offset, size)` after every
-  successful read, but no production code installs a non-null sink
-  today.  The Python `ReadaheadManager` is the canonical fan-out
-  point; the kernel trait is reserved for a future Python-callable
-  installer that includes explicit release/invalidate semantics.
-- **Python bridge** — `PyPrefetchEngine` exposed via `nexus_runtime`
-  cdylib. The Python `ReadaheadManager` accepts `use_rust_engine=True`
-  and routes `on_open`/`on_read`/`on_release` to the Rust engine. The
-  FUSE layer (`src/nexus/fuse/operations.py`) sets the flag by
-  default; `NEXUS_PREFETCH_RUST=0` flips back to the Python path.
-
-The Rust engine retains the same `on_open(fh, path, file_size)` /
-`on_read(fh, offset, size) -> Option<Bytes>` / `on_release(fh)` shape
-as the Python `ReadaheadManager` it replaces, so call sites swap
-transparently.
-
 ---
 
 ## 5. Kernel-Authored Standards

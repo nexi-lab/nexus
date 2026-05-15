@@ -81,6 +81,10 @@ runs:
 
     - name: Install Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        # Do not restore ~/.cargo/bin; a stale macOS cache can replace cargo
+        # with a rustup-init shim. Keep registry/target caching enabled.
+        cache-bin: false
 
     - name: Rust cache
       uses: Swatinem/rust-cache@v2

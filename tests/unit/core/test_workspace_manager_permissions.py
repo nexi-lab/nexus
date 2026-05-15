@@ -61,6 +61,11 @@ class TestWorkspaceManagerPermissions:
         mock_session = MagicMock()
         mock_metadata.SessionLocal.return_value.__enter__.return_value = mock_session
         mock_metadata.list.return_value = []  # Empty workspace
+        mock_metadata.metastore_list_paginated.return_value = {
+            "items": [],
+            "has_more": False,
+            "next_cursor": None,
+        }
         mock_session.execute.return_value.scalar.return_value = None  # No previous snapshots
 
         # Execute
@@ -356,6 +361,11 @@ class TestWorkspaceManagerPermissions:
         mock_session = MagicMock()
         mock_metadata.SessionLocal.return_value.__enter__.return_value = mock_session
         mock_metadata.list.return_value = []
+        mock_metadata.metastore_list_paginated.return_value = {
+            "items": [],
+            "has_more": False,
+            "next_cursor": None,
+        }
         mock_session.execute.return_value.scalar.return_value = None
 
         # Execute - should succeed without permission check

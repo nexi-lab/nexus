@@ -23,11 +23,11 @@ contracts = { workspace = true }
 # HTTP stack so the binary stays at the sudowork target size.
 kernel = { workspace = true }
 backends = { workspace = true, default-features = false, features = ["driver-path-local", "driver-remote"] }
-# VFS gRPC server — pure Rust content I/O on a separate port.
-# No python feature — cluster binary has zero PyO3.
+# VFS gRPC server (port 2028) + auth provider (NoAuth — mTLS is the
+# cluster-internal authentication boundary). No python feature;
+# cluster binary has zero PyO3 and never pulls the services
+# post-syscall-hooks tier.
 transport = { workspace = true }
-# Auth provider for VFS gRPC (NoAuth — mTLS is the boundary).
-services = { workspace = true }
 
 tonic = { workspace = true }
 anyhow = "1"

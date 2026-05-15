@@ -2245,7 +2245,6 @@ dependencies = [
  "gethostname",
  "kernel",
  "raft 0.1.0",
- "services",
  "tokio",
  "tonic 0.14.6",
  "tracing",

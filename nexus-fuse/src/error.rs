@@ -76,10 +76,6 @@ pub enum NexusClientError {
     #[error("Invalid response: {0}")]
     InvalidResponse(String),
 
-    /// Server explicitly declared a filesystem capability unsupported.
-    #[error("Unsupported capability {capability} for {path}")]
-    UnsupportedCapability { capability: String, path: String },
-
     /// HTTP client error.
     #[error("HTTP client error: {0}")]
     HttpError(#[from] reqwest::Error),
@@ -118,7 +114,6 @@ impl NexusClientError {
             Self::Timeout { .. } => libc::ETIMEDOUT,
             Self::ConnectionRefused(_) => libc::ECONNREFUSED,
             Self::RateLimited => libc::EBUSY,
-            Self::UnsupportedCapability { .. } => libc::EOPNOTSUPP,
             Self::ServerError { status, .. } => {
                 // Map server errors to EIO
                 // 5xx = server error (transient), 4xx = client error (may not be transient)
@@ -159,7 +154,6 @@ impl NexusClientError {
             | Self::InvalidPath(_)
             | Self::ValidationError(_)
             | Self::InvalidResponse(_)
-            | Self::UnsupportedCapability { .. }
             | Self::JsonError(_)
             | Self::Base64Error(_)
             | Self::Other(_) => false,

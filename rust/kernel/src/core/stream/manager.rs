@@ -28,6 +28,21 @@ impl StreamNotify {
             not_empty: Condvar::new(),
         }
     }
+
+    /// Wake one blocked reader (after push). Acquires mutex to avoid
+    /// lost-wakeup race — see `write_nowait` comment.
+    #[inline]
+    fn wake_readers(&self) {
+        let _g = self.mutex.lock();
+        self.not_empty.notify_one();
+    }
+
+    /// Wake all blocked readers (shutdown / close). Acquires mutex.
+    #[inline]
+    fn wake_all_readers(&self) {
+        let _g = self.mutex.lock();
+        self.not_empty.notify_all();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -88,8 +103,7 @@ impl StreamManager {
             Some((_, buf)) => {
                 buf.close();
                 if let Some((_, n)) = self.notify.remove(path) {
-                    let _guard = n.mutex.lock();
-                    n.not_empty.notify_all();
+                    n.wake_all_readers();
                 }
                 Ok(())
             }
@@ -103,8 +117,7 @@ impl StreamManager {
             Some(buf) => {
                 buf.close();
                 if let Some(n) = self.notify.get(path) {
-                    let _guard = n.mutex.lock();
-                    n.not_empty.notify_all();
+                    n.wake_all_readers();
                 }
                 Ok(())
             }
@@ -124,24 +137,9 @@ impl StreamManager {
             .get(path)
             .ok_or_else(|| StreamManagerError::NotFound(path.to_string()))?;
         let offset = buf.push(data).map_err(StreamManagerError::Backend)?;
-        // Wake blocked readers. We MUST acquire `notify.mutex` before
-        // calling `notify_all` to avoid a lost-wakeup race against
-        // `read_at_blocking`'s slow path:
-        //
-        //   T1 reader     T2 writer
-        //   lock(mu)
-        //   read_at -> Empty
-        //                 push(data)
-        //                 notify_all()    ← no waiter parked → LOST
-        //   wait_for() ← parks; misses notification → blocks until timeout
-        //
-        // parking_lot::Condvar notifications are unbuffered. Acquiring
-        // `mu` here serializes with the reader's atomic
-        // `wait_for(mu, …)` release/park, so the notification can never
-        // arrive between the reader's predicate check and parking.
+        // Wake blocked readers — see StreamNotify::wake_all_readers doc.
         if let Some(notify) = self.notify.get(path) {
-            let _guard = notify.mutex.lock();
-            notify.not_empty.notify_all();
+            notify.wake_all_readers();
         }
         Ok(offset)
     }
@@ -335,8 +333,7 @@ impl StreamManager {
 
         if forwarded > 0 {
             if let Some(notify) = self.notify.get(to) {
-                let _guard = notify.mutex.lock();
-                notify.not_empty.notify_one();
+                notify.wake_readers();
             }
         }
 
@@ -354,8 +351,7 @@ impl StreamManager {
             entry.value().close();
         }
         for entry in self.notify.iter() {
-            let _guard = entry.mutex.lock();
-            entry.not_empty.notify_all();
+            entry.wake_all_readers();
         }
     }
 }

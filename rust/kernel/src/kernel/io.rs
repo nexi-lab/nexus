@@ -1539,9 +1539,10 @@ impl Kernel {
         // — same pattern ``sys_mkdir`` uses ("the mount IS the
         // directory"). Avoids a metastore round-trip and removes the
         // need for federation to seed a dcache row at the mount root.
-        let (parent_zone, _user_mp) =
-            crate::vfs_router::extract_zone_from_canonical(&route.mount_point);
-        if route.backend_path.is_empty() && parent_zone != route.zone_id {
+        if route.backend_path.is_empty() {
+            // Mount-point root: the routed path IS the mount point itself.
+            // No metastore entry exists at the mount root — the VFS route
+            // is the SSOT. Synthesize a DT_MOUNT directory result.
             return Some(StatResult {
                 path: path.to_string(),
                 size: 4096,

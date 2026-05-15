@@ -129,8 +129,7 @@ fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     // constructs concrete backends through the §3.B.2 trait without
     // the kernel reaching into the backends crate.
     backends::python::register(m)?;
-    // Network surface tier: in-bound VFS gRPC server (PyVfsGrpcServerHandle
-    // + start_vfs_grpc_server) plus out-bound clients (PyFederationClient
+    // Network surface tier: out-bound clients (PyFederationClient
     // + `install_transport_wiring(kernel)` for peer-blob client wiring).
     // Python's NexusFS boot calls
     // `nexus_runtime.install_transport_wiring(kernel)` once after

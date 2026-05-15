@@ -141,8 +141,7 @@ def _resolve_module_path(mod_name: str) -> Path | None:
         peer_nested = peer_root / mod_name / "mod.rs"
         if peer_nested.exists():
             return peer_nested
-        # Sub-module: `python/grpc_bridge.rs` registered via
-        # `grpc_bridge::PyVfsGrpcServerHandle` in python/mod.rs.
+        # Sub-module under `python/` (e.g. federation peer exports).
         peer_python = peer_root / "python" / f"{mod_name}.rs"
         if peer_python.exists():
             return peer_python
@@ -918,7 +917,6 @@ def generate_stubs(
         "simd",
         "trigram",
         "grpc",
-        "grpc_bridge",
     ]
 
     for mod_name in MODULE_ORDER:
@@ -3122,8 +3120,8 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    /// Clone the inner `Arc<Kernel>`.  Same Phase 3 motivation",
             "    /// as [`Self::kernel_ref`] but returns an owned `Arc<Kernel>`",
             "    /// for callers that need to spawn tasks holding the kernel",
-            "    /// (e.g. `transport::grpc::start_vfs_grpc_server` clones the",
-            "    /// Arc into a tonic worker task).",
+            "    /// (e.g. `transport::grpc::spawn` clones the Arc into a tonic",
+            "    /// worker task).",
             "    pub fn kernel_arc(&self) -> Arc<Kernel> {",
             "        Arc::clone(&self.inner)",
             "    }",
@@ -5147,9 +5145,9 @@ def collect_all() -> tuple[
     # `lib::python::register`, AND e.g. `transport::python::register`,
     # `backends::python::register`, `services::python::register`).
     # Scan each peer's mod.rs so codegen sees the full export set —
-    # without this, `start_vfs_grpc_server` / `PyVfsGrpcServerHandle`
-    # / `PyFederationClient` (moved to `transport::python::register`
-    # in Phase 4) drop out of the generated stubs / kernel_exports.
+    # without this, `PyFederationClient` (moved to
+    # `transport::python::register` in Phase 4) drops out of the
+    # generated stubs / kernel_exports.
     peer_python_texts: list[str] = []
     for peer in ("transport", "backends", "services"):
         peer_mod = ROOT / "rust" / peer / "src" / "python" / "mod.rs"

@@ -152,23 +152,6 @@ def trigram_index_stats(index_path: str) -> dict[str, Any]: ...
 def invalidate_trigram_cache(index_path: str) -> None: ...
 
 # ---------------------------------------------------------------------------
-# grpc_bridge.rs
-# ---------------------------------------------------------------------------
-
-def start_vfs_grpc_server(
-    kernel: Any,
-    bind_addr: str,
-    api_key: str | None,
-    tls_cert_pem: bytes | None,
-    tls_key_pem: bytes | None,
-    tls_ca_pem: bytes | None,
-    server_version: str,
-    authenticate: Any,
-    dispatch_call: Any,
-    initialize: Any,
-) -> Any: ...
-
-# ---------------------------------------------------------------------------
 # Classes
 # ---------------------------------------------------------------------------
 
@@ -577,10 +560,6 @@ class BloomFilter:
     def fp_rate(self) -> float: ...
     @property
     def memory_bytes(self) -> int: ...
-
-class PyVfsGrpcServerHandle:
-    def shutdown(self) -> None: ...
-    def __repr__(self) -> str: ...
 
 class PyFederationClient:
     def __init__(

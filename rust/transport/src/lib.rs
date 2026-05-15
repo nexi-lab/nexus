@@ -19,7 +19,6 @@
 //!   federation.rs   — federation peer client (out-bound)
 //!   python/
 //!     mod.rs        — register() + install_transport_wiring
-//!     grpc_bridge.rs — PyO3 bridge for Initialize + Call RPCs
 //! ```
 //!
 //! Direction: `transport -> {kernel, lib, raft, services}`. Transport
@@ -35,9 +34,6 @@
 #[cfg(feature = "python")]
 pub mod federation;
 /// VFS gRPC server (in-bound). Always compiled — zero PyO3 coupling.
-/// `Initialize` and `Call` RPCs are stubbed (`Unimplemented`); the
-/// Python bridge layer in `transport::python::grpc_bridge` overrides
-/// them when the `python` feature is enabled.
 pub mod grpc;
 pub mod ipc;
 pub mod peer_blob;

@@ -3,32 +3,24 @@
 //! Owns the :2028 socket via tonic. Auth is handled by
 //! `services::auth::AuthProvider` (pure Rust).
 //!
-//! `Initialize` and `Call` RPCs are stubbed here (`Unimplemented`).
-//! The legacy bridge in `transport::python::grpc_bridge` overrides
-//! them for the Python deployment; that module is a delete target.
-//!
 //! Per-RPC architecture:
 //!
 //! | RPC                              | Path                                     |
 //! | -------------------------------- | ---------------------------------------- |
 //! | `Read`/`Write`/`Delete`/`Ping`   | Pure Rust → `Kernel::sys_*`              |
 //! | `BatchRead`                      | Pure Rust → `Kernel::sys_read` (batch)   |
-//! | `Initialize` / `Call`            | Stubbed; overridden by legacy bridge      |
+//! | `Initialize` / `Call`            | Stubbed (`Unimplemented`)                |
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-#[cfg(feature = "python")]
-use serde_json::Value as JsonValue;
 use services::auth::AuthProvider;
 use tokio::sync::oneshot;
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::TlsConfig;
-#[cfg(feature = "python")]
-use kernel::abc::object_store::ObjectStorePosixCapabilities;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest, CallResponse,
@@ -36,8 +28,6 @@ use kernel::kernel::vfs_proto::{
     PingResponse, ReadRequest, ReadResponse, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
-#[cfg(feature = "python")]
-use kernel::vfs_router::extract_zone_from_canonical;
 
 /// Configuration for the VFS gRPC server.
 #[derive(Clone)]
@@ -86,9 +76,7 @@ impl Drop for VfsGrpcHandle {
 /// Core VFS service implementation — pure Rust.
 ///
 /// Auth is delegated to `Arc<dyn AuthProvider>`.  `Initialize` and
-/// `Call` RPCs return `Unimplemented` — the legacy bridge in
-/// `transport::python::grpc_bridge` wraps this service and overrides
-/// those two RPCs for the Python deployment.
+/// `Call` RPCs return `Unimplemented`.
 #[derive(Clone)]
 pub(crate) struct VfsServiceImpl {
     pub(crate) kernel: Arc<Kernel>,
@@ -116,55 +104,6 @@ impl VfsServiceImpl {
         }
     }
 
-    #[cfg(feature = "python")]
-    pub(crate) fn rust_mounts_for_initialize(&self) -> serde_json::Map<String, JsonValue> {
-        let mut mounts = serde_json::Map::new();
-        for canonical in self.kernel.get_mount_points() {
-            let (zone_id, mount_point) = extract_zone_from_canonical(&canonical);
-            let route = match self.kernel.route(&mount_point, &zone_id) {
-                Ok(route) => route,
-                Err(err) => {
-                    tracing::warn!(
-                        "Initialize skipped unroutable mount canonical={} mount_point={} zone_id={}: {:?}",
-                        canonical,
-                        mount_point,
-                        zone_id,
-                        err
-                    );
-                    continue;
-                }
-            };
-            let backend_name = route
-                .backend
-                .as_ref()
-                .map(|backend| backend.name().to_string())
-                .unwrap_or_default();
-            let rust_native = route.backend.is_some();
-            let posix = if route.is_external {
-                ObjectStorePosixCapabilities::readonly()
-            } else {
-                route
-                    .backend
-                    .as_ref()
-                    .map(|backend| backend.posix_capabilities())
-                    .unwrap_or_else(ObjectStorePosixCapabilities::readonly)
-            };
-            mounts.insert(
-                mount_point,
-                serde_json::json!({
-                    "backend_name": backend_name,
-                    "backend_type": backend_name,
-                    "posix": posix_capability_json(posix),
-                    "features": [],
-                    "extensions": [],
-                    "rust_native": rust_native,
-                    "external": route.is_external,
-                }),
-            );
-        }
-        mounts
-    }
-
     /// Test-only constructor.
     #[cfg(test)]
     pub(crate) fn for_test(kernel: Arc<Kernel>) -> Self {
@@ -178,49 +117,13 @@ impl VfsServiceImpl {
     }
 }
 
-#[cfg(feature = "python")]
-fn posix_capability_json(caps: ObjectStorePosixCapabilities) -> JsonValue {
-    serde_json::json!({
-        "read": caps.read,
-        "readdir": caps.readdir,
-        "stat": caps.stat,
-        "write": caps.write,
-        "unlink": caps.unlink,
-        "mkdir": caps.mkdir,
-        "rmdir": caps.rmdir,
-        "rename": caps.rename,
-        "glob": caps.glob,
-    })
-}
-
-#[cfg(feature = "python")]
-pub(crate) fn auth_json_from_context(ctx: &OperationContext) -> JsonValue {
-    let subject_id = ctx
-        .subject_id
-        .clone()
-        .unwrap_or_else(|| ctx.user_id.clone());
-    serde_json::json!({
-        "authenticated": true,
-        "subject_type": ctx.subject_type.clone(),
-        "subject_id": subject_id,
-        "zone_id": ctx.zone_id.clone(),
-        "is_admin": ctx.is_admin,
-        "x_agent_id": ctx.agent_id.clone(),
-        "zone_perms": ctx.zone_perms.clone(),
-    })
-}
-
 #[tonic::async_trait]
 impl NexusVfsService for VfsServiceImpl {
     async fn initialize(
         &self,
         _req: Request<InitializeRequest>,
     ) -> Result<Response<InitializeResponse>, Status> {
-        // Stubbed — the legacy bridge overrides this for Python deployment.
-        // Cluster binary doesn't need it.
-        Err(Status::unimplemented(
-            "Initialize RPC requires the legacy bridge (use transport::python for full server)",
-        ))
+        Err(Status::unimplemented("Initialize RPC is not supported"))
     }
 
     async fn read(&self, req: Request<ReadRequest>) -> Result<Response<ReadResponse>, Status> {
@@ -348,7 +251,7 @@ impl NexusVfsService for VfsServiceImpl {
         };
         if !ctx.zone_perms.is_empty() {
             return Err(Status::permission_denied(
-                "federation token: use Call dispatch (read_bulk RPC) — typed BatchRead bypasses zone authorization",
+                "federation token: use Call dispatch (BatchRead RPC) — typed BatchRead bypasses zone authorization",
             ));
         }
 
@@ -405,11 +308,7 @@ impl NexusVfsService for VfsServiceImpl {
     }
 
     async fn call(&self, _req: Request<CallRequest>) -> Result<Response<CallResponse>, Status> {
-        // Stubbed — the legacy bridge overrides this for Python deployment.
-        // Cluster binary doesn't need it.
-        Err(Status::unimplemented(
-            "Call RPC requires the legacy bridge (use transport::python for full server)",
-        ))
+        Err(Status::unimplemented("Call RPC is not supported"))
     }
 }
 
@@ -561,78 +460,9 @@ fn status_to_code(s: &Status) -> RpcErrorCode {
     }
 }
 
-/// Resolve a `Call.method` string into `(service_name, dispatch_method)`
-/// for the Rust dispatch attempt.
-#[cfg(feature = "python")]
-pub(crate) fn resolve_rust_dispatch(method: &str) -> Option<(&str, &str)> {
-    if let Some((svc, bare)) = method.split_once('.') {
-        if !svc.is_empty() && !bare.is_empty() {
-            return Some((svc, bare));
-        }
-    }
-    if method.starts_with("acp_") {
-        return Some(("acp", method));
-    }
-    if method.starts_with("managed_agent_") {
-        return Some(("managed_agent", method));
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── resolve_rust_dispatch ──────────────────────────────────────────
-
-    #[test]
-    fn dotted_form_splits_on_first_dot() {
-        assert_eq!(
-            resolve_rust_dispatch("managed_agent.start_session_v1"),
-            Some(("managed_agent", "start_session_v1"))
-        );
-    }
-
-    #[test]
-    fn dotted_form_keeps_inner_dots_in_method() {
-        assert_eq!(
-            resolve_rust_dispatch("acp.session.cancel"),
-            Some(("acp", "session.cancel"))
-        );
-    }
-
-    #[test]
-    fn dotted_form_empty_service_falls_through() {
-        assert_eq!(resolve_rust_dispatch(".start"), None);
-    }
-
-    #[test]
-    fn dotted_form_empty_method_falls_through() {
-        assert_eq!(resolve_rust_dispatch("acp."), None);
-    }
-
-    #[test]
-    fn flat_acp_routes_to_acp_with_full_name() {
-        assert_eq!(resolve_rust_dispatch("acp_call"), Some(("acp", "acp_call")));
-        assert_eq!(resolve_rust_dispatch("acp_kill"), Some(("acp", "acp_kill")));
-    }
-
-    #[test]
-    fn flat_managed_agent_routes_to_managed_agent_with_full_name() {
-        assert_eq!(
-            resolve_rust_dispatch("managed_agent_start_session_v1"),
-            Some(("managed_agent", "managed_agent_start_session_v1"))
-        );
-    }
-
-    #[test]
-    fn unknown_flat_method_falls_through() {
-        assert_eq!(resolve_rust_dispatch("get_capabilities"), None);
-        assert_eq!(resolve_rust_dispatch("ping"), None);
-        assert_eq!(resolve_rust_dispatch(""), None);
-    }
-
-    // ── BatchRead integration ──────────────────────────────────────────
 
     use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;

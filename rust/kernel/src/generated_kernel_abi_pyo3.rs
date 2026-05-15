@@ -1082,8 +1082,8 @@ impl PyKernel {
     /// Clone the inner `Arc<Kernel>`.  Same Phase 3 motivation
     /// as [`Self::kernel_ref`] but returns an owned `Arc<Kernel>`
     /// for callers that need to spawn tasks holding the kernel
-    /// (e.g. `transport::grpc::start_vfs_grpc_server` clones the
-    /// Arc into a tonic worker task).
+    /// (e.g. `transport::grpc::spawn` clones the Arc into a tonic
+    /// worker task).
     pub fn kernel_arc(&self) -> Arc<Kernel> {
         Arc::clone(&self.inner)
     }

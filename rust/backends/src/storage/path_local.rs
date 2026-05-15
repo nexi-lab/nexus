@@ -162,46 +162,6 @@ impl ObjectStore for PathLocalBackend {
     }
 
     /// Native pread-style range read: avoids the default impl's full-file
-    /// read + slice. Path-addressed: `content_id` is the backend path,
-    /// resolved through `resolve_path` (same as `read_content`).
-    ///
-    /// Past-EOF returns empty; a short read at EOF is truncated to actual
-    /// bytes read — same semantics as the CAS backend's override and POSIX
-    /// `pread`.
-    fn read_range(
-        &self,
-        content_id: &str,
-        offset: u64,
-        size: u32,
-        _ctx: &kernel::kernel::OperationContext,
-    ) -> Result<Vec<u8>, StorageError> {
-        use std::io::{Read, Seek, SeekFrom};
-
-        if content_id.is_empty() {
-            return Err(StorageError::IOError(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "PathLocalBackend requires content_id",
-            )));
-        }
-        let file_path = self.resolve_path(content_id)?;
-        let mut f = fs::File::open(&file_path).map_err(|e| {
-            if e.kind() == io::ErrorKind::NotFound {
-                StorageError::NotFound(content_id.to_string())
-            } else {
-                StorageError::IOError(e)
-            }
-        })?;
-        let file_size = f.metadata().map_err(StorageError::IOError)?.len();
-        if offset >= file_size {
-            return Ok(Vec::new());
-        }
-        f.seek(SeekFrom::Start(offset))
-            .map_err(StorageError::IOError)?;
-        let mut buf = vec![0u8; size as usize];
-        let n = f.read(&mut buf).map_err(StorageError::IOError)?;
-        buf.truncate(n);
-        Ok(buf)
-    }
 
     fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
         // For PAS local, content_id is not the path — need backend_path from context.
@@ -423,63 +383,5 @@ impl Iterator for ChunkedReader {
     }
 }
 
+
 // ── LocalConnectorBackend ──────────────────────────────────────────
-
-#[cfg(test)]
-mod read_range_tests {
-    //! Native `read_range` override tests — verify path-local does
-    //! offset+size reads without falling back to the default's full-file
-    //! read+slice. Covers offset slice, past-EOF empty, and short-read
-    //! truncate semantics (POSIX pread parity).
-    use super::*;
-    use tempfile::TempDir;
-
-    fn setup() -> (TempDir, PathLocalBackend) {
-        let tmp = TempDir::new().unwrap();
-        let backend = PathLocalBackend::new(tmp.path(), false).unwrap();
-        (tmp, backend)
-    }
-
-    fn test_ctx() -> kernel::kernel::OperationContext {
-        kernel::kernel::OperationContext::new("test", "root", false, None, false)
-    }
-
-    #[test]
-    fn read_range_returns_offset_slice() {
-        let (_tmp, backend) = setup();
-        let ctx = test_ctx();
-        backend
-            .write_content(b"hello world!", "blob.txt", &ctx, 0)
-            .expect("write");
-        let got = backend
-            .read_range("blob.txt", 6, 5, &ctx)
-            .expect("read_range");
-        assert_eq!(&got, b"world");
-    }
-
-    #[test]
-    fn read_range_past_eof_returns_empty() {
-        let (_tmp, backend) = setup();
-        let ctx = test_ctx();
-        backend
-            .write_content(b"short", "blob.txt", &ctx, 0)
-            .expect("write");
-        let got = backend
-            .read_range("blob.txt", 100, 4, &ctx)
-            .expect("read_range");
-        assert!(got.is_empty());
-    }
-
-    #[test]
-    fn read_range_truncates_at_eof() {
-        let (_tmp, backend) = setup();
-        let ctx = test_ctx();
-        backend
-            .write_content(b"abc", "blob.txt", &ctx, 0)
-            .expect("write");
-        let got = backend
-            .read_range("blob.txt", 1, 10, &ctx)
-            .expect("read_range");
-        assert_eq!(&got, b"bc");
-    }
-}

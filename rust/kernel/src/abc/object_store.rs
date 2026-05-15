@@ -207,28 +207,6 @@ pub trait ObjectStore: Send + Sync {
         ctx: &crate::kernel::OperationContext,
     ) -> Result<Vec<u8>, StorageError>;
 
-    /// Read a contiguous byte range from a content object.
-    ///
-    /// Default impl reads the full content and slices.  Backends that
-    /// can do native range GETs (S3, HTTP, local files) should override
-    /// for perf — falling through to the default doubles read amplification
-    /// on tiny prefetch blocks.
-    fn read_range(
-        &self,
-        content_id: &str,
-        offset: u64,
-        size: u32,
-        ctx: &crate::kernel::OperationContext,
-    ) -> Result<Vec<u8>, StorageError> {
-        let whole = self.read_content(content_id, ctx)?;
-        let start = offset as usize;
-        let end = ((offset + size as u64) as usize).min(whole.len());
-        if start >= whole.len() {
-            return Ok(Vec::new());
-        }
-        Ok(whole[start..end].to_vec())
-    }
-
     /// Delete content by identifier.
     fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
         let _ = content_id;
@@ -297,70 +275,5 @@ pub trait ObjectStore: Send + Sync {
     fn list_dir(&self, path: &str) -> Result<Vec<String>, StorageError> {
         let _ = path;
         Err(StorageError::NotSupported("list_dir"))
-    }
-}
-
-#[cfg(test)]
-mod read_range_default_tests {
-    use super::*;
-    use crate::kernel::OperationContext;
-
-    struct FakeStore {
-        data: Vec<u8>,
-    }
-
-    impl ObjectStore for FakeStore {
-        fn name(&self) -> &str {
-            "fake"
-        }
-
-        fn write_content(
-            &self,
-            _content: &[u8],
-            _content_id: &str,
-            _ctx: &OperationContext,
-            _offset: u64,
-        ) -> Result<WriteResult, StorageError> {
-            Err(StorageError::NotSupported("write_content"))
-        }
-
-        fn read_content(
-            &self,
-            _content_id: &str,
-            _ctx: &OperationContext,
-        ) -> Result<Vec<u8>, StorageError> {
-            Ok(self.data.clone())
-        }
-    }
-
-    fn test_ctx() -> OperationContext {
-        OperationContext::new("test", "test", false, None, true)
-    }
-
-    #[test]
-    fn default_read_range_slices_full_content() {
-        let s = FakeStore {
-            data: (0u8..16).collect(),
-        };
-        let ctx = test_ctx();
-        let r = s.read_range("x", 4, 8, &ctx).unwrap();
-        assert_eq!(r, (4u8..12).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn read_range_past_end_returns_empty() {
-        let s = FakeStore { data: vec![1u8; 4] };
-        let ctx = test_ctx();
-        let r = s.read_range("x", 100, 8, &ctx).unwrap();
-        assert!(r.is_empty());
-    }
-
-    #[test]
-    fn read_range_truncates_at_eof() {
-        let s = FakeStore { data: vec![1u8; 4] };
-        let ctx = test_ctx();
-        let r = s.read_range("x", 2, 8, &ctx).unwrap();
-        // request 8 bytes starting at offset 2, file is 4 bytes → only 2 bytes returned
-        assert_eq!(r, vec![1u8, 1u8]);
     }
 }

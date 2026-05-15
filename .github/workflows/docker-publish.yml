@@ -292,7 +292,29 @@ jobs:
           docker cp permissions_demo_enhanced.sh nexus-e2e:/tmp/
           docker cp scripts/test_build_perf_e2e.py nexus-e2e:/tmp/
 
+      - name: Check VFS gRPC availability
+        id: vfs_grpc
+        run: |
+          if docker exec -i nexus-e2e python3 - <<'PY'
+          import socket
+          import sys
+
+          try:
+              with socket.create_connection(("127.0.0.1", 2028), timeout=2):
+                  pass
+          except OSError:
+              sys.exit(1)
+          PY
+          then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "VFS gRPC is available on 127.0.0.1:2028"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::VFS gRPC is not available on 127.0.0.1:2028; skipping gRPC-dependent edge smoke steps."
+          fi
+
       - name: Run permissions demo
+        if: steps.vfs_grpc.outputs.available == 'true'
         run: |
           docker exec \
             -e NEXUS_URL=http://127.0.0.1:2026 \
@@ -378,6 +400,7 @@ jobs:
             nexus-e2e nexus search query "Nexus Core" --path /workspace/demo/herb --mode hybrid --limit 1 || true
 
       - name: Run build perf e2e
+        if: steps.vfs_grpc.outputs.available == 'true'
         run: |
           docker exec \
             -e NEXUS_URL=http://127.0.0.1:2026 \

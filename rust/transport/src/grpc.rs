@@ -20,20 +20,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(feature = "python")]
 use serde_json::Value as JsonValue;
 use services::auth::AuthProvider;
 use tokio::sync::oneshot;
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::TlsConfig;
+#[cfg(feature = "python")]
 use kernel::abc::object_store::ObjectStorePosixCapabilities;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
-    BackendCapabilities, BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest,
-    CallResponse, DeleteRequest, DeleteResponse, InitializeRequest, InitializeResponse,
-    PingRequest, PingResponse, ReadRequest, ReadResponse, WriteRequest, WriteResponse,
+    BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest, CallResponse,
+    DeleteRequest, DeleteResponse, InitializeRequest, InitializeResponse, PingRequest,
+    PingResponse, ReadRequest, ReadResponse, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
+#[cfg(feature = "python")]
 use kernel::vfs_router::extract_zone_from_canonical;
 
 /// Configuration for the VFS gRPC server.
@@ -113,6 +116,7 @@ impl VfsServiceImpl {
         }
     }
 
+    #[cfg(feature = "python")]
     pub(crate) fn rust_mounts_for_initialize(&self) -> serde_json::Map<String, JsonValue> {
         let mut mounts = serde_json::Map::new();
         for canonical in self.kernel.get_mount_points() {
@@ -174,6 +178,7 @@ impl VfsServiceImpl {
     }
 }
 
+#[cfg(feature = "python")]
 fn posix_capability_json(caps: ObjectStorePosixCapabilities) -> JsonValue {
     serde_json::json!({
         "read": caps.read,
@@ -188,6 +193,7 @@ fn posix_capability_json(caps: ObjectStorePosixCapabilities) -> JsonValue {
     })
 }
 
+#[cfg(feature = "python")]
 pub(crate) fn auth_json_from_context(ctx: &OperationContext) -> JsonValue {
     let subject_id = ctx
         .subject_id
@@ -557,6 +563,7 @@ fn status_to_code(s: &Status) -> RpcErrorCode {
 
 /// Resolve a `Call.method` string into `(service_name, dispatch_method)`
 /// for the Rust dispatch attempt.
+#[cfg(feature = "python")]
 pub(crate) fn resolve_rust_dispatch(method: &str) -> Option<(&str, &str)> {
     if let Some((svc, bare)) = method.split_once('.') {
         if !svc.is_empty() && !bare.is_empty() {

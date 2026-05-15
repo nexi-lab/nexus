@@ -1032,7 +1032,9 @@ async def write_to_connector(
                 _old_meta = nx._kernel.sys_stat(mount_path, ROOT_ZONE_ID)
 
                 nx.intercept_pre_write(
-                    _WHC(path=mount_path, content=data, context=write_context, old_metadata=_old_meta)
+                    _WHC(
+                        path=mount_path, content=data, context=write_context, old_metadata=_old_meta
+                    )
                 )
 
                 # Write via kernel — Rust backend handles CLI dispatch.

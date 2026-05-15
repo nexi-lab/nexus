@@ -773,7 +773,6 @@ disable_error_code = ["no-any-return"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.core.metadata_pb2",
-    "nexus.grpc.initialize_pb2",
     "nexus.grpc.vfs.vfs_pb2",
     "nexus.grpc.vfs.vfs_pb2_grpc",
     "nexus.grpc.vfs",
@@ -876,7 +875,6 @@ exclude = [
     "src/nexus/core/_metadata_generated.py",  # Generated at install time
     "src/nexus/core/_compact_generated.py",    # Generated at install time
     "src/nexus/core/protocols/",               # Generated at install time
-    "src/nexus/grpc/initialize_pb2.py",        # Generated gRPC stub
     "src/nexus/grpc/vfs/vfs_pb2.py",           # Generated gRPC stub
     "src/nexus/grpc/vfs/vfs_pb2_grpc.py",      # Generated gRPC stub
     "src/nexus/grpc/approvals/approvals_pb2.py",       # Generated gRPC stub

@@ -10,7 +10,7 @@
 //! 195 `@rpc_expose` Python services migrate to Rust (next PR).
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Instant;
 

@@ -31,6 +31,8 @@
 //! wrappers wrap it directly — re-exported here under
 //! [`vfs::RpcTransport`] for the canonical out-bound name.
 
+/// Federation peer client — only used by `PyFederationClient` (Python deployment).
+#[cfg(feature = "python")]
 pub mod federation;
 /// VFS gRPC server (in-bound). Always compiled — zero PyO3 coupling.
 /// `Initialize` and `Call` RPCs are stubbed (`Unimplemented`); the

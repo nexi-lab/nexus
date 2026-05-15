@@ -294,11 +294,6 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
-        // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
-        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
-            return self.handle_xattr_read(rest);
-        }
-
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
             return Err(not_found());
@@ -793,12 +788,6 @@ impl Kernel {
 
         // 1. Validate
         validate_path_fast(path)?;
-
-        // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
-        // Short-circuits to metastore set_file_metadata without hooks/routing.
-        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
-            return self.handle_xattr_write(rest, content);
-        }
 
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {

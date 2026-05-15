@@ -586,6 +586,8 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). BackgroundService + duck-typed hook_spec() |
 | **DriverLifecycleCoordinator** | `rust/kernel/src/dlc.rs` + `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + lock manager upgrade. Apply-side cache coherence is metastore-internal (each `ZoneMetaStore` self-registers an invalidator on its consensus during construction; no kernel-level dcache to keep in sync). Python DLC: backend refs (`_PyMountInfo`) + event dispatch |
 | **PermissionGate** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/permission_cache.rs` | LSM `security_inode_permission` | Kernel permission gate called before NativeInterceptHook dispatch on every `sys_*`. Decision cascade with lease cache (~100-200ns). Details in §2.4.1 |
+| **FileCache** | `rust/kernel/src/cache/file_cache.rs` | Linux page cache (`struct address_space`) | Kernel-owned byte-LRU content cache. Private field on `Kernel`, invalidated by mutating syscalls (write/delete/rename). Used in `sys_read` hot path. Details in §4.6 |
+| **OpsRegistry** | `rust/kernel/src/core/dispatch/ops_registry.rs` | VFS `file_operations` function pointer table | Kernel dispatch infrastructure for operation specialization. Resolves (op, filetype, backend) → handler at ~0ns via precomputed 3D array. Details in §4.7 |
 
 ### 4.1 Unified LockManager — I/O Lock + Advisory Lock
 
@@ -695,6 +697,56 @@ rejected at `sys_setattr` time.
 - `/proc/{pid}/workspace/chat-with-me` → `/proc/{pid}/chat-with-me` (workspace-anchored mailbox shortcut so agents addressing each other don't have to walk the registry)
 
 See the sudowork integration design doc (`sudowork/docs/tech/nexus-integration-architecture.md`) for the A2A messaging conventions that consume DT_LINK.
+
+### 4.6 FileCache — Kernel Content Cache
+
+**Linux analogue:** page cache (`struct address_space` + `find_get_page`)
+
+Kernel-owned byte-LRU cache for file content. Private field on `Kernel`
+(not Arc-shared, not service-accessible). Keyed by `(scope_id, path, namespace)`.
+
+| Property | Value |
+|----------|-------|
+| Package | `rust/kernel/src/cache/file_cache.rs` |
+| Data structure | `LinkedHashMap<FileCacheKey, FileEntry>` (LRU order) |
+| Capacity | 512 MB default (`DEFAULT_MAX_BYTES`), configurable via `with_max_bytes()` |
+| Concurrency | `RwLock<CacheInner>` + 64-stripe `Mutex` singleflight (prevents thundering herd on cache miss) |
+| TTL | Per-entry optional TTL; expired entries evicted on read |
+| Fingerprint | Optional content hash; `get()` validates fingerprint match to detect stale entries |
+| Invalidation | `invalidate_path(scope_id, path, namespace)` called by mutating syscalls (write, delete, rename) |
+
+The cache is transparent to callers: `sys_read` checks the cache before
+backend I/O, and `sys_write`/`sys_unlink`/`sys_rename` invalidate affected
+entries. IndexCache (directory listing cache) is a sibling struct with the
+same invalidation pattern.
+
+### 4.7 OpsRegistry — Operation Handler Dispatch
+
+**Linux analogue:** `struct file_operations` function pointer table
+
+Kernel dispatch infrastructure for operation specialization. Maps
+`(operation, filetype, backend)` → `OpHandler` with hierarchical
+fallback resolution.
+
+| Property | Value |
+|----------|-------|
+| Package | `rust/kernel/src/core/dispatch/ops_registry.rs` |
+| Operations (fast path) | `Cat`, `Grep`, `RawRead`, `Fingerprint` (4 pre-allocated slots) |
+| Resolution priority | exact(op+filetype+backend) → backend(op+backend) → filetype(op+filetype) → default(op) |
+| Performance | ~0ns via precomputed `resolved[op][filetype][backend]` 3D array (60 entries for fast-path ops) |
+| Slow path | Custom operation names stored in `Vec<(OpKey, OpHandler)>` with linear scan |
+
+**Default handlers** registered at `Kernel::new()`:
+
+| Operation | Scope | Handler |
+|-----------|-------|---------|
+| `cat` | default | `CatHandlerKind::Default` |
+| `cat` | filetype=json | `CatHandlerKind::JsonPretty` |
+| `grep` | default | `GrepHandlerKind::Default` |
+| `fingerprint` | backend=s3 | `FingerprintHandlerKind::S3` |
+
+Callers reach the registry via `kernel.resolve_op_handler(op, filetype, backend)`.
+The registry is `pub(crate)` — kernel-internal only, not exposed to services.
 
 ---
 

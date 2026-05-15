@@ -245,7 +245,10 @@ struct ZoneManagerBundle {
 /// `Progress[new_id].matched=0` from the moment AddNode commits, so
 /// heartbeats with `m.commit=0` cannot trip raft-rs 0.7's
 /// `commit_to`'s stale-`Progress` panic.
-fn open_zone_manager(common: &CommonArgs) -> Result<ZoneManagerBundle> {
+fn open_zone_manager(
+    common: &CommonArgs,
+    extra_grpc_services: Option<tonic::service::Routes>,
+) -> Result<ZoneManagerBundle> {
     std::fs::create_dir_all(&common.data_dir)
         .with_context(|| format!("create data dir {}", common.data_dir.display()))?;
 
@@ -318,6 +321,7 @@ fn open_zone_manager(common: &CommonArgs) -> Result<ZoneManagerBundle> {
         &common.bind_addr,
         tls,
         Some(self_address.clone()),
+        extra_grpc_services,
     )
     .map_err(|e| anyhow::anyhow!("ZoneManager::with_node_id: {}", e))?;
 
@@ -370,12 +374,59 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         "bootstrap mode validated",
     );
 
+    // ── Data plane: mount host-fs at "/" via PathLocalBackend ──
+    // Created BEFORE ZoneManager so the VFS gRPC service can be
+    // co-hosted on the same port as the raft gRPC server.
+    let kernel = Arc::new(Kernel::new());
+    let root_fs = common.root_fs_path();
+    std::fs::create_dir_all(&root_fs)
+        .with_context(|| format!("create cluster root mount dir {}", root_fs.display()))?;
+    let backend: Arc<dyn ObjectStore> = Arc::new(
+        PathLocalBackend::new(&root_fs, /* fsync */ false)
+            .with_context(|| format!("PathLocalBackend init at {}", root_fs.display()))?,
+    );
+    kernel
+        .sys_setattr(
+            "/",
+            DT_MOUNT as i32,
+            "local",
+            Some(backend),
+            None,
+            None,
+            "memory",
+            contracts::ROOT_ZONE_ID,
+            false,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("mount / via path_local: {:?}", e))?;
+    tracing::info!(
+        root_fs = %root_fs.display(),
+        "mounted host-fs at \"/\" via PathLocalBackend",
+    );
+
+    // Build VFS gRPC service as tonic Routes — co-hosted on the raft
+    // port via ZoneManager. Uses NoAuth (mTLS is the boundary).
+    let vfs_auth: Arc<dyn services::auth::AuthProvider> = Arc::new(services::auth::NoAuth);
+    let vfs_routes = transport::grpc::build_vfs_routes(
+        Arc::clone(&kernel),
+        vfs_auth,
+        64 * 1024 * 1024,
+        "nexusd-cluster",
+    );
+
     let ZoneManagerBundle {
         zm,
         node_id,
         self_address,
         peer_addrs,
-    } = open_zone_manager(&common)?;
+    } = open_zone_manager(&common, Some(vfs_routes))?;
 
     // Bring root zone online based on declared mode.
     //
@@ -425,48 +476,6 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         .iter()
         .map(NodeAddress::to_raft_peer_str)
         .collect();
-
-    // ── Data plane: mount host-fs at "/" via PathLocalBackend ──
-    // Cluster binary's compiled-in feature set is exactly
-    // ["driver-path-local"] (see Cargo.toml), so this mount call is the
-    // only `ObjectStore` impl available — connectors / S3 / remote are
-    // not linked.  No `set_enabled_drivers` needed: the runtime gate is
-    // a Python construct (DeploymentProfile-driven), and the cluster
-    // binary intentionally bypasses it in favour of the compile-time
-    // feature gate.
-    let kernel = Arc::new(Kernel::new());
-    let root_fs = common.root_fs_path();
-    std::fs::create_dir_all(&root_fs)
-        .with_context(|| format!("create cluster root mount dir {}", root_fs.display()))?;
-    let backend: Arc<dyn ObjectStore> = Arc::new(
-        PathLocalBackend::new(&root_fs, /* fsync */ false)
-            .with_context(|| format!("PathLocalBackend init at {}", root_fs.display()))?,
-    );
-    kernel
-        .sys_setattr(
-            "/",
-            DT_MOUNT as i32,
-            "local",
-            Some(backend),
-            None, // metastore — kernel falls back to its in-memory MetaStore
-            None, // raft_backend — federation wiring is a follow-up
-            "memory",
-            contracts::ROOT_ZONE_ID,
-            false, // is_external
-            0,     // capacity
-            None,  // read_fd
-            None,  // write_fd
-            None,  // mime_type
-            None,  // modified_at_ms
-            None,  // link_target
-            None,  // source — same-zone local mount
-            None,  // remote_metastore
-        )
-        .map_err(|e| anyhow::anyhow!("mount / via path_local: {:?}", e))?;
-    tracing::info!(
-        root_fs = %root_fs.display(),
-        "mounted host-fs at \"/\" via PathLocalBackend",
-    );
 
     let (zones, mounts) = parse_federation_env();
     if !zones.is_empty() || !mounts.is_empty() {
@@ -524,7 +533,7 @@ async fn run_share(
     path: &str,
     new_zone_id: &str,
 ) -> Result<()> {
-    let ZoneManagerBundle { zm, peer_addrs, .. } = open_zone_manager(&common)?;
+    let ZoneManagerBundle { zm, peer_addrs, .. } = open_zone_manager(&common, None)?;
     let peers_str: Vec<String> = peer_addrs
         .iter()
         .map(NodeAddress::to_raft_peer_str)
@@ -596,7 +605,7 @@ fn run_mount(
     // Open ZoneManager offline so the mount entry is written through
     // the same redb file the daemon will reload on next start.  Same
     // pattern as the `share` / `join` subcommands.
-    let _bundle = open_zone_manager(&common)?;
+    let _bundle = open_zone_manager(&common, None)?;
     let kernel = Arc::new(Kernel::new());
     let root =
         local_root.ok_or_else(|| anyhow::anyhow!("--root is required for driver `{driver}`"))?;
@@ -633,7 +642,7 @@ fn run_mount(
 }
 
 fn run_unmount(common: CommonArgs, mount_point: &str) -> Result<()> {
-    let _bundle = open_zone_manager(&common)?;
+    let _bundle = open_zone_manager(&common, None)?;
     let kernel = Arc::new(Kernel::new());
     let ctx = contracts::OperationContext::new(
         /* user_id */ "operator", /* zone_id */ "root", /* is_admin */ true,
@@ -665,7 +674,7 @@ async fn run_join(
         node_id,
         self_address,
         ..
-    } = open_zone_manager(&common)?;
+    } = open_zone_manager(&common, None)?;
 
     // Pre-#3996 (and pre-this commit) ``run_join`` only invoked
     // ``zm.join_zone(remote_zone_id, peers, false)`` — that registers

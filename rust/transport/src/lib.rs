@@ -13,16 +13,17 @@
 //!
 //! ```text
 //! transport/
-//!   grpc.rs         — Rust-native VFS gRPC server (in-bound)
+//!   grpc.rs         — Rust-native VFS gRPC server (in-bound, pure Rust)
 //!   ipc.rs          — IPC message envelope helpers
 //!   peer_blob.rs    — peer-blob fetch client (out-bound)
 //!   federation.rs   — federation peer client (out-bound)
 //!   python/
 //!     mod.rs        — register() + install_transport_wiring
+//!     grpc_bridge.rs — PyO3 bridge for Initialize + Call RPCs
 //! ```
 //!
-//! Direction: `transport -> {kernel, lib, raft}`. Transport names
-//! raft's wire-format proto stubs directly through the federation
+//! Direction: `transport -> {kernel, lib, raft, services}`. Transport
+//! names raft's wire-format proto stubs directly through the federation
 //! client (same shape as a Postgres client crate referencing libpq);
 //! raft does not import transport, so no cycle. The VFS gRPC client
 //! (`RpcTransport`) lives in the kernel crate where the kernel-internal
@@ -31,11 +32,10 @@
 //! [`vfs::RpcTransport`] for the canonical out-bound name.
 
 pub mod federation;
-/// VFS gRPC server (in-bound). Requires `python` feature because the
-/// `Call` RPC and OIDC auth path delegate to Python callbacks via
-/// `PyBridge`. Pure Rust consumers (nexus-cluster) use the raft gRPC
-/// server directly.
-#[cfg(feature = "python")]
+/// VFS gRPC server (in-bound). Always compiled — zero PyO3 coupling.
+/// `Initialize` and `Call` RPCs are stubbed (`Unimplemented`); the
+/// Python bridge layer in `transport::python::grpc_bridge` overrides
+/// them when the `python` feature is enabled.
 pub mod grpc;
 pub mod ipc;
 pub mod peer_blob;

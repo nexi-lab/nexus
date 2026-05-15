@@ -80,6 +80,11 @@ pub struct RaftGrpcServer {
     /// backend is wired. `None` while the slot is empty —
     /// `ReadBlob` returns `NotFound` until the kernel installs one.
     blob_fetcher_slot: Option<BlobFetcherSlot>,
+    /// Additional gRPC services co-hosted on the same port.
+    /// Constructed externally (e.g. VFS gRPC by the cluster binary)
+    /// and passed in as type-erased `tonic::service::Routes` so this
+    /// crate has no dependency on the transport crate.
+    extra_services: Option<tonic::service::Routes>,
 }
 
 impl RaftGrpcServer {
@@ -90,6 +95,7 @@ impl RaftGrpcServer {
             ca_key_pem: None,
             join_token_hash: None,
             blob_fetcher_slot: None,
+            extra_services: None,
         }
     }
 
@@ -106,6 +112,17 @@ impl RaftGrpcServer {
     /// owning `ZoneManager` so both halves reach the same `Arc`.
     pub fn with_blob_fetcher_slot(mut self, slot: BlobFetcherSlot) -> Self {
         self.blob_fetcher_slot = Some(slot);
+        self
+    }
+
+    /// Co-host additional gRPC services on the same port.
+    ///
+    /// The caller builds the services externally (e.g. VFS gRPC via
+    /// `transport::grpc::build_vfs_service`) and passes them as
+    /// type-erased `tonic::service::Routes`. This avoids a circular
+    /// dependency between `raft` and `transport` crates.
+    pub fn with_extra_services(mut self, routes: tonic::service::Routes) -> Self {
+        self.extra_services = Some(routes);
         self
     }
 
@@ -149,12 +166,21 @@ impl RaftGrpcServer {
             tracing::info!("TLS mode: mTLS (client auth required)");
         }
 
-        builder
-            .add_service(ZoneTransportServiceServer::new(raft_service))
-            .add_service(ZoneApiServiceServer::new(client_service))
-            .serve(addr)
-            .await
-            .map_err(TransportError::Tonic)?;
+        // If extra services are provided, add them first via add_routes
+        // (which returns a Router), then add the raft services.
+        // Otherwise, add raft services directly.
+        let router = if let Some(extra) = self.extra_services {
+            builder
+                .add_routes(extra)
+                .add_service(ZoneTransportServiceServer::new(raft_service))
+                .add_service(ZoneApiServiceServer::new(client_service))
+        } else {
+            builder
+                .add_service(ZoneTransportServiceServer::new(raft_service))
+                .add_service(ZoneApiServiceServer::new(client_service))
+        };
+
+        router.serve(addr).await.map_err(TransportError::Tonic)?;
 
         Ok(())
     }
@@ -197,9 +223,18 @@ impl RaftGrpcServer {
             tracing::info!("TLS mode: mTLS (client auth required)");
         }
 
-        builder
-            .add_service(ZoneTransportServiceServer::new(raft_service))
-            .add_service(ZoneApiServiceServer::new(client_service))
+        let router = if let Some(extra) = self.extra_services {
+            builder
+                .add_routes(extra)
+                .add_service(ZoneTransportServiceServer::new(raft_service))
+                .add_service(ZoneApiServiceServer::new(client_service))
+        } else {
+            builder
+                .add_service(ZoneTransportServiceServer::new(raft_service))
+                .add_service(ZoneApiServiceServer::new(client_service))
+        };
+
+        router
             .serve_with_shutdown(addr, shutdown)
             .await
             .map_err(TransportError::Tonic)?;

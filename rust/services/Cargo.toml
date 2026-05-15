@@ -60,6 +60,9 @@ kernel = { workspace = true }
 # syscalls (the same path Python takes), never via direct cross-crate
 # imports. See `services/src/lib.rs` for the rationale.
 redb = "4"
+# `tonic::Status` is the error type in `auth::AuthProvider::resolve`.
+# Workspace dep — same version as transport / raft.
+tonic = { workspace = true }
 # Tasks engine storage backend.
 fjall = "3"
 # `acp::subprocess` calls libc::dup() to hand kernel-side OwnedFds

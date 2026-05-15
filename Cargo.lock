@@ -2322,9 +2322,12 @@ dependencies = [
  "gethostname",
  "kernel",
  "raft 0.1.0",
+ "services",
  "tokio",
+ "tonic 0.14.6",
  "tracing",
  "tracing-subscriber",
+ "transport",
 ]
 
 [[package]]
@@ -3850,6 +3853,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tonic 0.14.6",
  "tower",
  "tracing",
  "uuid",
@@ -4596,6 +4600,7 @@ dependencies = [
  "rcgen",
  "serde",
  "serde_json",
+ "services",
  "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.18",

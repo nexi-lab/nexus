@@ -7,22 +7,24 @@
 //! Registers:
 //!
 //! * `PyVfsGrpcServerHandle` + `start_vfs_grpc_server` — in-bound
-//!   VFS gRPC server.
+//!   VFS gRPC server (Python-bridged: Initialize + Call via PyO3).
 //! * `PyFederationClient` — out-bound federation peer client used by
 //!   the Python federation_rpc shim.
 //! * `install_transport_wiring(kernel)` — Python entry point that
 //!   replaces the kernel's `NoopPeerBlobClient` with the real
 //!   `transport::peer_blob::PeerBlobClient` impl.
 
+pub mod grpc_bridge;
+
 use kernel::generated_kernel_abi_pyo3::PyKernel;
 use pyo3::prelude::*;
 
-use crate::{federation, grpc};
+use crate::federation;
 
 /// Register every transport-tier PyO3 export into the parent module.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
-    m.add_class::<grpc::PyVfsGrpcServerHandle>()?;
-    m.add_function(wrap_pyfunction!(grpc::start_vfs_grpc_server, m)?)?;
+    m.add_class::<grpc_bridge::PyVfsGrpcServerHandle>()?;
+    m.add_function(wrap_pyfunction!(grpc_bridge::start_vfs_grpc_server, m)?)?;
     m.add_class::<federation::PyFederationClient>()?;
     m.add_function(wrap_pyfunction!(install_transport_wiring, m)?)?;
     Ok(())

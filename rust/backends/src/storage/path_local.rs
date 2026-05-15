@@ -9,9 +9,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use kernel::abc::object_store::{
-    ObjectStore, ObjectStorePosixCapabilities, StorageError, WriteResult,
-};
+use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
 
 // ── PathLocalBackend ────────────────────────────────────────────────
 
@@ -49,10 +47,6 @@ impl PathLocalBackend {
 impl ObjectStore for PathLocalBackend {
     fn name(&self) -> &str {
         "path_local"
-    }
-
-    fn posix_capabilities(&self) -> ObjectStorePosixCapabilities {
-        ObjectStorePosixCapabilities::writable()
     }
 
     fn write_content(

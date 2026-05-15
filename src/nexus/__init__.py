@@ -206,8 +206,6 @@ def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
         from nexus_runtime import PyKernel as _Kernel
 
         kernel = _Kernel()
-        # Start write-buffer background flusher (production only).
-        kernel.start_write_buffer_flusher(250)
         # Phase 4 (full): drain the federation init's blob-fetcher slot
         # + install the real `PeerBlobClient` (replaces the kernel's
         # boot-time Noop default).  Idempotent — no-op if the slot
@@ -412,20 +410,6 @@ def connect(
             connect_timeout=float(connect_timeout),
             tls_config=_tls_config,
         )
-        try:
-            initialize_payload = transport.initialize(
-                client_name="nexus-python",
-                client_version=__version__,
-            )
-        except Exception:
-            try:
-                transport.close()
-            except Exception as close_error:
-                logger.debug(
-                    "Failed to close remote transport after initialize failure: %s",
-                    close_error,
-                )
-            raise
 
         # Rust-native remote wiring (Issue #1134 Phase 4, a803a9d63):
         # the root mount carries backend_type="remote" + connection params,
@@ -471,9 +455,6 @@ def connect(
         # NexusFUSEOperations (see operations.py: `context is not None`).
         nfs._base_url = server_url  # noqa: SLF001
         nfs._api_key = api_key  # noqa: SLF001
-        nfs.capabilities = (
-            initialize_payload.get("capabilities") if initialize_payload is not None else None
-        )
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards
@@ -640,8 +621,6 @@ def connect(
 
             if _RUST_AVAILABLE and _Kernel is not None:
                 _early_kernel = _Kernel()
-                # Start write-buffer background flusher (production only).
-                _early_kernel.start_write_buffer_flusher(250)
                 # Skip federation wiring during pytest — xdist workers
                 # compete for the same gRPC port causing hangs and
                 # preventing clean process exit.

@@ -87,6 +87,9 @@ class _Kernel:
             for index, (_path, content) in enumerate(files)
         ]
 
+    def write_batch(self, files: list[tuple[str, bytes]], _ctx: object) -> list[Any]:
+        return self.sys_write_batch(files, _ctx)
+
     def dispatch_pre_hooks(self, _name: str, _ctx: object) -> None:
         return None
 

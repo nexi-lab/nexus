@@ -200,6 +200,7 @@ Kernel syscalls, all POSIX-aligned, all path-addressed:
 | **Content** | `sys_read` (pread), `sys_write` (pwrite — file must exist), `sys_copy` |
 | **Locking** | `sys_lock` (acquire + extend), `sys_unlock` (release + force) |
 | **Watch** | `sys_watch` (inotify) |
+| **Search** | `sys_glob` (metadata-only pattern match), `sys_grep` (content search via `lib::search`) |
 
 \* **Vectored syscalls:** `sys_read`, `sys_write`, and `sys_unlink` accept a
 slice of request structs (`&[ReadRequest]`, `&[WriteRequest]`, `&[UnlinkRequest]`)
@@ -249,7 +250,7 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*`. `glob`/`grep` are search-tier convenience (PR #3921), composing `sys_readdir` + filter/regex |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `service()` | Path-addressed, delegates to `sys_*` |
 | **Xattr** (extended attributes) | `get_xattr(path, key)`, `set_xattr(path, key, value)`, `get_xattr_bulk(paths, key)` | Direct metastore `get_file_metadata`/`set_file_metadata` — no hooks, no routing, no permission gate. Rust `KernelConvenience` trait |
 | **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 

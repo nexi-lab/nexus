@@ -152,7 +152,7 @@ def trigram_index_stats(index_path: str) -> dict[str, Any]: ...
 def invalidate_trigram_cache(index_path: str) -> None: ...
 
 # ---------------------------------------------------------------------------
-# VFS gRPC server (rust/transport/src/grpc.rs)
+# grpc_bridge.rs
 # ---------------------------------------------------------------------------
 
 def start_vfs_grpc_server(

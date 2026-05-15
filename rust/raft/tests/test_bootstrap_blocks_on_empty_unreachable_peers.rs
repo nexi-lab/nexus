@@ -43,6 +43,7 @@ fn make_node(node_id: u64, dir: &std::path::Path) -> (std::sync::Arc<ZoneManager
         &bind_str,
         None,
         Some(format!("http://{bind_str}")),
+        None,
     )
     .expect("ZoneManager");
     (zm, bind_str)
@@ -116,6 +117,7 @@ async fn test_late_founder_unblocks_waiting_joiner() {
             &bind_a_clone,
             None,
             Some(advertise),
+            None,
         )
         .expect("ZoneManager A");
         let zone = zm

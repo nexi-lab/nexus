@@ -1070,6 +1070,7 @@ impl RaftDistributedCoordinator {
             &bind_addr,
             tls,
             Some(self_addr.clone()),
+            None,
         )
         .map_err(|e| format!("ZoneManager::with_node_id: {e}"))?;
 

@@ -269,6 +269,7 @@ impl ZoneManager {
             bind_addr,
             tls,
             None,
+            None,
         )
     }
 
@@ -300,6 +301,7 @@ impl ZoneManager {
         bind_addr: &str,
         tls: Option<TlsFiles>,
         self_address: Option<String>,
+        extra_grpc_services: Option<tonic::service::Routes>,
     ) -> Result<Arc<Self>> {
         // Initialize tracing once.
         static TRACING_INIT: std::sync::Once = std::sync::Once::new();
@@ -407,6 +409,9 @@ impl ZoneManager {
                 RaftError::Config(format!("Failed to read CA key for JoinCluster: {}", e))
             })?;
             server = server.with_join_config(ca_key_pem, token_hash.to_string());
+        }
+        if let Some(extra) = extra_grpc_services {
+            server = server.with_extra_services(extra);
         }
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
@@ -1492,6 +1497,7 @@ mod tests {
             "127.0.0.1:0",
             None,
             None,
+            None,
         )
         .expect("ZoneManager");
         (zm, dir)
@@ -1542,13 +1548,14 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().to_str().expect("utf-8").to_string();
         {
-            let zm = ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None, None)
-                .expect("zm-1");
+            let zm =
+                ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None, None, None)
+                    .expect("zm-1");
             zm.create_zone("z1", vec![]).expect("create");
             // Drop zm — runtime + gRPC server shut down, redb files
             // remain on disk.
         }
-        let zm = ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None, None)
+        let zm = ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None, None, None)
             .expect("zm-2");
         // open_existing_zones_from_disk should have re-loaded "z1"
         // with the persisted ConfState; create_zone with identical

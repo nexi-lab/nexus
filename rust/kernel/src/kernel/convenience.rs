@@ -10,7 +10,7 @@
 
 use super::{Kernel, KernelError, OperationContext, StatResult, SysWriteResult};
 use crate::abi::KernelAbi;
-use crate::meta_store::{DT_DIR, DT_EXTERNAL_STORAGE, DT_MOUNT};
+use crate::meta_store::{DT_EXTERNAL_STORAGE, DT_MOUNT};
 
 // ── KernelConvenience trait ──────────────────────────────────────────
 
@@ -133,40 +133,7 @@ impl KernelConvenience for Kernel {
                 .enumerate()
                 .map(|(i, opt)| {
                     match opt {
-                        Some(entry) => {
-                            let is_dir = entry.entry_type == DT_DIR || entry.entry_type == DT_MOUNT;
-                            let mime = entry
-                                .mime_type
-                                .as_deref()
-                                .unwrap_or(if is_dir {
-                                    "inode/directory"
-                                } else {
-                                    "application/octet-stream"
-                                })
-                                .to_string();
-                            Some(StatResult {
-                                path: entry.path.clone(),
-                                size: if is_dir && entry.size == 0 {
-                                    4096
-                                } else {
-                                    entry.size
-                                },
-                                content_id: entry.content_id.clone(),
-                                mime_type: mime,
-                                is_directory: is_dir,
-                                entry_type: entry.entry_type,
-                                mode: if is_dir { 0o755 } else { 0o644 },
-                                version: entry.version,
-                                gen: entry.gen,
-                                zone_id: entry.zone_id.clone(),
-                                created_at_ms: entry.created_at_ms,
-                                modified_at_ms: entry.modified_at_ms,
-                                last_writer_address: entry.last_writer_address.clone(),
-                                lock: None, // batch stat skips lock info for perf
-                                link_target: entry.link_target.clone(),
-                                owner_id: entry.owner_id.clone(),
-                            })
-                        }
+                        Some(entry) => Some(StatResult::from(entry)),
                         None => {
                             // Fallback to sys_stat for implicit dirs, procfs, etc.
                             self.sys_stat(&paths[i], zone_id)

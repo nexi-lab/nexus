@@ -396,6 +396,45 @@ pub struct StatResult {
     pub owner_id: Option<String>,
 }
 
+impl From<crate::meta_store::FileMetadata> for StatResult {
+    #[inline]
+    fn from(entry: crate::meta_store::FileMetadata) -> Self {
+        let is_dir = entry.entry_type == crate::meta_store::DT_DIR
+            || entry.entry_type == crate::meta_store::DT_MOUNT;
+        let mime = entry
+            .mime_type
+            .as_deref()
+            .unwrap_or(if is_dir {
+                "inode/directory"
+            } else {
+                "application/octet-stream"
+            })
+            .to_string();
+        Self {
+            path: entry.path,
+            size: if is_dir && entry.size == 0 {
+                4096
+            } else {
+                entry.size
+            },
+            content_id: entry.content_id,
+            mime_type: mime,
+            is_directory: is_dir,
+            entry_type: entry.entry_type,
+            mode: if is_dir { 0o755 } else { 0o644 },
+            version: entry.version,
+            gen: entry.gen,
+            zone_id: entry.zone_id,
+            created_at_ms: entry.created_at_ms,
+            modified_at_ms: entry.modified_at_ms,
+            last_writer_address: entry.last_writer_address,
+            lock: None,
+            link_target: entry.link_target,
+            owner_id: entry.owner_id,
+        }
+    }
+}
+
 /// Result of paginated readdir: children + cursor for next page.
 pub struct ReadDirResult {
     /// (child_path, entry_type) tuples for this page.

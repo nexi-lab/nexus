@@ -25,9 +25,8 @@ from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.fs import _make_mount_entry
 from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
-from nexus.fs._sqlite_meta import SQLiteMetastore
+from nexus.fs._kernel_factory import create_kernel
 
 
 @pytest.fixture
@@ -35,7 +34,7 @@ def slim_fs(tmp_path: Path):
     """Boot a full slim NexusFS with SQLite + CASLocalBackend."""
     # SQLite metastore
     db_path = str(tmp_path / "metadata.db")
-    metastore = SQLiteMetastore(db_path)
+    metastore = create_kernel(db_path)
 
     # CASLocalBackend
     from nexus.backends.storage.cas_local import CASLocalBackend
@@ -56,11 +55,9 @@ def slim_fs(tmp_path: Path):
         is_admin=True,
     )
 
-    # Mount via coordinator (registers in backend pool + routing table + hooks)
+    # Mount via coordinator (registers in backend pool + routing table + hooks).
+    # sys_setattr(DT_MOUNT) handles metadata persistence internally.
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-
-    # Create DT_MOUNT entry so stat("/local") works
-    metastore.metastore_put(_make_mount_entry("/local", backend.name))
 
     return kernel
 
@@ -71,7 +68,7 @@ def dual_fs(tmp_path: Path):
     from nexus.backends.storage.cas_local import CASLocalBackend
 
     db_path = str(tmp_path / "metadata.db")
-    metastore = SQLiteMetastore(db_path)
+    metastore = create_kernel(db_path)
 
     data_a = tmp_path / "data_a"
     data_a.mkdir()
@@ -109,13 +106,10 @@ def dual_fs(tmp_path: Path):
         is_admin=True,
     )
 
-    # Mount via coordinator (registers in backend pool + routing table + hooks)
+    # Mount via coordinator (registers in backend pool + routing table + hooks).
+    # sys_setattr(DT_MOUNT) handles metadata persistence internally.
     kernel.sys_setattr("/a", entry_type=DT_MOUNT, backend=backend_a)
     kernel.sys_setattr("/b", entry_type=DT_MOUNT, backend=backend_b)
-
-    # Create DT_MOUNT entries
-    for mp, be in [("/a", backend_a), ("/b", backend_b)]:
-        metastore.metastore_put(_make_mount_entry(mp, be.name))
 
     return kernel
 
@@ -430,7 +424,7 @@ class TestMultiBackend:
 # ---------------------------------------------------------------------------
 
 
-class TestSQLiteMetastore:
+class TestCreateKernel:
     # F3 C4: the stdlib-SQLite backend was replaced with a kernel-backed
     # RustMetastoreProxy factory under the same import name. The previous
     # ``test_wal_mode_enabled`` check (``PRAGMA journal_mode == 'wal'``)
@@ -438,26 +432,20 @@ class TestSQLiteMetastore:
     # backing store.
 
     def test_put_and_get(self, tmp_path: Path):
-        """Basic put/get on the SQLite metastore."""
-        from datetime import UTC, datetime
-
-        from nexus.contracts.metadata import FileMetadata
-
+        """Basic setattr/stat roundtrip on the kernel metastore."""
         db_path = str(tmp_path / "test.db")
-        meta = SQLiteMetastore(db_path)
+        meta = create_kernel(db_path)
 
-        fm = FileMetadata(
-            path="/test/file.txt",
+        # Create DT_REG via sys_setattr (entry_type=0 with upsert)
+        meta.sys_setattr(
+            "/test/file.txt",
+            0,
+            zone_id=ROOT_ZONE_ID,
+            mime_type="text/plain",
             size=42,
             content_id="abc123",
-            mime_type="text/plain",
-            created_at=datetime.now(UTC),
-            modified_at=datetime.now(UTC),
-            version=1,
-            zone_id=ROOT_ZONE_ID,
         )
-        meta.metastore_put(fm)
-        result = meta.metastore_get("/test/file.txt")
+        result = meta.sys_stat("/test/file.txt", ROOT_ZONE_ID)
         assert result is not None
-        assert result.path == "/test/file.txt"
-        assert result.size == 42
+        assert result["path"] == "/test/file.txt"
+        assert result["size"] == 42

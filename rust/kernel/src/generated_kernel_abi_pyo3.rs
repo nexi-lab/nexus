@@ -340,6 +340,7 @@ fn extract_metadata(
         last_writer_address: get_opt_str("last_writer_address")?,
         target_zone_id: get_opt_str("target_zone_id")?,
         link_target: get_opt_str("link_target").ok().flatten(),
+        owner_id: get_opt_str("owner_id").ok().flatten(),
     })
 }
 
@@ -389,6 +390,9 @@ fn to_python_metadata<'py>(
     set_optional_datetime(py, &kwargs, "modified_at", meta.modified_at_ms).map_err(err)?;
     if let Some(target) = meta.link_target.as_deref() {
         kwargs.set_item("link_target", target).map_err(err)?;
+    }
+    if let Some(owner) = meta.owner_id.as_deref() {
+        kwargs.set_item("owner_id", owner).map_err(err)?;
     }
     cls.call((), Some(&kwargs)).map_err(err)
 }
@@ -450,6 +454,7 @@ fn stat_result_to_pydict<'py>(
     let _ = dict.set_item("version", s.version);
     let _ = dict.set_item("zone_id", s.zone_id.as_deref());
     let _ = dict.set_item("link_target", s.link_target.as_deref());
+    let _ = dict.set_item("owner_id", s.owner_id.as_deref());
     let _ = dict.set_item("lock", py.None());
     dict
 }
@@ -995,16 +1000,6 @@ pub struct PySysMkdirResult {
     pub post_hook_needed: bool,
 }
 
-// ── PySysRmdirResult ────────────────────────────────────────────
-
-/// Python-facing SysRmdirResult.
-#[pyclass(get_all)]
-pub struct PySysRmdirResult {
-    pub hit: bool,
-    pub post_hook_needed: bool,
-    pub children_deleted: usize,
-}
-
 // ── PySysCopyResult ─────────────────────────────────────────────
 
 /// Python-facing SysCopyResult.
@@ -1052,7 +1047,7 @@ pub struct PyKernel {
     /// without an extra accessor method that codegen would
     /// have to preserve. Not exposed to Python.
     pub(crate) inner: Arc<Kernel>,
-    _write_buffer_flusher: WriteBufferFlushHandle,
+    _write_buffer_flusher: Option<WriteBufferFlushHandle>,
     // RwLock (not Mutex) so a hook callback can re-enter
     // ``sys_*`` without deadlocking. The recursion is real:
     // ReBAC's permission_hook reads its own ``/__sys__/rebac/...``
@@ -1101,12 +1096,28 @@ impl PyKernel {
     #[new]
     fn new() -> Self {
         let inner = Arc::new(Kernel::new());
-        let write_buffer_flusher =
-            Kernel::spawn_write_buffer_flusher(&inner, std::time::Duration::from_millis(250));
+        // Write-buffer background flusher is NOT started here.
+        // Call `start_write_buffer_flusher(interval_ms)` explicitly
+        // from Python production code paths that need coalescing.
+        // Starting it unconditionally caused 13-min hangs on macOS
+        // CI: each PyKernel spawned a non-daemon thread that
+        // prevented xdist worker processes from exiting.
         Self {
             inner,
-            _write_buffer_flusher: write_buffer_flusher,
+            _write_buffer_flusher: None,
             hooks: RwLock::new(HookRegistry::new()),
+        }
+    }
+
+    /// Start the background write-buffer flusher thread.
+    /// Call from production entry points (NexusFS factory, connect()).
+    /// NOT called by default in `new()` — test kernels don't need it.
+    fn start_write_buffer_flusher(&mut self, interval_ms: u64) {
+        if self._write_buffer_flusher.is_none() {
+            self._write_buffer_flusher = Some(Kernel::spawn_write_buffer_flusher(
+                &self.inner,
+                std::time::Duration::from_millis(interval_ms),
+            ));
         }
     }
 
@@ -1163,120 +1174,6 @@ impl PyKernel {
     /// Called by Python ``NexusFS.close`` / nested ``ephemeral_mount``.
     fn release_metastores(&self) {
         self.inner.release_metastores()
-    }
-
-    // ── MetaStore proxy methods (for RustMetastoreProxy) ──────────────
-
-    fn metastore_get(&self, py: Python<'_>, path: &str) -> PyResult<Option<Py<PyAny>>> {
-        match self
-            .inner
-            .metastore_get(path)
-            .map_err::<PyErr, _>(Into::into)?
-        {
-            Some(meta) => {
-                let obj = to_python_metadata(py, &meta)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
-                Ok(Some(obj.into()))
-            }
-            None => Ok(None),
-        }
-    }
-
-    fn metastore_put(&self, py: Python<'_>, metadata: &Bound<'_, PyAny>) -> PyResult<()> {
-        let meta = extract_metadata(py, metadata)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
-        self.inner
-            .metastore_put(&meta.path.clone(), meta)
-            .map_err(Into::into)
-    }
-
-    fn metastore_delete(&self, path: &str) -> PyResult<bool> {
-        self.inner.metastore_delete(path).map_err(Into::into)
-    }
-
-    fn metastore_list(&self, py: Python<'_>, prefix: &str) -> PyResult<Vec<Py<PyAny>>> {
-        let items = self
-            .inner
-            .metastore_list(prefix)
-            .map_err::<PyErr, _>(Into::into)?;
-        let mut result = Vec::with_capacity(items.len());
-        for meta in &items {
-            result.push(
-                to_python_metadata(py, meta)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?
-                    .into(),
-            );
-        }
-        Ok(result)
-    }
-
-    fn metastore_exists(&self, path: &str) -> PyResult<bool> {
-        self.inner.metastore_exists(path).map_err(Into::into)
-    }
-
-    fn metastore_get_batch(
-        &self,
-        py: Python<'_>,
-        paths: Vec<String>,
-    ) -> PyResult<Vec<Option<Py<PyAny>>>> {
-        let items = self
-            .inner
-            .metastore_get_batch(&paths)
-            .map_err::<PyErr, _>(Into::into)?;
-        let mut result = Vec::with_capacity(items.len());
-        for opt in &items {
-            match opt {
-                Some(meta) => result.push(Some(
-                    to_python_metadata(py, meta)
-                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?
-                        .into(),
-                )),
-                None => result.push(None),
-            }
-        }
-        Ok(result)
-    }
-
-    /// Auxiliary per-path metadata storage (e.g. ``parsed_text``,
-    /// ``parser_name``). Values are UTF-8 strings; callers that want
-    /// to store structured data JSON-encode at this boundary — no
-    /// opaque bytes cross the GIL.
-    fn metastore_set_file_metadata(&self, path: &str, key: &str, value: String) -> PyResult<()> {
-        self.inner
-            .metastore_set_file_metadata(path, key, value)
-            .map_err(Into::into)
-    }
-
-    fn metastore_get_file_metadata(&self, path: &str, key: &str) -> PyResult<Option<String>> {
-        self.inner
-            .metastore_get_file_metadata(path, key)
-            .map_err(Into::into)
-    }
-
-    fn metastore_get_file_metadata_bulk(
-        &self,
-        py: Python<'_>,
-        paths: Vec<String>,
-        key: &str,
-    ) -> PyResult<Py<PyAny>> {
-        let pairs = self
-            .inner
-            .metastore_get_file_metadata_bulk(&paths, key)
-            .map_err::<PyErr, _>(Into::into)?;
-        let dict = PyDict::new(py);
-        for (path, value) in pairs {
-            match value {
-                Some(text) => dict.set_item(path, text)?,
-                None => dict.set_item(path, py.None())?,
-            }
-        }
-        Ok(dict.into())
-    }
-
-    fn metastore_is_implicit_directory(&self, path: &str) -> PyResult<bool> {
-        self.inner
-            .metastore_is_implicit_directory(path)
-            .map_err(Into::into)
     }
 
     #[pyo3(signature = (prefix, recursive=true, limit=1000, cursor=None))]
@@ -1354,6 +1251,72 @@ impl PyKernel {
             }
         }
         Ok(dict.into())
+    }
+
+    /// Tier 2 write: create-or-overwrite (composes sys_write + setattr_update).
+    fn write<'py>(
+        &self,
+        py: Python<'py>,
+        path: &str,
+        ctx: &PyOperationContext,
+        content: &[u8],
+        offset: u64,
+    ) -> PyResult<PySysWriteResult> {
+        use crate::kernel::convenience::KernelConvenience;
+
+        // PRE-INTERCEPT hooks (same as sys_write)
+        if self.inner.has_hooks("write") {
+            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+            let hc = get_hook_ctx_cache(py).ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("hook context cache init failed")
+            })?;
+            let whc = hc.write.bind(py).call1((path, content, py_ctx))?.unbind();
+            self.dispatch_pre_hooks_inner("write", &whc)?;
+        }
+
+        let rust_ctx = ctx.to_rust();
+        let content_owned = content.to_vec();
+        let result = py.detach(|| self.inner.write(path, &rust_ctx, &content_owned, offset));
+        let result = result.map_err(|e| -> PyErr { e.into() })?;
+
+        Ok(PySysWriteResult {
+            hit: result.hit,
+            content_id: result.content_id,
+            post_hook_needed: result.post_hook_needed,
+            version: result.version,
+            gen: result.gen,
+            size: result.size,
+            is_new: result.is_new,
+            old_content_id: result.old_content_id,
+            old_size: result.old_size,
+            old_version: result.old_version,
+            old_modified_at_ms: result.old_modified_at_ms,
+        })
+    }
+
+    #[pyo3(signature = (path, zone_id="root"))]
+    fn get_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner.get_content_id(path, zone_id)
+    }
+
+    #[pyo3(signature = (path, zone_id="root"))]
+    fn is_directory(&self, path: &str, zone_id: &str) -> bool {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner.is_directory(path, zone_id)
+    }
+
+    #[pyo3(signature = (zone_id="root"))]
+    fn get_top_level_mounts(&self, zone_id: &str) -> Vec<String> {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner.get_top_level_mounts(zone_id)
+    }
+
+    #[pyo3(signature = (paths, zone_id="root"))]
+    fn exists_batch(&self, paths: Vec<String>, zone_id: &str) -> Vec<bool> {
+        use crate::kernel::convenience::KernelConvenience;
+        self.inner.exists_batch(&paths, zone_id)
     }
 
     #[pyo3(signature = (parent_path, zone_id="root", is_admin=false, limit=0, cursor=None))]
@@ -1667,7 +1630,7 @@ impl PyKernel {
 
     // ── sys_setattr — unified mount/attr syscall ─────────────────────
 
-    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, backend_type="", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, hn_stories_per_feed=None, hn_include_comments=None, cli_command=None, cli_service=None, cli_auth_env_json=None, x_bearer_token=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None, server_address=None, remote_auth_token=None, remote_ca_pem=None, remote_cert_pem=None, remote_key_pem=None, remote_timeout=30.0, link_target=None, source=None))]
+    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, backend_type="", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, hn_stories_per_feed=None, hn_include_comments=None, cli_command=None, cli_service=None, cli_auth_env_json=None, x_bearer_token=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, content_id=None, size=None, version=None, created_at_ms=None, read_fd=None, write_fd=None, server_address=None, remote_auth_token=None, remote_ca_pem=None, remote_cert_pem=None, remote_key_pem=None, remote_timeout=30.0, link_target=None, source=None))]
     #[allow(clippy::too_many_arguments)]
     fn sys_setattr<'py>(
         &self,
@@ -1712,6 +1675,10 @@ impl PyKernel {
         capacity: usize,
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        content_id: Option<&str>,
+        size: Option<u64>,
+        version: Option<u32>,
+        created_at_ms: Option<i64>,
         read_fd: Option<i32>,
         write_fd: Option<i32>,
         server_address: Option<&str>,
@@ -1825,6 +1792,10 @@ impl PyKernel {
                 write_fd,
                 mime_type,
                 modified_at_ms,
+                content_id,
+                size,
+                version,
+                created_at_ms,
                 link_target,
                 source,
                 remote_metastore,
@@ -2383,6 +2354,7 @@ impl PyKernel {
                 dict.set_item("gen", s.gen)?;
                 dict.set_item("zone_id", s.zone_id.as_deref())?;
                 dict.set_item("link_target", s.link_target.as_deref())?;
+                dict.set_item("owner_id", s.owner_id.as_deref())?;
                 match &s.lock {
                     Some(lock) => {
                         let lock_dict = PyDict::new(py);
@@ -2567,39 +2539,6 @@ impl PyKernel {
         })
     }
 
-    // ── sys_rmdir ─────────────────────────────────────────────────────
-
-    #[pyo3(signature = (path, ctx, recursive=false))]
-    fn sys_rmdir(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        ctx: &PyOperationContext,
-        recursive: bool,
-    ) -> PyResult<PySysRmdirResult> {
-        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
-        if self.inner.has_hooks("rmdir") {
-            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
-                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-            let hc = get_hook_ctx_cache(py).ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err("hook context cache init failed")
-            })?;
-            let rhc = hc.rmdir.bind(py).call1((path, py_ctx))?.unbind();
-            self.dispatch_pre_hooks_inner("rmdir", &rhc)?;
-        }
-
-        // 2. Call pure Rust kernel (full rmdir)
-        let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx, recursive));
-        let result = result.map_err(|e| -> PyErr { e.into() })?;
-
-        Ok(PySysRmdirResult {
-            hit: result.hit,
-            post_hook_needed: result.post_hook_needed,
-            children_deleted: result.children_deleted,
-        })
-    }
-
     // ── Tier 2 convenience methods ────────────────────────────────────
 
     #[pyo3(signature = (path, zone_id))]
@@ -2610,11 +2549,6 @@ impl PyKernel {
     #[pyo3(signature = (parent_path, zone_id, is_admin=false))]
     fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
         self.inner.readdir(parent_path, zone_id, is_admin)
-    }
-
-    /// Backend-native directory listing for external connector mounts.
-    fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
-        self.inner.sys_readdir_backend(path, zone_id)
     }
 
     /// Phase 6: glob match against the metastore-recursive listing of

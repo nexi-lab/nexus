@@ -210,7 +210,7 @@ class MetadataMixin:
         parents_to_create: list[str] = []
 
         while parent_path and parent_path != "/":
-            if not self._kernel.metastore_exists(parent_path):
+            if not self._kernel.access(parent_path, ROOT_ZONE_ID):
                 parents_to_create.append(parent_path)
             else:
                 break
@@ -245,7 +245,8 @@ class MetadataMixin:
                     _meta.is_dir or _meta.is_mount or _meta.is_external_storage
                 ):
                     return True
-                return self._kernel.metastore_is_implicit_directory(path)
+                _stat = self._kernel.sys_stat(path, ROOT_ZONE_ID)
+                return _stat is not None and _stat.get("is_directory", False)
             # Single Rust round-trip: dcache → metastore → implicit directory
             stat = self.sys_stat(path, context=context)
             return stat is not None and stat.get("is_directory", False)
@@ -257,37 +258,17 @@ class MetadataMixin:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> bool:
-        """Tier 2: convenience wrapper — derives from sys_stat.
-
-        Equivalent to ``(await sys_stat(path)).get("is_directory", False)``.
-        """
-        try:
-            stat = self.sys_stat(path, context=context)
-            return stat is not None and stat.get("is_directory", False)
-        except (InvalidPathError, NexusFileNotFoundError):
-            return False
+        """Tier 2: convenience wrapper — derives from sys_stat."""
+        return self._kernel.is_directory(path, self._zone_id)
 
     # ── Tier 1 syscalls ───────────────────────────────────────────────
 
     @rpc_expose(description="Get available namespaces")
-    def get_top_level_mounts(self, context: OperationContext | None = None) -> builtins.list[str]:
-        """Return top-level mount names visible to the current user.
-
-        Reads DT_MOUNT entries from metastore (kernel's single source of
-        truth for mount points).
-        """
-        self._resolve_cred(context)
-        names: set[str] = set()
-        for meta in self._kernel.metastore_list("/"):
-            if not (meta.is_mount or meta.is_external_storage):
-                continue
-            top = meta.path.lstrip("/").split("/")[0]
-            if not top:
-                continue
-            names.add(top)
-        return sorted(names)
+    def get_top_level_mounts(self, context: OperationContext | None = None) -> builtins.list[str]:  # noqa: ARG002
+        """Return top-level mount names visible to the current user."""
+        return self._kernel.get_top_level_mounts(self._zone_id)
 
     # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_stat(
@@ -619,6 +600,10 @@ class MetadataMixin:
             capacity=capacity,
             mime_type=mime_type,
             modified_at_ms=modified_at_ms,
+            content_id=attrs.get("content_id"),
+            size=attrs.get("size"),
+            version=attrs.get("version"),
+            created_at_ms=attrs.get("created_at_ms"),
             read_fd=attrs.get("read_fd"),
             write_fd=attrs.get("write_fd"),
         )
@@ -632,8 +617,7 @@ class MetadataMixin:
         context: OperationContext | None = None,  # noqa: ARG002
     ) -> str | None:
         """Get content hash for HTTP If-None-Match checks."""
-        stat = self._kernel.sys_stat(path, self._zone_id)
-        return stat.get("content_id") if stat else None
+        return self._kernel.get_content_id(path, self._zone_id)
 
     # ── Tier 2 directory ──────────────────────────────────────────────
 
@@ -777,16 +761,16 @@ class MetadataMixin:
             return _result
 
         # Capture pre-delete metadata so post-delete hooks (snapshot
-        # rollback, audit, etc.) receive the original FileMetadata.
+        # rollback, audit, etc.) receive the original state as a dict.
         # Without this, SnapshotWriteHook.on_post_delete returns early
         # on ctx.metadata=None and never records original_hash for
         # transactional rollback (Codex review, Issue #4002 round 4).
-        # Let metastore errors propagate (Codex review, round 9): if
+        # Let stat errors propagate (Codex review, round 9): if
         # the probe fails we cannot prove the delete is observable,
         # so refuse rather than silently lose rollback data.  None is
         # still legitimate (implicit dirs / external storage entries
         # carry no metastore row).
-        _pre_delete_meta = self._kernel.metastore_get(path)
+        _pre_delete_meta = self._kernel.sys_stat(path, ROOT_ZONE_ID)
 
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         _unlink_start = time.perf_counter()
@@ -795,41 +779,39 @@ class MetadataMixin:
         _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
 
         if _unlink_result.hit:
-            # Rust handled the full operation (§12e: DT_DIR inlined via sys_rmdir).
-            try:
-                if _unlink_result.post_hook_needed:
-                    et = _unlink_result.entry_type
-                    if et == DT_DIR:
-                        from nexus.contracts.vfs_hooks import RmdirHookContext
+            # Rust handled the full operation (§12e: DT_DIR handled via internal sys_rmdir).
+            if _unlink_result.post_hook_needed:
+                et = _unlink_result.entry_type
+                if et == DT_DIR:
+                    from nexus.contracts.vfs_hooks import RmdirHookContext
 
-                        ctx = self._resolve_cred(context)
-                        self._kernel.dispatch_post_hooks(
-                            "rmdir",
-                            RmdirHookContext(
-                                path=path,
-                                context=ctx,
-                                zone_id=zone_id,
-                                agent_id=agent_id,
-                                recursive=recursive,
-                                metadata=_pre_delete_meta,
-                            ),
-                        )
-                    else:
-                        from nexus.contracts.vfs_hooks import DeleteHookContext
+                    ctx = self._resolve_cred(context)
+                    self._kernel.dispatch_post_hooks(
+                        "rmdir",
+                        RmdirHookContext(
+                            path=path,
+                            context=ctx,
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            recursive=recursive,
+                            metadata=_pre_delete_meta,
+                        ),
+                    )
+                else:
+                    from nexus.contracts.vfs_hooks import DeleteHookContext
 
-                        self._kernel.dispatch_post_hooks(
-                            "delete",
-                            DeleteHookContext(
-                                path=path,
-                                context=context,
-                                zone_id=zone_id,
-                                agent_id=agent_id,
-                                metadata=_pre_delete_meta,
-                            ),
-                        )
-            finally:
-                if _unlink_result.entry_type == DT_MOUNT:
-                    self._forget_mounted_backend_instance(path)
+                    self._kernel.dispatch_post_hooks(
+                        "delete",
+                        DeleteHookContext(
+                            path=path,
+                            context=context,
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            metadata=_pre_delete_meta,
+                        ),
+                    )
+            if _unlink_result.entry_type == DT_MOUNT:
+                self._forget_mounted_backend_instance(path)
             emit_op_completed(
                 agent_id=agent_id,
                 op="delete",
@@ -892,16 +874,8 @@ class MetadataMixin:
                 return {}
             raise NexusFileNotFoundError(path)
 
-        # DT_EXTERNAL_STORAGE (5): unmount via DLC (Python service-tier,
-        # connector teardown / token revocation).  Retry-safety
-        # (Codex review, Issue #4002 round 3): commit the metadata
-        # delete FIRST so a partial failure between teardown and
-        # metadata cleanup cannot leave a stuck entry.  After
-        # metadata.delete succeeds, the kernel no longer reports et=5
-        # for this path, so a retry simply short-circuits.  Connector
-        # teardown becomes best-effort; a False return is logged but
-        # does not raise, since we cannot distinguish "real teardown
-        # failure" from "already unmounted by an earlier attempt".
+        # DT_EXTERNAL_STORAGE (5): Rust kernel now handles metadata delete
+        # (C19). Python only needs connector teardown via DLC + post hooks.
         if et == 5:
             ctx = self._resolve_cred(context)
             from nexus.contracts.vfs_hooks import RmdirHookContext
@@ -912,9 +886,12 @@ class MetadataMixin:
             # caller's zone — e.g. an admin context deleting a tenant
             # mount.  Fall back to caller zone if metadata is missing
             # the field (older entries) and finally to ROOT_ZONE_ID.
-            route_zone = getattr(_pre_delete_meta, "zone_id", None) or zone_id or ROOT_ZONE_ID
+            route_zone = (
+                (_pre_delete_meta.get("zone_id") if _pre_delete_meta else None)
+                or zone_id
+                or ROOT_ZONE_ID
+            )
             self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
-            self._kernel.metastore_delete(path)
             removed = self._driver_coordinator.unmount(path, route_zone)
             # Verify the kernel mount route is actually gone so a real
             # teardown failure surfaces even when unmount() reports
@@ -1144,8 +1121,11 @@ class MetadataMixin:
         """
         path = self._validate_path(path)
 
-        # Check if it's an implicit directory first (for permission check optimization)
-        is_implicit_dir = self._kernel.metastore_is_implicit_directory(path)
+        # Single Rust round-trip: get stat (handles both explicit entries and implicit directories)
+        _stat = self._kernel.sys_stat(path, self._zone_id)
+        is_implicit_dir = (
+            _stat is not None and _stat.get("is_directory", False) and _stat.get("version", 1) == 0
+        )
 
         # Issue #1815: permission check via KernelDispatch INTERCEPT hook.
         ctx = self._resolve_cred(context)
@@ -1184,34 +1164,17 @@ class MetadataMixin:
                 "is_directory": True,
             }
 
-        # Get file metadata
-        meta = self._kernel.metastore_get(path)
-        if meta is None:
+        # sys_stat already has all metadata — no separate metastore_get needed
+        if _stat is None:
             raise NexusFileNotFoundError(path)
 
-        # Get size from backend if not in metadata
-        size = meta.size
-        if size is None and meta.content_id and meta.is_external_storage:
-            # External connectors: try Rust kernel sys_stat for size.
-            # CAS backends always have size set in metastore by sys_write.
-            try:
-                _stat = self._kernel.sys_stat(path, self._zone_id)
-                size = _stat.get("size") if isinstance(_stat, dict) else None
-            except Exception as exc:
-                logger.debug("Failed to get content size for %s: %s", path, exc)
-                size = None
-
-        # Convert datetime to ISO string for wire compatibility with Rust FUSE client
-        # The client expects a plain string, not the wrapped {"__type__": "datetime", ...} format
-        modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
-
         return {
-            "size": size,
-            "content_id": meta.content_id,
-            "version": meta.version,
-            "gen": meta.gen,
-            "modified_at": modified_at_str,
-            "is_directory": False,
+            "size": _stat.get("size", 0),
+            "content_id": _stat.get("content_id"),
+            "version": _stat.get("version"),
+            "gen": _stat.get("gen", 0),
+            "modified_at": _stat.get("modified_at"),
+            "is_directory": _stat.get("is_directory", False),
         }
 
     @rpc_expose(description="Get metadata for multiple files in bulk")
@@ -1292,38 +1255,27 @@ class MetadataMixin:
         # we check if it's an implicit directory as a fallback.
         try:
             allowed_paths = list(allowed_set)
-            batch_meta = dict(
+            batch_stats = dict(
                 zip(
                     allowed_paths,
-                    self._kernel.metastore_get_batch(allowed_paths),
+                    self._kernel.stat_batch(allowed_paths, ROOT_ZONE_ID),
                     strict=True,
                 )
             )
-            for path, meta in batch_meta.items():
-                if meta is None:
-                    # Path not found in metadata - check if it's an implicit directory
-                    if self._kernel.metastore_is_implicit_directory(path):
-                        results[path] = {
-                            "size": 0,
-                            "content_id": None,
-                            "version": None,
-                            "gen": 0,
-                            "modified_at": None,
-                            "is_directory": True,
-                        }
-                    elif skip_errors:
+            for path, stat in batch_stats.items():
+                if stat is None:
+                    if skip_errors:
                         results[path] = None
                     else:
                         raise NexusFileNotFoundError(path)
                 else:
-                    modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
                     results[path] = {
-                        "size": meta.size,
-                        "content_id": meta.content_id,
-                        "version": meta.version,
-                        "gen": meta.gen,
-                        "modified_at": modified_at_str,
-                        "is_directory": False,
+                        "size": stat.get("size", 0),
+                        "content_id": stat.get("content_id"),
+                        "version": stat.get("version"),
+                        "gen": stat.get("gen", 0),
+                        "modified_at": stat.get("modified_at"),
+                        "is_directory": stat.get("is_directory", False),
                     }
         except NexusFileNotFoundError:
             raise
@@ -1359,40 +1311,13 @@ class MetadataMixin:
 
     @rpc_expose(description="Check existence of multiple paths in single call")
     def exists_batch(
-        self, paths: list[str], context: OperationContext | None = None
+        self,
+        paths: list[str],
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, bool]:
-        """
-        Check existence of multiple paths in a single call (Issue #859).
-
-        This reduces network round trips when checking many paths at once.
-        Processing 10 paths requires 1 round trip instead of 10.
-
-        Args:
-            paths: List of virtual paths to check
-            context: Operation context for permission checks (uses default if None)
-
-        Returns:
-            Dictionary mapping each path to its existence status (True/False)
-
-        Performance:
-            - Single RPC call instead of N calls
-            - 10x fewer round trips for multi-path operations
-            - Each path is checked independently (errors don't affect others)
-
-        Examples:
-            >>> results = nx.exists_batch(["/file1.txt", "/file2.txt", "/missing.txt"])
-            >>> print(results)
-            {"/file1.txt": True, "/file2.txt": True, "/missing.txt": False}
-        """
-        results: dict[str, bool] = {}
-        for path in paths:
-            try:
-                results[path] = self.access(path, context=context)
-            except Exception as exc:
-                # Any error means file doesn't exist or isn't accessible
-                logger.debug("Exists check failed for %s: %s", path, exc)
-                results[path] = False
-        return results
+        """Check existence of multiple paths in a single call (Issue #859)."""
+        bools = self._kernel.exists_batch(paths, self._zone_id)
+        return dict(zip(paths, bools, strict=True))
 
     @rpc_expose(description="Get metadata for multiple paths in single call")
     def metadata_batch(
@@ -1439,22 +1364,22 @@ class MetadataMixin:
 
         # Batch fetch metadata from database
         if valid_paths:
-            batch_metadata = dict(
+            batch_stats = dict(
                 zip(
                     valid_paths,
-                    self._kernel.metastore_get_batch(list(valid_paths)),
+                    self._kernel.stat_batch(list(valid_paths), ROOT_ZONE_ID),
                     strict=True,
                 )
             )
         else:
-            batch_metadata = {}
+            batch_stats = {}
 
         # Process results with permission checks
         for path in valid_paths:
             try:
-                meta = batch_metadata.get(path)
+                stat = batch_stats.get(path)
 
-                if meta is None:
+                if stat is None:
                     results[path] = None
                     continue
 
@@ -1471,24 +1396,17 @@ class MetadataMixin:
                     results[path] = None
                     continue
 
-                # Check if it's a directory
-                is_dir = self.is_directory(path, context=context)
-
-                # ``backend_name``/``physical_path`` were removed from
-                # FileMetadata — the kernel resolves the physical
-                # location at read time via the mount/route layer, so
-                # batch metadata results no longer surface them.
                 results[path] = {
-                    "path": meta.path,
-                    "size": meta.size,
-                    "content_id": meta.content_id,
-                    "mime_type": meta.mime_type,
-                    "created_at": meta.created_at,
-                    "modified_at": meta.modified_at,
-                    "version": meta.version,
-                    "gen": meta.gen,
-                    "zone_id": meta.zone_id,
-                    "is_directory": is_dir,
+                    "path": stat.get("path", path),
+                    "size": stat.get("size", 0),
+                    "content_id": stat.get("content_id"),
+                    "mime_type": stat.get("mime_type"),
+                    "created_at": stat.get("created_at"),
+                    "modified_at": stat.get("modified_at"),
+                    "version": stat.get("version"),
+                    "gen": stat.get("gen", 0),
+                    "zone_id": stat.get("zone_id"),
+                    "is_directory": stat.get("is_directory", False),
                 }
             except Exception as exc:
                 logger.debug("Failed to build metadata result for %s: %s", path, exc)
@@ -1551,7 +1469,8 @@ class MetadataMixin:
                 # enumeration in a per-path try so a degraded metastore
                 # doesn't abort the whole batch (round 3 finding).
                 try:
-                    is_implicit = self._kernel.metastore_is_implicit_directory(normalized)
+                    _imp_stat = self._kernel.sys_stat(normalized, ROOT_ZONE_ID)
+                    is_implicit = _imp_stat is not None and _imp_stat.get("is_directory", False)
                 except Exception as e:
                     results[path] = {"success": False, "error": str(e)}
                     continue
@@ -1600,17 +1519,14 @@ class MetadataMixin:
                         # a "looks empty" verdict.  Success requires
                         # both probes to confirm absence.
                         try:
-                            explicit_after = self._kernel.metastore_get(normalized)
-                            implicit_after = self._kernel.metastore_is_implicit_directory(
-                                normalized
-                            )
+                            _after_stat = self._kernel.sys_stat(normalized, ROOT_ZONE_ID)
                         except Exception as e:
                             results[path] = {
                                 "success": False,
                                 "error": f"Could not verify recursive delete: {e}",
                             }
                             continue
-                        if explicit_after is not None or implicit_after:
+                        if _after_stat is not None:
                             results[path] = {
                                 "success": False,
                                 "error": (
@@ -1726,19 +1642,20 @@ class MetadataMixin:
         Promotes entry_type=0 (DT_REG) to 1 (DT_DIR) for implicit directories
         in non-recursive listings, matching ls -l semantics.
         """
-        entry_type = entry.entry_type
-        if not recursive and entry.entry_type == 0:
-            if implicit_dirs is None:
-                is_implicit_dir = self._kernel.metastore_is_implicit_directory(entry.path)
-            else:
+        et = entry.entry_type
+        if not recursive and et == 0:
+            if implicit_dirs is not None:
                 is_implicit_dir = entry.path.rstrip("/") in implicit_dirs
+            else:
+                _s = self._kernel.sys_stat(entry.path, ROOT_ZONE_ID)
+                is_implicit_dir = _s is not None and _s.get("is_directory", False)
             if is_implicit_dir:
-                entry_type = DT_DIR
+                et = DT_DIR
         return {
             "path": entry.path,
             "size": entry.size,
             "content_id": entry.content_id,
-            "entry_type": entry_type,
+            "entry_type": et,
             "zone_id": entry.zone_id,
             "owner_id": entry.owner_id,
             "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,

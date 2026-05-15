@@ -363,8 +363,8 @@ class TransactionalSnapshotService:
         conflicts: list[ConflictInfo] = []
         for entry in entries:
             if entry.new_hash is not None:
-                current_meta = self._kernel.metastore_get(entry.path)
-                current_hash = current_meta.content_id if current_meta else None
+                current_stat = self._kernel.sys_stat(entry.path, ROOT_ZONE_ID)
+                current_hash = current_stat["content_id"] if current_stat else None
                 if current_hash != entry.new_hash:
                     conflicts.append(
                         ConflictInfo(
@@ -456,6 +456,11 @@ class TransactionalSnapshotService:
         if txn_model.status != "active":
             raise TransactionNotActiveError(transaction_id, txn_model.status)
 
+        # System context for admin cleanup operations (rollback deletes).
+        from nexus.contracts.types import OperationContext
+
+        _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+
         # Process entries in reverse order (LIFO)
         for entry in reversed(entries):
             try:
@@ -464,28 +469,33 @@ class TransactionalSnapshotService:
                     restored = self._restore_metadata_from_snapshot(
                         entry.path, entry.original_hash, entry.original_metadata
                     )
-                    self._kernel.metastore_put(restored)
+                    self._kernel.sys_setattr(
+                        entry.path,
+                        0,  # UPDATE existing entry
+                        content_id=restored.content_id,
+                        size=restored.size,
+                        version=restored.version,
+                        modified_at_ms=int(restored.modified_at.timestamp() * 1000)
+                        if restored.modified_at
+                        else None,
+                        created_at_ms=int(restored.created_at.timestamp() * 1000)
+                        if restored.created_at
+                        else None,
+                    )
                     logger.debug("Restored file: path=%s hash=%s", entry.path, entry.original_hash)
                 elif entry.original_hash is not None and entry.original_metadata is None:
                     # Restore with minimal metadata (original_metadata was not captured)
                     if self._metadata_factory is not None:
-                        current_meta = self._kernel.metastore_get(entry.path)
-                        restored = self._metadata_factory(
-                            path=entry.path,
-                            size=getattr(current_meta, "size", 0) if current_meta else 0,
+                        current_stat = self._kernel.sys_stat(entry.path, ROOT_ZONE_ID)
+                        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+                        self._kernel.sys_setattr(
+                            entry.path,
+                            0,  # UPDATE existing entry
                             content_id=entry.original_hash,
-                            created_at=getattr(current_meta, "created_at", None)
-                            or datetime.now(UTC),
-                            modified_at=datetime.now(UTC),
-                            version=(getattr(current_meta, "version", 1) if current_meta else 1),
-                            zone_id=getattr(current_meta, "zone_id", ROOT_ZONE_ID)
-                            if current_meta
-                            else "root",
-                            owner_id=getattr(current_meta, "owner_id", None)
-                            if current_meta
-                            else None,
+                            size=current_stat.get("size", 0) if current_stat else 0,
+                            version=current_stat.get("version", 1) if current_stat else 1,
+                            modified_at_ms=now_ms,
                         )
-                        self._kernel.metastore_put(restored)
                         logger.debug(
                             "Restored file (minimal): path=%s hash=%s",
                             entry.path,
@@ -494,7 +504,7 @@ class TransactionalSnapshotService:
                 elif entry.operation == "write" and entry.original_hash is None:
                     # New file created during transaction — delete it
                     try:
-                        self._kernel.metastore_delete(entry.path)
+                        self._kernel.sys_unlink(entry.path, context=_sys_ctx)
                         if entry.new_hash:
                             self._cas_store.release(entry.new_hash)
                     except Exception:
@@ -502,10 +512,27 @@ class TransactionalSnapshotService:
                 elif entry.operation == "delete" and entry.original_hash is not None:
                     # File was deleted — restore from snapshot
                     if entry.original_metadata:
-                        restored = self._restore_metadata_from_snapshot(
-                            entry.path, entry.original_hash, entry.original_metadata
+                        meta_dict = json.loads(entry.original_metadata)
+                        _created = (
+                            datetime.fromisoformat(meta_dict["created_at"])
+                            if meta_dict.get("created_at")
+                            else datetime.now(UTC)
                         )
-                        self._kernel.metastore_put(restored)
+                        _modified = (
+                            datetime.fromisoformat(meta_dict["modified_at"])
+                            if meta_dict.get("modified_at")
+                            else datetime.now(UTC)
+                        )
+                        self._kernel.sys_setattr(
+                            entry.path,
+                            0,  # DT_REG upsert (re-create deleted entry)
+                            content_id=entry.original_hash,
+                            size=meta_dict.get("size", 0),
+                            version=meta_dict.get("version", 1),
+                            zone_id=meta_dict.get("zone_id", ROOT_ZONE_ID),
+                            modified_at_ms=int(_modified.timestamp() * 1000),
+                            created_at_ms=int(_created.timestamp() * 1000),
+                        )
                         logger.debug(
                             "Restored deleted file: path=%s hash=%s",
                             entry.path,

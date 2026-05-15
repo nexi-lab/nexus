@@ -251,16 +251,12 @@ impl<K: KernelAbi> AcpService<K> {
     pub(crate) fn list_agent_configs(&self, zone_id: Option<&str>) -> Vec<Value> {
         let zone_id = zone_id.unwrap_or(&self.default_zone);
         let agents_dir = format!("/{zone_id}/agents");
-        let entries = self.kernel.sys_readdir_backend(&agents_dir, zone_id);
+        let entries = self.kernel.readdir(&agents_dir, zone_id, true);
         let mut out = Vec::new();
-        for entry_path in entries {
-            // sys_readdir_backend returns paths; we look for
-            // <agent_id>/agent.json under each.
-            let cfg_path = if entry_path.ends_with('/') {
-                format!("{entry_path}agent.json")
-            } else {
-                format!("{entry_path}/agent.json")
-            };
+        for (child_path, _etype) in entries {
+            // readdir returns full child paths; append agent.json to
+            // each child directory.
+            let cfg_path = format!("{}/agent.json", child_path.trim_end_matches('/'));
             if let Some(bytes) = self
                 .kernel
                 .sys_read(&cfg_path, &Self::ctx(), 5000, 0)
@@ -340,16 +336,12 @@ impl<K: KernelAbi> AcpService<K> {
     pub(crate) fn get_call_history(&self, zone_id: Option<&str>, limit: usize) -> Vec<Value> {
         let zone_id = zone_id.unwrap_or(&self.default_zone);
         let proc_dir = format!("/{zone_id}/proc");
-        let entries = self.kernel.sys_readdir_backend(&proc_dir, zone_id);
+        let entries = self.kernel.readdir(&proc_dir, zone_id, true);
         let mut out = Vec::new();
-        for entry_path in entries {
-            let result_path = if entry_path.ends_with("/result") {
-                entry_path
-            } else if entry_path.ends_with('/') {
-                format!("{entry_path}result")
-            } else {
-                continue;
-            };
+        for (child_path, _etype) in entries {
+            // readdir returns full child paths like /{zone}/proc/{pid}.
+            // Look for a "result" child under each entry.
+            let result_path = format!("{}/result", child_path.trim_end_matches('/'));
             if let Some(bytes) = self
                 .kernel
                 .sys_read(&result_path, &Self::ctx(), 5000, 0)

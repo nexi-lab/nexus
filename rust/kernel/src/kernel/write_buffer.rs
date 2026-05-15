@@ -453,6 +453,7 @@ mod tests {
             last_writer_address: None,
             target_zone_id: None,
             link_target: None,
+            owner_id: None,
         }
     }
 

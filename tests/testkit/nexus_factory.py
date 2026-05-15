@@ -1,4 +1,8 @@
-"""Shared NexusFS factory for tests."""
+"""Shared NexusFS factory for tests.
+
+Federation wiring is intentionally omitted — unit tests must not start
+gRPC servers (port contention with xdist workers).
+"""
 
 from __future__ import annotations
 
@@ -41,18 +45,6 @@ def make_test_nexus(
         from nexus_runtime import PyKernel as _Kernel
 
         _kernel = _Kernel()
-        try:
-            import nexus_runtime as _nk
-
-            _nk.install_transport_wiring(_kernel)
-            _nk.install_federation_wiring(_kernel)
-        except Exception as _wiring_exc:
-            import logging as _logging
-
-            _logging.getLogger(__name__).debug(
-                "install_transport_wiring/install_federation_wiring failed in test fixture: %s",
-                _wiring_exc,
-            )
         _kernel.set_metastore_path(str(tmp_path / "metastore.redb"))
         metadata_store = _kernel
 

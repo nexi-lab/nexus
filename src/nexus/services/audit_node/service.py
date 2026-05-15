@@ -250,6 +250,8 @@ class AuditNode:
         path = self._offset_path(source_zone)
         payload = json.dumps({"offset": offset}).encode("utf-8")
         try:
+            # sys_write requires file to exist — ensure DT_REG entry first.
+            self._kernel.sys_setattr(path, entry_type=0)
             self._kernel.sys_write(path, payload)
         except Exception as exc:  # pragma: no cover
             logger.warning(

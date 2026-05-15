@@ -11,6 +11,7 @@ Operations:
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -201,7 +202,7 @@ class MountService:
 
             admin_ctx = OperationContext(user_id="system", groups=[], is_admin=True, is_system=True)
 
-            # Enumerate files via Rust kernel sys_readdir (BFS) — works for all
+            # Enumerate files via Rust kernel readdir (BFS) — works for all
             # connector types including CLI-backed ones where the Raft metastore
             # doesn't store file entries.
             file_paths: list[str] = []
@@ -209,23 +210,19 @@ class MountService:
             if _rust_kernel is not None:
                 from collections import deque
 
+                DT_DIR = 1  # kernel entry_type constant
                 queue: deque[str] = deque([mount_point])
                 while queue and len(file_paths) < 200:
                     virtual_prefix = queue.popleft()
                     try:
-                        entries = list(
-                            _rust_kernel.sys_readdir_backend(virtual_prefix, zone_id or "root")
-                        )
+                        entries = list(_rust_kernel.readdir(virtual_prefix, zone_id or "root"))
                     except Exception:
                         continue
-                    for entry in entries:
-                        is_dir = entry.endswith("/")
-                        name = entry.rstrip("/")
-                        vp = f"{virtual_prefix.rstrip('/')}/{name}"
-                        if is_dir:
-                            queue.append(vp)
+                    for child_path, etype in entries:
+                        if etype == DT_DIR:
+                            queue.append(child_path)
                         else:
-                            file_paths.append(vp)
+                            file_paths.append(child_path)
                             if len(file_paths) >= 200:
                                 break
 
@@ -316,9 +313,8 @@ class MountService:
         # Create directory entries for mount point AND parent directories
         # via sync metadata_put.
         if self.nexus_fs is not None and hasattr(self.nexus_fs, "metadata"):
-            from datetime import UTC, datetime
-
-            from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
+            from nexus.contracts.constants import ROOT_ZONE_ID
+            from nexus.contracts.metadata import DT_DIR, DT_MOUNT
             from nexus.lib.context_utils import get_zone_id
 
             if entry_type is None:
@@ -330,22 +326,15 @@ class MountService:
             for i in range(2, len(parts) + 1):
                 dir_path = "/".join(parts[:i])
                 try:
-                    existing = self.nexus_fs._kernel.metastore_get(dir_path)
+                    existing = self.nexus_fs._kernel.access(dir_path, ROOT_ZONE_ID)
                     if existing:
                         continue
-                    now = datetime.now(UTC)
                     is_mount_point = i == len(parts)
-                    meta = FileMetadata(
-                        path=dir_path,
-                        size=0,
-                        content_id=None,
-                        entry_type=entry_type if is_mount_point else DT_DIR,
-                        created_at=now,
-                        modified_at=now,
-                        version=1,
+                    self.nexus_fs._kernel.sys_setattr(
+                        dir_path,
+                        entry_type if is_mount_point else DT_DIR,
                         zone_id=zone_id,
                     )
-                    self.nexus_fs._kernel.metastore_put(meta)
                     logger.info(f"Created directory entry: {dir_path}")
                 except Exception as e:
                     logger.warning(f"Failed to create directory entry {dir_path}: {e}")
@@ -613,11 +602,14 @@ class MountService:
             # Delete all metadata entries (mount point + children)
             try:
                 dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
-                child_entries = list(kernel.metastore_list(dir_prefix))
+                child_entries = kernel.metastore_list_paginated(dir_prefix, True, 100000, None)[
+                    "items"
+                ]
                 paths_to_delete = [entry.path for entry in child_entries] if child_entries else []
                 paths_to_delete.append(mount_point)  # Include mount point itself
                 for path in paths_to_delete:
-                    kernel.metastore_delete(path)
+                    with contextlib.suppress(Exception):
+                        self.nexus_fs.sys_unlink(path, context=context)
                 result["files_deleted"] = len(paths_to_delete)
                 logger.info(f"Deleted {len(paths_to_delete)} metadata entries for {mount_point}")
             except Exception as e:

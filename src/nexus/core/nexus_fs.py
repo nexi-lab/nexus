@@ -274,24 +274,30 @@ class NexusFS(  # type: ignore[misc]
                     from nexus_runtime import PyKernel as _Kernel
 
                     self._kernel = _Kernel()
+                    # Start write-buffer background flusher (production only).
+                    # Test kernels skip this — see make_test_nexus.
+                    self._kernel.start_write_buffer_flusher(250)
                     # Phase 4 (full): drain federation's blob-fetcher
                     # slot + install real `PeerBlobClient` (idempotent).
                     # Log on failure so a stale wheel surfaces in the
                     # logs rather than silently disabling federation.
-                    try:
-                        import nexus_runtime as _nk
+                    # Skip federation wiring during pytest — parallel xdist
+                    # workers compete for the same gRPC port causing 8+ min
+                    # hangs. Federation is an integration-level concern; unit
+                    # tests pass a pre-built kernel via _provided_kernel instead.
+                    if "pytest" not in __import__("sys").modules:
+                        try:
+                            import nexus_runtime as _nk
 
-                        # Federation first so init_from_env stashes the
-                        # blob-fetcher slot before transport drains it.
-                        _nk.install_federation_wiring(self._kernel)
-                        _nk.install_transport_wiring(self._kernel)
-                    except Exception as _wiring_exc:
-                        logger.warning(
-                            "install_transport_wiring/install_federation_wiring "
-                            "failed (federation peer-blob fetch will fall back "
-                            "to Noop): %s",
-                            _wiring_exc,
-                        )
+                            _nk.install_federation_wiring(self._kernel)
+                            _nk.install_transport_wiring(self._kernel)
+                        except Exception as _wiring_exc:
+                            logger.warning(
+                                "install_transport_wiring/install_federation_wiring "
+                                "failed (federation peer-blob fetch will fall back "
+                                "to Noop): %s",
+                                _wiring_exc,
+                            )
                     # Wire redb metastore — ALL reads and writes go through
                     # Rust redb. When the caller handed us a path, open
                     # against it. When ``None`` was passed, fall back to a
@@ -1066,11 +1072,11 @@ class NexusFS(  # type: ignore[misc]
                     _release()
             except Exception as exc:  # pragma: no cover - best-effort teardown
                 logger.debug("kernel.release_metastores failed: %s", exc)
-            # Drop this kernel from the shared SQLiteMetastore cache so the
-            # next ``SQLiteMetastore(path)`` in this process gets a fresh
+            # Drop this kernel from the shared create_kernel cache so the
+            # next ``create_kernel(path)`` in this process gets a fresh
             # kernel with its own metastore wired up (Issue #3765 Cat-5/6).
             try:
-                from nexus.fs._sqlite_meta import _evict_kernel_cache
+                from nexus.fs._kernel_factory import _evict_kernel_cache
 
                 _evict_kernel_cache(self._kernel)
             except Exception as exc:  # pragma: no cover - best-effort

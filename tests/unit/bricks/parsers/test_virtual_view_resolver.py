@@ -1,7 +1,7 @@
 """Tests for VirtualViewResolver — VFSPathResolver behavioral contract (#1305).
 
 Verifies:
-- try_read uses single metastore lookup (no double lookup)
+- try_read uses single kernel lookup (no double lookup)
 - try_read returns parsed content for virtual view paths
 - try_read returns None for non-virtual paths
 - try_write / try_delete reject virtual views with error
@@ -9,7 +9,6 @@ Verifies:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -17,27 +16,24 @@ import pytest
 from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
 
 
-@dataclass
-class FakeFileMetadata:
-    path: str
-    content_id: str = "abc123"
-    version: str = "1"
-    size: int = 100
-    owner: str = "user"
-
-
 @pytest.fixture
 def metadata() -> MagicMock:
     """Mock kernel-shaped metastore.
 
-    Post-W3 the resolver stores ``self._kernel = metadata`` directly
-    (no proxy unwrap), so tests assert on
-    ``metadata.metastore_{get,exists}`` rather than going through a
-    ``_rust_kernel`` shim.
+    Post-C10a the resolver stores ``self._kernel = metadata`` directly
+    and calls ``sys_stat`` (try_read) and ``access`` (try_write/try_delete)
+    instead of the deleted ``metastore_get`` / ``metastore_exists``.
     """
     mock = MagicMock()
-    mock.metastore_get.return_value = FakeFileMetadata(path="/file.xlsx", content_id="hash123")
-    mock.metastore_exists.return_value = True
+    # sys_stat returns a dict (truthy) or None (falsy) — used by try_read
+    mock.sys_stat.return_value = {
+        "path": "/file.xlsx",
+        "content_id": "hash123",
+        "size": 100,
+        "entry_type": 0,
+    }
+    # access returns bool — used by try_write / try_delete
+    mock.access.return_value = True
     return mock
 
 
@@ -70,30 +66,30 @@ def resolver(
 
 
 class TestSingleMetastoreLookup:
-    """Behavioral contract: try_read must use at most one metastore call."""
+    """Behavioral contract: try_read must use at most one kernel call."""
 
     def test_try_read_single_lookup(
         self, resolver: VirtualViewResolver, metadata: MagicMock
     ) -> None:
-        """try_read should call metastore_get exactly once, not exists+get."""
+        """try_read should call sys_stat exactly once, not access+sys_stat."""
         resolver.try_read("/file_parsed.xlsx.md")
 
-        # kernel.metastore_get called exactly once (by parse_virtual_path)
-        assert metadata.metastore_get.call_count == 1
-        assert metadata.metastore_get.call_args == call("/file.xlsx")
+        # kernel.sys_stat called exactly once (by parse_virtual_path)
+        assert metadata.sys_stat.call_count == 1
+        assert metadata.sys_stat.call_args == call("/file.xlsx", "root")
 
-        # kernel.metastore_exists must NOT be called during try_read
-        metadata.metastore_exists.assert_not_called()
+        # kernel.access must NOT be called during try_read
+        metadata.access.assert_not_called()
 
     def test_try_read_nonvirtual_single_lookup(
         self, resolver: VirtualViewResolver, metadata: MagicMock
     ) -> None:
-        """Non-virtual path: metastore_get should not be called at all."""
+        """Non-virtual path: sys_stat should not be called at all."""
         result = resolver.try_read("/normal_file.txt")
 
         assert result is None
-        metadata.metastore_get.assert_not_called()
-        metadata.metastore_exists.assert_not_called()
+        metadata.sys_stat.assert_not_called()
+        metadata.access.assert_not_called()
 
 
 class TestTryRead:
@@ -107,7 +103,7 @@ class TestTryRead:
     def test_returns_none_when_original_missing(
         self, resolver: VirtualViewResolver, metadata: MagicMock
     ) -> None:
-        metadata.metastore_get.return_value = None
+        metadata.sys_stat.return_value = None
         assert resolver.try_read("/missing_parsed.xlsx.md") is None
 
 

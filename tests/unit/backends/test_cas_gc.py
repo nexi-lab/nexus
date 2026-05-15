@@ -30,8 +30,8 @@ class FakeMetaEntry:
 class FakeMetastore:
     """Kernel-handle stub for CAS GC tests.
 
-    Post-W3 ``CASGarbageCollector`` reaches the metastore via
-    ``self._kernel.metastore_list``. The constructor's
+    Post-C24 ``CASGarbageCollector`` reaches the metastore via
+    ``self._kernel.metastore_list_paginated``. The constructor's
     ``hasattr(metastore, "_rust_kernel")`` guard treats this stub as
     a bare kernel.
     """
@@ -42,8 +42,10 @@ class FakeMetastore:
     def add(self, path: str, content_id: str) -> None:
         self._entries.append(FakeMetaEntry(path=path, content_id=content_id))
 
-    def metastore_list(self, prefix: str = "", **kwargs: object) -> list[FakeMetaEntry]:
-        return list(self._entries)
+    def metastore_list_paginated(
+        self, prefix: str = "", recursive: bool = True, limit: int = 100000, cursor: object = None
+    ) -> dict:
+        return {"items": list(self._entries), "cursor": None}
 
 
 @pytest.fixture

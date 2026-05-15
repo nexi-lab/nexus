@@ -1,8 +1,11 @@
-//! File I/O syscalls — `sys_read`, `sys_write`, `sys_stat`,
-//! `sys_unlink`, `sys_rename`, `sys_copy`, `sys_mkdir`, `sys_rmdir`.
+//! Tier 1 syscall IMPLEMENTATIONS — see `abi.rs` for contracts,
+//! `convenience.rs` for Tier 2.
 //!
-//! Every method stays a member of [`Kernel`] via this submodule's
-//! `impl Kernel { ... }` block.
+//! File I/O syscalls: `sys_read`, `sys_write`, `sys_stat`,
+//! `sys_unlink`, `sys_rename`, `sys_copy`, `sys_mkdir`.
+//!
+//! `sys_rmdir` is kernel-internal (`pub(crate)`) — only called from
+//! `sys_unlink` DT_DIR branch. Removed from PyO3 surface in C21.
 
 use std::sync::atomic::Ordering;
 
@@ -789,7 +792,13 @@ impl Kernel {
         }
         if reqs.len() == 1 {
             let req = &reqs[0];
-            return vec![self.sys_write_single(&req.path, ctx, &req.content, req.offset, 1)];
+            return vec![self.sys_write_with_link_depth(
+                &req.path,
+                ctx,
+                &req.content,
+                req.offset,
+                1,
+            )];
         }
         self.sys_write_batch_impl(reqs, ctx)
     }
@@ -805,10 +814,10 @@ impl Kernel {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
-        self.sys_write_single(path, ctx, content, offset, 1)
+        self.sys_write_with_link_depth(path, ctx, content, offset, 1)
     }
 
-    fn sys_write_single(
+    pub(crate) fn sys_write_with_link_depth(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -903,7 +912,7 @@ impl Kernel {
                         "DT_LINK chain rejected (ELOOP) at {path}"
                     )));
                 }
-                return self.sys_write_single(
+                return self.sys_write_with_link_depth(
                     target,
                     ctx,
                     effective_content,
@@ -1499,8 +1508,21 @@ impl Kernel {
             return Some(stat);
         }
 
-        // 3. Route
-        let route = self.vfs_router.route(path, zone_id).ok()?;
+        // 3. Route — try VFS routing; fall back to global metastore
+        //    for paths outside any mount (e.g. /settings/* config entries).
+        let route = match self.vfs_router.route(path, zone_id) {
+            Ok(r) => r,
+            Err(_) => {
+                // No mount covers this path — check global metastore directly.
+                // This is the read-side counterpart of setattr_update's global
+                // metastore fallback (same path create_nexus_fs settings boot uses).
+                return self
+                    .metastore_get(path)
+                    .ok()
+                    .flatten()
+                    .map(StatResult::from);
+            }
+        };
         if self.flush_dirty_path_if_present(path, zone_id).is_err() {
             return None;
         }
@@ -1517,9 +1539,10 @@ impl Kernel {
         // — same pattern ``sys_mkdir`` uses ("the mount IS the
         // directory"). Avoids a metastore round-trip and removes the
         // need for federation to seed a dcache row at the mount root.
-        let (parent_zone, _user_mp) =
-            crate::vfs_router::extract_zone_from_canonical(&route.mount_point);
-        if route.backend_path.is_empty() && parent_zone != route.zone_id {
+        if route.backend_path.is_empty() {
+            // Mount-point root: the routed path IS the mount point itself.
+            // No metastore entry exists at the mount root — the VFS route
+            // is the SSOT. Synthesize a DT_MOUNT directory result.
             return Some(StatResult {
                 path: path.to_string(),
                 size: 4096,
@@ -1536,6 +1559,7 @@ impl Kernel {
                 last_writer_address: None,
                 lock: None,
                 link_target: None,
+                owner_id: None,
             });
         }
 
@@ -1579,6 +1603,7 @@ impl Kernel {
                         last_writer_address: None,
                         lock: None,
                         link_target: None,
+                        owner_id: None,
                     });
                 }
                 return None;
@@ -1620,6 +1645,7 @@ impl Kernel {
             last_writer_address: entry.last_writer_address,
             lock,
             link_target: entry.link_target,
+            owner_id: entry.owner_id,
         })
     }
 
@@ -1747,6 +1773,7 @@ impl Kernel {
                 last_writer_address: None,
                 target_zone_id: Some(route.zone_id.clone()),
                 link_target: None,
+                owner_id: None,
             }
         } else {
             // 3. Get metadata via the routed metastore (per-mount first,
@@ -3051,8 +3078,9 @@ impl Kernel {
                 continue;
             }
 
-            // Backend write. Per-item error semantics: a failure only taints
-            // that item's result, not the whole batch.
+            // Backend write. ``sys_write_batch`` keeps per-item error
+            // semantics: a failure only taints that item's result, not the
+            // whole batch.
             let write_result = route.backend.as_ref().and_then(|b| {
                 b.write_content(&req.content, &route.backend_path, ctx, 0)
                     .ok()

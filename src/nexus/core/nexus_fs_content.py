@@ -273,13 +273,13 @@ class ContentMixin:
                     result = self._kernel.sys_read(path, _rust_ctx)
                     content = result.data or b""
                     if return_metadata:
-                        meta = self._kernel.metastore_get(path)
+                        stat = self._kernel.sys_stat(path, ROOT_ZONE_ID)
                         results[path] = {
                             "content": content,
-                            "content_id": meta.content_id if meta else None,
-                            "version": meta.version if meta else 0,
-                            "gen": meta.gen if meta else 0,
-                            "modified_at": meta.modified_at if meta else None,
+                            "content_id": stat["content_id"] if stat else None,
+                            "version": stat["version"] if stat else 0,
+                            "gen": stat.get("gen", 0) if stat else 0,
+                            "modified_at": stat["modified_at"] if stat else None,
                             "size": len(content),
                         }
                     else:
@@ -326,14 +326,14 @@ class ContentMixin:
         _rust_ctx = self._build_rust_ctx(context, is_admin)
 
         # Batch metadata lookup (needed for return_metadata=True)
-        batch_meta: dict[str, FileMetadata | None] | None = None
+        batch_meta: dict[str, dict[str, Any] | None] | None = None
         if return_metadata:
             meta_start = time.time()
             allowed_paths = list(allowed_set)
             batch_meta = dict(
                 zip(
                     allowed_paths,
-                    self._kernel.metastore_get_batch(allowed_paths),
+                    self._kernel.stat_batch(allowed_paths, ROOT_ZONE_ID),
                     strict=True,
                 )
             )
@@ -358,13 +358,13 @@ class ContentMixin:
                 content = bulk_content
                 if return_metadata:
                     assert batch_meta is not None
-                    meta = batch_meta.get(path)
+                    stat = batch_meta.get(path)
                     results[path] = {
                         "content": bulk_content,
-                        "content_id": meta.content_id if meta else None,
-                        "version": meta.version if meta else 0,
-                        "gen": meta.gen if meta else 0,
-                        "modified_at": meta.modified_at if meta else None,
+                        "content_id": stat["content_id"] if stat else None,
+                        "version": stat["version"] if stat else 0,
+                        "gen": stat.get("gen", 0) if stat else 0,
+                        "modified_at": stat["modified_at"] if stat else None,
                         "size": len(bulk_content),
                     }
                 else:
@@ -679,7 +679,7 @@ class ContentMixin:
                     is_new_file=result.is_new,
                     content_id=result.content_id or "",
                     metadata=_meta_obj,
-                    old_metadata=_old_metadata,
+                    old_metadata=_old_metadata.to_dict() if _old_metadata else None,
                     new_version=result.version,
                 ),
             )
@@ -886,6 +886,12 @@ class ContentMixin:
 
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
+        # Tier 1 sys_write: Rust handles create-on-write (implicit create
+        # when offset==0 and entry absent), backend I/O, metadata build+put,
+        # dcache update, and OBSERVE dispatch.  Matches develop — Tier 2
+        # write() wraps sys_write with a redundant create-on-miss fallback
+        # that is never exercised under implicit-create and adds PyO3
+        # dispatch overhead on macOS CI (5× slower).
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
         if result.hit:
             io_metrics.record_write_backend_rpc()
@@ -932,7 +938,7 @@ class ContentMixin:
                     gen=result.gen,
                     zone_id=zone_id,
                 ),
-                old_metadata=_old_meta,
+                old_metadata=_old_meta.to_dict() if _old_meta else None,
                 new_version=result.version,
             ),
         )
@@ -1631,7 +1637,7 @@ class ContentMixin:
         """Inner write_batch body — caller holds _occ_path_lock for every path."""
         # Get existing metadata for pre-hooks and is_new detection
         existing_metadata = dict(
-            zip(paths, self._kernel.metastore_get_batch(list(paths)), strict=True)
+            zip(paths, self._kernel.stat_batch(list(paths), ROOT_ZONE_ID), strict=True)
         )
 
         # PRE-INTERCEPT: pre-write hooks per file in batch
@@ -1681,21 +1687,31 @@ class ContentMixin:
                     )
                 )
             else:
-                # Fallback: Rust batch missed — use sys_write for single file
-                wr = self.sys_write(path, content, context=context)
+                # Fallback: Rust batch missed (new file — doesn't exist in
+                # metastore yet). Use Tier 2 self.write() which composes
+                # create-on-write + sys_write, so new files are created via
+                # route-scoped metastore put. The raw sys_write alone returns
+                # a miss (hit=false) without creating the file (POSIX write(2)
+                # contract: file must already exist).
+                #
+                # self.write() dispatches its own post-hooks for this single
+                # file — the batch post-hook below will also fire, but that
+                # is harmless (write_batch hooks expect per-item metadata
+                # that is already in metadata_list regardless).
+                wr = self.write(path, content, context=context)
                 results.append(
                     {
                         "content_id": wr.get("content_id", ""),
                         "version": wr.get("version", 1),
                         "gen": wr.get("gen", 0),
                         "modified_at": now,
-                        "size": len(content),
+                        "size": wr.get("size", len(content)),
                     }
                 )
                 metadata_list.append(
                     FileMetadata(
                         path=path,
-                        size=len(content),
+                        size=wr.get("size", len(content)),
                         content_id=wr.get("content_id", ""),
                         version=wr.get("version", 1),
                         gen=wr.get("gen", 0),
@@ -1815,7 +1831,7 @@ class ContentMixin:
             dict(
                 zip(
                     allowed_paths,
-                    self._kernel.metastore_get_batch(list(allowed_paths)),
+                    self._kernel.stat_batch(list(allowed_paths), ROOT_ZONE_ID),
                     strict=True,
                 )
             )
@@ -1835,7 +1851,7 @@ class ContentMixin:
         _MAX_BATCH_READ_BYTES = 100 * 1024 * 1024  # 100 MB
         if allowed_paths and batch_meta:
             _total_declared = sum(
-                batch_meta[p].size
+                batch_meta[p].get("size", 0)
                 for p in allowed_paths
                 if batch_meta.get(p) is not None  # value may be None for missing files
             )
@@ -1856,7 +1872,7 @@ class ContentMixin:
         )
 
         results: list[dict[str, Any]] = []
-        hit_items: list[tuple[str, "FileMetadata | None"]] = []  # for post-hooks
+        hit_items: list[tuple[str, dict[str, Any] | None]] = []  # for post-hooks
 
         # Check once whether any per-file "read" post-hooks are registered.
         # These hooks (e.g. DynamicViewerReadHook) may transform or redact content.
@@ -1956,10 +1972,10 @@ class ContentMixin:
                         {
                             "path": path,
                             "content": content,
-                            "content_id": meta.content_id if meta else None,
-                            "version": meta.version if meta else 0,
-                            "gen": meta.gen if meta else 0,
-                            "modified_at": meta.modified_at if meta else None,
+                            "content_id": meta.get("content_id") if meta else None,
+                            "version": meta.get("version", 0) if meta else 0,
+                            "gen": meta.get("gen", 0) if meta else 0,
+                            "modified_at": meta.get("modified_at") if meta else None,
                             "size": content_bytes_len,
                         }
                     )
@@ -2017,15 +2033,15 @@ class ContentMixin:
             # returned by this read, not the pre-read metadata snapshot (which can be
             # stale under concurrent writes).  Fall back to meta.content_id only when the
             # Rust result has no content_id (older backends / degenerate path).
-            _content_id = r.content_id or (meta.content_id if meta else None)
+            _content_id = r.content_id or (meta.get("content_id") if meta else None)
             results.append(
                 {
                     "path": path,
                     "content": content,
                     "content_id": _content_id,
-                    "version": meta.version if meta else 0,
+                    "version": meta.get("version", 0) if meta else 0,
                     "gen": r.gen,
-                    "modified_at": meta.modified_at if meta else None,
+                    "modified_at": meta.get("modified_at") if meta else None,
                     "size": len(content),
                 }
             )

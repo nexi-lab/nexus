@@ -73,6 +73,7 @@ impl Kernel {
                 last_writer_address: None,
                 lock: None,
                 link_target: None,
+                owner_id: None,
             });
         }
         // /__sys__/zones/<id>: synthesise from federation list.
@@ -99,12 +100,14 @@ impl Kernel {
             last_writer_address: self.self_address_string(),
             lock: None,
             link_target: None,
+            owner_id: None,
         })
     }
 
     /// Federation procfs: list zones for `/__sys__/zones/` directory
     /// reads.  Returns `None` for paths outside the namespace so the
     /// caller falls through to normal routing.
+    #[allow(dead_code)] // reserved for readdir `/__sys__/zones/` integration
     pub(crate) fn zones_procfs_readdir(&self, path: &str) -> Option<Vec<String>> {
         let suffix = path.strip_prefix("/__sys__/zones")?;
         if !suffix.is_empty() && suffix != "/" {

@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import Permission
 from nexus.contracts.vfs_hooks import VFSPathResolver
@@ -82,9 +83,11 @@ class VirtualViewResolver(VFSPathResolver):
         """Read virtual parsed view, or return None if not a virtual view."""
         from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
-        # Single metastore lookup: kernel.metastore_get returns FileMetadata (truthy)
-        # or None (falsy). parse_virtual_path passes the result through.
-        original_path, view_type, meta = parse_virtual_path(path, self._kernel.metastore_get)
+        # Single kernel lookup: sys_stat returns dict (truthy) or None (falsy).
+        # parse_virtual_path passes the result through.
+        original_path, view_type, meta = parse_virtual_path(
+            path, lambda p: self._kernel.sys_stat(p, ROOT_ZONE_ID)
+        )
         if view_type != "md":
             return None
 
@@ -94,7 +97,7 @@ class VirtualViewResolver(VFSPathResolver):
         logger.info("read: Virtual view detected, reading original file: %s", original_path)
 
         # Route and read original file content
-        if meta is None or meta.content_id is None:
+        if meta is None or meta.get("content_id") is None:
             raise NexusFileNotFoundError(original_path)
 
         # Read content via kernel syscall — sys_read_raw raises on missing path.
@@ -122,7 +125,7 @@ class VirtualViewResolver(VFSPathResolver):
         _ = context
         from nexus.lib.virtual_views import parse_virtual_path
 
-        _, view_type, _ = parse_virtual_path(path, self._kernel.metastore_exists)
+        _, view_type, _ = parse_virtual_path(path, lambda p: self._kernel.access(p, ROOT_ZONE_ID))
         if view_type == "md":
             raise NexusFileNotFoundError(
                 f"Cannot write to virtual view: {path} ({len(content)} bytes)"
@@ -134,7 +137,7 @@ class VirtualViewResolver(VFSPathResolver):
         from nexus.lib.virtual_views import parse_virtual_path
 
         _ = context
-        _, view_type, _ = parse_virtual_path(path, self._kernel.metastore_exists)
+        _, view_type, _ = parse_virtual_path(path, lambda p: self._kernel.access(p, ROOT_ZONE_ID))
         if view_type == "md":
             raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")
         return None

@@ -470,7 +470,7 @@ class ZoneImportService:
         target_zone_id = options.target_zone_id or record.zone_id
 
         # Check if file already exists
-        existing = self.nexus_fs._kernel.metastore_get(remapped_path)
+        existing = self.nexus_fs._kernel.sys_stat(remapped_path, ROOT_ZONE_ID)
 
         if existing is not None:
             # Handle conflict
@@ -483,11 +483,12 @@ class ZoneImportService:
                 raise FileExistsError(f"File already exists: {remapped_path}")
 
             elif options.conflict_mode == ConflictMode.MERGE:
-                # Merge: prefer newer content based on updated_at
+                # Merge: prefer newer content based on modified_at
+                existing_modified = existing.get("modified_at")
                 if (
-                    existing.modified_at
+                    existing_modified
                     and record.updated_at
-                    and existing.modified_at >= record.updated_at
+                    and existing_modified >= record.updated_at.isoformat()
                 ):
                     logger.debug("Skipping older file: %s", remapped_path)
                     result.files_skipped += 1
@@ -620,18 +621,21 @@ class ZoneImportService:
                 result.files_skipped += 1
                 return
 
-            metadata = self._file_metadata_class(
-                path=path,
-                size=record.size_bytes,
-                content_id=record.content_id,
-                mime_type=record.file_type,
-                created_at=record.created_at if options.preserve_timestamps else None,
-                modified_at=record.updated_at if options.preserve_timestamps else None,
-                version=record.current_version if options.preserve_ids else 1,
-            )
+            _created_at = record.created_at if options.preserve_timestamps else None
+            _modified_at = record.updated_at if options.preserve_timestamps else None
 
-            # Store metadata
-            self.nexus_fs._kernel.metastore_put(metadata)
+            # Store metadata via sys_setattr DT_REG upsert
+            self.nexus_fs._kernel.sys_setattr(
+                path,
+                0,  # DT_REG upsert
+                content_id=record.content_id,
+                size=record.size_bytes,
+                mime_type=record.file_type,
+                version=record.current_version if options.preserve_ids else 1,
+                zone_id=ROOT_ZONE_ID,
+                created_at_ms=int(_created_at.timestamp() * 1000) if _created_at else None,
+                modified_at_ms=int(_modified_at.timestamp() * 1000) if _modified_at else None,
+            )
 
             if is_update:
                 result.files_updated += 1

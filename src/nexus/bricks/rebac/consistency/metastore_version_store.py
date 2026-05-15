@@ -41,6 +41,7 @@ class _NexusFSProto(Protocol):
     """Minimal NexusFS surface used by the version store."""
 
     def sys_write(self, path: str, buf: bytes | str, **kwargs: Any) -> Any: ...
+    def sys_setattr(self, path: str, **kwargs: Any) -> Any: ...
     def sys_read(self, path: str, **kwargs: Any) -> Any: ...
 
 
@@ -97,5 +98,8 @@ class MetastoreVersionStore:
         current = self.get_version(zone_id)
         new_version = current + 1
         path = _version_path(zone_id)
+        if current == 0:
+            # First version write — sys_write requires file to exist.
+            self._nx.sys_setattr(path, entry_type=0)
         self._nx.sys_write(path, json.dumps({"v": new_version}).encode("utf-8"))
         return new_version

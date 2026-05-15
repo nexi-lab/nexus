@@ -287,7 +287,9 @@ class WorkspaceManager:
                 workspace_prefix += "/"
 
             # Get current workspace files
-            current_files = self._kernel.metastore_list(workspace_prefix)
+            current_files = self._kernel.metastore_list_paginated(
+                workspace_prefix, True, 100000, None
+            )["items"]
             current_paths = {
                 f.path[len(workspace_prefix) :]
                 for f in current_files
@@ -295,12 +297,15 @@ class WorkspaceManager:
             }
 
             # Delete files not in snapshot
+            from nexus.contracts.types import OperationContext
+
+            _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
             manifest_paths = manifest.paths()
             files_deleted = 0
             for current_path in current_paths:
                 if current_path not in manifest_paths and not current_path.endswith("/"):
                     full_path = workspace_prefix + current_path
-                    self._kernel.metastore_delete(full_path)
+                    self._kernel.sys_unlink(full_path, context=_sys_ctx)
                     files_deleted += 1
 
             # Restore files from snapshot
@@ -309,29 +314,29 @@ class WorkspaceManager:
 
             from datetime import UTC, datetime
 
-            from nexus.contracts.metadata import FileMetadata
-
             for rel_path in manifest_paths:
                 entry = manifest.get(rel_path)
                 assert entry is not None  # paths() guarantees entry exists
                 full_path = workspace_prefix + rel_path
 
                 # Check if file exists with same content
-                existing = self._kernel.metastore_get(full_path)
-                if existing and existing.content_id == entry.content_id:
+                existing = self._kernel.sys_stat(full_path, "root")
+                if existing and existing.get("content_id") == entry.content_id:
                     continue  # Already up to date
 
                 # Create metadata entry pointing to existing CAS content
                 # No need to read/write content - it's already in CAS!
-                file_meta = FileMetadata(
-                    path=full_path,
-                    size=entry.size,
+                now_ms = int(datetime.now(UTC).timestamp() * 1000)
+                self._kernel.sys_setattr(
+                    full_path,
+                    0,  # DT_REG upsert
                     content_id=entry.content_id,
+                    size=entry.size,
                     mime_type=entry.mime_type,
-                    modified_at=datetime.now(UTC),
-                    version=1,  # Will be updated by metadata store  # Track who restored this version
+                    version=1,
+                    zone_id="root",
+                    modified_at_ms=now_ms,
                 )
-                self._kernel.metastore_put(file_meta)
                 files_restored += 1
 
             return {

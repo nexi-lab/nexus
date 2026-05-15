@@ -140,10 +140,10 @@ async def mount(
 
     # Create metastore
     from nexus.fs._backend_factory import create_backend
+    from nexus.fs._kernel_factory import create_kernel
     from nexus.fs._paths import metadata_db
-    from nexus.fs._sqlite_meta import SQLiteMetastore
 
-    metastore = SQLiteMetastore(str(metadata_db()))
+    metastore = create_kernel(str(metadata_db()))
 
     # Create all backends with cleanup on partial failure.
     # Store spec alongside each backend so _resolve_entry_type() can use it
@@ -228,15 +228,12 @@ async def mount(
                     exc,
                 )
 
-        # Create DT_MOUNT or DT_EXTERNAL_STORAGE metadata entries for each mount point.
-        # Non-storage connectors (oauth/api backends like gdrive) must be registered as
-        # DT_EXTERNAL_STORAGE so the router returns ExternalRouteResult and reads go
-        # directly to backend.read_content() instead of through the kernel.
-        # Mirrors the logic in nexus.bricks.mount.mount_service (mount_service.py:608).
-        for mp, backend, spec in backends:
-            metastore.metastore_put(
-                _make_mount_entry(mp, backend.name, entry_type=_resolve_entry_type(spec))
-            )
+        # Mount metadata is already persisted by kernel.sys_setattr(DT_MOUNT)
+        # above — no additional metastore write needed. The previous
+        # metastore.metastore_put / metastore.sys_setattr loop was
+        # redundant and, because metastore is a singleton PyKernel shared
+        # with kernel._kernel, caused a DT_MOUNT re-mount that wiped the
+        # backend off the VFS route.
     except Exception:
         for _, be, _ in backends:
             _close_backend(be)

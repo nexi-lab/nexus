@@ -1,18 +1,17 @@
 """Metastore-backed implementation of SystemSettingsStoreProtocol.
 
-Stores system settings as FileMetadata entries in the metastore (redb)
-under the reserved ``cfg:`` path prefix.
+Stores system settings in the metastore (redb) via kernel syscalls.
 
 Issue #184: Migrate SystemSettingsModel from RecordStore to Metastore.
 
 Storage layout
 --------------
-Each setting reuses the file-metadata KV slot keyed by ``cfg:{key}``.
-The ``cfg:`` path prefix uniquely identifies these synthetic records —
-no per-record discriminator field is required.  The JSON envelope
-``{"v": value, "d": description?}`` is stashed in ``content_id`` (a Nullable
-string slot the metastore already round-trips).  Mirrors the pattern
-used by :mod:`nexus.bricks.mount.metastore_mount_store`.
+Each setting is stored at the VFS path ``/settings/{key}`` in the global
+(root-zone) metastore.  No kernel special-casing — ``/settings/`` is a
+legitimate VFS namespace that routes through standard syscalls.
+The JSON envelope ``{"v": value, "d": description?}`` is stored in the
+``content_id`` field.  Service layer uses sys_stat to read and sys_setattr
+to write (DT_REG upsert with content_id).
 """
 
 from __future__ import annotations
@@ -21,9 +20,9 @@ import json
 from typing import Any
 
 from nexus.contracts.auth_store_types import SystemSettingDTO
-from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.constants import ROOT_ZONE_ID
 
-_CFG_PREFIX = "cfg:"
+_CFG_PREFIX = "/settings/"
 
 
 class MetastoreSettingsStore:
@@ -39,11 +38,11 @@ class MetastoreSettingsStore:
         self._kernel = metastore
 
     def get_setting(self, key: str) -> SystemSettingDTO | None:
-        fm = self._kernel.metastore_get(f"{_CFG_PREFIX}{key}")
-        if fm is None or not fm.content_id:
+        stat = self._kernel.sys_stat(f"{_CFG_PREFIX}{key}", ROOT_ZONE_ID)
+        if stat is None or not stat.get("content_id"):
             return None
         try:
-            payload = json.loads(fm.content_id)
+            payload = json.loads(stat["content_id"])
         except (json.JSONDecodeError, TypeError):
             return None
         if not isinstance(payload, dict) or "v" not in payload:
@@ -64,9 +63,11 @@ class MetastoreSettingsStore:
         payload: dict[str, str | None] = {"v": value}
         if description is not None:
             payload["d"] = description
-        fm = FileMetadata(
-            path=f"{_CFG_PREFIX}{key}",
+        json_payload = json.dumps(payload)
+        self._kernel.sys_setattr(
+            f"{_CFG_PREFIX}{key}",
+            0,  # DT_REG upsert
+            content_id=json_payload,
             size=0,
-            content_id=json.dumps(payload),
+            zone_id=ROOT_ZONE_ID,
         )
-        self._kernel.metastore_put(fm)

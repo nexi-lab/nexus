@@ -48,7 +48,7 @@ def nx(tmp_path):
 
 class TestDeleteBatchRoundTrip:
     def test_write_then_delete_then_exists(self, nx):
-        path = "delete-test-fresh.json"
+        path = "/delete-test-fresh.json"
         nx.write_batch([(path, b"hello")])
         assert nx.exists_batch([path]) == {path: True}
 
@@ -179,9 +179,8 @@ class TestSysUnlinkMountedBackendRegistry:
     class _Kernel:
         def __init__(self, result):
             self.result = result
-            self.deleted: list[str] = []
 
-        def metastore_get(self, _path):
+        def sys_stat(self, _path, _zone_id=None):
             return None
 
         def sys_unlink(self, *_a, **_kw):
@@ -189,9 +188,6 @@ class TestSysUnlinkMountedBackendRegistry:
 
         def dispatch_pre_hooks(self, *_a, **_kw):
             return None
-
-        def metastore_delete(self, path):
-            self.deleted.append(path)
 
         def has_mount(self, *_a, **_kw):
             return False
@@ -290,7 +286,12 @@ class TestDeleteBatchExternalRetrySafety:
     metadata.delete is committed before the connector teardown so a
     partial failure cannot leave a stuck mount entry."""
 
-    def test_metadata_deleted_before_unmount(self, nx, monkeypatch):
+    def test_kernel_unlink_before_unmount(self, nx, monkeypatch):
+        """Rust kernel deletes metadata (C19) before Python calls
+        coordinator.unmount. Verify the ordering is preserved."""
+
+        order: list[str] = []
+
         class _ExternalResult:
             hit = False
             entry_type = 5
@@ -304,17 +305,11 @@ class TestDeleteBatchExternalRetrySafety:
                 return getattr(self._real, name)
 
             def sys_unlink(self, *_a, **_kw):
+                order.append("kernel.sys_unlink")
                 return _ExternalResult()
 
             def dispatch_pre_hooks(self, *_a, **_kw):
                 return None
-
-        order: list[str] = []
-        original_delete = nx._kernel.metastore_delete
-
-        def tracking_delete(p):
-            order.append("metadata.delete")
-            return original_delete(p)
 
         class _TrackingCoordinator:
             def __init__(self, real):
@@ -328,13 +323,11 @@ class TestDeleteBatchExternalRetrySafety:
                 return True
 
         monkeypatch.setattr(nx, "_kernel", _ExternalKernel(nx._kernel))
-        _wrap_kernel(nx, monkeypatch)
-        monkeypatch.setattr(nx._kernel, "metastore_delete", tracking_delete)
         monkeypatch.setattr(nx, "_driver_coordinator", _TrackingCoordinator(nx._driver_coordinator))
 
         nx.sys_unlink("/external-mount")
 
-        assert order == ["metadata.delete", "unmount"]
+        assert order == ["kernel.sys_unlink", "unmount"]
 
     def test_unmount_false_after_metadata_delete_succeeds(self, nx, monkeypatch):
         """If teardown returns False after the metadata commit, the call
@@ -429,8 +422,8 @@ class TestDeleteHookMetadataPropagation:
         assert delete_calls, "post-delete hook was not dispatched"
         ctx = delete_calls[0][1]
         assert ctx.metadata is not None, "DeleteHookContext.metadata must be populated"
-        assert ctx.metadata.path == "/tracked.txt"
-        assert ctx.metadata.size == len(b"original-bytes")
+        assert ctx.metadata["path"] == "/tracked.txt"
+        assert ctx.metadata["size"] == len(b"original-bytes")
 
 
 class TestExternalRouteRemainsFailure:
@@ -503,24 +496,18 @@ class TestImplicitRecursiveRaceRecheck:
     def test_concurrent_explicit_inode_recreation_is_reported(self, nx, monkeypatch):
         """Round-5 broadened race: a writer can also create an explicit
         inode at the target itself between drain and the finalize
-        re-check. is_implicit_directory alone wouldn't catch that;
-        metadata.get does. Simulate the race by stubbing metadata.get
-        to return a fake explicit entry AFTER the drain runs, so we
-        exercise the re-check logic without needing real-time
-        concurrency."""
+        re-check. Simulate the race by stubbing sys_stat to return a
+        fake explicit entry AFTER the drain runs, so we exercise the
+        re-check logic without needing real-time concurrency."""
         nx.write_batch([("/parent/leaf.txt", b"a")])
 
-        original_get = nx._kernel.metastore_get
+        original_stat = nx._kernel.sys_stat
         children_drained = {"done": False}
 
-        class _FakeMeta:
-            path = "/parent"
-            mime_type = "application/octet-stream"
-
-        def post_drain_get(p):
+        def post_drain_stat(p, zone_id=None):
             if children_drained["done"] and p == "/parent":
-                return _FakeMeta()
-            return original_get(p)
+                return {"path": "/parent", "is_directory": False, "size": 0}
+            return original_stat(p, zone_id)
 
         original_unlink = nx.sys_unlink
 
@@ -532,7 +519,7 @@ class TestImplicitRecursiveRaceRecheck:
 
         _wrap_kernel(nx, monkeypatch)
 
-        monkeypatch.setattr(nx._kernel, "metastore_get", post_drain_get)
+        monkeypatch.setattr(nx._kernel, "sys_stat", post_drain_stat)
         monkeypatch.setattr(nx, "sys_unlink", tracking_unlink)
 
         result = nx.delete_batch(["/parent"], recursive=True)
@@ -550,14 +537,14 @@ class TestPreDeleteMetadataFailClosed:
     def test_metastore_failure_aborts_delete(self, nx, monkeypatch):
         nx.write_batch([("/tracked.txt", b"x")])
 
-        def flaky_get(p):
+        def flaky_stat(p, _zone_id=None):
             if p == "/tracked.txt":
                 raise RuntimeError("metastore degraded")
             return None
 
         _wrap_kernel(nx, monkeypatch)
 
-        monkeypatch.setattr(nx._kernel, "metastore_get", flaky_get)
+        monkeypatch.setattr(nx._kernel, "sys_stat", flaky_stat)
 
         result = nx.delete_batch(["/tracked.txt"])
 
@@ -572,7 +559,6 @@ class TestMountVerifyFailClosed:
 
     def test_has_mount_failure_raises(self, nx, monkeypatch):
         from nexus.contracts.exceptions import BackendError
-        from nexus.contracts.metadata import FileMetadata
 
         class _ExternalResult:
             hit = False
@@ -595,15 +581,15 @@ class TestMountVerifyFailClosed:
             def has_mount(self, *_a, **_kw):
                 raise RuntimeError("kernel verification crashed")
 
-        meta = FileMetadata(
-            path="/unverifiable",
-            content_id=None,
-            mime_type="inode/external_storage",
-            size=0,
-            zone_id="root",
-        )
+        stat_dict = {
+            "path": "/unverifiable",
+            "content_id": None,
+            "mime_type": "inode/external_storage",
+            "size": 0,
+            "zone_id": "root",
+        }
         _wrap_kernel(nx, monkeypatch)
-        monkeypatch.setattr(nx._kernel, "metastore_get", lambda _p: meta)
+        monkeypatch.setattr(nx._kernel, "sys_stat", lambda _p, _z=None: stat_dict)
         monkeypatch.setattr(nx, "_kernel", _UnverifiableKernel(nx._kernel))
 
         with pytest.raises(BackendError, match="cannot verify mount route teardown"):
@@ -699,13 +685,13 @@ class TestImplicitRecursiveStrictRecheck:
     def test_recheck_metastore_failure_reported_as_failure(self, nx, monkeypatch):
         nx.write_batch([("/parent/leaf.txt", b"a")])
 
-        original_get = nx._kernel.metastore_get
+        original_stat = nx._kernel.sys_stat
         children_drained = {"done": False}
 
-        def flaky_get(p):
+        def flaky_stat(p, zone_id=None):
             if children_drained["done"] and p == "/parent":
                 raise RuntimeError("metastore degraded")
-            return original_get(p)
+            return original_stat(p, zone_id)
 
         original_unlink = nx.sys_unlink
 
@@ -717,7 +703,7 @@ class TestImplicitRecursiveStrictRecheck:
 
         _wrap_kernel(nx, monkeypatch)
 
-        monkeypatch.setattr(nx._kernel, "metastore_get", flaky_get)
+        monkeypatch.setattr(nx._kernel, "sys_stat", flaky_stat)
         monkeypatch.setattr(nx, "sys_unlink", tracking_unlink)
 
         result = nx.delete_batch(["/parent"], recursive=True)
@@ -781,11 +767,9 @@ class TestStrandedMountRecovery:
 
     def test_unmount_uses_metadata_zone_not_caller_zone(self, nx, monkeypatch):
         """Codex round-8 finding: route zone must come from pre-delete
-        FileMetadata, not the caller context. An admin operating from
+        sys_stat result, not the caller context. An admin operating from
         the root zone deleting a tenant mount must tear down the route
         in the tenant's zone, not in root."""
-        from nexus.contracts.metadata import FileMetadata
-
         captured: list = []
 
         class _ExternalResult:
@@ -821,16 +805,16 @@ class TestStrandedMountRecovery:
                 captured.append(("unmount", p, z))
                 return True
 
-        # Pre-delete metadata reports the mount lives in tenant-A.
-        tenant_meta = FileMetadata(
-            path="/tenant-mount",
-            content_id=None,
-            mime_type="inode/external_storage",
-            size=0,
-            zone_id="tenant-A",
-        )
+        # Pre-delete sys_stat reports the mount lives in tenant-A.
+        tenant_stat = {
+            "path": "/tenant-mount",
+            "content_id": None,
+            "mime_type": "inode/external_storage",
+            "size": 0,
+            "zone_id": "tenant-A",
+        }
         _wrap_kernel(nx, monkeypatch)
-        monkeypatch.setattr(nx._kernel, "metastore_get", lambda _p: tenant_meta)
+        monkeypatch.setattr(nx._kernel, "sys_stat", lambda _p, _z=None: tenant_stat)
         monkeypatch.setattr(nx, "_kernel", _ZoneRecordingKernel(nx._kernel))
         monkeypatch.setattr(
             nx, "_driver_coordinator", _ZoneRecordingCoordinator(nx._driver_coordinator)
@@ -986,16 +970,16 @@ class TestDeleteBatchImplicitDirProbeFailure:
     def test_implicit_dir_probe_failure_isolated(self, nx, monkeypatch):
         nx.write_batch([("/keeper.txt", b"x")])
 
-        original_probe = nx._kernel.metastore_is_implicit_directory
+        original_stat = nx._kernel.sys_stat
 
-        def flaky_probe(p):
+        def flaky_stat(p, zone_id=None):
             if p == "/ghost":
                 raise RuntimeError("metastore degraded")
-            return original_probe(p)
+            return original_stat(p, zone_id)
 
         _wrap_kernel(nx, monkeypatch)
 
-        monkeypatch.setattr(nx._kernel, "metastore_is_implicit_directory", flaky_probe)
+        monkeypatch.setattr(nx._kernel, "sys_stat", flaky_stat)
 
         # /ghost doesn't exist → sys_unlink raises NexusFileNotFoundError →
         # the probe runs and raises. Must record per-item failure and

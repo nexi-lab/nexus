@@ -537,7 +537,10 @@ class FederationRPCService(FederationRPCMixin):
     def federation_list_zones(self) -> dict[str, Any]:
         # /__sys__/zones/ procfs view — read-only, kernel-internal
         # synthesised entries.
-        zone_ids: list[str] = list(self._kernel.sys_readdir_backend("/__sys__/zones/", "root"))
+        zone_ids: list[str] = [
+            p.rstrip("/").rsplit("/", 1)[-1]
+            for p, _etype in self._kernel.readdir("/__sys__/zones/", "root")
+        ]
         zones = [
             {
                 "zone_id": zid,

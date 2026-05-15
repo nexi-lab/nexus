@@ -105,12 +105,12 @@ def test_write_creates_metadata(embedded: NexusFS) -> None:
     assert embedded.access(path)
 
     # Check metadata content
-    meta = embedded._kernel.metastore_get(path)
+    meta = embedded._kernel.sys_stat(path, "root")
     assert meta is not None
-    assert meta.path == path
-    assert meta.size == len(content)
-    assert meta.version == 1
-    assert meta.content_id is not None
+    assert meta["path"] == path
+    assert meta["size"] == len(content)
+    assert meta["version"] == 1
+    assert meta["content_id"] is not None
 
 
 @pytest.mark.asyncio
@@ -124,24 +124,24 @@ def test_write_updates_version(embedded: NexusFS) -> None:
 
     # Write initial version
     embedded.write(path, b"Version 1")
-    meta1 = embedded._kernel.metastore_get(path)
+    meta1 = embedded._kernel.sys_stat(path, "root")
     assert meta1 is not None
-    assert meta1.version == 1
+    assert meta1["version"] == 1
 
     # Rewrite file - version should increment
     embedded.write(path, b"Version 2")
-    meta2 = embedded._kernel.metastore_get(path)
+    meta2 = embedded._kernel.sys_stat(path, "root")
     assert meta2 is not None
-    assert meta2.version == 2  # Version tracking enabled in v0.3.5
+    assert meta2["version"] == 2  # Version tracking enabled in v0.3.5
     # But modified_at should be updated
-    assert meta2.modified_at > meta1.modified_at
+    assert meta2["modified_at"] > meta1["modified_at"]
 
     # Rewrite again - version should increment again
     embedded.write(path, b"Version 3")
-    meta3 = embedded._kernel.metastore_get(path)
+    meta3 = embedded._kernel.sys_stat(path, "root")
     assert meta3 is not None
-    assert meta3.version == 3  # Version tracking enabled in v0.3.5
-    assert meta3.modified_at > meta2.modified_at
+    assert meta3["version"] == 3  # Version tracking enabled in v0.3.5
+    assert meta3["modified_at"] > meta2["modified_at"]
 
 
 @pytest.mark.asyncio
@@ -188,14 +188,14 @@ def test_delete_removes_metadata(embedded: NexusFS) -> None:
 
     # Create file
     embedded.write(path, b"Content")
-    assert embedded._kernel.metastore_exists(path)
+    assert embedded._kernel.access(path, "root")
 
     # Delete file
     embedded.sys_unlink(path)
 
     # Metadata should be gone
-    assert not embedded._kernel.metastore_exists(path)
-    assert embedded._kernel.metastore_get(path) is None
+    assert not embedded._kernel.access(path, "root")
+    assert embedded._kernel.sys_stat(path, "root") is None
 
 
 @pytest.mark.asyncio
@@ -328,9 +328,9 @@ def test_empty_file(embedded: NexusFS) -> None:
     assert result == b""
 
     # Check metadata
-    meta = embedded._kernel.metastore_get("/empty.txt")
+    meta = embedded._kernel.sys_stat("/empty.txt", "root")
     assert meta is not None
-    assert meta.size == 0
+    assert meta["size"] == 0
 
 
 @pytest.mark.asyncio
@@ -366,15 +366,15 @@ def test_content_id_changes_on_update(embedded: NexusFS) -> None:
 
     # Write initial content
     embedded.write(path, b"Content 1")
-    meta1 = embedded._kernel.metastore_get(path)
+    meta1 = embedded._kernel.sys_stat(path, "root")
     assert meta1 is not None
-    content_id1 = meta1.content_id
+    content_id1 = meta1["content_id"]
 
     # Update content
     embedded.write(path, b"Content 2")
-    meta2 = embedded._kernel.metastore_get(path)
+    meta2 = embedded._kernel.sys_stat(path, "root")
     assert meta2 is not None
-    content_id2 = meta2.content_id
+    content_id2 = meta2["content_id"]
 
     # content_ids should be different
     assert content_id1 != content_id2
@@ -392,11 +392,11 @@ def test_content_id_same_for_same_content(embedded: NexusFS) -> None:
     embedded.write(path2, content)
 
     # ETags should be the same
-    meta1 = embedded._kernel.metastore_get(path1)
-    meta2 = embedded._kernel.metastore_get(path2)
+    meta1 = embedded._kernel.sys_stat(path1, "root")
+    meta2 = embedded._kernel.sys_stat(path2, "root")
     assert meta1 is not None
     assert meta2 is not None
-    assert meta1.content_id == meta2.content_id
+    assert meta1["content_id"] == meta2["content_id"]
 
 
 @pytest.mark.asyncio
@@ -429,20 +429,20 @@ def test_modified_at_updates(embedded: NexusFS) -> None:
 
         # Write initial content
         embedded.write(path, b"Content 1")
-        meta1 = embedded._kernel.metastore_get(path)
+        meta1 = embedded._kernel.sys_stat(path, "root")
         assert meta1 is not None
-        modified1 = meta1.modified_at
+        modified1 = meta1["modified_at"]
 
         # Advance time
         frozen_time.tick(delta=timedelta(seconds=1))
 
         # Update content
         embedded.write(path, b"Content 2")
-        meta2 = embedded._kernel.metastore_get(path)
+        meta2 = embedded._kernel.sys_stat(path, "root")
         assert meta2 is not None
-        modified2 = meta2.modified_at
+        modified2 = meta2["modified_at"]
 
-        # Modified timestamp should be later
+        # Modified timestamp should be later (ISO string comparison works for chronological order)
         assert modified1 is not None
         assert modified2 is not None
         assert modified2 > modified1
@@ -455,15 +455,15 @@ def test_created_at_persists(embedded: NexusFS) -> None:
 
     # Write initial content
     embedded.write(path, b"Content 1")
-    meta1 = embedded._kernel.metastore_get(path)
+    meta1 = embedded._kernel.sys_stat(path, "root")
     assert meta1 is not None
-    created1 = meta1.created_at
+    created1 = meta1["created_at"]
 
     # Update content
     embedded.write(path, b"Content 2")
-    meta2 = embedded._kernel.metastore_get(path)
+    meta2 = embedded._kernel.sys_stat(path, "root")
     assert meta2 is not None
-    created2 = meta2.created_at
+    created2 = meta2["created_at"]
 
     # Created timestamp should be the same
     assert created1 is not None

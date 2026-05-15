@@ -185,6 +185,7 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     write_opt_str(&mut buf, &meta.target_zone_id);
     write_opt_str(&mut buf, &meta.link_target);
     buf.extend_from_slice(&meta.gen.to_le_bytes());
+    write_opt_str(&mut buf, &meta.owner_id);
 
     buf
 }
@@ -281,10 +282,13 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
         if pos + 8 > data.len() {
             return Err(MetaStoreError::IOError("truncated gen".into()));
         }
-        u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap())
+        let g = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        g
     } else {
         0
     };
+    let owner_id = read_opt_str(data, &mut pos).ok().flatten();
 
     Ok(FileMetadata {
         path,
@@ -300,6 +304,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
         target_zone_id,
         last_writer_address,
         link_target,
+        owner_id,
     })
 }
 
@@ -778,6 +783,7 @@ mod tests {
             target_zone_id: None,
             link_target: None,
             gen: 42,
+            owner_id: None,
         };
 
         let restored = deserialize_metadata(&serialize_metadata(&meta)).unwrap();
@@ -803,10 +809,12 @@ mod tests {
             target_zone_id: None,
             link_target: None,
             gen: 99,
+            owner_id: None,
         };
         let mut bytes = serialize_metadata(&meta);
         bytes[0] = 3;
-        bytes.truncate(bytes.len() - 8);
+        // Truncate gen (8 bytes) + owner_id opt-str (1 byte for None tag)
+        bytes.truncate(bytes.len() - 9);
 
         let restored = deserialize_metadata(&bytes).unwrap();
 
@@ -829,9 +837,11 @@ mod tests {
             target_zone_id: None,
             link_target: None,
             gen: 7,
+            owner_id: None,
         };
         let mut bytes = serialize_metadata(&meta);
-        bytes.truncate(bytes.len() - 1);
+        // Remove owner_id opt-str (1 byte for None tag) + last byte of gen
+        bytes.truncate(bytes.len() - 2);
 
         let err = deserialize_metadata(&bytes).unwrap_err();
 
@@ -857,6 +867,7 @@ mod tests {
                 last_writer_address: Some("nexus-1:2028".to_string()),
                 target_zone_id: None,
                 link_target: None,
+                owner_id: None,
             },
             FileMetadata {
                 path: "/mnt/peer".to_string(),
@@ -872,6 +883,7 @@ mod tests {
                 last_writer_address: None,
                 target_zone_id: Some("zone-a".to_string()),
                 link_target: None,
+                owner_id: None,
             },
         ];
         for meta in &cases {
@@ -903,6 +915,7 @@ mod tests {
             last_writer_address: None,
             target_zone_id: None,
             link_target: None,
+            owner_id: None,
         }
     }
 
@@ -1024,6 +1037,7 @@ mod tests {
             last_writer_address: None,
             target_zone_id: None,
             link_target: None,
+            owner_id: None,
         };
         let data = serialize_metadata(&meta);
         let restored = deserialize_metadata(&data).unwrap();

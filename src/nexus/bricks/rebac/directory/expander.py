@@ -163,7 +163,8 @@ class DirectoryExpander:
         # If we have a kernel reference, check for children
         if self._kernel is not None:
             try:
-                return bool(self._kernel.metastore_is_implicit_directory(path))
+                _stat = self._kernel.sys_stat(path, ROOT_ZONE_ID)
+                return _stat is not None and _stat.get("is_directory", False)
             except (RuntimeError, OperationalError) as e:
                 logger.debug("[LEOPARD] Failed to check directory via metadata: %s", e)
 
@@ -311,7 +312,8 @@ class DirectoryExpander:
         # below honours the parameter for federated installs.
         if self._kernel is not None:
             try:
-                files = self._kernel.metastore_list(directory_path)
+                _page = self._kernel.metastore_list_paginated(directory_path, True, 100000, None)
+                files = _page["items"]
                 return [f.path for f in files]
             except (RuntimeError, OperationalError) as e:
                 logger.warning("[LEOPARD] Metadata store query failed: %s", e)

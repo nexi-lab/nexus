@@ -62,7 +62,7 @@ class PermissionChecker:
         path: str,
         permission: Permission,
         context: OperationContext | None = None,
-        file_metadata: "FileMetadata | None" = None,
+        file_metadata: "FileMetadata | None" = None,  # noqa: ARG002
     ) -> None:
         """Check whether the requested operation is permitted.
 
@@ -144,7 +144,7 @@ class PermissionChecker:
         from nexus.lib.virtual_views import parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
-            return bool(self._kernel.metastore_exists(check_path))
+            return bool(self._kernel.access(check_path, ROOT_ZONE_ID))
 
         original_path, view_type, _ = parse_virtual_path(path, metadata_exists)
         if view_type == "md":
@@ -198,11 +198,7 @@ class PermissionChecker:
         # check lives on the kernel contract, not in this service class.
         # ----------------------------------------------------------
         if self._permission_enforcer is not None:
-            _owner_meta = (
-                file_metadata
-                if (file_metadata is not None and permission_path == path)
-                else self._kernel.metastore_get(permission_path)
-            )
+            _owner_meta = self._kernel.sys_stat(permission_path, ROOT_ZONE_ID)
             if self._permission_enforcer.check_owner(_owner_meta, ctx):
                 return  # Owner has all permissions — skip ReBAC
 

@@ -220,6 +220,7 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetaSt
         } else {
             Some(proto.link_target)
         },
+        owner_id: None,
     })
 }
 
@@ -422,6 +423,7 @@ mod tests {
             last_writer_address: Some("nexus-1:2028".to_string()),
             target_zone_id: None,
             link_target: None,
+            owner_id: None,
         };
         let restored = proto_to_kernel(&kernel_to_proto(&meta)).unwrap();
         assert_eq!(restored.path, meta.path);

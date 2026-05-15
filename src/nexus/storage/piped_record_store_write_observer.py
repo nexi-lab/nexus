@@ -7,7 +7,7 @@ batches.
 Issue #809: Decouple write_observer.on_write() sync DB write from hot path.
 
 Architecture:
-    Rust kernel sys_write / sys_unlink / sys_mkdir / sys_rmdir
+    Rust kernel sys_write / sys_unlink / sys_mkdir
       -> dispatch_observers (Rust MutationObserver trait)
         -> accumulate event in deque + reset debounce timer
         -> threading.Timer fires _flush()

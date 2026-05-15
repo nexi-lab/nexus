@@ -71,23 +71,34 @@ class FakeCASStore:
 class FakeMetadataStore:
     """Fake kernel-handle stub backed by a dict.
 
-    Post-W3 ``TransactionalSnapshotService`` reaches the metastore via
-    ``self._kernel.metastore_*`` (the constructor's
-    ``hasattr(_, "_rust_kernel")`` guard treats anything without that
-    attribute as a bare kernel — so this stub is used directly).
+    Post-C24 ``TransactionalSnapshotService`` reaches the metastore via
+    ``self._kernel.sys_stat`` / ``sys_setattr`` / ``sys_unlink``
+    (the constructor's ``hasattr(_, "_rust_kernel")`` guard treats
+    anything without that attribute as a bare kernel — so this stub
+    is used directly).
     """
 
     def __init__(self) -> None:
         self.data: dict[str, Any] = {}
 
-    def metastore_get(self, path: str) -> Any:
-        return self.data.get(path)
+    def sys_stat(self, path: str, zone_id: str | None = None) -> Any:
+        obj = self.data.get(path)
+        if obj is None:
+            return None
+        return {"path": path, "content_id": getattr(obj, "content_id", None)}
 
-    def metastore_put(self, meta: Any) -> None:
-        self.data[meta.path] = meta
+    def sys_setattr(self, path: str, entry_type: int = 1, **kwargs: Any) -> Any:
+        meta = self.data.get(path)
+        if meta is None:
+            meta = type("FakeMeta", (), {"path": path})()
+            self.data[path] = meta
+        for k, v in kwargs.items():
+            setattr(meta, k, v)
+        return {"path": path}
 
-    def metastore_delete(self, path: str) -> None:
+    def sys_unlink(self, path: str, context: Any = None, recursive: bool = False) -> Any:
         self.data.pop(path, None)
+        return {}
 
 
 # ---------------------------------------------------------------------------

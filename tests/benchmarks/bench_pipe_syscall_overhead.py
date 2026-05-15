@@ -102,7 +102,7 @@ async def _setup(tmp_dir: Path):
 
     kernel = nx._kernel
 
-    return nx, kernel, metastore
+    return nx, kernel
 
 
 # ── Benchmark functions ────────────────────────────────────────────────
@@ -138,15 +138,15 @@ async def _bench_sys_write(nx, data: bytes) -> list[float]:
     return times
 
 
-def _bench_metastore_get(metastore, path: str) -> list[float]:
-    """[3a] Isolated metastore.get() — the main suspect."""
+def _bench_sys_stat(kernel, path: str) -> list[float]:
+    """[3a] Isolated kernel.sys_stat() — the main suspect."""
     for _ in range(WARMUP):
-        metastore.get(path)
+        kernel.sys_stat(path, "root")
 
     times: list[float] = []
     for _ in range(ITERATIONS):
         t0 = time.perf_counter()
-        metastore.get(path)
+        kernel.sys_stat(path, "root")
         t1 = time.perf_counter()
         times.append((t1 - t0) * 1_000_000)
     return times
@@ -231,7 +231,7 @@ def _bench_ideal_fast_path(kernel, path: str, data: bytes) -> list[float]:
 async def _run() -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        nx, kernel, metastore = await _setup(tmp_dir)
+        nx, kernel = await _setup(tmp_dir)
 
         payload = json.dumps(
             {
@@ -246,7 +246,7 @@ async def _run() -> dict:
         direct = _bench_direct(kernel, payload)
         sys_write = await _bench_sys_write(nx, payload)
         sys_read = await _bench_sys_read(nx, kernel, payload)
-        meta_get = _bench_metastore_get(metastore, _BENCH_PIPE_PATH)
+        meta_get = _bench_sys_stat(kernel, _BENCH_PIPE_PATH)
         validate = _bench_validate_path(nx, _BENCH_PIPE_PATH)
         resolve = _bench_resolve_write(nx, _BENCH_PIPE_PATH, payload)
         dict_in = _bench_dict_in(kernel, _BENCH_PIPE_PATH)
@@ -260,7 +260,7 @@ async def _run() -> dict:
         "direct_pipe_write": _stats(direct),
         "sys_write": _stats(sys_write),
         "sys_read": _stats(sys_read),
-        "metastore_get": _stats(meta_get),
+        "sys_stat": _stats(meta_get),
         "validate_path": _stats(validate),
         "resolve_write": _stats(resolve),
         "dict_in": _stats(dict_in),
@@ -290,12 +290,12 @@ def main() -> None:
     print(f"\n  >>> sys_write overhead: {_fmt(overhead)} per call")
 
     print("\n--- Component breakdown ---")
-    _print_stats("metastore.get(path)", "3a", results["metastore_get"])
+    _print_stats("kernel.sys_stat(path)", "3a", results["sys_stat"])
     _print_stats("_validate_path()", "3b", results["validate_path"])
     _print_stats("_dispatch.resolve_write()", "3c", results["resolve_write"])
 
     component_sum = (
-        results["metastore_get"]["mean_us"]
+        results["sys_stat"]["mean_us"]
         + results["validate_path"]["mean_us"]
         + results["resolve_write"]["mean_us"]
     )

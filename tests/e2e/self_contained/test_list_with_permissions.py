@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: F401 — kept for future use
-from nexus.contracts.metadata import FileMetadata
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -28,13 +27,6 @@ def _make_store(zone_id: str = ROOT_ZONE_ID) -> Any:  # noqa: ARG001
     kernel = _Kernel()
     kernel.set_metastore_path(str(Path(tmpdir) / "meta.redb"))
     return kernel
-
-
-def _make_meta(path: str, size: int = 100) -> FileMetadata:
-    return FileMetadata(
-        path=path,
-        size=size,
-    )
 
 
 def _make_search_service(
@@ -62,9 +54,9 @@ class TestListWithZoneAndPermissions:
         """Basic list returns all files in the store."""
         store = _make_store()
         try:
-            store.metastore_put(_make_meta("/file1.txt"))
-            store.metastore_put(_make_meta("/file2.txt"))
-            store.metastore_put(_make_meta("/dir/file3.txt"))
+            store.sys_setattr("/file1.txt", 0)
+            store.sys_setattr("/file2.txt", 0)
+            store.sys_setattr("/dir/file3.txt", 0)
 
             svc = _make_search_service(store)
             results = svc.list(path="/", recursive=True)
@@ -79,9 +71,9 @@ class TestListWithZoneAndPermissions:
         """Non-recursive list should exclude nested files."""
         store = _make_store()
         try:
-            store.metastore_put(_make_meta("/file1.txt"))
-            store.metastore_put(_make_meta("/dir/file2.txt"))
-            store.metastore_put(_make_meta("/dir/sub/file3.txt"))
+            store.sys_setattr("/file1.txt", 0)
+            store.sys_setattr("/dir/file2.txt", 0)
+            store.sys_setattr("/dir/sub/file3.txt", 0)
 
             svc = _make_search_service(store)
             results = svc.list(path="/", recursive=False)
@@ -97,9 +89,9 @@ class TestListWithZoneAndPermissions:
         """List with prefix should only return matching files."""
         store = _make_store()
         try:
-            store.metastore_put(_make_meta("/a/file1.txt"))
-            store.metastore_put(_make_meta("/a/file2.txt"))
-            store.metastore_put(_make_meta("/b/file3.txt"))
+            store.sys_setattr("/a/file1.txt", 0)
+            store.sys_setattr("/a/file2.txt", 0)
+            store.sys_setattr("/b/file3.txt", 0)
 
             svc = _make_search_service(store)
             results = svc.list(path="/a/", recursive=True)
@@ -125,8 +117,8 @@ class TestListWithZoneAndPermissions:
         store_a = _make_store(zone_id="zone_a")
         store_b = _make_store(zone_id="zone_b")
         try:
-            store_a.metastore_put(_make_meta("/zone_a/file1.txt"))
-            store_b.metastore_put(_make_meta("/zone_b/file2.txt"))
+            store_a.sys_setattr("/zone_a/file1.txt", 0)
+            store_b.sys_setattr("/zone_b/file2.txt", 0)
 
             svc_a = _make_search_service(store_a)
             svc_b = _make_search_service(store_b)
@@ -147,7 +139,7 @@ class TestListWithZoneAndPermissions:
         store = _make_store()
         try:
             for i in range(10):
-                store.metastore_put(_make_meta(f"/p/{chr(97 + i)}.txt"))
+                store.sys_setattr(f"/p/{chr(97 + i)}.txt", 0)
 
             svc = _make_search_service(store)
             page1 = svc._list_paginated(
@@ -164,7 +156,7 @@ class TestListWithZoneAndPermissions:
         """List with details=True should return dicts with metadata."""
         store = _make_store()
         try:
-            store.metastore_put(_make_meta("/doc.txt", size=512))
+            store.sys_setattr("/doc.txt", 0)
 
             svc = _make_search_service(store)
             results = svc.list(path="/", recursive=True, details=True)
@@ -172,7 +164,7 @@ class TestListWithZoneAndPermissions:
             assert len(results) >= 1
             doc = next((r for r in results if r["path"] == "/doc.txt"), None)
             assert doc is not None
-            assert doc["size"] == 512
+            assert doc["size"] == 0
             assert doc["is_directory"] is False
         finally:
             pass  # kernel manages redb lifecycle

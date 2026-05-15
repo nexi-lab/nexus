@@ -231,19 +231,18 @@ def test_gmail_is_directory_matches_list_dir_acceptance() -> None:
 
 
 def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
-    """Post-DLC-rewrite: Rust ``sys_readdir_backend`` swallows backend errors
+    """Post-DLC-rewrite: Rust ``readdir`` swallows backend errors
     and returns an empty Vec instead of propagating ``BackendError``.  The
     kernel's readdir layer therefore returns an empty list (or metastore
     entries only) rather than raising.  This matches the Rust kernel's
     defensive design — callers see an empty listing, not a crash."""
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.exceptions import BackendError  # noqa: F811
-    from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, DT_MOUNT
+    from nexus.contracts.metadata import DT_MOUNT
     from nexus.contracts.types import OperationContext
     from nexus.core.config import PermissionConfig
     from nexus.core.nexus_fs import NexusFS
-    from nexus.fs import _make_mount_entry
-    from nexus.fs._sqlite_meta import SQLiteMetastore
+    from nexus.fs._kernel_factory import create_kernel
 
     class _ExplodingBackend:
         name = "exploding_connector"
@@ -256,7 +255,7 @@ def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
         def read_content(self, cid: str, context: OperationContext | None = None) -> bytes:
             raise BackendError("not needed", backend="exploding_connector")
 
-    metastore = SQLiteMetastore(str(tmp_path / "m.db"))
+    metastore = create_kernel(str(tmp_path / "m.db"))
     backend = _ExplodingBackend()
     kernel = NexusFS(
         metadata_store=metastore,
@@ -264,9 +263,8 @@ def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
     kernel.sys_setattr("/ext", entry_type=DT_MOUNT, backend=backend, is_external=True)
-    metastore.metastore_put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
 
-    # Rust sys_readdir_backend swallows errors and returns empty Vec;
+    # Rust readdir swallows errors and returns empty Vec;
     # the Python sys_readdir layer surfaces an empty list (or only
     # metastore-backed entries) instead of propagating BackendError.
     result = kernel.sys_readdir("/ext", context=kernel._init_cred)

@@ -90,6 +90,7 @@ impl MetaStore for RemoteMetaStore {
                 "modified_at_ms": metadata.modified_at_ms,
                 "target_zone_id": metadata.target_zone_id,
                 "link_target": metadata.link_target,
+                "owner_id": metadata.owner_id,
             },
         });
         let bytes =
@@ -305,6 +306,10 @@ fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, M
             .map(|s| s.to_string()),
         link_target: obj
             .get("link_target")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        owner_id: obj
+            .get("owner_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     })

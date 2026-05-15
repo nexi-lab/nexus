@@ -2,10 +2,11 @@
 
 Post-W3 the Python ``MetastoreABC`` / ``RustMetastoreProxy`` /
 ``DictMetastore`` classes are gone. The kernel exposes
-``metastore_*`` PyO3 bindings; tests that previously instantiated a
+``sys_stat`` / ``sys_setattr`` / ``sys_unlink`` / ``access`` /
+``stat_batch`` PyO3 bindings; tests that previously instantiated a
 Python metastore subclass now get a bare ``PyKernel`` from
 ``DictMetastore()``. ``FailingMetastore`` becomes a fault-injection
-wrapper that monkeypatches ``kernel.metastore_*`` calls.
+wrapper that delegates to kernel syscalls.
 """
 
 from __future__ import annotations
@@ -58,10 +59,10 @@ class MetastoreError(RuntimeError):
 class FailingMetastore:
     """Kernel-handle wrapper that injects failures for testing.
 
-    Wraps a real ``PyKernel`` and routes every ``metastore_*`` call
-    through ``_maybe_fail`` before delegating. The wrapper exposes the
+    Wraps a real ``PyKernel`` and routes every syscall through
+    ``_maybe_fail`` before delegating. The wrapper exposes the
     same surface tests use (``get`` / ``put`` / ``delete`` /
-    ``metastore_get`` / ``metastore_put`` / etc.) so existing call
+    ``sys_stat`` / ``sys_setattr`` / etc.) so existing call
     sites work unchanged.
     """
 
@@ -114,27 +115,32 @@ class FailingMetastore:
 
     def get(self, path: str) -> FileMetadata | None:
         self._maybe_fail("get")
-        return self._inner.metastore_get(path)
+        return self._inner.sys_stat(path, "root")
 
     def put(self, metadata: FileMetadata) -> Any:
         self._maybe_fail("put")
-        return self._inner.metastore_put(metadata)
+        return self._inner.sys_setattr(
+            metadata.path,
+            metadata.entry_type if hasattr(metadata, "entry_type") else 1,
+        )
 
     def delete(self, path: str) -> Any:
         self._maybe_fail("delete")
-        return self._inner.metastore_delete(path)
+        return self._inner.sys_unlink(path, None, False)
 
     def exists(self, path: str) -> bool:
         self._maybe_fail("exists")
-        return self._inner.metastore_exists(path)
+        return self._inner.access(path, "root")
 
     def list(self, prefix: str = "", recursive: bool = True, **_kwargs: Any) -> list[FileMetadata]:
         self._maybe_fail("list")
-        return list(self._inner.metastore_list(prefix))
+        page = self._inner.metastore_list_paginated(prefix, recursive, 100000, None)
+        return page["items"]
 
     def is_implicit_directory(self, path: str) -> bool:
         self._maybe_fail("is_implicit_directory")
-        return bool(self._inner.metastore_is_implicit_directory(path))
+        stat = self._inner.sys_stat(path, "root")
+        return stat is not None and stat.get("is_directory", False)
 
     def set_file_metadata(self, path: str, key: str, value: Any) -> None:
         self._maybe_fail("set_file_metadata")
@@ -153,19 +159,19 @@ class FailingMetastore:
     def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         self._maybe_fail("get_batch")
         plist = list(paths)
-        return dict(zip(plist, self._inner.metastore_get_batch(plist), strict=True))
+        return dict(zip(plist, self._inner.stat_batch(plist, "root"), strict=True))
 
     def delete_batch(self, paths: Sequence[str]) -> None:
         self._maybe_fail("delete_batch")
         for p in paths:
-            self._inner.metastore_delete(p)
+            self._inner.sys_unlink(p, None, False)
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         self._maybe_fail("batch_get_content_ids")
         result: dict[str, str | None] = {}
         for path in paths:
-            metadata = self._inner.metastore_get(path)
-            result[path] = metadata.content_id if metadata else None
+            stat = self._inner.sys_stat(path, "root")
+            result[path] = stat.get("content_id") if stat else None
         return result
 
     def close(self) -> None:
@@ -205,6 +211,9 @@ class InMemoryNexusFS:
                 if recursive or "/" not in rest:
                     names.add(rest.split("/", 1)[0])
         return sorted(names)
+
+    def sys_setattr(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        return {"path": path, "created": path not in self._files}
 
     def sys_unlink(self, path: str, **kwargs: Any) -> dict[str, Any]:
         if path not in self._files:

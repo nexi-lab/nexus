@@ -55,6 +55,13 @@ class _InMemoryNexusFS:
                     names.add(rest.split("/", 1)[0])
         return sorted(names)
 
+    def sys_setattr(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        # sys_setattr creates/updates metadata; for this stub we just ensure
+        # the file exists so subsequent sys_write / sys_read succeed.
+        if path not in self._files:
+            self._files[path] = b""
+        return {"path": path, "created": True}
+
     def sys_unlink(self, path: str, **kwargs: Any) -> dict[str, Any]:
         if path not in self._files:
             raise FileNotFoundError(path)

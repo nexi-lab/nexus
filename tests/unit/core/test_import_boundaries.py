@@ -246,14 +246,15 @@ class TestFourStoragePillars:
         """The MetaStore pillar has no Python ABC — its trait lives in
         ``rust/kernel/src/abc/meta_store.rs`` and the concrete impl is
         ``LocalMetaStore`` (also Rust). Python reaches the metastore
-        through ``kernel.metastore_*`` PyO3 bindings.
+        through ``sys_stat`` / ``sys_setattr`` / ``metastore_list_paginated``
+        PyO3 bindings.
         """
         from nexus_runtime import PyKernel
 
         kernel = PyKernel()
-        assert hasattr(kernel, "metastore_get")
-        assert hasattr(kernel, "metastore_put")
-        assert hasattr(kernel, "metastore_list")
+        assert hasattr(kernel, "sys_stat")
+        assert hasattr(kernel, "sys_setattr")
+        assert hasattr(kernel, "metastore_list_paginated")
 
     def test_no_old_name_in_codebase(self):
         """FileMetadataProtocol should not appear in src/ (clean rename)."""

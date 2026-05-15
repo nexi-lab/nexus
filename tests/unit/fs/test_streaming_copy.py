@@ -16,10 +16,9 @@ from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.fs import _make_mount_entry
 from nexus.fs._constants import STREAMING_COPY_CHUNK_SIZE
 from nexus.fs._helpers import LOCAL_CONTEXT
-from nexus.fs._sqlite_meta import SQLiteMetastore
+from nexus.fs._kernel_factory import create_kernel
 
 
 @pytest.fixture
@@ -28,7 +27,7 @@ def slim_fs(tmp_path: Path):
     from nexus.backends.storage.cas_local import CASLocalBackend
 
     db_path = str(tmp_path / "metadata.db")
-    metastore = SQLiteMetastore(db_path)
+    metastore = create_kernel(db_path)
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -47,7 +46,6 @@ def slim_fs(tmp_path: Path):
 
     # Mount via the driver coordinator (F2 MountTable migration).
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-    metastore.metastore_put(_make_mount_entry("/local", backend.name))
 
     return kernel
 

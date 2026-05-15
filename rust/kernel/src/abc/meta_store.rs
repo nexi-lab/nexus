@@ -89,6 +89,10 @@ pub struct FileMetadata {
     /// rejection at `sys_setattr` write time.  See
     /// `KERNEL-ARCHITECTURE.md` §4.5.
     pub link_target: Option<String>,
+    /// User/agent identity that owns this file. Set by the application
+    /// layer via ``sys_setattr``. The kernel stores and forwards but does
+    /// not enforce ownership — that is the permission layer's concern.
+    pub owner_id: Option<String>,
 }
 
 /// Error type for `MetaStore` operations.

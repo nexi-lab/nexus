@@ -1,3 +1,5 @@
+//! Tier 1 CONTRACTS — implementations in `io.rs`.
+//!
 //! `KernelAbi` — the canonical Rust syscall surface that every
 //! in-process Rust service uses to reach the kernel.
 //!
@@ -103,6 +105,10 @@ pub trait KernelAbi: Send + Sync + 'static {
         write_fd: Option<i32>,
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        content_id: Option<&str>,
+        size: Option<u64>,
+        version: Option<u32>,
+        created_at_ms: Option<i64>,
         link_target: Option<&str>,
         source: Option<&str>,
         remote_metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
@@ -110,10 +116,10 @@ pub trait KernelAbi: Send + Sync + 'static {
 
     fn sys_stat(&self, path: &str, zone_id: &str) -> Option<StatResult>;
 
-    /// Backend-direct readdir (bypasses native hooks). Used by ACP
-    /// to scan `/__sys__/agents/` and `/__proc__/` without firing
-    /// the agent-status pre-hook on every entry.
-    fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String>;
+    /// Directory listing with metastore + backend merge. Returns
+    /// Vec<(child_path, entry_type)>. Handles procfs intercepts
+    /// (e.g. `/__sys__/zones/`).
+    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)>;
 
     /// DT_PIPE creation helper. Used by `AcpSubprocess::spawn` to
     /// surface the agent's stdio fds inside VFS as
@@ -226,6 +232,10 @@ impl KernelAbi for crate::kernel::Kernel {
         write_fd: Option<i32>,
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        content_id: Option<&str>,
+        size: Option<u64>,
+        version: Option<u32>,
+        created_at_ms: Option<i64>,
         link_target: Option<&str>,
         source: Option<&str>,
         remote_metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
@@ -246,6 +256,10 @@ impl KernelAbi for crate::kernel::Kernel {
             write_fd,
             mime_type,
             modified_at_ms,
+            content_id,
+            size,
+            version,
+            created_at_ms,
             link_target,
             source,
             remote_metastore,
@@ -256,8 +270,8 @@ impl KernelAbi for crate::kernel::Kernel {
         Self::sys_stat(self, path, zone_id)
     }
 
-    fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
-        Self::sys_readdir_backend(self, path, zone_id)
+    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+        Self::readdir(self, parent_path, zone_id, is_admin)
     }
 
     fn setattr_pipe(

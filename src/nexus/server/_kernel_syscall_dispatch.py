@@ -49,6 +49,7 @@ KERNEL_SYSCALL_NAMES: frozenset[str] = frozenset(
         "exists",
         "flush_write_buffer",
         "fsync",
+        "is_directory",
         "list",
         "lock_acquire",
         "mkdir",

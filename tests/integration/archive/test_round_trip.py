@@ -127,7 +127,7 @@ class TestRoundTripSQLite:
             service.import_zone(options)
 
             # Verify at least one path made it through
-            meta = target._kernel.metastore_get("/eng/readme.md")
+            meta = target._kernel.sys_stat("/eng/readme.md", "root")
             assert meta is not None
         finally:
             target.shutdown()

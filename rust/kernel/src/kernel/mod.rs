@@ -392,6 +392,47 @@ pub struct StatResult {
     /// the link compose with the kernel's transparent-follow paths
     /// or call sys_stat on `link_target` directly.
     pub link_target: Option<String>,
+    /// User/agent identity that owns this file (from FileMetadata).
+    pub owner_id: Option<String>,
+}
+
+impl From<crate::meta_store::FileMetadata> for StatResult {
+    #[inline]
+    fn from(entry: crate::meta_store::FileMetadata) -> Self {
+        let is_dir = entry.entry_type == crate::meta_store::DT_DIR
+            || entry.entry_type == crate::meta_store::DT_MOUNT;
+        let mime = entry
+            .mime_type
+            .as_deref()
+            .unwrap_or(if is_dir {
+                "inode/directory"
+            } else {
+                "application/octet-stream"
+            })
+            .to_string();
+        Self {
+            path: entry.path,
+            size: if is_dir && entry.size == 0 {
+                4096
+            } else {
+                entry.size
+            },
+            content_id: entry.content_id,
+            mime_type: mime,
+            is_directory: is_dir,
+            entry_type: entry.entry_type,
+            mode: if is_dir { 0o755 } else { 0o644 },
+            version: entry.version,
+            gen: entry.gen,
+            zone_id: entry.zone_id,
+            created_at_ms: entry.created_at_ms,
+            modified_at_ms: entry.modified_at_ms,
+            last_writer_address: entry.last_writer_address,
+            lock: None,
+            link_target: entry.link_target,
+            owner_id: entry.owner_id,
+        }
+    }
 }
 
 /// Result of paginated readdir: children + cursor for next page.
@@ -1193,6 +1234,7 @@ impl Kernel {
             // target through a different construction path; non-link
             // metadata never carries a value here.
             link_target: None,
+            owner_id: None,
         }
     }
 
@@ -1613,6 +1655,10 @@ impl Kernel {
         // -- UPDATE params (entry_type == 0) --
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        content_id: Option<&str>,
+        size: Option<u64>,
+        version: Option<u32>,
+        created_at_ms: Option<i64>,
         // -- DT_LINK params (entry_type == 6) --
         link_target: Option<&str>,
         // -- DT_MOUNT explicit source (entry_type == 2) --
@@ -1767,8 +1813,17 @@ impl Kernel {
                 self.setattr_create_dir(path, zone_id)
             }
             0 => {
-                // UPDATE or IDEMPOTENT OPEN
-                self.setattr_update(path, mime_type, modified_at_ms)
+                // UPDATE existing DT_REG, or CREATE if path does not exist (upsert).
+                self.setattr_update(
+                    path,
+                    zone_id,
+                    mime_type,
+                    modified_at_ms,
+                    content_id,
+                    size,
+                    version,
+                    created_at_ms,
+                )
             }
             6 => {
                 // DT_LINK — VFS-internal symlink (KERNEL-ARCHITECTURE.md §4.5).
@@ -1850,6 +1905,7 @@ impl Kernel {
             last_writer_address: self.self_address.read().clone(),
             target_zone_id: None,
             link_target: Some(link_target.to_string()),
+            owner_id: None,
         };
         self.metastore_put(path, meta)?;
         // The metastore impl populates its own internal cache during
@@ -2172,18 +2228,92 @@ impl Kernel {
         })
     }
 
-    /// UPDATE or IDEMPOTENT OPEN: modify mutable fields on existing inode.
+    /// UPDATE existing DT_REG, or CREATE if path does not exist (upsert).
+    ///
+    /// When the metastore has no entry for `path`, a new DT_REG is created
+    /// with the supplied fields (mirrors `setattr_create_dir` semantics).
+    /// This eliminates the need for Python callers to use `metastore_put`
+    /// to create file metadata entries.
+    #[allow(clippy::too_many_arguments)]
     fn setattr_update(
         &self,
         path: &str,
+        zone_id: &str,
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        content_id: Option<&str>,
+        size: Option<u64>,
+        version: Option<u32>,
+        created_at_ms: Option<i64>,
     ) -> Result<SysSetAttrResult, KernelError> {
-        let existing = self.metastore_get(path)?;
-        let meta = existing.ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
+        // Route-scoped metastore resolution — same path sys_write/sys_read
+        // use, ensuring SSOT. Falls back to global metastore_get/metastore_put
+        // when no VFS route covers the path (e.g. boot-time, tests).
+        let route = self.vfs_router.route(path, zone_id).ok();
+
+        let existing: Option<crate::meta_store::FileMetadata> = if let Some(ref r) = route {
+            self.with_metastore_route(r, |ms| ms.get(path).ok().flatten())
+                .flatten()
+        } else {
+            self.metastore_get(path)?
+        };
+
+        // ── CREATE: path does not exist — build new DT_REG ──────────
+        let Some(meta) = existing else {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+
+            let effective_zone = route
+                .as_ref()
+                .map(|r| r.zone_id.as_str())
+                .unwrap_or(zone_id);
+            let new_meta = self.build_metadata(
+                path,
+                effective_zone,
+                crate::meta_store::DT_REG,
+                size.unwrap_or(0),
+                content_id.map(|s| s.to_string()),
+                0, // gen — setattr create, gen will be set on first write
+                version.unwrap_or(1),
+                mime_type.map(|s| s.to_string()),
+                Some(created_at_ms.unwrap_or(now_ms)),
+                Some(modified_at_ms.unwrap_or(now_ms)),
+            );
+            if let Some(ref r) = route {
+                self.with_metastore_route(r, |ms| ms.put(path, new_meta))
+                    .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
+                    .and_then(|r| {
+                        r.map_err(|e| {
+                            KernelError::IOError(format!("setattr_update put({path}): {e:?}"))
+                        })
+                    })?;
+            } else {
+                self.metastore_put(path, new_meta)?;
+            }
+
+            return Ok(SysSetAttrResult {
+                path: path.to_string(),
+                created: true,
+                entry_type: crate::meta_store::DT_REG as i32,
+                backend_name: None,
+                capacity: None,
+                updated: Vec::new(),
+                shm_path: None,
+                data_rd_fd: None,
+                space_rd_fd: None,
+            });
+        };
 
         // No fields to update → idempotent open (no-op)
-        if mime_type.is_none() && modified_at_ms.is_none() {
+        if mime_type.is_none()
+            && modified_at_ms.is_none()
+            && content_id.is_none()
+            && size.is_none()
+            && version.is_none()
+            && created_at_ms.is_none()
+        {
             return Ok(SysSetAttrResult {
                 path: path.to_string(),
                 created: false,
@@ -2208,18 +2338,34 @@ impl Kernel {
             new_meta.modified_at_ms = Some(ms);
             updated_fields.push("modified_at_ms".to_string());
         }
+        if let Some(cid) = content_id {
+            new_meta.content_id = Some(cid.to_string());
+            updated_fields.push("content_id".to_string());
+        }
+        if let Some(s) = size {
+            new_meta.size = s;
+            updated_fields.push("size".to_string());
+        }
+        if let Some(v) = version {
+            new_meta.version = v;
+            updated_fields.push("version".to_string());
+        }
+        if let Some(ca) = created_at_ms {
+            new_meta.created_at_ms = Some(ca);
+            updated_fields.push("created_at_ms".to_string());
+        }
 
-        // metastore_put owns dcache coherence after PR #4027 collapsed
-        // commit_metadata/commit_delete into the metastore layer: the
-        // put() write atomically invalidates the dcache so a
-        // follow-up sys_stat sees the new mime_type/modified_at_ms
-        // instead of the stale cached entry. Earlier this method
-        // wrote via metastore_put without the dcache update; service-
-        // tier readers using metastore_get (dcache-bypassing) papered
-        // over the bug. Since v2 services route through sys_stat
-        // (which consults dcache first), the post-#4027 metastore_put
-        // is the right SSOT.
-        self.metastore_put(path, new_meta)?;
+        if let Some(ref r) = route {
+            self.with_metastore_route(r, |ms| ms.put(path, new_meta))
+                .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
+                .and_then(|r| {
+                    r.map_err(|e| {
+                        KernelError::IOError(format!("setattr_update put({path}): {e:?}"))
+                    })
+                })?;
+        } else {
+            self.metastore_put(path, new_meta)?;
+        }
 
         Ok(SysSetAttrResult {
             path: path.to_string(),
@@ -2534,41 +2680,6 @@ impl Kernel {
     // ── File I/O syscalls (sys_read / sys_write / sys_stat / sys_unlink /
     //    sys_rename / sys_copy / sys_mkdir / sys_rmdir) ──────────────────
     // (Moved to `kernel::io` submodule.)
-
-    /// Backend-native directory listing for external mounts.
-    ///
-    /// Unlike `readdir` (which merges dcache + metastore), this calls the
-    /// backend's `list_dir` directly — needed for external connectors
-    /// (HN, CLI, X, GDrive, etc.) whose entries are only known to the
-    /// live API, not persisted in dcache/metastore.
-    ///
-    /// Returns entry names (files plain, directories with trailing `/`).
-    /// Returns empty Vec on backend NotSupported or mount not found.
-    pub fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
-        if validate_path_fast(path).is_err() {
-            return Vec::new();
-        }
-        // Federation procfs: /__sys__/zones/ enumerates loaded zones
-        // (read-only namespace, like Linux /proc).  Returns the zone-id
-        // list verbatim — caller may format with trailing-slash etc.
-        if let Some(zones) = self.zones_procfs_readdir(path) {
-            return zones;
-        }
-        let normalized = if path != "/" && path.ends_with('/') {
-            path.trim_end_matches('/')
-        } else {
-            path
-        };
-        let route = match self.vfs_router.route(normalized, zone_id) {
-            Ok(r) => r,
-            Err(_) => return Vec::new(),
-        };
-        route
-            .backend
-            .as_ref()
-            .and_then(|b| b.list_dir(&route.backend_path).ok())
-            .unwrap_or_default()
-    }
 
     // ── sys_grep + sys_glob ───────────────────────────────────────────
     //
@@ -2967,6 +3078,31 @@ pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
     Ok(())
 }
 
+// ── Drop ────────────────────────────────────────────────────────────────
+
+impl Drop for Kernel {
+    fn drop(&mut self) {
+        // Shut down the kernel-owned tokio runtime so its worker threads
+        // exit promptly. Without this, the two `nexus-kernel-peer` threads
+        // survive past Python process exit and keep xdist worker processes
+        // alive indefinitely (~39 min hang on macOS CI).
+        //
+        // We replace the Arc with a dummy single-threaded runtime, then
+        // drop the original. When the last Arc ref drops, tokio's own
+        // Drop impl shuts down the worker threads. The swap ensures this
+        // Kernel's drop triggers the shutdown even if other Arcs exist
+        // (they'd hold the dummy, which is cheap to drop).
+        let dummy = std::sync::Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("dummy runtime for Kernel::drop"),
+        );
+        let old = std::mem::replace(&mut self.runtime, dummy);
+        // Explicitly drop — if this is the last Arc, tokio shuts down workers.
+        drop(old);
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -3093,6 +3229,7 @@ mod tests {
     fn sys_write_increments_content_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/gen.txt", DT_REG as i32).unwrap();
 
         let first = k.sys_write_one("/gen.txt", &ctx, b"one", 0).unwrap();
         let second = k.sys_write_one("/gen.txt", &ctx, b"two", 0).unwrap();
@@ -3107,6 +3244,7 @@ mod tests {
     fn sys_setattr_metadata_update_preserves_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/mime.txt", DT_REG as i32).unwrap();
         k.sys_write_one("/mime.txt", &ctx, b"body", 0).unwrap();
 
         k.sys_setattr(
@@ -3127,6 +3265,10 @@ mod tests {
             None,
             None,
             None,
+            None, // created_at_ms
+            None, // link_target
+            None, // source
+            None, // remote_metastore
         )
         .unwrap();
 
@@ -3138,6 +3280,7 @@ mod tests {
     fn copy_uses_destination_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
 
         let copied = k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
@@ -3157,6 +3300,7 @@ mod tests {
     fn copy_rejects_non_regular_destination() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
         k.sys_mkdir("/dst", &ctx, true, true).unwrap();
 
@@ -3179,7 +3323,9 @@ mod tests {
     fn copy_overwrite_preserves_destination_created_at() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
         k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
@@ -3197,7 +3343,9 @@ mod tests {
     fn copy_snapshot_failure_releases_vfs_locks() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
         k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
@@ -3223,6 +3371,8 @@ mod tests {
     fn batch_write_increments_each_path_generation() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
+        setattr(&k, "/a.txt", DT_REG as i32).unwrap();
+        setattr(&k, "/b.txt", DT_REG as i32).unwrap();
 
         let first = k.sys_write(
             &[
@@ -3259,6 +3409,7 @@ mod tests {
     fn sys_cat_pretty_prints_json_without_changing_sys_read() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("system", "root", true, None, true);
+        setattr(&k, "/doc.json", DT_REG as i32).unwrap();
         let write = k
             .sys_write_one("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
             .unwrap();
@@ -3275,6 +3426,7 @@ mod tests {
     fn sys_cat_returns_raw_bytes_for_unknown_filetype() {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("system", "root", true, None, true);
+        setattr(&k, "/plain.bin", DT_REG as i32).unwrap();
         let write = k.sys_write_one("/plain.bin", &ctx, b"abc", 0).unwrap();
         assert!(write.hit);
 
@@ -3559,6 +3711,10 @@ mod tests {
             None,  // write_fd
             None,  // mime_type
             None,  // modified_at_ms
+            None,  // content_id
+            None,  // size
+            None,  // version
+            None,  // created_at_ms
             None,  // link_target
             None,  // source
             None,  // remote_metastore
@@ -3640,6 +3796,7 @@ mod tests {
                 last_writer_address: None,
                 target_zone_id: None,
                 link_target: None,
+                owner_id: None,
             },
         )
         .unwrap();
@@ -3662,6 +3819,10 @@ mod tests {
                 Some("text/plain"),
                 None,
                 None,
+                None,
+                None,
+                None,
+                None,
                 None, // source
                 None, // remote_metastore
             )
@@ -3671,14 +3832,17 @@ mod tests {
     }
 
     #[test]
-    fn sys_setattr_update_file_not_found() {
+    fn sys_setattr_update_creates_on_miss() {
         let k = Kernel::new();
-        let err = setattr(&k, "/nonexistent", 0);
-        assert!(err.is_err());
-        match err.unwrap_err() {
-            KernelError::FileNotFound(_) => {}
-            other => panic!("expected FileNotFound, got: {other:?}"),
-        }
+        let result = setattr(&k, "/newfile", 0);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert!(r.created);
+        assert_eq!(r.entry_type, 0); // DT_REG
+
+        // Idempotent: second call is an update (created=false)
+        let r2 = setattr(&k, "/newfile", 0).unwrap();
+        assert!(!r2.created);
     }
 
     // ── Metastore-key tests ────────────────────────────────────────────
@@ -3727,6 +3891,10 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
+                None,
                 None, // source
                 None, // remote_metastore
             )
@@ -3764,6 +3932,10 @@ mod tests {
             "root",
             false,
             0,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -4281,6 +4453,7 @@ mod tests {
                 .metastore_get("/workspace/default.txt")
                 .unwrap()
                 .expect("metadata committed by default write-through policy");
+            // sys_write with implicit create = v1
             assert_eq!(meta.version, 1);
             assert_eq!(meta.size, 7);
             assert!(meta.content_id.is_some());
@@ -4791,6 +4964,8 @@ mod tests {
                 .flush_write_buffer(Some("/workspace/a.txt"), Some("root"))
                 .unwrap();
             let stat = kernel.sys_stat("/workspace/a.txt", "root").unwrap();
+            // sys_write implicit create (v1); dirty sys_write(v2 buffered)
+            // flush replaces metadata from dirty snapshot (v1) → v1+1 = 2
             assert_eq!(stat.version, 2);
             assert_eq!(stat.content_id.as_deref(), Some("a.txt"));
         }
@@ -4875,6 +5050,7 @@ mod tests {
                 last_writer_address: None,
                 target_zone_id: None,
                 link_target: Some(target.to_string()),
+                owner_id: None,
             }
         }
 
@@ -4893,6 +5069,7 @@ mod tests {
                 last_writer_address: None,
                 target_zone_id: None,
                 link_target: None,
+                owner_id: None,
             }
         }
 
@@ -4964,6 +5141,10 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
+                    None,
+                    None,
+                    None,
                     Some(target),
                     None,
                     None, // remote_metastore
@@ -5005,6 +5186,10 @@ mod tests {
                     "root",
                     false,
                     0,
+                    None,
+                    None,
+                    None,
+                    None,
                     None,
                     None,
                     None,
@@ -5217,6 +5402,10 @@ mod tests {
                     /* write_fd */ None,
                     /* mime_type */ None,
                     /* modified_at_ms */ None,
+                    /* content_id */ None,
+                    /* size */ None,
+                    /* version */ None,
+                    /* created_at_ms */ None,
                     /* link_target */ None,
                     /* source */ None,
                     /* remote_metastore */ None,
@@ -5271,6 +5460,10 @@ mod tests {
                         "root",
                         false,
                         65_536,
+                        None,
+                        None,
+                        None,
+                        None,
                         None,
                         None,
                         None,

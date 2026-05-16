@@ -1108,8 +1108,7 @@ pub fn spawn(
 
     let routes = build_vfs_routes(kernel, auth, cfg.max_message_bytes, &cfg.server_version);
 
-    let mut server_builder = Server::builder()
-        .max_concurrent_streams(Some(1024))
+    let mut server_builder = lib::transport_primitives::apply_server_limits(Server::builder())
         .timeout(std::time::Duration::from_secs(60));
 
     if let Some(tls) = cfg.tls {

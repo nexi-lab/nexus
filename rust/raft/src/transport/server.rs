@@ -153,7 +153,8 @@ impl RaftGrpcServer {
             blob_fetcher_slot: self.blob_fetcher_slot.clone(),
         };
 
-        let mut builder = tonic::transport::Server::builder();
+        let mut builder =
+            lib::transport_primitives::apply_server_limits(tonic::transport::Server::builder());
         if let Some(ref tls) = self.config.tls {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
             let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
@@ -210,7 +211,8 @@ impl RaftGrpcServer {
             blob_fetcher_slot: self.blob_fetcher_slot.clone(),
         };
 
-        let mut builder = tonic::transport::Server::builder();
+        let mut builder =
+            lib::transport_primitives::apply_server_limits(tonic::transport::Server::builder());
         if let Some(ref tls) = self.config.tls {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
             let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
@@ -1683,7 +1685,8 @@ impl RaftWitnessServer {
             registry: self.registry.clone(),
         };
 
-        let mut builder = tonic::transport::Server::builder();
+        let mut builder =
+            lib::transport_primitives::apply_server_limits(tonic::transport::Server::builder());
         if let Some(ref tls) = self.config.tls {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
             let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);

@@ -1656,21 +1656,6 @@ impl PyKernel {
         Ok(dict.into())
     }
 
-    // ── Router proxy methods ───────────────────────────────────────────
-
-    fn has_mount(&self, mount_point: &str, zone_id: &str) -> bool {
-        self.inner.has_mount(mount_point, zone_id)
-    }
-
-    fn get_mount_points(&self) -> Vec<String> {
-        self.inner.get_mount_points()
-    }
-
-    #[pyo3(signature = (mount_point, zone_id="root"))]
-    fn kernel_unmount(&self, mount_point: &str, zone_id: &str) -> bool {
-        self.inner.dlc.unmount(&self.inner, mount_point, zone_id)
-    }
-
     // ── IPC Registry — Pipe methods ──────────────────────────────────
 
     fn create_pipe(&self, path: &str, capacity: usize) -> PyResult<()> {

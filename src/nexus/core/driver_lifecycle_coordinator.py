@@ -102,7 +102,11 @@ class DriverLifecycleCoordinator:
         # Rust DLC handles metastore delete + dcache evict + routing remove
         if self._kernel is not None:
             with contextlib.suppress(Exception):
-                self._kernel.kernel_unmount(normalized, zone_id)
+                from nexus_runtime import PyOperationContext
+
+                self._kernel.sys_unlink(
+                    normalized, PyOperationContext(is_system=True, zone_id=zone_id)
+                )
 
         return True
 

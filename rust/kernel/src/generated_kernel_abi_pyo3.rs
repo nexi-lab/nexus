@@ -27,7 +27,7 @@ use crate::hook_registry::HookRegistry;
 use crate::hook_registry::InterceptHook;
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::meta_store::{FileMetadata, MetaStoreError};
-use crate::vfs_router::RouteError;
+// RouteError import removed — Route variant now stores String directly
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PyServiceLifecycle — Python → ServiceLifecycle adapter
@@ -168,9 +168,7 @@ impl From<KernelError> for PyErr {
                 }
             }),
             KernelError::FileExists(msg) => pyo3::exceptions::PyFileExistsError::new_err(msg),
-            KernelError::Route(RouteError::NotMounted(msg)) => {
-                pyo3::exceptions::PyValueError::new_err(msg)
-            }
+            KernelError::Route(msg) => pyo3::exceptions::PyValueError::new_err(msg),
             KernelError::IOError(msg) => pyo3::exceptions::PyIOError::new_err(msg),
             KernelError::TrieError(msg) => pyo3::exceptions::PyValueError::new_err(msg),
             // IPC error variants
@@ -793,55 +791,6 @@ impl PathResolver for PyPathResolverAdapter {
     }
 }
 
-// ── PyPermissionProviderAdapter ──────────────────────────────────────
-
-use crate::core::dispatch::{Permission, PermissionDecision, PermissionProvider};
-
-pub(crate) struct PyPermissionProviderAdapter {
-    checker: Py<PyAny>,
-}
-
-unsafe impl Send for PyPermissionProviderAdapter {}
-
-unsafe impl Sync for PyPermissionProviderAdapter {}
-
-impl PermissionProvider for PyPermissionProviderAdapter {
-    fn check(
-        &self,
-        path: &str,
-        permission: Permission,
-        _ctx: &contracts::OperationContext,
-    ) -> PermissionDecision {
-        Python::attach(|py| {
-            let checker = self.checker.bind(py);
-            let perm_mod = match py.import("nexus.contracts.types") {
-                Ok(m) => m,
-                Err(_) => return PermissionDecision::Unknown,
-            };
-            let perm_cls = match perm_mod.getattr("Permission") {
-                Ok(c) => c,
-                Err(_) => return PermissionDecision::Unknown,
-            };
-            let py_perm = match perm_cls.getattr(permission.as_str()) {
-                Ok(p) => p,
-                Err(_) => return PermissionDecision::Unknown,
-            };
-            let py_ctx = match rust_ctx_to_python(py, _ctx, "") {
-                Ok(c) => c,
-                Err(_) => return PermissionDecision::Unknown,
-            };
-            match checker.call_method1("check", (path, py_perm, py_ctx)) {
-                Ok(_) => PermissionDecision::Allow,
-                Err(_) => PermissionDecision::Deny(format!(
-                    "permission denied: {} on '{}'",
-                    permission.as_str(),
-                    path
-                )),
-            }
-        })
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Direction 1 (WRAPPER): PyO3 wrapper types
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1105,11 +1054,9 @@ impl PyKernel {
 
     // ── §13 Permission gate wiring ──────────────────────────────────
 
-    /// Register a Python permission provider (wraps in PyPermissionProviderAdapter).
-    fn set_permission_provider(&self, provider: Py<PyAny>) {
-        let adapter = PyPermissionProviderAdapter { checker: provider };
-        self.inner
-            .set_permission_provider(std::sync::Arc::new(adapter));
+    /// Enable the kernel permission gate (no external provider needed).
+    fn enable_permission_gate(&self) {
+        self.inner.enable_permission_gate();
     }
 
     /// Configure admin bypass (default: true).
@@ -2406,8 +2353,8 @@ impl PyKernel {
     }
 
     #[pyo3(signature = (parent_path, zone_id, is_admin=false))]
-    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
-        self.inner.readdir(parent_path, zone_id, is_admin)
+    fn sys_readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+        self.inner.sys_readdir(parent_path, zone_id, is_admin)
     }
 
     /// Simplified sys_read that takes (path, zone_id) — creates a minimal

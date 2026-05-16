@@ -20,7 +20,6 @@ service-agents = []
 service-managed-agent = []
 service-acp = []
 service-tasks = []
-service-permission = []
 # Matrix Client-Server v3 adapter — exposes nexus chat-with-me
 # DT_STREAMs as Matrix rooms so stock chat clients (Element /
 # FluffyChat / Cinny) can join conversations without a bespoke
@@ -40,7 +39,6 @@ python = [
     "service-managed-agent",
     "service-acp",
     "service-tasks",
-    "service-permission",
     # service-matrix-adapter intentionally NOT in `python` — it has no
     # PyO3 surface; nexus-cdylib opts in separately when shipping the
     # adapter alongside the Python wheel.

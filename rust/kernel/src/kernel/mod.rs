@@ -17,7 +17,7 @@
 
 use crate::cache::index_cache::IndexCache;
 use crate::core::permission_cache::PermissionLeaseCache;
-use crate::dispatch::{MutationObserver, PermissionProvider, Trie};
+use crate::dispatch::{MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
 use crate::meta_store::LocalMetaStore;
@@ -99,12 +99,14 @@ mod observability;
 /// Kernel-level error type — pure Rust, no PyO3 dependency.
 ///
 /// Error conversion to PyErr lives in generated_pyo3.rs.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum KernelError {
     InvalidPath(String),
     FileNotFound(String),
     FileExists(String),
-    Route(RouteError),
+    /// Routing failure — stores the formatted `RouteError` message so
+    /// KernelError can derive Clone (RouteError itself is !Clone).
+    Route(String),
     IOError(String),
     TrieError(String),
     // IPC error variants
@@ -132,7 +134,7 @@ pub enum KernelError {
 
 impl From<RouteError> for KernelError {
     fn from(e: RouteError) -> Self {
-        KernelError::Route(e)
+        KernelError::Route(format!("{e:?}"))
     }
 }
 
@@ -177,6 +179,28 @@ pub struct SysReadResult {
     /// DT_STREAM: next read offset (message index) for cursor advancement.
     /// None for non-stream entry types.
     pub stream_next_offset: Option<usize>,
+}
+
+impl SysReadResult {
+    /// Construct an IPC read result (DT_PIPE / DT_STREAM).
+    ///
+    /// All IPC reads share `post_hook_needed: false`, `content_id: None`,
+    /// `gen: 0` — only `entry_type`, `data`, and `stream_next_offset` vary.
+    #[inline]
+    pub(crate) fn ipc(
+        entry_type: u8,
+        data: Option<Vec<u8>>,
+        stream_next_offset: Option<usize>,
+    ) -> Self {
+        Self {
+            data,
+            post_hook_needed: false,
+            content_id: None,
+            gen: 0,
+            entry_type,
+            stream_next_offset,
+        }
+    }
 }
 
 /// Per-request entry for `Kernel::sys_read` (batch variant).
@@ -759,11 +783,9 @@ pub struct Kernel {
 
     // ── §13 Permission gate ───────────────────────────────────────────
     //
-    // Pluggable permission provider (set once at boot, never mutated).
     // When `has_permission_provider` is false, the entire permission
     // gate is skipped (~1ns AtomicBool load). When true, the gate
-    // runs: lease cache → admin bypass → zone perms → provider.
-    permission_provider: parking_lot::RwLock<Option<Arc<dyn PermissionProvider>>>,
+    // runs: lease cache → admin bypass → zone perms.
     permission_lease_cache: PermissionLeaseCache,
     /// Admin bypass enabled — Docker default true.
     permission_admin_bypass: AtomicBool,
@@ -854,7 +876,6 @@ impl Kernel {
                 crate::hal::distributed_coordinator::NoopDistributedCoordinator::arc(),
             ),
             pending_blob_fetcher_slot: parking_lot::Mutex::new(None),
-            permission_provider: parking_lot::RwLock::new(None),
             permission_lease_cache: PermissionLeaseCache::new(
                 std::time::Duration::from_secs(30),
                 100_000,
@@ -3693,14 +3714,14 @@ mod tests {
                 Duration::from_secs(60),
             );
             assert_eq!(
-                k.readdir("/data", "root", false),
+                k.sys_readdir("/data", "root", false),
                 vec![("/data/stale.txt".to_string(), DT_REG)]
             );
 
             let ctx = OperationContext::new("test", "root", true, None, true);
             k.sys_mkdir("/data/fresh", &ctx, false, false).unwrap();
 
-            let entries = k.readdir("/data", "root", false);
+            let entries = k.sys_readdir("/data", "root", false);
             assert!(entries.contains(&("/data/fresh".to_string(), DT_DIR)));
             assert!(!entries.contains(&("/data/stale.txt".to_string(), DT_REG)));
         }

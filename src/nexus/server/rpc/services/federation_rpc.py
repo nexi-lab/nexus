@@ -539,7 +539,7 @@ class FederationRPCService(FederationRPCMixin):
         # synthesised entries.
         zone_ids: list[str] = [
             p.rstrip("/").rsplit("/", 1)[-1]
-            for p, _etype in self._kernel.readdir("/__sys__/zones/", "root")
+            for p, _etype in self._kernel.sys_readdir("/__sys__/zones/", "root")
         ]
         zones = [
             {

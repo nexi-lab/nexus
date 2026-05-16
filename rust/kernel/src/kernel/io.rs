@@ -35,39 +35,6 @@ struct ResolvedRead {
     entry: Option<FileMetadata>,
 }
 
-/// Produce a cheap structural clone of a `KernelError` for fan-out in
-/// `sys_read` batch path.  `KernelError` is `!Clone` (its `Route` variant holds a
-/// non-Clone `RouteError`), so we collapse that variant to its `Debug` repr.
-fn clone_kernel_err(e: &KernelError) -> KernelError {
-    match e {
-        KernelError::InvalidPath(s) => KernelError::InvalidPath(s.clone()),
-        KernelError::FileNotFound(s) => KernelError::FileNotFound(s.clone()),
-        KernelError::FileExists(s) => KernelError::FileExists(s.clone()),
-        KernelError::IOError(s) => KernelError::IOError(s.clone()),
-        KernelError::TrieError(s) => KernelError::TrieError(s.clone()),
-        KernelError::PipeFull(s) => KernelError::PipeFull(s.clone()),
-        KernelError::PipeEmpty(s) => KernelError::PipeEmpty(s.clone()),
-        KernelError::PipeClosed(s) => KernelError::PipeClosed(s.clone()),
-        KernelError::PipeExists(s) => KernelError::PipeExists(s.clone()),
-        KernelError::PipeNotFound(s) => KernelError::PipeNotFound(s.clone()),
-        KernelError::StreamFull(s) => KernelError::StreamFull(s.clone()),
-        KernelError::StreamEmpty(s) => KernelError::StreamEmpty(s.clone()),
-        KernelError::StreamClosed(s) => KernelError::StreamClosed(s.clone()),
-        KernelError::StreamExists(s) => KernelError::StreamExists(s.clone()),
-        KernelError::StreamNotFound(s) => KernelError::StreamNotFound(s.clone()),
-        KernelError::WouldBlock(s) => KernelError::WouldBlock(s.clone()),
-        KernelError::PermissionDenied(s) => KernelError::PermissionDenied(s.clone()),
-        KernelError::BackendError(s) => KernelError::BackendError(s.clone()),
-        KernelError::Federation(s) => KernelError::Federation(s.clone()),
-        KernelError::Route(_) => {
-            // RouteError isn't trivially cloneable. Collapse to a string form —
-            // batch path only needs the per-item error visible downstream; the
-            // structural detail is preserved in the Debug repr.
-            KernelError::IOError(format!("{:?}", e))
-        }
-    }
-}
-
 /// Build a per-consumer `SysReadResult` from the lead request's shared result.
 ///
 /// On success the caller's `offset` + `len` window is sliced out of the
@@ -85,7 +52,7 @@ fn clone_read_result(
     consumer_meta: Option<&FileMetadata>,
 ) -> Result<SysReadResult, KernelError> {
     match shared {
-        Err(e) => Err(clone_kernel_err(e)),
+        Err(e) => Err(e.clone()),
         Ok(src) => {
             let data = src.data.as_ref().map(|bytes| {
                 let off = (req.offset as usize).min(bytes.len());
@@ -289,46 +256,18 @@ impl Kernel {
         if entry.entry_type == DT_PIPE {
             match self.pipe_read_nowait(path) {
                 Ok(Some(data)) => {
-                    return Ok(SysReadResult {
-                        data: Some(data),
-                        post_hook_needed: false,
-                        content_id: None,
-                        gen: 0,
-                        entry_type: DT_PIPE,
-                        stream_next_offset: None,
-                    });
+                    return Ok(SysReadResult::ipc(DT_PIPE, Some(data), None));
                 }
                 Ok(None) => {
                     if timeout_ms == 0 {
-                        return Ok(SysReadResult {
-                            data: None,
-                            post_hook_needed: false,
-                            content_id: None,
-                            gen: 0,
-                            entry_type: DT_PIPE,
-                            stream_next_offset: None,
-                        });
+                        return Ok(SysReadResult::ipc(DT_PIPE, None, None));
                     }
                     match self.pipe_read_blocking(path, timeout_ms) {
                         Ok(data) => {
-                            return Ok(SysReadResult {
-                                data: Some(data),
-                                post_hook_needed: false,
-                                content_id: None,
-                                gen: 0,
-                                entry_type: DT_PIPE,
-                                stream_next_offset: None,
-                            });
+                            return Ok(SysReadResult::ipc(DT_PIPE, Some(data), None));
                         }
                         Err(KernelError::WouldBlock(_)) => {
-                            return Ok(SysReadResult {
-                                data: None,
-                                post_hook_needed: false,
-                                content_id: None,
-                                gen: 0,
-                                entry_type: DT_PIPE,
-                                stream_next_offset: None,
-                            });
+                            return Ok(SysReadResult::ipc(DT_PIPE, None, None));
                         }
                         Err(e) => return Err(e),
                     }
@@ -341,46 +280,22 @@ impl Kernel {
         if entry.entry_type == DT_STREAM {
             match self.stream_read_at(path, offset as usize) {
                 Ok(Some((data, next_offset))) => {
-                    return Ok(SysReadResult {
-                        data: Some(data),
-                        post_hook_needed: false,
-                        content_id: None,
-                        gen: 0,
-                        entry_type: DT_STREAM,
-                        stream_next_offset: Some(next_offset),
-                    });
+                    return Ok(SysReadResult::ipc(DT_STREAM, Some(data), Some(next_offset)));
                 }
                 Ok(None) => {
                     if timeout_ms == 0 {
-                        return Ok(SysReadResult {
-                            data: None,
-                            post_hook_needed: false,
-                            content_id: None,
-                            gen: 0,
-                            entry_type: DT_STREAM,
-                            stream_next_offset: None,
-                        });
+                        return Ok(SysReadResult::ipc(DT_STREAM, None, None));
                     }
                     match self.stream_read_at_blocking(path, offset as usize, timeout_ms) {
                         Ok((data, next_offset)) => {
-                            return Ok(SysReadResult {
-                                data: Some(data),
-                                post_hook_needed: false,
-                                content_id: None,
-                                gen: 0,
-                                entry_type: DT_STREAM,
-                                stream_next_offset: Some(next_offset),
-                            });
+                            return Ok(SysReadResult::ipc(
+                                DT_STREAM,
+                                Some(data),
+                                Some(next_offset),
+                            ));
                         }
                         Err(KernelError::WouldBlock(_)) => {
-                            return Ok(SysReadResult {
-                                data: None,
-                                post_hook_needed: false,
-                                content_id: None,
-                                gen: 0,
-                                entry_type: DT_STREAM,
-                                stream_next_offset: None,
-                            });
+                            return Ok(SysReadResult::ipc(DT_STREAM, None, None));
                         }
                         Err(e) => return Err(e),
                     }
@@ -2972,7 +2887,12 @@ impl Kernel {
     /// the root zone (global namespace).
     ///
     /// Returns Vec of (child_path, entry_type) tuples.
-    pub fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+    pub fn sys_readdir(
+        &self,
+        parent_path: &str,
+        zone_id: &str,
+        is_admin: bool,
+    ) -> Vec<(String, u8)> {
         if validate_path_fast(parent_path).is_err() {
             return Vec::new();
         }
@@ -3133,7 +3053,7 @@ impl Kernel {
         }
 
         // Normal readdir with optional pagination.
-        let all = self.readdir(parent_path, zone_id, is_admin);
+        let all = self.sys_readdir(parent_path, zone_id, is_admin);
 
         if limit == 0 {
             return super::ReadDirResult {

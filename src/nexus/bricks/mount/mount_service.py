@@ -215,7 +215,7 @@ class MountService:
                 while queue and len(file_paths) < 200:
                     virtual_prefix = queue.popleft()
                     try:
-                        entries = list(_rust_kernel.readdir(virtual_prefix, zone_id or "root"))
+                        entries = list(_rust_kernel.sys_readdir(virtual_prefix, zone_id or "root"))
                     except Exception:
                         continue
                     for child_path, etype in entries:

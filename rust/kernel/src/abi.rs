@@ -19,8 +19,11 @@
 //!
 //! ## Surface scope
 //!
-//! Trait methods are 1:1 with the inherent `Kernel::sys_*` syscalls —
-//! same name, same signature. No invented syscalls. No
+//! Trait methods correspond to the inherent `Kernel::sys_*` syscalls.
+//! Vectored syscalls (sys_read, sys_write, sys_unlink) expose
+//! single-path convenience wrappers here; the inherent methods accept
+//! `&[ReadRequest]` / `&[WriteRequest]` / `&[UnlinkRequest]` for
+//! batch callers. No invented syscalls. No
 //! kernel-internal struct accessors (`vfs_router_arc`,
 //! `agent_registry`, `distributed_coordinator`, …); services that
 //! need those reach them through the production-only
@@ -38,8 +41,10 @@ use contracts::{OperationContext, RustService};
 
 use crate::core::dispatch::{FileEvent, NativeInterceptHook};
 use crate::kernel::{
-    KernelError, StatResult, SysReadResult, SysSetAttrResult, SysUnlinkResult, SysWriteResult,
+    KernelError, StatResult, SysCopyResult, SysMkdirResult, SysReadResult, SysRenameResult,
+    SysSetAttrResult, SysUnlinkResult, SysWriteResult,
 };
+use crate::lock_manager::KernelLockMode;
 
 /// Canonical syscall surface that every Rust service uses to reach
 /// the kernel.
@@ -73,7 +78,7 @@ pub trait KernelAbi: Send + Sync + 'static {
         recursive: bool,
     ) -> Result<SysUnlinkResult, KernelError>;
 
-    /// Full inherent `sys_setattr` signature (17 args). Kernel-internal
+    /// Full inherent `sys_setattr` signature (21 params). Kernel-internal
     /// types (`Arc<dyn ObjectStore>`, `Arc<dyn MetaStore>`, `Box<dyn
     /// Any + Send + Sync>`) appear here because the trait lives in
     /// the kernel crate. Service callers that don't touch DT_MOUNT
@@ -108,10 +113,58 @@ pub trait KernelAbi: Send + Sync + 'static {
 
     fn sys_stat(&self, path: &str, zone_id: &str) -> Option<StatResult>;
 
+    fn sys_rename(
+        &self,
+        old_path: &str,
+        new_path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysRenameResult, KernelError>;
+
+    fn sys_copy(
+        &self,
+        src_path: &str,
+        dst_path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysCopyResult, KernelError>;
+
+    fn sys_mkdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        parents: bool,
+        exist_ok: bool,
+    ) -> Result<SysMkdirResult, KernelError>;
+
+    // ── Locks ────────────────────────────────────────────────────────
+
+    /// Acquire or create a lock on `path`. Returns the lock_id on
+    /// success (generated if `lock_id` is empty), or `None` if the lock
+    /// could not be acquired (contention).
+    fn sys_lock(
+        &self,
+        path: &str,
+        lock_id: &str,
+        mode: KernelLockMode,
+        max_holders: u32,
+        ttl_secs: u64,
+        holder_info: &str,
+    ) -> Result<Option<String>, KernelError>;
+
+    /// Release a lock. If `force` is true, unconditionally removes the
+    /// lock regardless of holder identity. Returns true if the lock was
+    /// actually released.
+    fn sys_unlock(&self, path: &str, lock_id: &str, force: bool) -> Result<bool, KernelError>;
+
     /// Directory listing with metastore + backend merge. Returns
     /// Vec<(child_path, entry_type)>. Handles procfs intercepts
     /// (e.g. `/__sys__/zones/`).
-    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)>;
+    fn sys_readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)>;
+
+    /// Compat shim — external deps (sudocode runtime) still call `readdir`.
+    /// Remove once sudocode rev is bumped past the rename.
+    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+        self.sys_readdir(parent_path, zone_id, is_admin)
+    }
 
     /// DT_PIPE creation helper. Used by `AcpSubprocess::spawn` to
     /// surface the agent's stdio fds inside VFS as
@@ -250,8 +303,60 @@ impl KernelAbi for crate::kernel::Kernel {
         Self::sys_stat(self, path, zone_id)
     }
 
-    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
-        Self::readdir(self, parent_path, zone_id, is_admin)
+    fn sys_rename(
+        &self,
+        old_path: &str,
+        new_path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysRenameResult, KernelError> {
+        Self::sys_rename(self, old_path, new_path, ctx)
+    }
+
+    fn sys_copy(
+        &self,
+        src_path: &str,
+        dst_path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysCopyResult, KernelError> {
+        Self::sys_copy(self, src_path, dst_path, ctx)
+    }
+
+    fn sys_mkdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        parents: bool,
+        exist_ok: bool,
+    ) -> Result<SysMkdirResult, KernelError> {
+        Self::sys_mkdir(self, path, ctx, parents, exist_ok)
+    }
+
+    fn sys_lock(
+        &self,
+        path: &str,
+        lock_id: &str,
+        mode: KernelLockMode,
+        max_holders: u32,
+        ttl_secs: u64,
+        holder_info: &str,
+    ) -> Result<Option<String>, KernelError> {
+        Self::sys_lock(
+            self,
+            path,
+            lock_id,
+            mode,
+            max_holders,
+            ttl_secs,
+            holder_info,
+        )
+    }
+
+    fn sys_unlock(&self, path: &str, lock_id: &str, force: bool) -> Result<bool, KernelError> {
+        Self::sys_unlock(self, path, lock_id, force)
+    }
+
+    fn sys_readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+        Self::sys_readdir(self, parent_path, zone_id, is_admin)
     }
 
     fn setattr_pipe(

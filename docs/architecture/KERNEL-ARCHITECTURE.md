@@ -664,7 +664,7 @@ See `federation-memo.md` §7j for design rationale.
 
 | Property | Value |
 |----------|-------|
-| Event types | `FILE_WRITE`, `FILE_DELETE`, `FILE_RENAME`, `METADATA_CHANGE`, `DIR_CREATE`, `DIR_DELETE`, `SYNC_*`, `CONFLICT_*` |
+| Event types | `FILE_WRITE`, `FILE_DELETE`, `FILE_RENAME`, `METADATA_CHANGE`, `DIR_CREATE`, `DIR_DELETE`, `CONFLICT_DETECTED`, `FILE_COPY`, `MOUNT`, `UNMOUNT` |
 | FileEvent | Frozen dataclass: path, etag, size, version, zone_id, agent_id, user_id, vector_clock |
 | FileWatcher (kernel-owned) | Local OBSERVE waiters — `on_mutation()` resolves in-memory futures (~0µs) |
 | FileWatcher (kernel-knows) | Optional `RemoteWatchProtocol` for distributed watch, set via `set_remote_watcher()` |

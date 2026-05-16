@@ -18,7 +18,6 @@
 //!   audit/           — AuditHook (NativeInterceptHook) + factory
 //!   managed_agent/   — ManagedAgentService (mailbox + workspace hooks
 //!                      plus session lifecycle for AgentKind::MANAGED)
-//!   permission/      — PermissionHook scaffolding (§11; dead today)
 //!   python/          — `#[cfg(feature = "python")]` PyO3 sub-module
 //! ```
 //!
@@ -68,12 +67,9 @@ pub mod managed_agent;
 // the per-service gate also requires `python`.
 #[cfg(all(feature = "service-tasks", feature = "python"))]
 pub mod tasks;
-// `permission` is gated behind the `python` feature because its only
-// caller path is `Python::attach(...)` → `PermissionChecker.check(...)`
-// (the slow path).  Pure-Rust builds (e.g. WASM, raft-witness) drop it.
-// Kernel registration of §11 PermissionHook is scaffolded here only.
-#[cfg(all(feature = "service-permission", feature = "python"))]
-pub mod permission;
+// `permission` module deleted — PermissionProvider trait removed in
+// kernel primitive integrity audit. Enforcement runs via
+// NativeInterceptHook chain (dispatch_native_pre).
 // Matrix Client-Server v3 adapter — exposes nexus chat-with-me
 // DT_STREAMs as Matrix rooms so stock chat clients (Element /
 // FluffyChat / Cinny) participate in nexus conversations through the

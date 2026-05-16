@@ -1740,9 +1740,9 @@ class MetadataMixin:
                 else (context.get("is_admin", False) if isinstance(context, dict) else False)
             )
             try:
-                _kernel_entries = _kernel.readdir(path, self._zone_id, _is_admin)
+                _kernel_entries = _kernel.sys_readdir(path, self._zone_id, _is_admin)
             except (OSError, ValueError) as exc:
-                logger.debug("kernel.readdir failed for %s: %s", path, exc)
+                logger.debug("kernel.sys_readdir failed for %s: %s", path, exc)
                 _kernel_entries = None
             if _kernel_entries:
                 _children = [

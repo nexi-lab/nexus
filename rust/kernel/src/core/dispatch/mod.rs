@@ -39,7 +39,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// Bit positions are the source of truth — Python's `FILE_EVENT_BIT` table
 /// is generated from the same positions. Adding a new variant requires
 /// updating both this enum and `nexus.core.file_events.FILE_EVENT_BIT`.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
 pub enum FileEventType {
@@ -55,10 +54,10 @@ pub enum FileEventType {
     Unmount = 1 << 9,
 }
 
-#[allow(dead_code)]
 impl FileEventType {
     /// Event-type bitmask matching `ObserverRegistry::event_mask` filters.
     #[inline]
+    #[allow(dead_code)] // forward-declared for observer mask filtering
     pub(crate) fn bit(self) -> u32 {
         self as u32
     }
@@ -101,7 +100,6 @@ pub(crate) const ALL_FILE_EVENTS: u32 = (1 << 10) - 1;
 /// `file_events.py`. Optional Python fields map to `Option<T>`. Strings
 /// (`event_id`, `timestamp` ISO 8601) are stored as owned `String` so the
 /// boundary adapter can clone cheaply.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct FileEvent {
     /// Event type — strongly typed; the boundary adapter converts to the
@@ -123,8 +121,10 @@ pub struct FileEvent {
     pub(crate) size: Option<u64>,
     pub(crate) content_id: Option<String>,
     pub(crate) agent_id: Option<String>,
+    #[allow(dead_code)] // forward-declared for federation vector clocks
     pub(crate) vector_clock: Option<String>,
     /// Monotonic ordering within a zone (#2755).
+    #[allow(dead_code)] // forward-declared for federation sequence numbers
     pub(crate) sequence_number: Option<u64>,
     pub(crate) user_id: Option<String>,
     /// Write-specific: file version counter.
@@ -139,7 +139,6 @@ pub struct FileEvent {
     pub(crate) old_content_id: Option<String>,
 }
 
-#[allow(dead_code)]
 impl FileEvent {
     /// Primary path of the event (rename: old path).  Public accessor
     /// because peer crates (`transport::ipc`) consume `sys_watch`
@@ -263,7 +262,6 @@ fn now_iso8601() -> String {
 /// `services::agents::status_resolver`) can impl this trait. Same
 /// in-tree Rust API model as `NativeInterceptHook` — not an ABI, just
 /// a kernel API surface for in-tree services.
-#[allow(dead_code)]
 pub trait PathResolver: Send + Sync {
     fn try_read(&self, path: &str) -> Option<Vec<u8>>;
     fn try_write(&self, path: &str, content: &[u8]) -> Option<()>;
@@ -283,22 +281,14 @@ pub trait PathResolver: Send + Sync {
 /// choice: fire-and-forget only. Observers needing causal ordering or
 /// sync blocking on the syscall return path belong in INTERCEPT POST,
 /// not OBSERVE.
-#[allow(dead_code)]
 pub trait MutationObserver: Send + Sync {
     fn on_mutation(&self, event: &FileEvent);
 }
 
-// ── Permission provider (§13) ────────────────────────────────────────
+// ── Permission types (§13) ───────────────────────────────────────────
 //
-// Trait for pluggable permission checking. The kernel's permission gate
-// calls this for lease-miss / admin-bypass-miss scenarios. The default
-// when no provider is registered is "allow all" (zero perf hit: not
-// even an atomic check when `has_permission_provider` is false).
-//
-// Implementations live in the services tier (e.g.
-// `services::rebac::RebacPermissionHook`), NOT in kernel.
-
-use contracts::OperationContext;
+// Permission enum used by check_permission gate. Actual enforcement
+// runs in the NativeInterceptHook chain (dispatch_native_pre).
 
 /// Permission type — Read, Write, or Traverse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,33 +309,6 @@ impl Permission {
     }
 }
 
-/// Result of a permission check.
-#[derive(Debug)]
-pub enum PermissionDecision {
-    /// Permission granted.
-    Allow,
-    /// Permission denied with reason.
-    Deny(String),
-    /// Provider has no opinion — default to allow.
-    Unknown,
-}
-
-/// Pluggable permission provider — registered at boot, checked on
-/// every syscall (after lease cache miss + admin bypass miss).
-///
-/// Implementations must be `Send + Sync` (the kernel is shared across
-/// threads). The provider MAY acquire the GIL internally (e.g. to call
-/// a Python ReBAC checker) — that's the provider's responsibility,
-/// not the kernel's.
-pub trait PermissionProvider: Send + Sync {
-    fn check(
-        &self,
-        path: &str,
-        permission: Permission,
-        ctx: &OperationContext,
-    ) -> PermissionDecision;
-}
-
 // ── INTERCEPT hook context structs (§11) ─────────────────────────────
 //
 // Pure Rust equivalents of Python vfs_hooks dataclasses.
@@ -354,7 +317,6 @@ pub trait PermissionProvider: Send + Sync {
 
 /// Caller identity extracted from OperationContext.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
 pub struct HookIdentity {
     pub user_id: String,
     pub zone_id: String,
@@ -364,7 +326,6 @@ pub struct HookIdentity {
 
 /// ReadHookContext — pre/post read intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ReadHookCtx {
     pub path: String,
     pub identity: HookIdentity,
@@ -374,7 +335,6 @@ pub struct ReadHookCtx {
 
 /// WriteHookContext — pre/post write intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct WriteHookCtx {
     pub path: String,
     pub identity: HookIdentity,
@@ -391,7 +351,6 @@ pub struct WriteHookCtx {
 
 /// DeleteHookContext — pre/post delete intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct DeleteHookCtx {
     pub path: String,
     pub identity: HookIdentity,
@@ -399,7 +358,6 @@ pub struct DeleteHookCtx {
 
 /// RenameHookContext — pre/post rename intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct RenameHookCtx {
     pub old_path: String,
     pub new_path: String,
@@ -409,7 +367,6 @@ pub struct RenameHookCtx {
 
 /// MkdirHookContext — pre/post mkdir intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct MkdirHookCtx {
     pub path: String,
     pub identity: HookIdentity,
@@ -417,7 +374,6 @@ pub struct MkdirHookCtx {
 
 /// RmdirHookContext — pre/post rmdir intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct RmdirHookCtx {
     pub path: String,
     pub identity: HookIdentity,
@@ -426,7 +382,6 @@ pub struct RmdirHookCtx {
 
 /// CopyHookContext — pre/post copy intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CopyHookCtx {
     pub src_path: String,
     pub dst_path: String,
@@ -435,7 +390,6 @@ pub struct CopyHookCtx {
 
 /// StatHookContext — pre/post stat intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct StatHookCtx {
     pub path: String,
     pub identity: HookIdentity,
@@ -445,7 +399,6 @@ pub struct StatHookCtx {
 
 /// AccessHookContext — pre/post access intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct AccessHookCtx {
     pub path: String,
     pub identity: HookIdentity,
@@ -455,7 +408,6 @@ pub struct AccessHookCtx {
 
 /// WriteBatchHookContext — pre/post write_batch intercept.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct WriteBatchHookCtx {
     pub paths: Vec<String>,
     pub identity: HookIdentity,
@@ -463,7 +415,6 @@ pub struct WriteBatchHookCtx {
 
 /// Enum dispatching all hook context types for the InterceptHook trait.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum HookContext {
     Read(ReadHookCtx),
     Write(WriteHookCtx),
@@ -477,7 +428,6 @@ pub enum HookContext {
     WriteBatch(WriteBatchHookCtx),
 }
 
-#[allow(dead_code)]
 impl HookContext {
     /// Extract the path from any context variant.
     pub fn path(&self) -> &str {
@@ -525,7 +475,6 @@ impl HookContext {
 /// rmdir / copy / stat / access ignore the replacement bytes (the
 /// caller dispatching those ops drops the result).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum HookOutcome {
     Pass,
     Replace(Vec<u8>),
@@ -574,7 +523,6 @@ pub enum HookOutcome {
 /// `/chat-with-me`, `WorkspaceBoundaryHook` keying off
 /// `/proc/{pid}/workspace/`) still add the explicit check —
 /// defense-in-depth and uniform contract enforcement.
-#[allow(dead_code)]
 pub trait NativeInterceptHook: Send + Sync {
     fn name(&self) -> &str;
 

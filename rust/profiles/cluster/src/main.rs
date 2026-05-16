@@ -462,8 +462,38 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     });
 
     wait_for_shutdown().await;
-    topology_handle.abort();
     tracing::info!("nexusd-cluster shutting down");
+
+    // Stop the convergence loop first — it's a best-effort reconciler,
+    // safe to abort mid-tick.
+    topology_handle.abort();
+
+    // Drain ZoneManager: signal gRPC + zone transport loops to exit
+    // their serve_with_shutdown paths so in-flight raft messages drain
+    // cleanly. ZoneManager::shutdown() is synchronous and uses an
+    // internal bridge_block_on; call it from spawn_blocking so we
+    // don't trigger "Cannot drop a runtime" / nested-runtime panics.
+    //
+    // 10s cap matches typical k8s preStop / SIGTERM grace windows —
+    // if tonic hasn't finished draining by then, force-drop and exit
+    // rather than hang the pod.
+    //
+    // TODO(leader-transfer): on graceful shutdown of a leader we could
+    // proactively transfer leadership before drain, sparing the cluster
+    // one election round. raft-rs's `MsgTransferLeader` is not exposed
+    // through our wrapper today, and `propose_conf_change(RemoveNode,
+    // self_id)` would permanently demote the node — wrong semantics
+    // for a restart-and-rejoin cycle. Out of scope for this PR; needs
+    // a dedicated commitment-timeline test plan.
+    let zm_for_drain = zm.clone();
+    let drain = tokio::task::spawn_blocking(move || {
+        zm_for_drain.shutdown();
+    });
+    match tokio::time::timeout(Duration::from_secs(10), drain).await {
+        Ok(Ok(())) => tracing::info!("ZoneManager drain complete"),
+        Ok(Err(join_err)) => tracing::warn!(?join_err, "ZoneManager drain task panicked"),
+        Err(_) => tracing::warn!("ZoneManager drain exceeded 10s — forcing exit"),
+    }
 
     // Drop Kernel (which owns a nested tokio Runtime) on a blocking
     // thread — dropping it inside the current async context panics with

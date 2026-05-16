@@ -4175,7 +4175,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)",
             "        let rust_ctx = ctx.to_rust();",
             "        let content_owned = content.to_vec();",
-            "        let result = py.detach(|| self.inner.sys_write_one(path, &rust_ctx, &content_owned, offset));",
+            "        let result = py.detach(|| self.inner.sys_write_with_link_depth(path, &rust_ctx, &content_owned, offset, 1));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysWriteResult {",

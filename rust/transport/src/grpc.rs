@@ -21,13 +21,13 @@ use tokio::sync::oneshot;
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::TlsConfig;
+use kernel::abi::KernelAbi;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest, CallResponse,
     DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse,
     WriteRequest, WriteResponse,
 };
-use kernel::abi::KernelAbi;
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
 /// Configuration for the VFS gRPC server.
@@ -168,10 +168,7 @@ impl NexusVfsService for VfsServiceImpl {
                 "federation token: use Call dispatch (sys_write RPC) — typed Write bypasses zone authorization",
             ))));
         }
-        match self
-            .kernel
-            .sys_write_one(&req.path, &ctx, &req.content, 0)
-        {
+        match KernelAbi::sys_write(&*self.kernel, &req.path, &ctx, &req.content, 0) {
             Ok(result) => Ok(Response::new(WriteResponse {
                 content_id: result.content_id.unwrap_or_default(),
                 size: result.size as i64,
@@ -320,12 +317,7 @@ pub fn spawn(
         .build()
         .map_err(|e| format!("vfs-grpc runtime: {e}"))?;
 
-    let routes = build_vfs_routes(
-        kernel,
-        auth,
-        cfg.max_message_bytes,
-        &cfg.server_version,
-    );
+    let routes = build_vfs_routes(kernel, auth, cfg.max_message_bytes, &cfg.server_version);
 
     let mut server_builder = Server::builder()
         .max_concurrent_streams(Some(1024))
@@ -547,9 +539,7 @@ mod tests {
     async fn batch_read_returns_per_item_results_in_order() {
         let kernel = std::sync::Arc::new(kernel_with_mem_backend());
         let ctx = OperationContext::new("test", "root", true, None, true);
-        kernel
-            .sys_write_one("/x.txt", &ctx, b"hello", 0)
-            .expect("write");
+        KernelAbi::sys_write(&*kernel, "/x.txt", &ctx, b"hello", 0).expect("write");
 
         let svc = VfsServiceImpl::for_test(kernel.clone());
 

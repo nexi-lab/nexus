@@ -49,7 +49,7 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 - `reqs.len() == 1` → fast path: dispatches to single-item implementation (`sys_read_single`, `sys_write_single`, `sys_unlink_single`) with zero batch overhead.
 - `reqs.len() > 1` → batch path: per-item auth + hooks in Phase A, then coalesced I/O in Phase B (sys_read uses rayon parallelism; sys_write uses sorted VFS lock acquisition to avoid deadlocks; sys_unlink loops sequentially).
 - Each item in the result `Vec` corresponds positionally to its request. Per-item errors are isolated — one failing path does not abort the batch.
-- `sys_read_one` / `sys_write_one` / `sys_unlink_one` are convenience wrappers for single-path callers.
+- Single-path convenience wrappers (`sys_read_one`, `sys_write_one`, `sys_unlink_one`) are deleted; callers use the internal `*_single`/`*_with_link_depth` methods or the `KernelAbi` trait instead.
 - The former `_read_batch` / `_write_batch` / `_delete_batch` internal methods are deleted — the vectored `sys_*` signatures subsume them entirely.
 - The `skip_authz` hack (which bypassed permission checks for batch-internal items) is eliminated — every item in the batch goes through the full permission gate individually.
 

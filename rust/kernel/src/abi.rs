@@ -184,7 +184,7 @@ impl KernelAbi for crate::kernel::Kernel {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
-        Self::sys_write_one(self, path, ctx, content, offset)
+        self.sys_write_with_link_depth(path, ctx, content, offset, 1)
     }
 
     fn sys_unlink(

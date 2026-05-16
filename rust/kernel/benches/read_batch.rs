@@ -175,8 +175,7 @@ fn setup() -> Kernel {
     for i in 0..100u32 {
         let path = format!("/bench/f{i:03}.txt");
         let payload = vec![b'x'; 1024];
-        k.sys_write_one(&path, &ctx, &payload, 0)
-            .expect("bench write");
+        KernelAbi::sys_write(&k, &path, &ctx, &payload, 0).expect("bench write");
     }
 
     // Phase 2: re-mount with the latency-simulating backend.

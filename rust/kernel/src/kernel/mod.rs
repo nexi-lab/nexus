@@ -3041,8 +3041,12 @@ mod tests {
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/gen.txt", DT_REG as i32).unwrap();
 
-        let first = k.sys_write_one("/gen.txt", &ctx, b"one", 0).unwrap();
-        let second = k.sys_write_one("/gen.txt", &ctx, b"two", 0).unwrap();
+        let first = k
+            .sys_write_with_link_depth("/gen.txt", &ctx, b"one", 0, 1)
+            .unwrap();
+        let second = k
+            .sys_write_with_link_depth("/gen.txt", &ctx, b"two", 0, 1)
+            .unwrap();
         let stat = k.sys_stat("/gen.txt", "root").unwrap();
 
         assert_eq!(first.gen, 1);
@@ -3055,7 +3059,8 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/mime.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/mime.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_with_link_depth("/mime.txt", &ctx, b"body", 0, 1)
+            .unwrap();
 
         k.sys_setattr(
             "/mime.txt",
@@ -3091,7 +3096,8 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_with_link_depth("/src.txt", &ctx, b"body", 0, 1)
+            .unwrap();
 
         let copied = k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
         let dst = k.sys_stat("/dst.txt", "root").unwrap();
@@ -3111,7 +3117,8 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_with_link_depth("/src.txt", &ctx, b"body", 0, 1)
+            .unwrap();
         k.sys_mkdir("/dst", &ctx, true, true).unwrap();
 
         match k.sys_copy("/src.txt", "/dst", &ctx) {
@@ -3134,9 +3141,11 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_with_link_depth("/src.txt", &ctx, b"new", 0, 1)
+            .unwrap();
         setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_with_link_depth("/dst.txt", &ctx, b"old", 0, 1)
+            .unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.created_at_ms = Some(123);
@@ -3154,9 +3163,11 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_with_link_depth("/src.txt", &ctx, b"new", 0, 1)
+            .unwrap();
         setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_with_link_depth("/dst.txt", &ctx, b"old", 0, 1)
+            .unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.content_id = Some("/missing-destination-content.txt".to_string());
@@ -4175,7 +4186,7 @@ mod tests {
             }
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            match k.sys_write_one("/data/a", &ctx, b"payload", 0) {
+            match k.sys_write_with_link_depth("/data/a", &ctx, b"payload", 0, 1) {
                 Err(KernelError::PermissionDenied(msg)) => {
                     assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
                 }
@@ -4207,7 +4218,7 @@ mod tests {
     //      composes a `WalStreamCore` over the test metastore + writes
     //      the inode + registers the stream — same code path
     //      production runs through.
-    //   3. `kernel.sys_write_one(path, …)` and `kernel.sys_read_single(path, …)`
+    //   3. `kernel.sys_write_with_link_depth(path, …)` and `kernel.sys_read_single(path, …)`
     //      round-trip bytes through the wal stream, validating the
     //      stream is actually wal-backed (memory streams use a
     //      different backend type, so a memory-vs-wal mistake would
@@ -4396,7 +4407,7 @@ mod tests {
             // wal backend registered and the bytes flow through it.
             let ctx = OperationContext::new("test", "root", true, None, true);
             kernel
-                .sys_write_one(path, &ctx, b"federation hello", 0)
+                .sys_write_with_link_depth(path, &ctx, b"federation hello", 0, 1)
                 .expect("sys_write to wal stream");
             let read = kernel
                 .sys_read_single(path, &ctx, 1, /* timeout_ms */ 0, 0)
@@ -4448,7 +4459,7 @@ mod tests {
                     .expect("idempotent wal sys_setattr");
             }
             kernel
-                .sys_write_one(path, &ctx, b"survives reopen", 0)
+                .sys_write_with_link_depth(path, &ctx, b"survives reopen", 0, 1)
                 .expect("write to reopened wal stream");
             let read = kernel
                 .sys_read_single(path, &ctx, 1, 0, 0)

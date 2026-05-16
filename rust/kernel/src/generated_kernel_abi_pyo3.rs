@@ -2275,7 +2275,7 @@ impl PyKernel {
         let content_owned = content.to_vec();
         let result = py.detach(|| {
             self.inner
-                .sys_write_one(path, &rust_ctx, &content_owned, offset)
+                .sys_write_with_link_depth(path, &rust_ctx, &content_owned, offset, 1)
         });
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 

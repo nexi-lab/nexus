@@ -570,20 +570,6 @@ impl Kernel {
         self.sys_write_batch_impl(reqs, ctx)
     }
 
-    /// Convenience wrapper for single-path writes.
-    ///
-    /// Kernel-internal callers (tests, services) and external callers
-    /// (gRPC, PyO3) use this for the familiar single-path API.
-    pub fn sys_write_one(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        content: &[u8],
-        offset: u64,
-    ) -> Result<SysWriteResult, KernelError> {
-        self.sys_write_with_link_depth(path, ctx, content, offset, 1)
-    }
-
     pub(crate) fn sys_write_with_link_depth(
         &self,
         path: &str,
@@ -3338,7 +3324,7 @@ mod read_batch_tests {
     fn read_batch_single_file_round_trip() {
         let k = kernel_with_backend();
         let c = ctx();
-        k.sys_write_one("/r3.txt", &c, b"hi there", 0)
+        k.sys_write_with_link_depth("/r3.txt", &c, b"hi there", 0, 1)
             .expect("write");
         let reqs = vec![rreq("/r3.txt", 0, None)];
         let out = k.sys_read(&reqs, &c);
@@ -3352,7 +3338,7 @@ mod read_batch_tests {
         let k = kernel_with_backend();
         let c = ctx();
         let payload = b"hello vectored world".to_vec();
-        k.sys_write_one("/coalesce.txt", &c, &payload, 0)
+        k.sys_write_with_link_depth("/coalesce.txt", &c, &payload, 0, 1)
             .expect("write");
         let reqs: Vec<_> = (0..5).map(|_| rreq("/coalesce.txt", 0, None)).collect();
         let out = k.sys_read(&reqs, &c);
@@ -3371,7 +3357,8 @@ mod read_batch_tests {
         for i in 0..100u32 {
             let path = format!("/p{i:03}.txt");
             let payload = format!("payload-{i}").into_bytes();
-            k.sys_write_one(&path, &c, &payload, 0).expect("write");
+            k.sys_write_with_link_depth(&path, &c, &payload, 0, 1)
+                .expect("write");
             reqs.push(rreq(&path, 0, None));
         }
         let out = k.sys_read(&reqs, &c);
@@ -3388,10 +3375,11 @@ mod read_batch_tests {
         let k = kernel_with_backend();
         let c = ctx();
         let payload = b"0123456789".to_vec(); // 10 bytes
-        k.sys_write_one("/r.txt", &c, &payload, 0).unwrap();
+        k.sys_write_with_link_depth("/r.txt", &c, &payload, 0, 1)
+            .unwrap();
 
         for letter in ["a", "b", "c", "d"] {
-            k.sys_write_one(&format!("/r_{letter}.txt"), &c, &payload, 0)
+            k.sys_write_with_link_depth(&format!("/r_{letter}.txt"), &c, &payload, 0, 1)
                 .unwrap();
         }
 
@@ -3439,8 +3427,14 @@ mod read_batch_tests {
         k.set_read_batch_max_concurrency(1);
         let c = ctx();
         for i in 0..10 {
-            k.sys_write_one(&format!("/x{i}.txt"), &c, &format!("v{i}").into_bytes(), 0)
-                .unwrap();
+            k.sys_write_with_link_depth(
+                &format!("/x{i}.txt"),
+                &c,
+                &format!("v{i}").into_bytes(),
+                0,
+                1,
+            )
+            .unwrap();
         }
         let reqs: Vec<_> = (0..10)
             .map(|i| rreq(&format!("/x{i}.txt"), 0, None))

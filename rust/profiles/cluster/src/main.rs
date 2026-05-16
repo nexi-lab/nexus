@@ -399,15 +399,15 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             0,
             None,
             None,
-            None,         // mime_type
-            None,         // modified_at_ms
-            None,         // content_id
-            None,         // size
-            None,         // version
-            None,         // created_at_ms
-            None,         // link_target
-            None,         // source
-            None,         // remote_metastore
+            None, // mime_type
+            None, // modified_at_ms
+            None, // content_id
+            None, // size
+            None, // version
+            None, // created_at_ms
+            None, // link_target
+            None, // source
+            None, // remote_metastore
         )
         .map_err(|e| anyhow::anyhow!("mount / via path_local: {:?}", e))?;
     tracing::info!(

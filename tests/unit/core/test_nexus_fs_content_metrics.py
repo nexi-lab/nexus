@@ -161,6 +161,13 @@ class _Harness(ContentMixin):
     def _get_context_identity(self, context: object | None) -> tuple[str, str | None, bool]:
         return ("root", None, False)
 
+    def _prepare_rust_ctx(
+        self, context: object | None = None
+    ) -> tuple[str | None, str | None, bool, object]:
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        rust_ctx = self._build_rust_ctx(context, is_admin)
+        return zone_id, agent_id, is_admin, rust_ctx
+
     def _validate_path(self, path: str) -> str:
         return path
 

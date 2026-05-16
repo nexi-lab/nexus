@@ -774,8 +774,7 @@ class MetadataMixin:
 
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         _unlink_start = time.perf_counter()
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
         _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
 
         if _unlink_result.hit:
@@ -975,10 +974,9 @@ class MetadataMixin:
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
 
         # PRE-INTERCEPT hooks dispatched by Rust kernel
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
         # Rust handles all entry types (files, dirs, mounts, external storage).
@@ -1054,11 +1052,10 @@ class MetadataMixin:
         self._gate_sys_namespace_mutation((src_path, dst_path), context)
         context = self._parse_context(context)
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
 
         # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy.
         # Rust validates source existence + rejects directories internally.
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
         _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
 
         # POST-INTERCEPT hooks (zero consumers use metadata field)

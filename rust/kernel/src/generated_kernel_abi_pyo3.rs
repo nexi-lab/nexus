@@ -1993,19 +1993,7 @@ impl PyKernel {
         let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_pre_hook_impls(op);
         for hook in impls {
-            match op {
-                "read" => hook.on_pre_read(&hook_ctx)?,
-                "write" => hook.on_pre_write(&hook_ctx)?,
-                "delete" => hook.on_pre_delete(&hook_ctx)?,
-                "rename" => hook.on_pre_rename(&hook_ctx)?,
-                "mkdir" => hook.on_pre_mkdir(&hook_ctx)?,
-                "rmdir" => hook.on_pre_rmdir(&hook_ctx)?,
-                "copy" => hook.on_pre_copy(&hook_ctx)?,
-                "stat" => hook.on_pre_stat(&hook_ctx)?,
-                "access" => hook.on_pre_access(&hook_ctx)?,
-                "write_batch" => hook.on_pre_write_batch(&hook_ctx)?,
-                _ => {}
-            }
+            dispatch_pre_hook_by_op(hook, op, &hook_ctx)?;
         }
         Ok(())
     }
@@ -2906,7 +2894,42 @@ impl PyKernel {
     }
 }
 
-// ── Private: hook dispatch (wrapper-only) ───────────────────────────────
+// ── Private: hook dispatch helpers (DRY — single match block each) ────────
+
+/// Dispatch a single pre-hook by operation name.
+fn dispatch_pre_hook_by_op(hook: &dyn InterceptHook, op: &str, ctx: &Py<PyAny>) -> PyResult<()> {
+    match op {
+        "read" => hook.on_pre_read(ctx)?,
+        "write" => hook.on_pre_write(ctx)?,
+        "delete" => hook.on_pre_delete(ctx)?,
+        "rename" => hook.on_pre_rename(ctx)?,
+        "mkdir" => hook.on_pre_mkdir(ctx)?,
+        "rmdir" => hook.on_pre_rmdir(ctx)?,
+        "copy" => hook.on_pre_copy(ctx)?,
+        "stat" => hook.on_pre_stat(ctx)?,
+        "access" => hook.on_pre_access(ctx)?,
+        "write_batch" => hook.on_pre_write_batch(ctx)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Dispatch a single post-hook by operation name (fire-and-forget).
+fn dispatch_post_hook_by_op(hook: &dyn InterceptHook, op: &str, ctx: &Py<PyAny>) {
+    match op {
+        "read" => hook.on_post_read(ctx),
+        "write" => hook.on_post_write(ctx),
+        "delete" => hook.on_post_delete(ctx),
+        "rename" => hook.on_post_rename(ctx),
+        "mkdir" => hook.on_post_mkdir(ctx),
+        "rmdir" => hook.on_post_rmdir(ctx),
+        "copy" => hook.on_post_copy(ctx),
+        "stat" => hook.on_post_stat(ctx),
+        "access" => hook.on_post_access(ctx),
+        "write_batch" => hook.on_post_write_batch(ctx),
+        _ => {}
+    }
+}
 
 impl PyKernel {
     /// Internal pre-hook dispatch (used by Tier 1 syscalls).
@@ -2914,19 +2937,7 @@ impl PyKernel {
         let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_pre_hook_impls(op);
         for hook in impls {
-            match op {
-                "read" => hook.on_pre_read(hook_ctx)?,
-                "write" => hook.on_pre_write(hook_ctx)?,
-                "delete" => hook.on_pre_delete(hook_ctx)?,
-                "rename" => hook.on_pre_rename(hook_ctx)?,
-                "mkdir" => hook.on_pre_mkdir(hook_ctx)?,
-                "rmdir" => hook.on_pre_rmdir(hook_ctx)?,
-                "copy" => hook.on_pre_copy(hook_ctx)?,
-                "stat" => hook.on_pre_stat(hook_ctx)?,
-                "access" => hook.on_pre_access(hook_ctx)?,
-                "write_batch" => hook.on_pre_write_batch(hook_ctx)?,
-                _ => {}
-            }
+            dispatch_pre_hook_by_op(hook, op, hook_ctx)?;
         }
         Ok(())
     }
@@ -2940,19 +2951,7 @@ impl PyKernel {
         let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_post_hook_impls(op);
         for hook in impls {
-            match op {
-                "read" => hook.on_post_read(hook_ctx),
-                "write" => hook.on_post_write(hook_ctx),
-                "delete" => hook.on_post_delete(hook_ctx),
-                "rename" => hook.on_post_rename(hook_ctx),
-                "mkdir" => hook.on_post_mkdir(hook_ctx),
-                "rmdir" => hook.on_post_rmdir(hook_ctx),
-                "copy" => hook.on_post_copy(hook_ctx),
-                "stat" => hook.on_post_stat(hook_ctx),
-                "access" => hook.on_post_access(hook_ctx),
-                "write_batch" => hook.on_post_write_batch(hook_ctx),
-                _ => {}
-            }
+            dispatch_post_hook_by_op(hook, op, hook_ctx);
         }
     }
 }

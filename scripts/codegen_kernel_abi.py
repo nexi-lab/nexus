@@ -3741,7 +3741,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    }",
             "",
             "    fn stream_read_at_blocking<'py>(&self, py: Python<'py>, path: &str, offset: usize, timeout_ms: u64) -> PyResult<(Bound<'py, PyBytes>, usize)> {",
-            "        let (data, next) = py.allow_threads(|| self.inner.stream_read_at_blocking(path, offset, timeout_ms)).map_err(|e| -> PyErr { e.into() })?;",
+            "        let (data, next) = self.inner.stream_read_at_blocking(path, offset, timeout_ms).map_err(|e| -> PyErr { e.into() })?;",
             "        Ok((PyBytes::new(py, &data), next))",
             "    }",
             "",

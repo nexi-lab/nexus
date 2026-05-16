@@ -1810,8 +1810,9 @@ impl PyKernel {
         offset: usize,
         timeout_ms: u64,
     ) -> PyResult<(Bound<'py, PyBytes>, usize)> {
-        let (data, next) = py
-            .allow_threads(|| self.inner.stream_read_at_blocking(path, offset, timeout_ms))
+        let (data, next) = self
+            .inner
+            .stream_read_at_blocking(path, offset, timeout_ms)
             .map_err(|e| -> PyErr { e.into() })?;
         Ok((PyBytes::new(py, &data), next))
     }

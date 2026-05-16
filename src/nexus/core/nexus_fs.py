@@ -894,10 +894,11 @@ class NexusFS(  # type: ignore[misc]
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
 
     def _pipe_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_PIPE — close Rust buffer."""
+        """Destroy DT_PIPE — sys_unlink on the pipe path."""
 
         with contextlib.suppress(Exception):
-            self._kernel.destroy_pipe(path)
+            rust_ctx = self._build_rust_ctx(None, True)
+            self._kernel.sys_unlink(path, rust_ctx)
         return {}
 
     # ------------------------------------------------------------------
@@ -911,21 +912,26 @@ class NexusFS(  # type: ignore[misc]
     # add event-loop ping-pong without buying anything.
 
     def pipe_create(self, path: str, capacity: int = 65_536) -> None:
-        """Create a DT_PIPE in the kernel registry.
+        """Create a DT_PIPE via sys_setattr."""
+        from nexus.contracts.metadata import DT_PIPE
 
-        Sync passthrough to ``Kernel.create_pipe``.
-        """
-        self._kernel.create_pipe(path, capacity)
+        self.sys_setattr(path, entry_type=DT_PIPE, capacity=capacity)
 
     def pipe_close(self, path: str) -> None:
         """Mark a DT_PIPE as closed (signals EOF to readers, keeps registry entry)."""
         self._kernel.close_pipe(path)
 
     def has_pipe(self, path: str) -> bool:
-        """Check if a DT_PIPE exists in the kernel registry."""
+        """Check if a DT_PIPE exists via sys_stat."""
+        from nexus.contracts.metadata import DT_PIPE
+
         if self._kernel is None:
             return False
-        return self._kernel.has_pipe(path)
+        try:
+            stat = self._kernel.sys_stat(path, self._zone_id)
+            return stat.get("entry_type") == DT_PIPE
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # Tier 2 public sync stream methods (kernel passthroughs)

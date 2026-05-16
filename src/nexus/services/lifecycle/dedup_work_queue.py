@@ -309,7 +309,11 @@ class DedupWorkQueue(Generic[T]):
             return
         self._closed = True
         with contextlib.suppress(RuntimeError):
+<<<<<<< HEAD
             self._kernel.sys_unlink(self._pipe_path, self._sys_ctx)
+=======
+            self._kernel.sys_unlink(self._pipe_path, self._pipe_context)
+>>>>>>> 6a3d5ddda (refactor(dedup-queue): destroy_pipe → sys_unlink)
 
     def __del__(self) -> None:
         self.close()

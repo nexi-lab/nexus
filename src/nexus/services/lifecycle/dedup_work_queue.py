@@ -30,10 +30,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Generic, TypeVar
-
-if TYPE_CHECKING:
-    from nexus_runtime import PyKernel
+from typing import Any, Generic, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +70,7 @@ class DedupWorkQueue(Generic[T]):
 
     Usage::
 
-        from nexus_runtime import PyKernel
-        kernel = PyKernel(...)
+        kernel = ...  # kernel client instance (gRPC)
         q: DedupWorkQueue[str] = DedupWorkQueue(kernel=kernel)
 
         # Producer side — events coalesce by key
@@ -94,7 +90,7 @@ class DedupWorkQueue(Generic[T]):
     def __init__(
         self,
         *,
-        kernel: PyKernel,
+        kernel: Any,
         pipe_path: str | None = None,
         capacity: int = 65_536,
     ) -> None:

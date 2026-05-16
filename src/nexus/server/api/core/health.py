@@ -4,7 +4,6 @@ Extracted from fastapi_server.py (#1602).
 """
 
 import logging
-import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -41,32 +40,8 @@ async def health_check(request: Request) -> HealthResponse | Any:
         enforce_permissions = getattr(getattr(nx_fs, "_perm_config", None), "enforce", None)
         enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
 
-        # Phase H: federation readiness is observed through the
-        # DistributedCoordinator HAL trait via the
-        # ``nexus_runtime.federation_is_initialized`` module helper.
-        # Treat federation-disabled (no env vars) as ready without
-        # entering the native readiness helper; /health must stay cheap
-        # and non-blocking for Docker health checks.
-        _kernel = getattr(nx_fs, "_kernel", None)
-        _ready = True
-        if _kernel is not None and os.environ.get("NEXUS_PEERS"):
-            try:
-                import nexus_runtime as _nr
-
-                _ready = bool(_nr.federation_is_initialized(_kernel))
-            except Exception:
-                _ready = True
-        if not _ready:
-            from fastapi.responses import JSONResponse
-
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "status": "starting",
-                    "service": "nexus-rpc",
-                    "detail": "Waiting for Raft leader election and topology initialization",
-                },
-            )
+        # The kernel process manages federation internally; if it
+        # responds to gRPC, it's ready.
 
     has_auth = bool(request.app.state.api_key or request.app.state.auth_provider)
 

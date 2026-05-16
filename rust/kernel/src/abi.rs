@@ -160,6 +160,12 @@ pub trait KernelAbi: Send + Sync + 'static {
     /// (e.g. `/__sys__/zones/`).
     fn sys_readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)>;
 
+    /// Compat shim — external deps (sudocode runtime) still call `readdir`.
+    /// Remove once sudocode rev is bumped past the rename.
+    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+        self.sys_readdir(parent_path, zone_id, is_admin)
+    }
+
     /// DT_PIPE creation helper. Used by `AcpSubprocess::spawn` to
     /// surface the agent's stdio fds inside VFS as
     /// `/{zone}/proc/{pid}/fd/{0,1,2}`. Stays a dedicated method

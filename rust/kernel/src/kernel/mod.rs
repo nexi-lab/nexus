@@ -99,12 +99,14 @@ mod observability;
 /// Kernel-level error type — pure Rust, no PyO3 dependency.
 ///
 /// Error conversion to PyErr lives in generated_pyo3.rs.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum KernelError {
     InvalidPath(String),
     FileNotFound(String),
     FileExists(String),
-    Route(RouteError),
+    /// Routing failure — stores the formatted `RouteError` message so
+    /// KernelError can derive Clone (RouteError itself is !Clone).
+    Route(String),
     IOError(String),
     TrieError(String),
     // IPC error variants
@@ -132,7 +134,7 @@ pub enum KernelError {
 
 impl From<RouteError> for KernelError {
     fn from(e: RouteError) -> Self {
-        KernelError::Route(e)
+        KernelError::Route(format!("{e:?}"))
     }
 }
 

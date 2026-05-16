@@ -2272,7 +2272,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "use crate::hook_registry::InterceptHook;",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
             "use crate::meta_store::{FileMetadata, MetaStoreError};",
-            "use crate::vfs_router::RouteError;",
+            "// RouteError import removed — Route variant now stores String directly",
         ]
     )
 
@@ -2427,9 +2427,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "                }",
             "            }),",
             "            KernelError::FileExists(msg) => pyo3::exceptions::PyFileExistsError::new_err(msg),",
-            "            KernelError::Route(RouteError::NotMounted(msg)) => {",
-            "                pyo3::exceptions::PyValueError::new_err(msg)",
-            "            }",
+            "            KernelError::Route(msg) => pyo3::exceptions::PyValueError::new_err(msg),",
             "            KernelError::IOError(msg) => pyo3::exceptions::PyIOError::new_err(msg),",
             "            KernelError::TrieError(msg) => pyo3::exceptions::PyValueError::new_err(msg),",
             "            // IPC error variants",

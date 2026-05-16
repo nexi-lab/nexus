@@ -27,7 +27,7 @@ use crate::hook_registry::HookRegistry;
 use crate::hook_registry::InterceptHook;
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::meta_store::{FileMetadata, MetaStoreError};
-use crate::vfs_router::RouteError;
+// RouteError import removed — Route variant now stores String directly
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PyServiceLifecycle — Python → ServiceLifecycle adapter
@@ -168,9 +168,7 @@ impl From<KernelError> for PyErr {
                 }
             }),
             KernelError::FileExists(msg) => pyo3::exceptions::PyFileExistsError::new_err(msg),
-            KernelError::Route(RouteError::NotMounted(msg)) => {
-                pyo3::exceptions::PyValueError::new_err(msg)
-            }
+            KernelError::Route(msg) => pyo3::exceptions::PyValueError::new_err(msg),
             KernelError::IOError(msg) => pyo3::exceptions::PyIOError::new_err(msg),
             KernelError::TrieError(msg) => pyo3::exceptions::PyValueError::new_err(msg),
             // IPC error variants

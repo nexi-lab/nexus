@@ -35,39 +35,6 @@ struct ResolvedRead {
     entry: Option<FileMetadata>,
 }
 
-/// Produce a cheap structural clone of a `KernelError` for fan-out in
-/// `sys_read` batch path.  `KernelError` is `!Clone` (its `Route` variant holds a
-/// non-Clone `RouteError`), so we collapse that variant to its `Debug` repr.
-fn clone_kernel_err(e: &KernelError) -> KernelError {
-    match e {
-        KernelError::InvalidPath(s) => KernelError::InvalidPath(s.clone()),
-        KernelError::FileNotFound(s) => KernelError::FileNotFound(s.clone()),
-        KernelError::FileExists(s) => KernelError::FileExists(s.clone()),
-        KernelError::IOError(s) => KernelError::IOError(s.clone()),
-        KernelError::TrieError(s) => KernelError::TrieError(s.clone()),
-        KernelError::PipeFull(s) => KernelError::PipeFull(s.clone()),
-        KernelError::PipeEmpty(s) => KernelError::PipeEmpty(s.clone()),
-        KernelError::PipeClosed(s) => KernelError::PipeClosed(s.clone()),
-        KernelError::PipeExists(s) => KernelError::PipeExists(s.clone()),
-        KernelError::PipeNotFound(s) => KernelError::PipeNotFound(s.clone()),
-        KernelError::StreamFull(s) => KernelError::StreamFull(s.clone()),
-        KernelError::StreamEmpty(s) => KernelError::StreamEmpty(s.clone()),
-        KernelError::StreamClosed(s) => KernelError::StreamClosed(s.clone()),
-        KernelError::StreamExists(s) => KernelError::StreamExists(s.clone()),
-        KernelError::StreamNotFound(s) => KernelError::StreamNotFound(s.clone()),
-        KernelError::WouldBlock(s) => KernelError::WouldBlock(s.clone()),
-        KernelError::PermissionDenied(s) => KernelError::PermissionDenied(s.clone()),
-        KernelError::BackendError(s) => KernelError::BackendError(s.clone()),
-        KernelError::Federation(s) => KernelError::Federation(s.clone()),
-        KernelError::Route(_) => {
-            // RouteError isn't trivially cloneable. Collapse to a string form —
-            // batch path only needs the per-item error visible downstream; the
-            // structural detail is preserved in the Debug repr.
-            KernelError::IOError(format!("{:?}", e))
-        }
-    }
-}
-
 /// Build a per-consumer `SysReadResult` from the lead request's shared result.
 ///
 /// On success the caller's `offset` + `len` window is sliced out of the
@@ -85,7 +52,7 @@ fn clone_read_result(
     consumer_meta: Option<&FileMetadata>,
 ) -> Result<SysReadResult, KernelError> {
     match shared {
-        Err(e) => Err(clone_kernel_err(e)),
+        Err(e) => Err(e.clone()),
         Ok(src) => {
             let data = src.data.as_ref().map(|bytes| {
                 let off = (req.offset as usize).min(bytes.len());

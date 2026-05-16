@@ -266,8 +266,7 @@ class ContentMixin:
         # Small-batch fast path: <=4 paths → sequential sys_read (no batch overhead).
         # Avoids permission-check batching, metadata batching, and logging for tiny requests.
         if len(paths) <= 4:
-            zone_id, agent_id, is_admin = self._get_context_identity(context)
-            _rust_ctx = self._build_rust_ctx(context, is_admin)
+            zone_id, agent_id, is_admin, _rust_ctx = self._prepare_rust_ctx(context)
             for path in paths:
                 try:
                     result = self._kernel.sys_read(path, _rust_ctx)
@@ -322,8 +321,7 @@ class ContentMixin:
         # Read allowed files via Rust kernel sys_read (single path per call).
         # Rust kernel handles: validate → route → dcache → metastore → backend read.
         read_start = time.time()
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
 
         # Batch metadata lookup (needed for return_metadata=True)
         batch_meta: dict[str, dict[str, Any] | None] | None = None
@@ -1462,7 +1460,7 @@ class ContentMixin:
             validated_path = self._validate_path(path)
             validated_files.append((validated_path, content))
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
         paths = [p for p, _ in validated_files]
 
         # #4005 round-10: write_batch is a public mutation entrypoint and
@@ -1481,7 +1479,7 @@ class ContentMixin:
             for _p in sorted(set(paths)):
                 _stack.enter_context(_occ_path_lock(_p))
             return self._write_batch_locked(
-                validated_files, paths, context, zone_id, agent_id, is_admin
+                validated_files, paths, context, zone_id, agent_id, _rust_ctx
             )
 
     def _write_batch_locked(
@@ -1491,7 +1489,7 @@ class ContentMixin:
         context: OperationContext | None,
         zone_id: str | None,
         agent_id: str | None,
-        is_admin: bool,
+        _rust_ctx: object,
     ) -> list[dict[str, Any]]:
         """Inner write_batch body — caller holds _occ_path_lock for every path."""
         # Get existing metadata for pre-hooks
@@ -1517,7 +1515,6 @@ class ContentMixin:
         # ── KERNEL: Rust Tier 2 write_batch (create-or-overwrite per item) ──
         # Tier 2 write_batch composes Tier 2 write() per-item, which handles
         # create-on-miss + OBSERVE dispatch automatically. No Python fallback needed.
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
         rust_results = self._kernel.write_batch(validated_files, _rust_ctx)
 
         now = datetime.now(UTC)
@@ -1631,8 +1628,7 @@ class ContentMixin:
         # Validate all paths up-front — invalid paths always raise, even in partial mode.
         validated_paths: list[str] = [self._validate_path(p) for p in paths]
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
 
         # PRE-INTERCEPT: batch permission check via shared helper.
         allowed_set = self._batch_permission_check(validated_paths, context)

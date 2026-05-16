@@ -17,7 +17,7 @@
 
 use crate::cache::index_cache::IndexCache;
 use crate::core::permission_cache::PermissionLeaseCache;
-use crate::dispatch::{MutationObserver, PermissionProvider, Trie};
+use crate::dispatch::{MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
 use crate::meta_store::LocalMetaStore;
@@ -783,11 +783,9 @@ pub struct Kernel {
 
     // ── §13 Permission gate ───────────────────────────────────────────
     //
-    // Pluggable permission provider (set once at boot, never mutated).
     // When `has_permission_provider` is false, the entire permission
     // gate is skipped (~1ns AtomicBool load). When true, the gate
-    // runs: lease cache → admin bypass → zone perms → provider.
-    permission_provider: parking_lot::RwLock<Option<Arc<dyn PermissionProvider>>>,
+    // runs: lease cache → admin bypass → zone perms.
     permission_lease_cache: PermissionLeaseCache,
     /// Admin bypass enabled — Docker default true.
     permission_admin_bypass: AtomicBool,
@@ -878,7 +876,6 @@ impl Kernel {
                 crate::hal::distributed_coordinator::NoopDistributedCoordinator::arc(),
             ),
             pending_blob_fetcher_slot: parking_lot::Mutex::new(None),
-            permission_provider: parking_lot::RwLock::new(None),
             permission_lease_cache: PermissionLeaseCache::new(
                 std::time::Duration::from_secs(30),
                 100_000,

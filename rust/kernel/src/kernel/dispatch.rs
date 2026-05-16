@@ -4,12 +4,11 @@
 //! Every method stays a member of [`Kernel`] via this submodule's
 //! `impl Kernel { ... }` block.
 
-use crate::dispatch::{HookContext, NativeInterceptHook, Permission, PermissionProvider};
+use crate::dispatch::{HookContext, NativeInterceptHook, Permission};
 
 use super::{Kernel, KernelError, OperationContext, RwLockExt};
 
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 impl Kernel {
     // ── Native INTERCEPT hook dispatch ─────────────────
@@ -127,9 +126,12 @@ impl Kernel {
         Ok(())
     }
 
-    /// Register a permission provider (set once at boot).
-    pub fn set_permission_provider(&self, provider: Arc<dyn PermissionProvider>) {
-        *self.permission_provider.write() = Some(provider);
+    /// Enable the permission gate (zone perms + lease cache).
+    ///
+    /// Called once at boot when a permission hook is registered.
+    /// When disabled (default), all permission checks are skipped
+    /// (~1ns AtomicBool load).
+    pub fn enable_permission_gate(&self) {
         self.has_permission_provider.store(true, Ordering::Relaxed);
     }
 

@@ -285,17 +285,10 @@ pub trait MutationObserver: Send + Sync {
     fn on_mutation(&self, event: &FileEvent);
 }
 
-// ── Permission provider (§13) ────────────────────────────────────────
+// ── Permission types (§13) ───────────────────────────────────────────
 //
-// Trait for pluggable permission checking. The kernel's permission gate
-// calls this for lease-miss / admin-bypass-miss scenarios. The default
-// when no provider is registered is "allow all" (zero perf hit: not
-// even an atomic check when `has_permission_provider` is false).
-//
-// Implementations live in the services tier (e.g.
-// `services::rebac::RebacPermissionHook`), NOT in kernel.
-
-use contracts::OperationContext;
+// Permission enum used by check_permission gate. Actual enforcement
+// runs in the NativeInterceptHook chain (dispatch_native_pre).
 
 /// Permission type — Read, Write, or Traverse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,33 +307,6 @@ impl Permission {
             Self::Traverse => "TRAVERSE",
         }
     }
-}
-
-/// Result of a permission check.
-#[derive(Debug)]
-pub enum PermissionDecision {
-    /// Permission granted.
-    Allow,
-    /// Permission denied with reason.
-    Deny(String),
-    /// Provider has no opinion — default to allow.
-    Unknown,
-}
-
-/// Pluggable permission provider — registered at boot, checked on
-/// every syscall (after lease cache miss + admin bypass miss).
-///
-/// Implementations must be `Send + Sync` (the kernel is shared across
-/// threads). The provider MAY acquire the GIL internally (e.g. to call
-/// a Python ReBAC checker) — that's the provider's responsibility,
-/// not the kernel's.
-pub trait PermissionProvider: Send + Sync {
-    fn check(
-        &self,
-        path: &str,
-        permission: Permission,
-        ctx: &OperationContext,
-    ) -> PermissionDecision;
 }
 
 // ── INTERCEPT hook context structs (§11) ─────────────────────────────

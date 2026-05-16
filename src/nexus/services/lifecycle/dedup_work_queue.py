@@ -11,7 +11,7 @@ Three invariants maintained by add/get/done:
   3. An item can be in both ``dirty`` and ``processing`` (re-added during
      processing → will be re-queued on ``done()``).
 
-Transport: Rust kernel IPC pipe (``kernel.create_pipe``) carries u64 LE
+Transport: Rust kernel IPC pipe (``sys_setattr(DT_PIPE)``) carries u64 LE
 sequence tokens (8 bytes each); actual items stay in a Python dict — no
 serialization needed. Dedup logic (dirty/processing sets) remains in Python.
 
@@ -238,7 +238,11 @@ class DedupWorkQueue(Generic[T]):
                 self._items[seq] = key
                 self._kernel.sys_write(
                     self._pipe_path,
+<<<<<<< HEAD
                     self._sys_ctx,
+=======
+                    self._pipe_context,
+>>>>>>> 9361446d5 (refactor(dedup-queue): pipe_write_nowait → sys_write)
                     seq.to_bytes(self._TOKEN_SIZE, "little"),
                 )
             except RuntimeError:

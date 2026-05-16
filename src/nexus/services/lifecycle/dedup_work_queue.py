@@ -30,7 +30,12 @@ import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+from nexus.contracts.metadata import DT_PIPE
+
+if TYPE_CHECKING:
+    from nexus_runtime import PyKernel
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +52,14 @@ class DedupWorkQueue(Generic[T]):
     Coalesces duplicate keys so that rapid additions of the same key
     result in at most one processing run.
 
-    **Architectural layer (kernel-level primitive):** ``DedupWorkQueue``
-    holds a ``PyKernel`` handle directly rather than going through the
-    ``NexusFS`` facade. It is a kernel-level primitive (a tight polling
-    loop over a sequence-token pipe with no business logic), conceptually
-    the same tier as ``PyKernel.create_pipe`` itself, so the
-    ``self._kernel.pipe_*`` calls in this file are NOT abstraction
-    violations — ``_kernel`` is the construction-time injected dependency,
-    not a reach-in through a service abstraction.
+    **Architectural layer:** ``DedupWorkQueue`` holds a ``PyKernel`` handle
+    directly rather than going through the ``NexusFS`` facade — the queue
+    is a tight polling loop with no business logic that needs the pipeline
+    overhead of a full facade call. All pipe operations go through Tier 1
+    syscalls (``sys_setattr(DT_PIPE)`` / ``sys_write`` / ``sys_read`` /
+    ``sys_unlink``) — no direct ``PipeManager`` primitive access. The
+    is_system context bypasses the permission gate; INTERCEPT hooks and
+    OBSERVE still fire normally.
 
     **Transport:** Uses a Rust kernel IPC pipe for the internal FIFO.
     The pipe carries u64 LE sequence tokens (8 bytes each); actual items
@@ -99,7 +104,13 @@ class DedupWorkQueue(Generic[T]):
         self._kernel = kernel
         self._pipe_path = pipe_path or f"/__sys__/dedup/{id(self)}"
         self._sys_ctx = PyOperationContext(is_system=True)
-        self._kernel.create_pipe(self._pipe_path, capacity * self._TOKEN_SIZE)
+        # Tier 1 syscall — sys_setattr(DT_PIPE) creates the pipe; the
+        # create_pipe kernel primitive is no longer reachable from service tier.
+        self._kernel.sys_setattr(
+            self._pipe_path,
+            entry_type=DT_PIPE,
+            capacity=capacity * self._TOKEN_SIZE,
+        )
 
         self._seq = 0  # monotonic sequence counter
         self._items: dict[int, T] = {}  # seq → item (actual data stays in Python)

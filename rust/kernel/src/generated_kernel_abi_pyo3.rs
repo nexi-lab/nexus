@@ -2548,30 +2548,9 @@ impl PyKernel {
         self.inner.increment_zone_revision(zone_id)
     }
 
-    /// Notify a specific zone revision (monotonic update).
-    fn notify_zone_revision(&self, zone_id: &str, revision: u64) {
-        self.inner.notify_zone_revision(zone_id, revision)
-    }
-
     /// Get current zone revision (0 if unknown).
     fn get_zone_revision(&self, zone_id: &str) -> u64 {
         self.inner.get_zone_revision(zone_id)
-    }
-
-    /// Wait until zone revision >= min_revision, or timeout.
-    /// Releases GIL during condvar wait (pure Rust blocking).
-    fn wait_zone_revision(
-        &self,
-        py: Python<'_>,
-        zone_id: &str,
-        min_revision: u64,
-        timeout_ms: u64,
-    ) -> bool {
-        let zone = zone_id.to_string();
-        py.detach(|| {
-            self.inner
-                .wait_zone_revision(&zone, min_revision, timeout_ms)
-        })
     }
 
     // ── File watch registry (§10 A3) ────────────────────────────────

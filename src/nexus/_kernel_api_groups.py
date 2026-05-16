@@ -117,7 +117,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "match_watches",
         "metastore_list_locks",
         "metastore_list_paginated",
-        "notify_zone_revision",
         "permission_lease_invalidate_agent",
         "permission_lease_invalidate_all",
         "permission_lease_invalidate_path",
@@ -170,7 +169,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "trie_unregister",
         "unregister_hook",
         "unregister_watch",
-        "wait_zone_revision",
         "write",
         "write_batch",
     }

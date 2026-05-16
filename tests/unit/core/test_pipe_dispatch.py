@@ -54,10 +54,10 @@ class TestKernelPipeReadWrite:
 
         # close_pipe: sets closed flag but does NOT remove from registry
         kernel.close_pipe("/pipes/delme")
-        assert "/pipes/delme" in kernel.list_pipes()
+        assert kernel.has_pipe("/pipes/delme")
 
         # destroy_pipe: removes from registry
         kernel.destroy_pipe("/pipes/delme")
-        assert "/pipes/delme" not in kernel.list_pipes()
+        assert not kernel.has_pipe("/pipes/delme")
 
         kernel.close_all_pipes()

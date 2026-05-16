@@ -180,20 +180,6 @@ class TestKernelPipeLifecycle:
         with pytest.raises(FileNotFoundError):
             k.destroy_pipe("/pipes/nope")
 
-    def test_list_pipes(self) -> None:
-        k = _make_kernel()
-        k.create_pipe("/pipes/a", 100)
-        k.create_pipe("/pipes/b", 200)
-        pipes = k.list_pipes()
-        assert "/pipes/a" in pipes
-        assert "/pipes/b" in pipes
-        assert len(pipes) >= 2
-
-    def test_list_pipes_empty(self) -> None:
-        k = _make_kernel()
-        pipes = k.list_pipes()
-        assert pipes == []
-
     def test_close_all_pipes(self) -> None:
         k = _make_kernel()
         k.create_pipe("/pipes/ca-1", 1024)

@@ -180,20 +180,6 @@ def _bench_resolve_write(nx, path: str, data: bytes) -> list[float]:
     return times
 
 
-def _bench_dict_in(kernel, path: str) -> list[float]:
-    """[3e] `path in kernel.list_pipes()` — proposed fast-path check."""
-    for _ in range(WARMUP):
-        _ = path in kernel.list_pipes()
-
-    times: list[float] = []
-    for _ in range(ITERATIONS):
-        t0 = time.perf_counter()
-        _ = path in kernel.list_pipes()
-        t1 = time.perf_counter()
-        times.append((t1 - t0) * 1_000_000)
-    return times
-
-
 async def _bench_sys_read(nx, kernel, data: bytes) -> list[float]:
     """[2b] nx.sys_read(pipe_path) — full syscall path (pre-fill + read)."""
     # warmup
@@ -249,7 +235,6 @@ async def _run() -> dict:
         meta_get = _bench_sys_stat(kernel, _BENCH_PIPE_PATH)
         validate = _bench_validate_path(nx, _BENCH_PIPE_PATH)
         resolve = _bench_resolve_write(nx, _BENCH_PIPE_PATH, payload)
-        dict_in = _bench_dict_in(kernel, _BENCH_PIPE_PATH)
         fast_path = _bench_ideal_fast_path(kernel, _BENCH_PIPE_PATH, payload)
         sys_write_opt = await _bench_sys_write(nx, payload)
         sys_read_opt = await _bench_sys_read(nx, kernel, payload)
@@ -263,7 +248,6 @@ async def _run() -> dict:
         "sys_stat": _stats(meta_get),
         "validate_path": _stats(validate),
         "resolve_write": _stats(resolve),
-        "dict_in": _stats(dict_in),
         "fast_path": _stats(fast_path),
         "sys_write_optimized": _stats(sys_write_opt),
         "sys_read_optimized": _stats(sys_read_opt),
@@ -302,7 +286,6 @@ def main() -> None:
     print(f"\n  >>> Component sum: {_fmt(component_sum)}")
 
     print("\n--- Proposed optimization ---")
-    _print_stats("list_pipes() `in` check (pipe registry)", "3e", results["dict_in"])
     _print_stats("pipe_write_nowait (ideal)", 4, results["fast_path"])
 
     delta = results["fast_path"]["mean_us"] - results["direct_pipe_write"]["mean_us"]

@@ -1705,10 +1705,6 @@ impl PyKernel {
         }
     }
 
-    fn list_pipes(&self) -> Vec<String> {
-        self.inner.list_pipes()
-    }
-
     fn close_all_pipes(&self) {
         self.inner.close_all_pipes()
     }
@@ -1789,10 +1785,6 @@ impl PyKernel {
             .stream_collect_all(path)
             .map_err(|e| -> PyErr { e.into() })?;
         Ok(PyBytes::new(py, &data))
-    }
-
-    fn list_streams(&self) -> Vec<String> {
-        self.inner.list_streams()
     }
 
     fn close_all_streams(&self) {

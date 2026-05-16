@@ -111,8 +111,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "is_directory",
         "kernel_observer_count",
         "kernel_unmount",
-        "list_pipes",
-        "list_streams",
         "llm_start_streaming",
         "match_watches",
         "metastore_list_locks",

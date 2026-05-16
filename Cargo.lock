@@ -1945,7 +1945,6 @@ dependencies = [
  "crc32fast",
  "criterion",
  "dashmap",
- "encoding_rs",
  "fastcdc",
  "futures",
  "futures-util",

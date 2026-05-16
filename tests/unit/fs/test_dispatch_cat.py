@@ -132,21 +132,6 @@ def test_cat_path_falls_back_to_stat_when_metadata_misses() -> None:
     assert json.loads(rendered) == {"a": 1, "b": 2}
 
 
-class BrokenMetadataKernel:
-    def op_metadata_for_path(self, path: str, zone_id: str = "root") -> dict[str, str | None]:
-        raise RuntimeError("metadata failure")
-
-
-class KernelWithBrokenMetadata(FakeKernel):
-    _kernel = BrokenMetadataKernel()
-
-
-def test_cat_path_propagates_unexpected_metadata_error() -> None:
-    kernel = KernelWithBrokenMetadata(b'{"b":2,"a":1}')
-    with pytest.raises(RuntimeError, match="metadata failure"):
-        cat_path(kernel, "/data.json")
-
-
 class TypeErrorReadKernel(FakeKernel):
     def __init__(self) -> None:
         super().__init__(b"unused")

@@ -223,14 +223,12 @@ class TestRustOpenAIBackendMount:
             assert done["finish_reason"] == "stop"
             session_hash = done["session_hash"]
             assert len(session_hash) == 64
-
-            # cas_read(session_hash) retrieves the envelope.
-            envelope_bytes = nx._kernel.cas_read("/llm", "root", session_hash)
-            envelope = json.loads(envelope_bytes)
-            assert envelope["type"] == "llm_session_v1"
-            assert envelope["model"] == "gpt-4o"
-            assert envelope["request_hash"]
-            assert envelope["response_hash"]
+            # CAS envelope verification removed — the Python-facing
+            # `cas_read` PyO3 method is gone (KERNEL-ARCHITECTURE.md
+            # §2.5: services must access HAL only through syscalls).
+            # The streaming round-trip itself still proves the SSE →
+            # DT_STREAM → CAS pipeline; the kernel's own cas_engine
+            # unit tests cover envelope shape.
         finally:
             nx.close()
 
@@ -304,12 +302,7 @@ class TestRustAnthropicBackendMount:
             assert done["finish_reason"] == "stop"
             session_hash = done["session_hash"]
             assert len(session_hash) == 64
-
-            envelope_bytes = nx._kernel.cas_read("/llm", "root", session_hash)
-            envelope = json.loads(envelope_bytes)
-            assert envelope["type"] == "llm_session_v1"
-            assert envelope["model"] == "claude-sonnet-4-20250514"
-            assert envelope["request_hash"]
-            assert envelope["response_hash"]
+            # CAS envelope verification removed — see TestRustOpenAIBackendMount
+            # rationale above. cas_read PyO3 method deleted.
         finally:
             nx.close()

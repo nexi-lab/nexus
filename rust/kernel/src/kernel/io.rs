@@ -9,13 +9,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::cache::{
-    file_cache::FileCacheKey,
-    index_cache::{ttl_for_backend, IndexCacheKey, IndexKind},
-};
-use crate::dispatch::ops_registry::{
-    BackendKind, CatHandlerKind, FileType, FingerprintHandlerKind, OpHandler,
-};
+use crate::cache::index_cache::{ttl_for_backend, IndexCacheKey, IndexKind};
 use crate::dispatch::{
     DeleteHookCtx, FileEventType, HookContext, HookIdentity, Permission, ReadHookCtx,
     RenameHookCtx, WriteHookCtx,
@@ -24,15 +18,15 @@ use crate::lock_manager::{LockManager, LockMode};
 use crate::meta_store::{FileMetadata, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 
 use super::{
-    validate_path_fast, Kernel, KernelError, OpMetadataResult, OperationContext, StatResult,
-    SysCatResult, SysCopyResult, SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult,
-    SysUnlinkResult, SysWriteResult,
+    validate_path_fast, Kernel, KernelError, OperationContext, StatResult, SysCopyResult,
+    SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult, SysUnlinkResult,
+    SysWriteResult,
 };
 
 /// Per-request resolved state produced by Phase A of `sys_read` (batch path).
 /// Kept file-private; callers only see the final `Vec<Result<…>>`.
 /// `entry` is `None` when the metastore has no record yet; Phase B
-/// falls back to `sys_read_one` which retries the backend directly.
+/// falls back to `sys_read_single` which retries the backend directly.
 ///
 /// Fields are consumed by Task 4 coalescing; allow dead_code until then.
 #[allow(dead_code)]
@@ -165,123 +159,8 @@ impl Kernel {
         self.sys_read_batch_impl(reqs, ctx)
     }
 
-    /// Convenience wrapper for single-path reads.
-    ///
-    /// Kernel-internal callers (sys_cat, grep, etc.) and external callers
-    /// (gRPC, PyO3, services) use this for the familiar single-path API.
-    /// Will be removed once all callers migrate to the batch-capable `sys_read`.
-    pub fn sys_read_one(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        timeout_ms: u64,
-        offset: u64,
-    ) -> Result<SysReadResult, KernelError> {
-        self.sys_read_single(path, ctx, 1, timeout_ms, offset)
-    }
-
-    pub fn op_metadata_for_path(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-    ) -> Result<OpMetadataResult, KernelError> {
-        validate_path_fast(path)?;
-        self.check_permission(path, Permission::Read, ctx)?;
-
-        let route = self
-            .vfs_router
-            .route(path, &ctx.zone_id)
-            .map_err(|_| KernelError::FileNotFound(path.to_string()))?;
-        let stat = self.sys_stat(path, &ctx.zone_id);
-
-        let mime_type = stat
-            .as_ref()
-            .and_then(|stat| (!stat.mime_type.is_empty()).then(|| stat.mime_type.clone()));
-        let backend_name = route
-            .backend
-            .as_ref()
-            .map(|backend| backend.name().to_string())
-            .unwrap_or_default();
-        let filetype = FileType::from_path_and_mime(path, mime_type.as_deref());
-        let backend = BackendKind::from_backend_name(&backend_name);
-
-        Ok(OpMetadataResult {
-            filetype,
-            backend,
-            mime_type,
-            backend_name,
-        })
-    }
-
-    pub fn sys_cat(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        strict_json: bool,
-    ) -> Result<SysCatResult, KernelError> {
-        let metadata = self.op_metadata_for_path(path, ctx)?;
-        let read = self.sys_read_one(path, ctx, 5000, 0)?;
-        let data = read
-            .data
-            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
-
-        match self.resolve_op_handler("cat", &metadata.filetype, &metadata.backend) {
-            Some(OpHandler::Cat(CatHandlerKind::JsonPretty)) => {
-                match serde_json::from_slice::<serde_json::Value>(&data) {
-                    Ok(value) => {
-                        let mut pretty = serde_json::to_vec_pretty(&value)
-                            .map_err(|e| KernelError::IOError(e.to_string()))?;
-                        pretty.push(b'\n');
-                        Ok(SysCatResult {
-                            data: pretty,
-                            handler: "cat/json_pretty".to_string(),
-                            filetype: metadata.filetype,
-                            backend: metadata.backend,
-                        })
-                    }
-                    Err(e) if !strict_json => Ok(SysCatResult {
-                        data,
-                        handler: format!("cat/json_permissive_fallback:{e}"),
-                        filetype: metadata.filetype,
-                        backend: metadata.backend,
-                    }),
-                    Err(e) => Err(KernelError::IOError(format!(
-                        "cat json parse failed for {path}: {e}"
-                    ))),
-                }
-            }
-            Some(OpHandler::Cat(CatHandlerKind::Default)) | None => Ok(SysCatResult {
-                data,
-                handler: "cat/default".to_string(),
-                filetype: metadata.filetype,
-                backend: metadata.backend,
-            }),
-            Some(_) => Ok(SysCatResult {
-                data,
-                handler: "cat/default".to_string(),
-                filetype: metadata.filetype,
-                backend: metadata.backend,
-            }),
-        }
-    }
-
-    pub fn backend_fingerprint(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-    ) -> Result<Option<String>, KernelError> {
-        let metadata = self.op_metadata_for_path(path, ctx)?;
-        match self.resolve_op_handler("fingerprint", &metadata.filetype, &metadata.backend) {
-            Some(OpHandler::Fingerprint(FingerprintHandlerKind::S3)) => Ok(self
-                .sys_stat(path, &ctx.zone_id)
-                .and_then(|stat| stat.content_id)
-                .filter(|content_id| !content_id.is_empty())),
-            _ => Ok(None),
-        }
-    }
-
     /// Full single-read with auth + hooks + DT_LINK follow.
-    fn sys_read_single(
+    pub(crate) fn sys_read_single(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -517,14 +396,6 @@ impl Kernel {
             Some(id) => id,
             None => return Err(not_found()),
         };
-        let expected_fingerprint = entry
-            .content_id
-            .as_ref()
-            .filter(|id| !id.is_empty())
-            .cloned()
-            .or_else(|| (entry.version > 0).then(|| entry.version.to_string()));
-        let file_key = FileCacheKey::new(&ctx.zone_id, path, "raw");
-
         // 4. VFS lock (blocking acquire — wrapper releases GIL before calling this)
         let lock_handle =
             self.lock_manager
@@ -533,36 +404,6 @@ impl Kernel {
             return Err(KernelError::IOError(format!(
                 "vfs read lock timeout: {path}"
             )));
-        }
-
-        if let Some(bytes) = self
-            .file_cache
-            .get(&file_key, expected_fingerprint.as_deref())
-        {
-            self.lock_manager.do_release(lock_handle);
-            return Ok(SysReadResult {
-                data: Some(bytes),
-                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_id: expected_fingerprint.clone(),
-                gen: entry.gen,
-                entry_type: DT_REG,
-                stream_next_offset: None,
-            });
-        }
-        let _file_fill_guard = self.file_cache.lock(&file_key);
-        if let Some(bytes) = self
-            .file_cache
-            .get(&file_key, expected_fingerprint.as_deref())
-        {
-            self.lock_manager.do_release(lock_handle);
-            return Ok(SysReadResult {
-                data: Some(bytes),
-                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_id: expected_fingerprint.clone(),
-                gen: entry.gen,
-                entry_type: DT_REG,
-                stream_next_offset: None,
-            });
         }
 
         // 5. Backend read (Rust-native ObjectStore)
@@ -576,18 +417,14 @@ impl Kernel {
 
         // 7. Return result
         match content {
-            Some(data) => {
-                self.file_cache
-                    .put(file_key, data.clone(), expected_fingerprint.clone(), None);
-                Ok(SysReadResult {
-                    data: Some(data),
-                    post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                    content_id: entry.content_id.clone(),
-                    gen: entry.gen,
-                    entry_type: DT_REG,
-                    stream_next_offset: None,
-                })
-            }
+            Some(data) => Ok(SysReadResult {
+                data: Some(data),
+                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                content_id: entry.content_id.clone(),
+                gen: entry.gen,
+                entry_type: DT_REG,
+                stream_next_offset: None,
+            }),
             // Local backend miss + metadata exists → federation path:
             // try the origin encoded in backend_name. Otherwise it's a
             // genuine miss.
@@ -685,21 +522,6 @@ impl Kernel {
                 .as_ref()
                 .map(|b| b.write_content(&data, cache_key, ctx, 0));
         }
-        let expected_fingerprint = entry
-            .content_id
-            .as_ref()
-            .filter(|id| !id.is_empty())
-            .cloned()
-            .or_else(|| (entry.version > 0).then(|| entry.version.to_string()));
-        if expected_fingerprint.is_some() {
-            self.file_cache.put(
-                FileCacheKey::new(&ctx.zone_id, path, "raw"),
-                data.clone(),
-                expected_fingerprint.clone(),
-                None,
-            );
-        }
-
         Ok(SysReadResult {
             data: Some(data),
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
@@ -746,20 +568,6 @@ impl Kernel {
             )];
         }
         self.sys_write_batch_impl(reqs, ctx)
-    }
-
-    /// Convenience wrapper for single-path writes.
-    ///
-    /// Kernel-internal callers (tests, services) and external callers
-    /// (gRPC, PyO3) use this for the familiar single-path API.
-    pub fn sys_write_one(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        content: &[u8],
-        offset: u64,
-    ) -> Result<SysWriteResult, KernelError> {
-        self.sys_write_with_link_depth(path, ctx, content, offset, 1)
     }
 
     pub(crate) fn sys_write_with_link_depth(
@@ -1162,8 +970,6 @@ impl Kernel {
         };
         if let Ok(result) = &result {
             if result.hit {
-                self.file_cache
-                    .invalidate_path(&input.ctx.zone_id, input.path, "raw");
                 self.index_cache
                     .invalidate_parent_listing(&input.ctx.zone_id, input.path);
             }
@@ -1371,26 +1177,13 @@ impl Kernel {
             .collect()
     }
 
-    /// Convenience wrapper for single-path unlinks.
-    ///
-    /// Kernel-internal callers (tests, services) and external callers
-    /// (gRPC, PyO3) use this for the familiar single-path API.
-    pub fn sys_unlink_one(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        recursive: bool,
-    ) -> Result<SysUnlinkResult, KernelError> {
-        self.sys_unlink_single(path, ctx, recursive)
-    }
-
     /// Single-path unlink implementation.
     ///
     /// Returns `hit=true` when Rust completed the full operation. Python only
     /// dispatches event notify + POST hooks.
     /// Returns `hit=false` for DT_EXTERNAL_STORAGE (5) → Python handles connector teardown.
     /// DT_DIR is handled inline via sys_rmdir (§12e).
-    fn sys_unlink_single(
+    pub(crate) fn sys_unlink_single(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -1571,7 +1364,6 @@ impl Kernel {
             .backend
             .as_ref()
             .map(|b| b.delete_file(&route.backend_path));
-        self.file_cache.invalidate_path(&ctx.zone_id, path, "raw");
         self.index_cache
             .invalidate_parent_listing(&ctx.zone_id, path);
 
@@ -1863,10 +1655,6 @@ impl Kernel {
         // already invalidated old_path / repopulated new_path during
         // ``rename_path`` above. The kernel side has nothing left to do
         // — there is no kernel-global metadata cache to keep in sync.
-        self.file_cache
-            .invalidate_path(&ctx.zone_id, old_path, "raw");
-        self.file_cache
-            .invalidate_path(&ctx.zone_id, new_path, "raw");
         self.index_cache
             .invalidate_parent_listing(&ctx.zone_id, old_path);
         self.index_cache
@@ -2906,7 +2694,7 @@ impl Kernel {
                 }
             };
             // 4. Metadata lookup (best-effort; None means cold-cache /
-            //    backend-only file — Phase B falls through to sys_read_one
+            //    backend-only file — Phase B falls through to sys_read_single
             //    which has its own backend fallback path).
             let entry = self
                 .with_metastore_route(&route, |ms| ms.get(&req.path).ok().flatten())
@@ -3087,7 +2875,7 @@ impl Kernel {
                             let req = &reqs[lead];
                             // Route stability check — if the lead's mount has
                             // shifted since Phase A, fall back to full
-                            // sys_read_one so authz + hooks run against the
+                            // sys_read_single so authz + hooks run against the
                             // *current* mount. Otherwise use
                             // sys_read_content_only since Phase A already
                             // authorized this exact route.
@@ -3104,7 +2892,7 @@ impl Kernel {
                             let shared = if route_stable {
                                 self.sys_read_content_only(&req.path, ctx)
                             } else {
-                                self.sys_read_one(&req.path, ctx, 5000, 0)
+                                self.sys_read_single(&req.path, ctx, 1, 5000, 0)
                             };
                             let lead_cid = shared.as_ref().ok().and_then(|r| r.content_id.clone());
                             for &i in indices.iter() {
@@ -3119,7 +2907,7 @@ impl Kernel {
                                     .map(|r| r.mount_point == consumer_route.mount_point)
                                     .unwrap_or(false);
                                 if !consumer_route_stable {
-                                    let r = self.sys_read_one(&reqs[i].path, ctx, 5000, 0);
+                                    let r = self.sys_read_single(&reqs[i].path, ctx, 1, 5000, 0);
                                     local.push((i, slice_read_result(r, &reqs[i])));
                                     continue;
                                 }
@@ -3160,7 +2948,7 @@ impl Kernel {
                             let r = if route_stable {
                                 self.sys_read_content_only(&req.path, ctx)
                             } else {
-                                self.sys_read_one(&req.path, ctx, 5000, 0)
+                                self.sys_read_single(&req.path, ctx, 1, 5000, 0)
                             };
                             local.push((*idx, slice_read_result(r, req)));
                         }
@@ -3523,7 +3311,7 @@ mod read_batch_tests {
     fn read_batch_single_file_round_trip() {
         let k = kernel_with_backend();
         let c = ctx();
-        k.sys_write_one("/r3.txt", &c, b"hi there", 0)
+        k.sys_write_with_link_depth("/r3.txt", &c, b"hi there", 0, 1)
             .expect("write");
         let reqs = vec![rreq("/r3.txt", 0, None)];
         let out = k.sys_read(&reqs, &c);
@@ -3537,7 +3325,7 @@ mod read_batch_tests {
         let k = kernel_with_backend();
         let c = ctx();
         let payload = b"hello vectored world".to_vec();
-        k.sys_write_one("/coalesce.txt", &c, &payload, 0)
+        k.sys_write_with_link_depth("/coalesce.txt", &c, &payload, 0, 1)
             .expect("write");
         let reqs: Vec<_> = (0..5).map(|_| rreq("/coalesce.txt", 0, None)).collect();
         let out = k.sys_read(&reqs, &c);
@@ -3556,7 +3344,8 @@ mod read_batch_tests {
         for i in 0..100u32 {
             let path = format!("/p{i:03}.txt");
             let payload = format!("payload-{i}").into_bytes();
-            k.sys_write_one(&path, &c, &payload, 0).expect("write");
+            k.sys_write_with_link_depth(&path, &c, &payload, 0, 1)
+                .expect("write");
             reqs.push(rreq(&path, 0, None));
         }
         let out = k.sys_read(&reqs, &c);
@@ -3573,10 +3362,11 @@ mod read_batch_tests {
         let k = kernel_with_backend();
         let c = ctx();
         let payload = b"0123456789".to_vec(); // 10 bytes
-        k.sys_write_one("/r.txt", &c, &payload, 0).unwrap();
+        k.sys_write_with_link_depth("/r.txt", &c, &payload, 0, 1)
+            .unwrap();
 
         for letter in ["a", "b", "c", "d"] {
-            k.sys_write_one(&format!("/r_{letter}.txt"), &c, &payload, 0)
+            k.sys_write_with_link_depth(&format!("/r_{letter}.txt"), &c, &payload, 0, 1)
                 .unwrap();
         }
 
@@ -3624,8 +3414,14 @@ mod read_batch_tests {
         k.set_read_batch_max_concurrency(1);
         let c = ctx();
         for i in 0..10 {
-            k.sys_write_one(&format!("/x{i}.txt"), &c, &format!("v{i}").into_bytes(), 0)
-                .unwrap();
+            k.sys_write_with_link_depth(
+                &format!("/x{i}.txt"),
+                &c,
+                &format!("v{i}").into_bytes(),
+                0,
+                1,
+            )
+            .unwrap();
         }
         let reqs: Vec<_> = (0..10)
             .map(|i| rreq(&format!("/x{i}.txt"), 0, None))

@@ -15,12 +15,8 @@
 //!
 //! Kernel struct + syscalls — pure Rust kernel boundary.
 
-use crate::cache::{file_cache::FileCache, index_cache::IndexCache};
+use crate::cache::index_cache::IndexCache;
 use crate::core::permission_cache::PermissionLeaseCache;
-use crate::dispatch::ops_registry::{
-    BackendKind, CatHandlerKind, FileType, FingerprintHandlerKind, GrepHandlerKind, OpHandler,
-    OpKey, OpName, OpsRegistry,
-};
 use crate::dispatch::{MutationObserver, PermissionProvider, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
@@ -207,20 +203,6 @@ pub struct WriteRequest {
 pub struct UnlinkRequest {
     pub path: String,
     pub recursive: bool,
-}
-
-pub struct SysCatResult {
-    pub data: Vec<u8>,
-    pub handler: String,
-    pub filetype: FileType,
-    pub backend: BackendKind,
-}
-
-pub struct OpMetadataResult {
-    pub filetype: FileType,
-    pub backend: BackendKind,
-    pub mime_type: Option<String>,
-    pub backend_name: String,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -704,8 +686,6 @@ pub struct Kernel {
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     index_cache: IndexCache,
-    file_cache: FileCache,
-    pub(crate) ops_registry: OpsRegistry,
     // Per-mount metastores now live inside `VFSRouter::entries` as
     // `MountEntry::metastore: Option<Arc<dyn MetaStore>>` (our v20
     // SSOT cleanup — kept against develop's legacy split map).
@@ -866,8 +846,6 @@ impl Kernel {
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
             index_cache: IndexCache::default(),
-            file_cache: FileCache::default(),
-            ops_registry: Self::default_ops_registry(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: RwLock::new(NativeHookRegistry::new()),
@@ -904,44 +882,6 @@ impl Kernel {
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
         k
-    }
-
-    fn default_ops_registry() -> OpsRegistry {
-        let mut registry = OpsRegistry::new();
-        registry
-            .register(
-                OpKey::new(OpName::new("cat"), None, None),
-                OpHandler::Cat(CatHandlerKind::Default),
-            )
-            .expect("default cat handler registration must be unique");
-        registry
-            .register(
-                OpKey::new(OpName::new("cat"), Some(FileType::Json), None),
-                OpHandler::Cat(CatHandlerKind::JsonPretty),
-            )
-            .expect("json cat handler registration must be unique");
-        registry
-            .register(
-                OpKey::new(OpName::new("grep"), None, None),
-                OpHandler::Grep(GrepHandlerKind::Default),
-            )
-            .expect("default grep handler registration must be unique");
-        registry
-            .register(
-                OpKey::new(OpName::new("fingerprint"), None, Some(BackendKind::S3)),
-                OpHandler::Fingerprint(FingerprintHandlerKind::S3),
-            )
-            .expect("s3 fingerprint handler registration must be unique");
-        registry
-    }
-
-    pub fn resolve_op_handler(
-        &self,
-        op: &str,
-        filetype: &FileType,
-        backend: &BackendKind,
-    ) -> Option<OpHandler> {
-        self.ops_registry.resolve(op, filetype, backend)
     }
 
     // ── Lock Manager wiring ──────────────────────────────────────────
@@ -982,16 +922,6 @@ impl Kernel {
     pub fn set_read_batch_max_aggregate_bytes(&self, n: usize) {
         self.read_batch_max_aggregate_bytes
             .store(n, Ordering::Relaxed);
-    }
-
-    /// Evict every entry from the in-process file cache.
-    ///
-    /// Useful in benchmarks and integration tests that need cache-cold
-    /// reads without discarding the `Kernel` instance. Calling this in
-    /// production is safe but degrades hot-path read throughput until the
-    /// cache warms up again.
-    pub fn clear_file_cache(&self) {
-        self.file_cache.clear();
     }
 
     // ── Node identity (federation content origin) ─────────────────────
@@ -2587,139 +2517,6 @@ impl Kernel {
     //    sys_rename / sys_copy / sys_mkdir / sys_rmdir) ──────────────────
     // (Moved to `kernel::io` submodule.)
 
-    // ── sys_grep + sys_glob ───────────────────────────────────────────
-    //
-    // Two read-only "search" syscalls that wrap `lib::search` /
-    // `lib::glob` algorithms inside the standard syscall pipeline
-    // (validate path → walk recursive prefix scan → INTERCEPT-free
-    // since reads are routed through `sys_read`).
-
-    /// Glob-match: walk every path under `prefix` recursively and
-    /// return the ones matching `pattern` (one of `?`, `*`, `**`,
-    /// `[abc]`, `{a,b}` per the `globset` crate's syntax).
-    ///
-    /// Pure metadata scan — never reads file content, only consults
-    /// the metastore for the path list.  `Send + Sync` callers can
-    /// use the result list directly without holding kernel locks.
-    pub fn sys_glob(
-        &self,
-        pattern: &str,
-        prefix: &str,
-        _ctx: &OperationContext,
-    ) -> Result<Vec<String>, KernelError> {
-        validate_path_fast(prefix)?;
-        let all_paths = self.collect_paths_recursive(prefix)?;
-        let patterns = vec![pattern.to_string()];
-        lib::glob::glob_match(&patterns, &all_paths)
-            .map_err(|e| KernelError::IOError(format!("sys_glob: {e}")))
-    }
-
-    /// Grep: walk every regular file under `prefix` recursively, read
-    /// content via `sys_read`, scan lines with `lib::search::search_lines`,
-    /// return up to `max_results` matches.
-    ///
-    /// When `disk_paths` is non-empty the walk is skipped: the kernel
-    /// reads each absolute path from disk directly (bypassing the
-    /// metastore) and scans the same way.  Used by the search-tier
-    /// cache fast path where the cached blob's on-disk location is
-    /// already known.
-    ///
-    /// Skips:
-    ///   * non-regular entries (directories, pipes, streams, mounts)
-    ///   * unreadable files (permission errors, missing content)
-    ///   * non-UTF-8 content (binary files)
-    ///
-    /// `ignore_case = true` switches `lib::search::build_search_mode`
-    /// to a case-insensitive regex; literal patterns auto-detect via
-    /// `lib::search::is_literal_pattern`.
-    pub fn sys_grep(
-        &self,
-        pattern: &str,
-        prefix: &str,
-        ignore_case: bool,
-        max_results: usize,
-        disk_paths: &[String],
-        ctx: &OperationContext,
-    ) -> Result<Vec<lib::search::grep::GrepMatch>, KernelError> {
-        let search_mode = lib::search::build_search_mode(pattern, ignore_case)
-            .map_err(|e| KernelError::IOError(format!("sys_grep regex: {e}")))?;
-
-        let mut all_matches: Vec<lib::search::grep::GrepMatch> = Vec::new();
-
-        if !disk_paths.is_empty() {
-            // Disk-path mode: read each path directly, no metastore walk.
-            for fpath in disk_paths {
-                if all_matches.len() >= max_results {
-                    break;
-                }
-                let bytes = match std::fs::read(fpath) {
-                    Ok(b) => b,
-                    Err(_) => continue,
-                };
-                let content = match std::str::from_utf8(&bytes) {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                };
-                let remaining = max_results.saturating_sub(all_matches.len());
-                let matches = lib::search::search_lines(fpath, content, &search_mode, remaining);
-                all_matches.extend(matches);
-            }
-            return Ok(all_matches);
-        }
-
-        validate_path_fast(prefix)?;
-        let all_paths = self.collect_paths_recursive(prefix)?;
-        for fpath in all_paths {
-            if all_matches.len() >= max_results {
-                break;
-            }
-            // Probe entry_type via the routed metastore; skip
-            // non-regular entries. A miss is conservatively treated as
-            // regular (the metastore stamped it; sys_read will fail
-            // gracefully if the underlying backend disagrees).
-            if let Ok(route) = self.vfs_router.route(&fpath, &ctx.zone_id) {
-                if let Some(Some(meta)) =
-                    self.with_metastore_route(&route, |ms| ms.get(&fpath).ok().flatten())
-                {
-                    if meta.entry_type != crate::meta_store::DT_REG {
-                        continue;
-                    }
-                }
-            }
-            let bytes = match self.sys_read_one(&fpath, ctx, 5000, 0) {
-                Ok(r) => r.data.unwrap_or_default(),
-                Err(_) => continue,
-            };
-            let content = match std::str::from_utf8(&bytes) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            let remaining = max_results.saturating_sub(all_matches.len());
-            let matches = lib::search::search_lines(&fpath, content, &search_mode, remaining);
-            all_matches.extend(matches);
-        }
-        Ok(all_matches)
-    }
-
-    /// Helper: walk every metastore entry under `prefix` recursively
-    /// and return the full list of paths.  Pages through the metastore
-    /// in chunks of 1024 to bound peak memory on a deep tree.
-    fn collect_paths_recursive(&self, prefix: &str) -> Result<Vec<String>, KernelError> {
-        let mut out: Vec<String> = Vec::new();
-        let mut cursor: Option<String> = None;
-        loop {
-            let page = self.metastore_list_paginated(prefix, true, 1024, cursor.as_deref())?;
-            for meta in &page.items {
-                out.push(meta.path.clone());
-            }
-            if !page.has_more {
-                break;
-            }
-            cursor = page.next_cursor.clone();
-        }
-        Ok(out)
-    }
-
     // ── R10c: direct CAS surface ─────────────────────────────────────────
     //
     // These methods replace Python `CASAddressingEngine`'s hot-path bodies
@@ -3111,8 +2908,12 @@ mod tests {
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/gen.txt", DT_REG as i32).unwrap();
 
-        let first = k.sys_write_one("/gen.txt", &ctx, b"one", 0).unwrap();
-        let second = k.sys_write_one("/gen.txt", &ctx, b"two", 0).unwrap();
+        let first = k
+            .sys_write_with_link_depth("/gen.txt", &ctx, b"one", 0, 1)
+            .unwrap();
+        let second = k
+            .sys_write_with_link_depth("/gen.txt", &ctx, b"two", 0, 1)
+            .unwrap();
         let stat = k.sys_stat("/gen.txt", "root").unwrap();
 
         assert_eq!(first.gen, 1);
@@ -3125,7 +2926,8 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/mime.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/mime.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_with_link_depth("/mime.txt", &ctx, b"body", 0, 1)
+            .unwrap();
 
         k.sys_setattr(
             "/mime.txt",
@@ -3161,7 +2963,8 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_with_link_depth("/src.txt", &ctx, b"body", 0, 1)
+            .unwrap();
 
         let copied = k.sys_copy("/src.txt", "/dst.txt", &ctx).unwrap();
         let dst = k.sys_stat("/dst.txt", "root").unwrap();
@@ -3181,7 +2984,8 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/src.txt", &ctx, b"body", 0).unwrap();
+        k.sys_write_with_link_depth("/src.txt", &ctx, b"body", 0, 1)
+            .unwrap();
         k.sys_mkdir("/dst", &ctx, true, true).unwrap();
 
         match k.sys_copy("/src.txt", "/dst", &ctx) {
@@ -3204,9 +3008,11 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_with_link_depth("/src.txt", &ctx, b"new", 0, 1)
+            .unwrap();
         setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_with_link_depth("/dst.txt", &ctx, b"old", 0, 1)
+            .unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.created_at_ms = Some(123);
@@ -3224,9 +3030,11 @@ mod tests {
         let k = kernel_with_root_backend();
         let ctx = OperationContext::new("test", "root", true, None, true);
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/src.txt", &ctx, b"new", 0).unwrap();
+        k.sys_write_with_link_depth("/src.txt", &ctx, b"new", 0, 1)
+            .unwrap();
         setattr(&k, "/dst.txt", DT_REG as i32).unwrap();
-        k.sys_write_one("/dst.txt", &ctx, b"old", 0).unwrap();
+        k.sys_write_with_link_depth("/dst.txt", &ctx, b"old", 0, 1)
+            .unwrap();
 
         let mut dst_meta = k.metastore_get("/dst.txt").unwrap().unwrap();
         dst_meta.content_id = Some("/missing-destination-content.txt".to_string());
@@ -3283,64 +3091,6 @@ mod tests {
         assert_eq!(second[0].as_ref().unwrap().gen, 2);
         assert_eq!(k.sys_stat("/a.txt", "root").unwrap().gen, 2);
         assert_eq!(k.sys_stat("/b.txt", "root").unwrap().gen, 1);
-    }
-
-    #[test]
-    fn sys_cat_pretty_prints_json_without_changing_sys_read() {
-        let k = kernel_with_root_backend();
-        let ctx = OperationContext::new("system", "root", true, None, true);
-        setattr(&k, "/doc.json", DT_REG as i32).unwrap();
-        let write = k
-            .sys_write_one("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
-            .unwrap();
-        assert!(write.hit);
-        let raw = k.sys_read_one("/doc.json", &ctx, 5000, 0).unwrap();
-        assert_eq!(raw.data.unwrap(), br#"{"b":2,"a":1}"#);
-
-        let cat = k.sys_cat("/doc.json", &ctx, true).unwrap();
-        assert_eq!(cat.data, b"{\n  \"a\": 1,\n  \"b\": 2\n}\n");
-        assert_eq!(cat.filetype.as_str(), "json");
-    }
-
-    #[test]
-    fn sys_cat_returns_raw_bytes_for_unknown_filetype() {
-        let k = kernel_with_root_backend();
-        let ctx = OperationContext::new("system", "root", true, None, true);
-        setattr(&k, "/plain.bin", DT_REG as i32).unwrap();
-        let write = k.sys_write_one("/plain.bin", &ctx, b"abc", 0).unwrap();
-        assert!(write.hit);
-
-        let cat = k.sys_cat("/plain.bin", &ctx, true).unwrap();
-        assert_eq!(cat.data, b"abc");
-        assert_eq!(cat.handler, "cat/default");
-    }
-
-    #[test]
-    fn sys_cat_uses_backend_fallback_when_metadata_is_missing() {
-        let k = Kernel::new();
-        let backend = std::sync::Arc::new(TestObjectStore::default());
-        backend
-            .blobs
-            .lock()
-            .insert("loose.json".to_string(), br#"{"z":0}"#.to_vec());
-        let mounted: std::sync::Arc<dyn ObjectStore> = backend;
-        k.add_mount(
-            "/",
-            contracts::ROOT_ZONE_ID,
-            Some(mounted),
-            None,
-            None,
-            false,
-        )
-        .unwrap();
-        let ctx = OperationContext::new("system", "root", true, None, true);
-
-        let raw = k.sys_read_one("/loose.json", &ctx, 5000, 0).unwrap();
-        assert_eq!(raw.data.unwrap(), br#"{"z":0}"#);
-
-        let cat = k.sys_cat("/loose.json", &ctx, true).unwrap();
-        assert_eq!(cat.data, b"{\n  \"z\": 0\n}\n");
-        assert_eq!(cat.filetype.as_str(), "json");
     }
 
     // ── §11 OBSERVE ThreadPool tests ───────────────────────────────
@@ -4001,7 +3751,7 @@ mod tests {
         ms.put("/mnt", mount_meta).unwrap();
 
         let ctx = OperationContext::new("test", zone, true, None, true);
-        let result = k.sys_unlink_one("/mnt", &ctx, false).unwrap();
+        let result = k.sys_unlink_single("/mnt", &ctx, false).unwrap();
 
         assert!(result.hit, "DT_MOUNT unlink should return hit=true");
         assert_eq!(result.entry_type, DT_MOUNT);
@@ -4086,48 +3836,9 @@ mod tests {
     // ── Logical cache split ───────────────────────────────────────────
     mod logical_cache_split {
         use super::*;
-        use crate::cache::{
-            file_cache::FileCacheKey,
-            index_cache::{IndexCacheKey, IndexKind},
-        };
-        use crate::meta_store::{FileMetadata, LocalMetaStore, MetaStore};
+        use crate::cache::index_cache::{IndexCacheKey, IndexKind};
+        use crate::meta_store::{LocalMetaStore, MetaStore};
         use std::time::Duration;
-
-        #[test]
-        fn sys_read_serves_matching_fingerprint_from_file_cache() {
-            let k = Kernel::new();
-            let _td = tempfile::tempdir().unwrap();
-            let ms: Arc<dyn MetaStore> =
-                Arc::new(LocalMetaStore::open(&_td.path().join("meta.redb")).unwrap());
-            k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
-                .unwrap();
-
-            ms.put(
-                "/data/a.txt",
-                FileMetadata {
-                    path: "/data/a.txt".to_string(),
-                    size: 6,
-                    content_id: Some("etag:1".to_string()),
-                    version: 1,
-                    entry_type: DT_REG,
-                    zone_id: Some("root".to_string()),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            k.file_cache.put(
-                FileCacheKey::new("root", "/data/a.txt", "raw"),
-                b"cached".to_vec(),
-                Some("etag:1".to_string()),
-                None,
-            );
-
-            let ctx = OperationContext::new("test", "root", true, None, true);
-            let read = k.sys_read_one("/data/a.txt", &ctx, 5000, 0).unwrap();
-
-            assert_eq!(read.data.as_deref(), Some(&b"cached"[..]));
-            assert_eq!(read.content_id.as_deref(), Some("etag:1"));
-        }
 
         #[test]
         fn sys_mkdir_invalidates_parent_listing_index_cache() {
@@ -4293,7 +4004,7 @@ mod tests {
             }
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            match k.sys_read_one("/data/a", &ctx, 5000, 0) {
+            match k.sys_read_single("/data/a", &ctx, 1, 5000, 0) {
                 Err(KernelError::PermissionDenied(msg)) => {
                     assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
                 }
@@ -4342,7 +4053,7 @@ mod tests {
             }
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            match k.sys_write_one("/data/a", &ctx, b"payload", 0) {
+            match k.sys_write_with_link_depth("/data/a", &ctx, b"payload", 0, 1) {
                 Err(KernelError::PermissionDenied(msg)) => {
                     assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
                 }
@@ -4374,7 +4085,7 @@ mod tests {
     //      composes a `WalStreamCore` over the test metastore + writes
     //      the inode + registers the stream — same code path
     //      production runs through.
-    //   3. `kernel.sys_write_one(path, …)` and `kernel.sys_read_one(path, …)`
+    //   3. `kernel.sys_write_with_link_depth(path, …)` and `kernel.sys_read_single(path, …)`
     //      round-trip bytes through the wal stream, validating the
     //      stream is actually wal-backed (memory streams use a
     //      different backend type, so a memory-vs-wal mistake would
@@ -4563,10 +4274,10 @@ mod tests {
             // wal backend registered and the bytes flow through it.
             let ctx = OperationContext::new("test", "root", true, None, true);
             kernel
-                .sys_write_one(path, &ctx, b"federation hello", 0)
+                .sys_write_with_link_depth(path, &ctx, b"federation hello", 0, 1)
                 .expect("sys_write to wal stream");
             let read = kernel
-                .sys_read_one(path, &ctx, /* timeout_ms */ 0, 0)
+                .sys_read_single(path, &ctx, 1, /* timeout_ms */ 0, 0)
                 .expect("sys_read from wal stream");
             let bytes = read
                 .data
@@ -4615,10 +4326,10 @@ mod tests {
                     .expect("idempotent wal sys_setattr");
             }
             kernel
-                .sys_write_one(path, &ctx, b"survives reopen", 0)
+                .sys_write_with_link_depth(path, &ctx, b"survives reopen", 0, 1)
                 .expect("write to reopened wal stream");
             let read = kernel
-                .sys_read_one(path, &ctx, 0, 0)
+                .sys_read_single(path, &ctx, 1, 0, 0)
                 .expect("read after idempotent reopen");
             assert_eq!(
                 read.data.unwrap().as_slice(),

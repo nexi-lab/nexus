@@ -49,9 +49,8 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 - `reqs.len() == 1` → fast path: dispatches to single-item implementation (`sys_read_single`, `sys_write_single`, `sys_unlink_single`) with zero batch overhead.
 - `reqs.len() > 1` → batch path: per-item auth + hooks in Phase A, then coalesced I/O in Phase B (sys_read uses rayon parallelism; sys_write uses sorted VFS lock acquisition to avoid deadlocks; sys_unlink loops sequentially).
 - Each item in the result `Vec` corresponds positionally to its request. Per-item errors are isolated — one failing path does not abort the batch.
-- `sys_read_one` / `sys_write_one` / `sys_unlink_one` are convenience wrappers for single-path callers.
-- The former `_read_batch` / `_write_batch` / `_delete_batch` internal methods are deleted — the vectored `sys_*` signatures subsume them entirely.
-- The `skip_authz` hack (which bypassed permission checks for batch-internal items) is eliminated — every item in the batch goes through the full permission gate individually.
+- Single-path callers use `KernelAbi::sys_read/sys_write/sys_unlink` (trait methods) or internal `sys_read_single`/`sys_write_with_link_depth`/`sys_unlink_single` (`pub(crate)`). Tier 2 `read()`/`unlink()` in `KernelConvenience` provide `#[inline]` defaults.
+- Every item in the batch goes through the full permission gate individually.
 
 ### Tier 2 — Concrete Convenience (not abstract, composing Tier 1)
 
@@ -60,8 +59,8 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 | `rmdir` | 2 | `sys_unlink(recursive=)` | Thin delegation, overridable |
 | `access` | 2 | `sys_stat` | Returns `True` if stat succeeds |
 | `is_directory` | 2 | `sys_stat` | Checks `is_directory` field |
-| `glob` | 2 | `sys_readdir` + filter | Pattern matching over directory listing (PR #3921). Search-tier logic; future: migrate to search service |
-| `grep` | 2 | `sys_readdir` + `sys_read` + regex | Content search across files (PR #3921). Search-tier logic; future: migrate to search service |
+| `glob` | 2 | `sys_readdir` + `fnmatch` | Pattern matching over directory listing. Python-side composition. |
+| `grep` | 2 | `sys_readdir` + `sys_read` + `re` | Content search across files. Python-side composition. |
 
 `sys_setattr` is the universal creation/management syscall:
 - `create(path)` = `sys_setattr(path, entry_type=DT_REG)` — upsert: creates regular file if absent, updates metadata if present. Accepts `content_id`, `size`, `version`, `created_at_ms`, `owner_id`.
@@ -114,13 +113,6 @@ NexusFS inherits them — callers use `nx.read(path)` directly.
 | `write_content(content)` | `ObjectStoreABC.write_content(content)` | Direct blob store, return hash |
 | `stream(hash)` | `ObjectStoreABC.stream(hash)` | Streaming blob read |
 | `write_stream(path)` | `ObjectStoreABC.write_stream(path)` | Streaming blob write |
-
-### Search Convenience — Tier 2
-
-| Method | Composes | Notes |
-|--------|----------|-------|
-| `glob(pattern)` | `sys_readdir` + filter | Pattern matching over directory listing (PR #3921). Search-tier logic, not a kernel syscall |
-| `grep(pattern, path)` | `sys_readdir` + `sys_read` + regex | Content search across files (PR #3921). Search-tier logic, not a kernel syscall |
 
 ---
 
@@ -233,8 +225,8 @@ Tier 2 convenience (not kernel syscalls):
 - `is_directory` → Tier 2 (derives from `sys_stat`)
 - `rmdir` → Tier 2 (delegates to `sys_unlink`)
 - `get_xattr(path, key)` / `set_xattr(path, key, value)` / `get_xattr_bulk(paths, key)` → Tier 2 (Rust `KernelConvenience` trait, direct metastore — no hooks, no permission gate)
-- `glob` → Tier 2 (composes `sys_readdir` + filter). Search-tier logic (PR #3921)
-- `grep` → Tier 2 (composes `sys_readdir` + `sys_read` + regex). Search-tier logic (PR #3921)
+- `glob` → Tier 2 Python (composes `sys_readdir` + `fnmatch`)
+- `grep` → Tier 2 Python (composes `sys_readdir` + `sys_read` + `re`)
 
 ---
 
@@ -403,10 +395,10 @@ async fn read(&self, req: Request<ReadRequest>) -> Result<Response<ReadResponse>
 }
 
 // python/mod.rs — thin PyO3 adapter (for nexus-fs embed, FUSE, tests)
-// sys_read_one convenience wrapper for single-path callers.
+// sys_read single-path wrapper via sys_read_single.
 #[pyfunction]
-fn sys_read_one(kernel: &PyKernel, path: &str, offset: u64, timeout_ms: u64) -> PyResult<...> {
-    kernel.sys_read_one(path, &ctx, timeout_ms, offset)
+fn sys_read(kernel: &PyKernel, path: &str, offset: u64, timeout_ms: u64) -> PyResult<...> {
+    kernel.sys_read_single(path, &ctx, 1, timeout_ms, offset)
 }
 ```
 
@@ -472,3 +464,4 @@ collapse is a **refactoring** that changes the boundary, not the logic.
 | §6.1 | 2026-04-26 | Rust/Python boundary status: hook dispatch (2+N crossings), service lifecycle (4 crossings, stdlib-only), zero-crossing syscalls, pure Rust pillar dispatch. Eliminated: sys_write IPC pre-check (redundant metadata.get), sys_stat py.import("datetime") → chrono. |
 | §2, §4, §5 | 2026-05-07 | sys_setattr: DT_REG create (upsert) + content_id/size/version/created_at_ms/owner_id params. sys_stat: owner_id in StatResult. sys_write: file-must-exist contract. glob/grep: Tier 2 convenience (search-tier, PR #3921). Tier 1 surface: 8 syscalls (read, write, stat, setattr, unlink, rename, copy, readdir). |
 | §5 | 2026-05-15 | Delete `/__xattr__/` path intercept from sys_read/sys_write — redundant with Tier 2 `get_xattr`/`set_xattr` (KernelConvenience). Document xattr as Tier 2 convenience. |
+| §2, §5 | 2026-05-15 | glob/grep: Python Tier 2 (compose readdir + sys_read). Single-path convenience: Tier 2 `read()`/`unlink()` in KernelConvenience; internal callers use `sys_read_single`/`sys_write_with_link_depth`/`sys_unlink_single`. |

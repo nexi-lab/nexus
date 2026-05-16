@@ -36,6 +36,7 @@ use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use kernel::abi::KernelAbi;
 use kernel::kernel::Kernel;
 use kernel::kernel::{KernelError, OperationContext};
 
@@ -180,7 +181,7 @@ pub fn send_message(
 
     // 1. Write to recipient inbox.
     let inbox = format!("{}/{filename}", inbox_path(&envelope.to));
-    let wr = kernel.sys_write_one(&inbox, ctx, &json, 0)?;
+    let wr = KernelAbi::sys_write(kernel, &inbox, ctx, &json, 0)?;
     if !wr.hit {
         return Err(IpcError::Kernel(KernelError::IOError(format!(
             "sys_write missed on inbox path {inbox}"
@@ -189,11 +190,11 @@ pub fn send_message(
 
     // 2. DT_PIPE wakeup — best-effort (no pipe = silent no-op).
     let notify = notify_pipe_path(&envelope.to);
-    let _ = kernel.sys_write_one(&notify, ctx, b"\x01", 0);
+    let _ = KernelAbi::sys_write(kernel, &notify, ctx, b"\x01", 0);
 
     // 3. Outbox copy (audit trail) — best-effort.
     let outbox = format!("{}/{filename}", outbox_path(&envelope.from));
-    let _ = kernel.sys_write_one(&outbox, ctx, &json, 0);
+    let _ = KernelAbi::sys_write(kernel, &outbox, ctx, &json, 0);
 
     Ok(inbox)
 }
@@ -226,7 +227,7 @@ pub fn wait_for_message(
     let msg_path = &msg_path;
 
     // Read the envelope.
-    let read_result = kernel.sys_read_one(msg_path, ctx, 5000, 0)?;
+    let read_result = KernelAbi::sys_read(kernel, msg_path, ctx, 5000, 0)?;
     let data = match read_result.data {
         Some(d) => d,
         None => {

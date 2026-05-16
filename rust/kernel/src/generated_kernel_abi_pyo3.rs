@@ -2230,7 +2230,10 @@ impl PyKernel {
 
         // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_read_one(path, &rust_ctx, timeout_ms, offset));
+        let result = py.detach(|| {
+            self.inner
+                .sys_read_single(path, &rust_ctx, 1, timeout_ms, offset)
+        });
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         // 3. Convert Vec<u8> -> PyBytes
@@ -2272,7 +2275,7 @@ impl PyKernel {
         let content_owned = content.to_vec();
         let result = py.detach(|| {
             self.inner
-                .sys_write_one(path, &rust_ctx, &content_owned, offset)
+                .sys_write_with_link_depth(path, &rust_ctx, &content_owned, offset, 1)
         });
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
@@ -2372,7 +2375,7 @@ impl PyKernel {
 
         // 2. Call pure Rust kernel
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_unlink_one(path, &rust_ctx, recursive));
+        let result = py.detach(|| self.inner.sys_unlink_single(path, &rust_ctx, recursive));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysUnlinkResult {
@@ -2513,66 +2516,17 @@ impl PyKernel {
         self.inner.readdir(parent_path, zone_id, is_admin)
     }
 
-    /// Phase 6: glob match against the metastore-recursive listing of
-    /// `prefix`.  Replaces `nexus.fs._helpers.glob` — pure Rust, no
-    /// Python fallback (`lib::glob::glob_match` covers the same
-    /// `globset` syntax the Python `fnmatch` fallback used).
-    #[pyo3(signature = (pattern, prefix="/", zone_id="root"))]
-    fn sys_glob(&self, pattern: &str, prefix: &str, zone_id: &str) -> PyResult<Vec<String>> {
-        let ctx = OperationContext::new("system", zone_id, true, None, true);
-        self.inner
-            .sys_glob(pattern, prefix, &ctx)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_glob: {:?}", e)))
-    }
-
-    /// Phase 6: grep recursive — walk every regular file under
-    /// `prefix`, scan content via `lib::search::search_lines`, return
-    /// up to `max_results` matches.  Replaces `nexus.fs._helpers.grep`.
-    /// Each match comes back as a `dict` matching the historical
-    /// shape: `{file, line, content, match}`.
-    ///
-    /// When `disk_paths` is non-empty the metastore walk is skipped:
-    /// the kernel reads each absolute path from disk directly.  Used
-    /// by the search-tier cache fast path where the cached blob's
-    /// on-disk location is already known.
-    #[pyo3(signature = (pattern, prefix="/", ignore_case=false, max_results=1000, zone_id="root", disk_paths=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn sys_grep<'py>(
-        &self,
-        py: Python<'py>,
-        pattern: &str,
-        prefix: &str,
-        ignore_case: bool,
-        max_results: usize,
-        zone_id: &str,
-        disk_paths: Option<Vec<String>>,
-    ) -> PyResult<Bound<'py, PyList>> {
-        let ctx = OperationContext::new("system", zone_id, true, None, true);
-        let paths = disk_paths.unwrap_or_default();
-        let matches = self
-            .inner
-            .sys_grep(pattern, prefix, ignore_case, max_results, &paths, &ctx)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_grep: {:?}", e)))?;
-        let out = PyList::empty(py);
-        for m in matches {
-            let d = PyDict::new(py);
-            d.set_item("file", m.file)?;
-            d.set_item("line", m.line)?;
-            d.set_item("content", m.content)?;
-            d.set_item("match", m.match_text)?;
-            out.append(d)?;
-        }
-        Ok(out)
-    }
-
     /// Simplified sys_read that takes (path, zone_id) — creates a minimal
     /// OperationContext internally.  Used by service-tier callers that don't
     /// have a full OperationContext handy.
     fn sys_read_raw<'py>(&self, py: Python<'py>, path: &str, zone_id: &str) -> PyResult<Py<PyAny>> {
         let ctx = OperationContext::new("system", zone_id, true, None, true);
-        let result = self.inner.sys_read_one(path, &ctx, 5000, 0).map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("sys_read_raw: {:?}", e))
-        })?;
+        let result = self
+            .inner
+            .sys_read_single(path, &ctx, 1, 5000, 0)
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("sys_read_raw: {:?}", e))
+            })?;
         match result.data {
             Some(bytes) => Ok(pyo3::types::PyBytes::new(py, &bytes).into()),
             None => Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(
@@ -2580,50 +2534,6 @@ impl PyKernel {
                 path
             ))),
         }
-    }
-
-    #[pyo3(signature = (path, zone_id="root", strict_json=true))]
-    fn sys_cat<'py>(
-        &self,
-        py: Python<'py>,
-        path: &str,
-        zone_id: &str,
-        strict_json: bool,
-    ) -> PyResult<Py<PyBytes>> {
-        let ctx = OperationContext::new("system", zone_id, true, None, true);
-        let result = self
-            .inner
-            .sys_cat(path, &ctx, strict_json)
-            .map_err(|e| -> PyErr { e.into() })?;
-        Ok(PyBytes::new(py, &result.data).unbind())
-    }
-
-    #[pyo3(signature = (path, zone_id="root"))]
-    fn op_metadata_for_path<'py>(
-        &self,
-        py: Python<'py>,
-        path: &str,
-        zone_id: &str,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let ctx = OperationContext::new("system", zone_id, true, None, true);
-        let result = self
-            .inner
-            .op_metadata_for_path(path, &ctx)
-            .map_err(|e| -> PyErr { e.into() })?;
-        let dict = PyDict::new(py);
-        dict.set_item("filetype", result.filetype.as_str())?;
-        dict.set_item("backend", result.backend.as_str())?;
-        dict.set_item("mime_type", result.mime_type.as_deref())?;
-        dict.set_item("backend_name", result.backend_name)?;
-        Ok(dict)
-    }
-
-    #[pyo3(signature = (path, zone_id="root"))]
-    fn backend_fingerprint(&self, path: &str, zone_id: &str) -> PyResult<Option<String>> {
-        let ctx = OperationContext::new("system", zone_id, true, None, true);
-        self.inner
-            .backend_fingerprint(path, &ctx)
-            .map_err(|e| -> PyErr { e.into() })
     }
 
     // ── Batch syscalls ─────────────────────────────────────────────────

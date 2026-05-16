@@ -174,7 +174,7 @@ impl KernelAbi for crate::kernel::Kernel {
         timeout_ms: u64,
         offset: u64,
     ) -> Result<SysReadResult, KernelError> {
-        Self::sys_read_one(self, path, ctx, timeout_ms, offset)
+        self.sys_read_single(path, ctx, 1, timeout_ms, offset)
     }
 
     fn sys_write(
@@ -184,7 +184,7 @@ impl KernelAbi for crate::kernel::Kernel {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
-        Self::sys_write_one(self, path, ctx, content, offset)
+        self.sys_write_with_link_depth(path, ctx, content, offset, 1)
     }
 
     fn sys_unlink(
@@ -193,7 +193,7 @@ impl KernelAbi for crate::kernel::Kernel {
         ctx: &OperationContext,
         recursive: bool,
     ) -> Result<SysUnlinkResult, KernelError> {
-        Self::sys_unlink_one(self, path, ctx, recursive)
+        self.sys_unlink_single(path, ctx, recursive)
     }
 
     fn sys_setattr(

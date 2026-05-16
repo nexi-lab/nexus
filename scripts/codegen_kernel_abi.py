@@ -1087,44 +1087,6 @@ def generate_stubs(
     )
     lines.append("")
 
-    # ──────────────────────────────────────────────────────────────────
-    # Manual section: PrefetchEngine (Issue #4057).  The class is
-    # implemented in rust/nexus-prefetch/src/pyo3_bindings.rs, not in
-    # rust/kernel/src, so the auto-scan above doesn't see it.  Keeping
-    # the canonical stub in this script keeps `Codegen Sync Check`
-    # consistent — re-running codegen reproduces the same output.
-    # ──────────────────────────────────────────────────────────────────
-    lines.append("# " + "-" * 75)
-    lines.append("# PrefetchEngine PyO3 surface (rust/nexus-prefetch/src/pyo3_bindings.rs)")
-    lines.append("# Issue #4057 — adaptive prefetcher exposed to Python via cdylib.  Manually")
-    lines.append("# maintained: the codegen at scripts/codegen_kernel_abi.py only scans")
-    lines.append("# rust/kernel/src; PrefetchEngine lives in rust/nexus-prefetch.")
-    lines.append("# " + "-" * 75)
-    lines.append("")
-    lines.append("class PrefetchEngine:")
-    lines.append("    def __init__(")
-    lines.append("        self,")
-    lines.append("        read_callable: Any,")
-    lines.append("        block_size: int,")
-    lines.append("        initial_window: int,")
-    lines.append("        max_window: int,")
-    lines.append("        max_workers: int,")
-    lines.append("        queue_capacity: int,")
-    lines.append("        max_blocks_per_trigger: int,")
-    lines.append("        sequential_tolerance: int,")
-    lines.append("        min_sequential_count: int,")
-    lines.append('        detector: str = "sequential",')
-    lines.append("        shutdown_timeout_ms: int = 2000,")
-    lines.append("        max_buffer_bytes: int = 134217728,")
-    lines.append("    ) -> None: ...")
-    lines.append("    def on_open(self, fh: int, path: str, file_size: int | None) -> None: ...")
-    lines.append("    def on_read(self, fh: int, offset: int, size: int) -> bytes | None: ...")
-    lines.append("    def on_release(self, fh: int) -> None: ...")
-    lines.append("    def invalidate_fh(self, fh: int) -> None: ...")
-    lines.append("    def invalidate_path(self, path: str) -> None: ...")
-    lines.append("    def metrics(self) -> tuple[int, int, int, int, int]: ...")
-    lines.append("    def shutdown(self) -> None: ...")
-
     return "\n".join(lines)
 
 
@@ -4175,7 +4137,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "        // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)",
             "        let rust_ctx = ctx.to_rust();",
-            "        let result = py.detach(|| self.inner.sys_read_one(path, &rust_ctx, timeout_ms, offset));",
+            "        let result = py.detach(|| self.inner.sys_read_single(path, &rust_ctx, 1, timeout_ms, offset));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        // 3. Convert Vec<u8> -> PyBytes",
@@ -4213,7 +4175,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)",
             "        let rust_ctx = ctx.to_rust();",
             "        let content_owned = content.to_vec();",
-            "        let result = py.detach(|| self.inner.sys_write_one(path, &rust_ctx, &content_owned, offset));",
+            "        let result = py.detach(|| self.inner.sys_write_with_link_depth(path, &rust_ctx, &content_owned, offset, 1));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysWriteResult {",
@@ -4310,7 +4272,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "        // 2. Call pure Rust kernel",
             "        let rust_ctx = ctx.to_rust();",
-            "        let result = py.detach(|| self.inner.sys_unlink_one(path, &rust_ctx, recursive));",
+            "        let result = py.detach(|| self.inner.sys_unlink_single(path, &rust_ctx, recursive));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysUnlinkResult {",
@@ -4437,68 +4399,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        self.inner.readdir(parent_path, zone_id, is_admin)",
             "    }",
             "",
-            "    /// Phase 6: glob match against the metastore-recursive listing of",
-            "    /// `prefix`.  Replaces `nexus.fs._helpers.glob` — pure Rust, no",
-            "    /// Python fallback (`lib::glob::glob_match` covers the same",
-            "    /// `globset` syntax the Python `fnmatch` fallback used).",
-            '    #[pyo3(signature = (pattern, prefix="/", zone_id="root"))]',
-            "    fn sys_glob(",
-            "        &self,",
-            "        pattern: &str,",
-            "        prefix: &str,",
-            "        zone_id: &str,",
-            "    ) -> PyResult<Vec<String>> {",
-            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
-            "        self.inner",
-            "            .sys_glob(pattern, prefix, &ctx)",
-            '            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_glob: {:?}", e)))',
-            "    }",
-            "",
-            "    /// Phase 6: grep recursive — walk every regular file under",
-            "    /// `prefix`, scan content via `lib::search::search_lines`, return",
-            "    /// up to `max_results` matches.  Replaces `nexus.fs._helpers.grep`.",
-            "    /// Each match comes back as a `dict` matching the historical",
-            "    /// shape: `{file, line, content, match}`.",
-            "    ///",
-            "    /// When `disk_paths` is non-empty the metastore walk is skipped:",
-            "    /// the kernel reads each absolute path from disk directly.  Used",
-            "    /// by the search-tier cache fast path where the cached blob's",
-            "    /// on-disk location is already known.",
-            '    #[pyo3(signature = (pattern, prefix="/", ignore_case=false, max_results=1000, zone_id="root", disk_paths=None))]',
-            "    #[allow(clippy::too_many_arguments)]",
-            "    fn sys_grep<'py>(",
-            "        &self,",
-            "        py: Python<'py>,",
-            "        pattern: &str,",
-            "        prefix: &str,",
-            "        ignore_case: bool,",
-            "        max_results: usize,",
-            "        zone_id: &str,",
-            "        disk_paths: Option<Vec<String>>,",
-            "    ) -> PyResult<Bound<'py, PyList>> {",
-            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
-            "        let paths = disk_paths.unwrap_or_default();",
-            "        let matches = self.inner",
-            "            .sys_grep(pattern, prefix, ignore_case, max_results, &paths, &ctx)",
-            '            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_grep: {:?}", e)))?;',
-            "        let out = PyList::empty(py);",
-            "        for m in matches {",
-            "            let d = PyDict::new(py);",
-            '            d.set_item("file", m.file)?;',
-            '            d.set_item("line", m.line)?;',
-            '            d.set_item("content", m.content)?;',
-            '            d.set_item("match", m.match_text)?;',
-            "            out.append(d)?;",
-            "        }",
-            "        Ok(out)",
-            "    }",
-            "",
             "    /// Simplified sys_read that takes (path, zone_id) — creates a minimal",
             "    /// OperationContext internally.  Used by service-tier callers that don't",
             "    /// have a full OperationContext handy.",
             "    fn sys_read_raw<'py>(&self, py: Python<'py>, path: &str, zone_id: &str) -> PyResult<Py<PyAny>> {",
             '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
-            "        let result = self.inner.sys_read_one(path, &ctx, 5000, 0).map_err(|e| {",
+            "        let result = self.inner.sys_read_single(path, &ctx, 1, 5000, 0).map_err(|e| {",
             '            pyo3::exceptions::PyRuntimeError::new_err(format!("sys_read_raw: {:?}", e))',
             "        })?;",
             "        match result.data {",
@@ -4507,54 +4413,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '                format!("File not found: {}", path),',
             "            )),",
             "        }",
-            "    }",
-            "",
-            '    #[pyo3(signature = (path, zone_id="root", strict_json=true))]',
-            "    fn sys_cat<'py>(",
-            "        &self,",
-            "        py: Python<'py>,",
-            "        path: &str,",
-            "        zone_id: &str,",
-            "        strict_json: bool,",
-            "    ) -> PyResult<Py<PyBytes>> {",
-            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
-            "        let result = self",
-            "            .inner",
-            "            .sys_cat(path, &ctx, strict_json)",
-            "            .map_err(|e| -> PyErr { e.into() })?;",
-            "        Ok(PyBytes::new(py, &result.data).unbind())",
-            "    }",
-            "",
-            '    #[pyo3(signature = (path, zone_id="root"))]',
-            "    fn op_metadata_for_path<'py>(",
-            "        &self,",
-            "        py: Python<'py>,",
-            "        path: &str,",
-            "        zone_id: &str,",
-            "    ) -> PyResult<Bound<'py, PyDict>> {",
-            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
-            "        let result = self",
-            "            .inner",
-            "            .op_metadata_for_path(path, &ctx)",
-            "            .map_err(|e| -> PyErr { e.into() })?;",
-            "        let dict = PyDict::new(py);",
-            '        dict.set_item("filetype", result.filetype.as_str())?;',
-            '        dict.set_item("backend", result.backend.as_str())?;',
-            '        dict.set_item("mime_type", result.mime_type.as_deref())?;',
-            '        dict.set_item("backend_name", result.backend_name)?;',
-            "        Ok(dict)",
-            "    }",
-            "",
-            '    #[pyo3(signature = (path, zone_id="root"))]',
-            "    fn backend_fingerprint(",
-            "        &self,",
-            "        path: &str,",
-            "        zone_id: &str,",
-            "    ) -> PyResult<Option<String>> {",
-            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
-            "        self.inner",
-            "            .backend_fingerprint(path, &ctx)",
-            "            .map_err(|e| -> PyErr { e.into() })",
             "    }",
             "",
             "    // ── Batch syscalls ─────────────────────────────────────────────────",

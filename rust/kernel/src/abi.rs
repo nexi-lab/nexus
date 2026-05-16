@@ -193,7 +193,7 @@ impl KernelAbi for crate::kernel::Kernel {
         ctx: &OperationContext,
         recursive: bool,
     ) -> Result<SysUnlinkResult, KernelError> {
-        Self::sys_unlink_one(self, path, ctx, recursive)
+        self.sys_unlink_single(path, ctx, recursive)
     }
 
     fn sys_setattr(

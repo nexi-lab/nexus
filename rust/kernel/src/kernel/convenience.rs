@@ -8,7 +8,10 @@
 //! overrides with optimized direct paths where the composition
 //! overhead matters.
 
-use super::{Kernel, KernelError, OperationContext, StatResult, SysReadResult, SysWriteResult};
+use super::{
+    Kernel, KernelError, OperationContext, StatResult, SysReadResult, SysUnlinkResult,
+    SysWriteResult,
+};
 use crate::abi::KernelAbi;
 use crate::meta_store::{DT_EXTERNAL_STORAGE, DT_MOUNT};
 
@@ -51,6 +54,17 @@ pub trait KernelConvenience: KernelAbi {
         key: &str,
         zone_id: &str,
     ) -> Result<Vec<(String, Option<String>)>, KernelError>;
+
+    /// Tier 2 single-file unlink — composes `sys_unlink`.
+    #[inline]
+    fn unlink(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        recursive: bool,
+    ) -> Result<SysUnlinkResult, KernelError> {
+        self.sys_unlink(path, ctx, recursive)
+    }
 
     /// Tier 2 single-file read — composes `sys_read`.
     #[inline]

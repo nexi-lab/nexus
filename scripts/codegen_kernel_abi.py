@@ -4272,7 +4272,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "        // 2. Call pure Rust kernel",
             "        let rust_ctx = ctx.to_rust();",
-            "        let result = py.detach(|| self.inner.sys_unlink_one(path, &rust_ctx, recursive));",
+            "        let result = py.detach(|| self.inner.sys_unlink_single(path, &rust_ctx, recursive));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysUnlinkResult {",

@@ -1177,26 +1177,13 @@ impl Kernel {
             .collect()
     }
 
-    /// Convenience wrapper for single-path unlinks.
-    ///
-    /// Kernel-internal callers (tests, services) and external callers
-    /// (gRPC, PyO3) use this for the familiar single-path API.
-    pub fn sys_unlink_one(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        recursive: bool,
-    ) -> Result<SysUnlinkResult, KernelError> {
-        self.sys_unlink_single(path, ctx, recursive)
-    }
-
     /// Single-path unlink implementation.
     ///
     /// Returns `hit=true` when Rust completed the full operation. Python only
     /// dispatches event notify + POST hooks.
     /// Returns `hit=false` for DT_EXTERNAL_STORAGE (5) → Python handles connector teardown.
     /// DT_DIR is handled inline via sys_rmdir (§12e).
-    fn sys_unlink_single(
+    pub(crate) fn sys_unlink_single(
         &self,
         path: &str,
         ctx: &OperationContext,

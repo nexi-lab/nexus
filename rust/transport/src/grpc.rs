@@ -203,7 +203,7 @@ impl NexusVfsService for VfsServiceImpl {
                 "federation token: use Call dispatch (sys_unlink RPC) — typed Delete bypasses zone authorization",
             ))));
         }
-        match self.kernel.sys_unlink_one(&req.path, &ctx, req.recursive) {
+        match KernelAbi::sys_unlink(&*self.kernel, &req.path, &ctx, req.recursive) {
             Ok(result) => Ok(Response::new(DeleteResponse {
                 success: result.hit,
                 is_error: false,

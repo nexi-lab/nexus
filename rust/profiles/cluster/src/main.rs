@@ -24,6 +24,7 @@ use anyhow::{Context, Result};
 use backends::storage::path_local::PathLocalBackend;
 use clap::{Parser, Subcommand};
 use kernel::abc::object_store::ObjectStore;
+use kernel::abi::KernelAbi;
 use kernel::kernel::Kernel;
 use kernel::meta_store::DT_MOUNT;
 
@@ -656,8 +657,7 @@ fn run_unmount(common: CommonArgs, mount_point: &str) -> Result<()> {
         /* user_id */ "operator", /* zone_id */ "root", /* is_admin */ true,
         /* agent_id */ None, /* is_system */ true,
     );
-    let res = kernel
-        .sys_unlink_one(mount_point, &ctx, /* recursive */ false)
+    let res = KernelAbi::sys_unlink(&*kernel, mount_point, &ctx, /* recursive */ false)
         .map_err(|e| anyhow::anyhow!("unmount {mount_point}: {:?}", e))?;
     if res.hit {
         println!(

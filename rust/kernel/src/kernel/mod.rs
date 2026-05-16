@@ -3884,7 +3884,7 @@ mod tests {
         ms.put("/mnt", mount_meta).unwrap();
 
         let ctx = OperationContext::new("test", zone, true, None, true);
-        let result = k.sys_unlink_one("/mnt", &ctx, false).unwrap();
+        let result = k.sys_unlink_single("/mnt", &ctx, false).unwrap();
 
         assert!(result.hit, "DT_MOUNT unlink should return hit=true");
         assert_eq!(result.entry_type, DT_MOUNT);

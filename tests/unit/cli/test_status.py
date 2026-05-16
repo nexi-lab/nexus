@@ -83,6 +83,29 @@ class TestServerHealth:
         assert result == {"status": "healthy", "service": "nexus-rpc"}
         assert mock_client.get.call_count == 2
 
+    @patch("httpx.Client")
+    def test_falls_back_to_public_health_when_detailed_route_missing(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """SANDBOX filters /health/detailed; status should still use /health."""
+        mock_client = MagicMock()
+        detailed_resp = MagicMock(status_code=404)
+        fallback_resp = MagicMock(status_code=200)
+        fallback_resp.json.return_value = {"status": "healthy", "service": "nexus-rpc"}
+        mock_client.get.side_effect = [detailed_resp, fallback_resp]
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        result = _server_health("http://localhost:2026", api_key="sk-test")
+
+        assert result is not None
+        assert result["status"] == "healthy"
+        assert [call.args[0] for call in mock_client.get.call_args_list] == [
+            "http://localhost:2026/health/detailed",
+            "http://localhost:2026/health",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # _collect_status

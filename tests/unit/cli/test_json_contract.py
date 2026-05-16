@@ -53,13 +53,13 @@ def _has_adhoc_json(cmd: click.Command) -> bool:
 
 # Modules known to use add_output_options
 _UNIFIED_MODULES = [
-    ("nexus.cli.commands.directory", "ls_cmd"),
+    ("nexus.cli.commands.directory", "list_files"),
     ("nexus.cli.commands.directory", "tree"),
     ("nexus.cli.commands.file_ops", "cat"),
-    ("nexus.cli.commands.search", "glob_cmd"),
-    ("nexus.cli.commands.search", "grep_cmd"),
+    ("nexus.cli.commands.search", "glob"),
+    ("nexus.cli.commands.search", "grep"),
     ("nexus.cli.commands.inspect", "info"),
-    ("nexus.cli.commands.zone", "zone_list"),
+    ("nexus.cli.commands.zone", "list_zones_cmd"),
     ("nexus.cli.commands.status", "status"),
     ("nexus.cli.commands.doctor", "doctor"),
     # Q1 sweep — newly migrated modules

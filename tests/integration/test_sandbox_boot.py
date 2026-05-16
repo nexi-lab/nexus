@@ -28,6 +28,7 @@ shared tmp SQLite file across concurrent workers.
 from __future__ import annotations
 
 import time
+from importlib.util import find_spec
 from pathlib import Path
 
 import httpx
@@ -173,17 +174,43 @@ def _resolve_search_service(nx: object) -> object | None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_default_does_not_instantiate_sqlite_vec_backend(
+async def test_sandbox_default_vector_search_matches_optional_deps(
     tmp_path: Path,
 ) -> None:
-    """SANDBOX default config has enable_vector_search=False, so the
-    optional local sqlite-vec backend must NOT be wired into SearchService.
+    """SANDBOX vector search is default-on when optional deps exist.
+
+    Without the [sandbox] extra, the same boot path must degrade to
+    keyword-only search instead of failing startup.
     """
+    deps_available = find_spec("sqlite_vec") is not None and (
+        find_spec("fastembed") is not None or find_spec("litellm") is not None
+    )
+
     nx = await nexus.connect(config=_sandbox_config(tmp_path))
     try:
         svc = _resolve_search_service(nx)
         assert svc is not None
-        # Default SANDBOX: enable_vector_search=False -> no backend wired.
+        backend = getattr(svc, "_sqlite_vec_backend", None)
+        if deps_available:
+            assert backend is not None
+        else:
+            assert backend is None
+    finally:
+        nx.close()
+
+
+@pytest.mark.asyncio
+async def test_sandbox_vector_search_opt_out_does_not_wire_backend(
+    tmp_path: Path,
+) -> None:
+    """Explicit enable_vector_search=False keeps SANDBOX keyword-only."""
+    cfg = _sandbox_config(tmp_path)
+    cfg["enable_vector_search"] = False
+
+    nx = await nexus.connect(config=cfg)
+    try:
+        svc = _resolve_search_service(nx)
+        assert svc is not None
         assert getattr(svc, "_sqlite_vec_backend", None) is None
     finally:
         nx.close()

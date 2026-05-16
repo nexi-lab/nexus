@@ -105,7 +105,7 @@ def _server_health(
                 return result
             # Detailed endpoint may require admin auth — fall back to
             # the public /health endpoint so we still report "healthy".
-            if resp.status_code in (401, 403):
+            if resp.status_code in (401, 403, 404):
                 return public_health(client)
             return {"status": "error", "http_status": resp.status_code}
     except Exception:

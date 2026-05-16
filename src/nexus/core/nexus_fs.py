@@ -5,7 +5,7 @@ import builtins
 import contextlib
 import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +114,14 @@ class NexusFS(  # type: ignore[misc]
     - Content integrity (hash verification)
     - Efficient storage
     """
+
+    def __await__(self) -> Generator[Any, None, "NexusFS"]:
+        """Allow ``await nexus.connect(...)`` compatibility for async callers."""
+
+        async def _identity() -> "NexusFS":
+            return self
+
+        return _identity().__await__()
 
     def __init__(
         self,

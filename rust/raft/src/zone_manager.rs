@@ -1173,6 +1173,32 @@ impl ZoneManager {
             ))
         })?;
 
+        // share_subtree_core writes (`propose_set_metadata`) target
+        // ``new_node``, which is leader-required.  ``parent_node`` is
+        // only read via ``with_state_machine`` (sequential-consistency
+        // local read — no leader needed).  Offline callers (e.g.
+        // ``nexusd-cluster share``) hit this immediately after
+        // ``create_zone``: the new 1-voter raft tick driver has not
+        // yet run its election cycle, so the first propose lands
+        // before ``cached_role`` is set to ``LEADER`` and fails with
+        // ``NotLeader { leader_hint: Some(self_id) }``.  Wait once,
+        // here, so every caller (offline CLI, online RPC, future
+        // binding) is safe by construction — single SSOT for this
+        // precondition rather than per-caller defensive waits.
+        //
+        // 10 s covers ~60 election windows; a 1-voter zone that has
+        // not elected itself within that timeframe means the raft
+        // tick driver did not start, which is a fatal bug worth
+        // failing loud about.
+        if !new_node.wait_for_leader(std::time::Duration::from_secs(10)) {
+            return Err(RaftError::Raft(format!(
+                "share_subtree_core: new zone '{}' did not elect self as leader \
+                 within 10s (leader hint: {:?}); raft tick driver may not be running",
+                new_zone_id,
+                new_node.leader_id(),
+            )));
+        }
+
         let normalized_prefix = prefix.trim_end_matches('/').to_string();
         if normalized_prefix.is_empty() && prefix != "/" {
             return Err(RaftError::InvalidState(format!(
@@ -1536,6 +1562,49 @@ mod tests {
             }
             Ok(_) => panic!("expected ZoneAlreadyExistsWithDifferentMembership, got Ok"),
         }
+    }
+
+    #[test]
+    fn test_share_subtree_core_after_fresh_create_no_notleader_race() {
+        // Regression: ``share_subtree_core`` writes (``propose_set_metadata``)
+        // target the freshly-created ``new_zone`` raft group.  Before the
+        // SSOT wait moved into the helper, callers had to ``wait_for_leader``
+        // themselves between ``create_zone`` and ``share_subtree_core``;
+        // forgetting that (or waiting on the wrong zone, like the offline
+        // ``nexusd-cluster share`` CLI did against ``parent_zone``) raced the
+        // raft election and surfaced as ``NotLeader { leader_hint:
+        // Some(self_id) }`` ~400 ms into the call.  This pin keeps the
+        // contract: the helper owns its leadership precondition, so
+        // back-to-back ``create_zone`` + ``share_subtree_core`` on a
+        // single-node cluster must succeed without external waits.
+        let (zm, _dir) = make_zm(1);
+        // Seed a parent zone with one entry under ``/shared`` so the
+        // share copies something non-trivial — the propose path against
+        // ``new_zone`` is what we're really exercising.
+        let parent = zm
+            .create_zone(contracts::ROOT_ZONE_ID, vec![])
+            .expect("root create");
+        assert!(
+            parent.wait_for_leader(std::time::Duration::from_secs(5)),
+            "root must elect itself as 1-voter leader"
+        );
+        let meta = encode_file_metadata("/shared", DT_DIR, contracts::ROOT_ZONE_ID, "");
+        let handle = zm.rt().handle().clone();
+        let root_node = zm
+            .registry
+            .get_node(contracts::ROOT_ZONE_ID)
+            .expect("root node");
+        propose_set_metadata(&handle, &root_node, "/shared", meta).expect("seed /shared");
+
+        // Fresh shared zone — created immediately before the share call
+        // so the raft tick driver has had no time to elect.  Under the
+        // old contract this raced and returned NotLeader.
+        zm.create_zone("sharedzone", vec![])
+            .expect("shared zone create");
+        let copied = zm
+            .share_subtree_core(contracts::ROOT_ZONE_ID, "/shared", "sharedzone")
+            .expect("share_subtree_core must wait for new_zone leader internally");
+        assert!(copied >= 1, "at least the /shared root entry copied");
     }
 
     #[test]

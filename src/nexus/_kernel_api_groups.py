@@ -79,14 +79,6 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
 KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
     {
         "access",
-        "agent_count",
-        "agent_get",
-        "agent_heartbeat",
-        "agent_list",
-        "agent_register",
-        "agent_unregister",
-        "agent_update_state",
-        "agent_wait",
         "close_all_pipes",
         "close_all_streams",
         "close_pipe",

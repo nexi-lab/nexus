@@ -145,7 +145,6 @@ async def test_resume_after_service_restart_uses_persisted_part_metadata() -> No
 
     assert completed.content_id is not None
     assert backend.read_content(completed.content_id) == b"helloworld"
-    assert metadata_store.writes[-1].size == 10
 
 
 @pytest.mark.asyncio

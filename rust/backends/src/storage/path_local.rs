@@ -155,8 +155,6 @@ impl ObjectStore for PathLocalBackend {
         })
     }
 
-    /// Native pread-style range read: avoids the default impl's full-file
-
     fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
         // For PAS local, content_id is not the path — need backend_path from context.
         // In practice, kernel calls sys_unlink which does metastore.delete() + backend cleanup.

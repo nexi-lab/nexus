@@ -17,11 +17,13 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use contracts::operation_context::OperationContext;
 use kernel::abc::object_store::ObjectStore;
-use kernel::kernel::Kernel;
+use kernel::kernel::{Kernel, ReadRequest, UnlinkRequest, WriteRequest};
 use kernel::meta_store::{DT_DIR, DT_PIPE};
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -64,15 +66,43 @@ fn setup_kernel(tmp: &Path) -> Kernel {
 
 /// Pre-populate kernel with test files.
 fn populate(kernel: &Kernel, ctx: &OperationContext) {
-    let w = kernel
-        .sys_write("/test_1kb.bin", ctx, PAYLOAD_1KB, 0)
-        .expect("write 1kb");
+    let results = kernel.sys_write(
+        &[WriteRequest {
+            path: "/test_1kb.bin".into(),
+            content: PAYLOAD_1KB.to_vec(),
+            offset: 0,
+        }],
+        ctx,
+    );
+    let w = results.into_iter().next().unwrap().expect("write 1kb");
     assert!(w.hit, "sys_write must hit (VFS route missing?)");
+
     kernel
-        .sys_write("/test_64kb.bin", ctx, &payload_64kb(), 0)
+        .sys_write(
+            &[WriteRequest {
+                path: "/test_64kb.bin".into(),
+                content: payload_64kb(),
+                offset: 0,
+            }],
+            ctx,
+        )
+        .into_iter()
+        .next()
+        .unwrap()
         .expect("write 64kb");
+
     kernel
-        .sys_write("/test_1mb.bin", ctx, &payload_1mb(), 0)
+        .sys_write(
+            &[WriteRequest {
+                path: "/test_1mb.bin".into(),
+                content: payload_1mb(),
+                offset: 0,
+            }],
+            ctx,
+        )
+        .into_iter()
+        .next()
+        .unwrap()
         .expect("write 1mb");
 
     // 100 files for readdir — mkdir via sys_setattr then write files
@@ -95,13 +125,27 @@ fn populate(kernel: &Kernel, ctx: &OperationContext) {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
         )
         .expect("mkdir /many_files");
     for i in 0..100 {
         let path = format!("/many_files/file_{i:04}.txt");
         let content = format!("Content {i}");
         kernel
-            .sys_write(&path, ctx, content.as_bytes(), 0)
+            .sys_write(
+                &[WriteRequest {
+                    path,
+                    content: content.into_bytes(),
+                    offset: 0,
+                }],
+                ctx,
+            )
+            .into_iter()
+            .next()
+            .unwrap()
             .expect("write many_files");
     }
 }
@@ -136,10 +180,16 @@ fn bench_sys_read(c: &mut Criterion) {
     ] {
         group.bench_with_input(BenchmarkId::new("nexus", label), &path, |b, &path| {
             b.iter(|| {
-                let result = kernel
-                    .sys_read(black_box(path), &ctx, 0, 0)
-                    .expect("sys_read");
-                black_box(result);
+                let results = kernel.sys_read(
+                    black_box(&[ReadRequest {
+                        path: path.to_string(),
+                        offset: 0,
+                        len: None,
+                        timeout_ms: 0,
+                    }]),
+                    &ctx,
+                );
+                black_box(results.into_iter().next().unwrap().expect("sys_read"));
             })
         });
     }
@@ -187,20 +237,36 @@ fn bench_sys_write(c: &mut Criterion) {
         b.iter(|| {
             let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let path = format!("/bench_new_{n}.txt");
-            let result = kernel
-                .sys_write(black_box(&path), &ctx, PAYLOAD_1KB, 0)
-                .expect("sys_write new");
-            black_box(result);
+            let results = kernel.sys_write(
+                black_box(&[WriteRequest {
+                    path,
+                    content: PAYLOAD_1KB.to_vec(),
+                    offset: 0,
+                }]),
+                &ctx,
+            );
+            black_box(results.into_iter().next().unwrap().expect("sys_write new"));
         })
     });
 
     // Write overwrite
     group.bench_function("nexus_overwrite_1KB", |b| {
         b.iter(|| {
-            let result = kernel
-                .sys_write(black_box("/test_1kb.bin"), &ctx, PAYLOAD_1KB, 0)
-                .expect("sys_write overwrite");
-            black_box(result);
+            let results = kernel.sys_write(
+                black_box(&[WriteRequest {
+                    path: "/test_1kb.bin".into(),
+                    content: PAYLOAD_1KB.to_vec(),
+                    offset: 0,
+                }]),
+                &ctx,
+            );
+            black_box(
+                results
+                    .into_iter()
+                    .next()
+                    .unwrap()
+                    .expect("sys_write overwrite"),
+            );
         })
     });
 
@@ -238,7 +304,7 @@ fn bench_sys_readdir(c: &mut Criterion) {
 
     group.bench_function("nexus_100_entries", |b| {
         b.iter(|| {
-            let result = kernel.sys_readdir_backend(black_box("/many_files"), "root");
+            let result = kernel.readdir_paged(black_box("/many_files"), "root", true, 1000, None);
             black_box(result);
         })
     });
@@ -273,7 +339,17 @@ fn bench_sys_unlink(c: &mut Criterion) {
     for i in 0..5000 {
         let path = format!("/bench_del_{i}.txt");
         kernel
-            .sys_write(&path, &ctx, b"x", 0)
+            .sys_write(
+                &[WriteRequest {
+                    path,
+                    content: b"x".to_vec(),
+                    offset: 0,
+                }],
+                &ctx,
+            )
+            .into_iter()
+            .next()
+            .unwrap()
             .expect("write del file");
     }
 
@@ -282,7 +358,13 @@ fn bench_sys_unlink(c: &mut Criterion) {
         b.iter(|| {
             let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let path = format!("/bench_del_{n}.txt");
-            let _ = kernel.sys_unlink(black_box(&path), &ctx, false);
+            let _ = kernel.sys_unlink(
+                black_box(&[UnlinkRequest {
+                    path,
+                    recursive: false,
+                }]),
+                &ctx,
+            );
         })
     });
 }
@@ -295,7 +377,17 @@ fn bench_sys_rename(c: &mut Criterion) {
     for i in 0..5000 {
         let path = format!("/bench_ren_{i}.txt");
         kernel
-            .sys_write(&path, &ctx, b"x", 0)
+            .sys_write(
+                &[WriteRequest {
+                    path,
+                    content: b"x".to_vec(),
+                    offset: 0,
+                }],
+                &ctx,
+            )
+            .into_iter()
+            .next()
+            .unwrap()
             .expect("write ren file");
     }
 
@@ -327,6 +419,10 @@ fn bench_pipe_roundtrip(c: &mut Criterion) {
             "root",
             false,
             4 * 1024 * 1024, // 4MB capacity
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,

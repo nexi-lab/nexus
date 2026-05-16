@@ -312,6 +312,7 @@ impl Kernel {
                     data: Some(data),
                     post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                     content_id: entry.content_id.clone(),
+                    gen: entry.gen,
                     entry_type: DT_REG,
                     stream_next_offset: None,
                 });
@@ -794,12 +795,13 @@ impl Kernel {
         let result = match write_result {
             Some(wr) => {
                 // FDT: register pre-opened fd for PAS backends (fast-path reads).
-                if let Some(phys) = route
+                if let Some(phys) = input
+                    .route
                     .backend
                     .as_ref()
                     .and_then(|b| b.resolve_physical_path(&wr.content_id))
                 {
-                    let _ = self.fdt.register(path, &phys);
+                    let _ = self.fdt.register(input.path, &phys);
                 }
 
                 // Snapshot old state for OBSERVE event payload + Python

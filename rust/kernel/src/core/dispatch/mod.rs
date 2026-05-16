@@ -140,6 +140,14 @@ impl FileEvent {
         &self.path
     }
 
+    /// Kernel namespace partition. Public accessor for the same reason
+    /// as `path()` — peer crates (services-tier MutationObservers like
+    /// `services::audit::ZoneAuditAutoWire`) need to read the zone an
+    /// event belongs to without `crate::` access to the raw field.
+    pub fn zone_id(&self) -> Option<&str> {
+        self.zone_id.as_deref()
+    }
+
     /// Serialize to compact JSON for DT_STREAM / audit trail.
     ///
     /// Uses `serde_json` so arbitrary control characters in path/new_path

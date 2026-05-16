@@ -143,33 +143,50 @@ enum Cmd {
     },
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     install_tracing();
     let args = Args::parse();
-    match args.cmd {
-        None => run_daemon(args.common).await,
-        Some(Cmd::Share {
-            path,
-            zone_id,
-            parent_zone,
-        }) => run_share(args.common, &parent_zone, &path, &zone_id).await,
-        Some(Cmd::Join {
-            peer_addr,
-            remote_zone_id,
-            local_path,
-            parent_zone,
-        }) => {
-            run_join(
-                args.common,
-                &peer_addr,
-                &remote_zone_id,
-                &local_path,
-                &parent_zone,
-            )
-            .await
-        }
-    }
+    // Size the multi-thread runtime against the host: federation
+    // gRPC + raft IO is IO-bound, so the kernel `available_parallelism`
+    // estimate (logical cores under cgroup / affinity constraints) is
+    // the right target. Falls back to 2 — the previous hard-coded
+    // worker count — when the platform can't report a value (e.g.
+    // bare-metal probes that aren't WASI-style sandboxed but lack
+    // `_SC_NPROCESSORS_ONLN`).
+    let workers = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(2);
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
+        .enable_all()
+        .thread_name("nexusd-cluster")
+        .build()
+        .context("build tokio runtime")?
+        .block_on(async move {
+            match args.cmd {
+                None => run_daemon(args.common).await,
+                Some(Cmd::Share {
+                    path,
+                    zone_id,
+                    parent_zone,
+                }) => run_share(args.common, &parent_zone, &path, &zone_id).await,
+                Some(Cmd::Join {
+                    peer_addr,
+                    remote_zone_id,
+                    local_path,
+                    parent_zone,
+                }) => {
+                    run_join(
+                        args.common,
+                        &peer_addr,
+                        &remote_zone_id,
+                        &local_path,
+                        &parent_zone,
+                    )
+                    .await
+                }
+            }
+        })
 }
 
 /// Bundle returned by [`open_zone_manager`].  Carries the opaque

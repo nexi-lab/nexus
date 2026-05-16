@@ -208,8 +208,7 @@ fn read_batch_meets_3x_speedup_target() {
     let k = setup_kernel_with_100_files();
     let ctx = OperationContext::new("bench", "root", true, None, true);
 
-    // ── Warmup — one full pass each to settle the cache and rayon pool ────
-    k.clear_file_cache();
+    // ── Warmup — one full pass each to settle the rayon pool ────
     for i in 0..100u32 {
         let _ = k
             .sys_read_one(&format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
@@ -223,14 +222,13 @@ fn read_batch_meets_3x_speedup_target() {
             timeout_ms: 5000,
         })
         .collect();
-    k.clear_file_cache();
+
     let _ = k.sys_read(&warmup_reqs, &ctx);
 
     // ── Sequential measurement ────────────────────────────────────────────
     let seq_iters = 5usize;
     let mut seq_total = Duration::ZERO;
     for _ in 0..seq_iters {
-        k.clear_file_cache();
         let t = Instant::now();
         for i in 0..100u32 {
             let _ = k
@@ -254,7 +252,6 @@ fn read_batch_meets_3x_speedup_target() {
     let batch_iters = 5usize;
     let mut batch_total = Duration::ZERO;
     for _ in 0..batch_iters {
-        k.clear_file_cache();
         let t = Instant::now();
         let _ = k.sys_read(&reqs, &ctx);
         batch_total += t.elapsed();

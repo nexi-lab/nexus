@@ -15,7 +15,7 @@
 //!
 //! Kernel struct + syscalls — pure Rust kernel boundary.
 
-use crate::cache::{file_cache::FileCache, index_cache::IndexCache};
+use crate::cache::index_cache::IndexCache;
 use crate::core::permission_cache::PermissionLeaseCache;
 use crate::dispatch::ops_registry::{
     BackendKind, CatHandlerKind, FileType, FingerprintHandlerKind, GrepHandlerKind, OpHandler,
@@ -704,7 +704,6 @@ pub struct Kernel {
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     index_cache: IndexCache,
-    file_cache: FileCache,
     pub(crate) ops_registry: OpsRegistry,
     // Per-mount metastores now live inside `VFSRouter::entries` as
     // `MountEntry::metastore: Option<Arc<dyn MetaStore>>` (our v20
@@ -866,7 +865,6 @@ impl Kernel {
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
             index_cache: IndexCache::default(),
-            file_cache: FileCache::default(),
             ops_registry: Self::default_ops_registry(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
@@ -982,16 +980,6 @@ impl Kernel {
     pub fn set_read_batch_max_aggregate_bytes(&self, n: usize) {
         self.read_batch_max_aggregate_bytes
             .store(n, Ordering::Relaxed);
-    }
-
-    /// Evict every entry from the in-process file cache.
-    ///
-    /// Useful in benchmarks and integration tests that need cache-cold
-    /// reads without discarding the `Kernel` instance. Calling this in
-    /// production is safe but degrades hot-path read throughput until the
-    /// cache warms up again.
-    pub fn clear_file_cache(&self) {
-        self.file_cache.clear();
     }
 
     // ── Node identity (federation content origin) ─────────────────────
@@ -4086,48 +4074,9 @@ mod tests {
     // ── Logical cache split ───────────────────────────────────────────
     mod logical_cache_split {
         use super::*;
-        use crate::cache::{
-            file_cache::FileCacheKey,
-            index_cache::{IndexCacheKey, IndexKind},
-        };
-        use crate::meta_store::{FileMetadata, LocalMetaStore, MetaStore};
+        use crate::cache::index_cache::{IndexCacheKey, IndexKind};
+        use crate::meta_store::{LocalMetaStore, MetaStore};
         use std::time::Duration;
-
-        #[test]
-        fn sys_read_serves_matching_fingerprint_from_file_cache() {
-            let k = Kernel::new();
-            let _td = tempfile::tempdir().unwrap();
-            let ms: Arc<dyn MetaStore> =
-                Arc::new(LocalMetaStore::open(&_td.path().join("meta.redb")).unwrap());
-            k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
-                .unwrap();
-
-            ms.put(
-                "/data/a.txt",
-                FileMetadata {
-                    path: "/data/a.txt".to_string(),
-                    size: 6,
-                    content_id: Some("etag:1".to_string()),
-                    version: 1,
-                    entry_type: DT_REG,
-                    zone_id: Some("root".to_string()),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            k.file_cache.put(
-                FileCacheKey::new("root", "/data/a.txt", "raw"),
-                b"cached".to_vec(),
-                Some("etag:1".to_string()),
-                None,
-            );
-
-            let ctx = OperationContext::new("test", "root", true, None, true);
-            let read = k.sys_read_one("/data/a.txt", &ctx, 5000, 0).unwrap();
-
-            assert_eq!(read.data.as_deref(), Some(&b"cached"[..]));
-            assert_eq!(read.content_id.as_deref(), Some("etag:1"));
-        }
 
         #[test]
         fn sys_mkdir_invalidates_parent_listing_index_cache() {

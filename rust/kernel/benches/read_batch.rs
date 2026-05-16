@@ -222,7 +222,7 @@ fn bench_sequential(c: &mut Criterion) {
     // Use iter_batched so setup (cache-clear) is excluded from measurement.
     c.bench_function("read_batch/sequential_100", |b| {
         b.iter_batched(
-            || k.clear_file_cache(), // setup: flush cache before each sample
+            || {}, // FileCache removed — reads go to backend directly
             |_| {
                 for i in 0..100u32 {
                     let path = format!("/bench/f{i:03}.txt");
@@ -252,7 +252,7 @@ fn bench_batched(c: &mut Criterion) {
 
     c.bench_function("read_batch/batched_100", |b| {
         b.iter_batched(
-            || k.clear_file_cache(), // setup: flush cache before each sample
+            || {}, // FileCache removed — reads go to backend directly
             |_| {
                 let out = k.sys_read(&reqs, &ctx);
                 black_box(out);

@@ -320,8 +320,14 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
             echo "VFS gRPC is available on 127.0.0.1:${GRPC_PORT}"
           else
+            # Loud (warning, not notice) so the skip surfaces in the PR
+            # summary instead of being invisible. The underlying root cause —
+            # the edge Docker image bundles Python ``nexusd`` whose lifespan
+            # no longer starts a VFS gRPC server (the server moved to Rust /
+            # ``nexusd-cluster``) — is tracked separately; until it lands,
+            # downstream gRPC-only smoke steps cannot run on this image.
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::VFS gRPC is not available on 127.0.0.1:${GRPC_PORT}; skipping gRPC-dependent edge smoke steps."
+            echo "::warning title=VFS gRPC unavailable in edge image::No gRPC listener on 127.0.0.1:${GRPC_PORT}. Edge image ships Python nexusd (no Rust VFS gRPC); permissions demo + build-perf e2e will be skipped. Tracked: https://github.com/nexi-lab/nexus/issues?q=is%3Aissue+VFS+gRPC+edge+image"
           fi
 
       - name: Run permissions demo

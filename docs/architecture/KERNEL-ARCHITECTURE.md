@@ -251,12 +251,21 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 |------|----------|-----------|
 | **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*`. `glob`/`grep` are search-tier convenience (PR #3921), composing `sys_readdir` + filter/regex |
 | **Xattr** (extended attributes) | `get_xattr(path, key)`, `set_xattr(path, key, value)`, `get_xattr_bulk(paths, key)` | Direct metastore `get_file_metadata`/`set_file_metadata` — no hooks, no routing, no permission gate. Rust `KernelConvenience` trait |
-| **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
+| **HDFS half** (driver-level, kernel-internal) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
 The HDFS half bypasses path resolution and metadata lookup — CAS is a driver
 detail. Like HDFS separates ClientProtocol (NameNode, path-based) from
 DataTransferProtocol (DataNode, block-based). The metadata layer above ensures
 etag ownership and zone isolation.
+
+**Boundary note (§2.5 Mediation Principle):** Hash-addressed access is
+kernel-internal Tier 2 — used by federation cross-node fetch
+(`KernelBlobFetcher` in `rust/raft/`) reaching `Arc<dyn ObjectStore>::read_content`
+directly. **Services do NOT have a hash-addressed PyO3 surface.** A service
+caller that needs historical-version bytes must go through `sys_read(path)` and
+verify the served content_hash matches the requested version. If the path no
+longer maps to the requested version, the bytes are not reachable through this
+endpoint — the snapshot service owns historical restore.
 
 **Kernel-managed metadata side effects** (POSIX ``generic_write_end`` pattern):
 kernel updates mtime, size, version, etag in VFS lock after
@@ -423,12 +432,17 @@ last Python `MetastoreABC` reference.
 3 §3.A ABC pillar trait files. `kernel/src/hal/` contains the §3.B
 Control-Plane HAL trait files (`DistributedCoordinator`,
 `ObjectStoreProvider`). Kernel primitives (§4) live in `kernel/src/core/`
-as concrete types. Connector-backend protocol extensions (e.g.
-`LlmStreamingBackend`) live in `rust/backends/`; transport-layer
-abstractions (`PeerBlobClient`, TOFU trust store) live in the
-tier-neutral `rust/lib/` crate's `transport_primitives` module.
-Directory layout enforces the three-way split: `abc/` is for §3.A
-pillars, `hal/` is for §3.B DI surfaces, `core/` is for primitives.
+as concrete types. Connector-backend protocol extensions
+(e.g. `LlmStreamingBackend`) live in `rust/backends/`; the matching
+trait DECLARATION stays at the kernel boundary because
+`ObjectStore::as_llm_streaming()` returns
+`Option<&dyn LlmStreamingBackend>` in the kernel ABC. Concrete impls
+(`OpenAIBackend`, `AnthropicBackend`) live in
+`rust/backends/transports/api/ai/`. Transport-layer abstractions
+(`PeerBlobClient`, TOFU trust store) live in the tier-neutral
+`rust/lib/` crate's `transport_primitives` module. Directory layout
+enforces the three-way split: `abc/` is for §3.A pillars, `hal/` is
+for §3.B DI surfaces, `core/` is for primitives.
 
 **Orthogonality:** Between pillars = different query patterns. Within pillars =
 interchangeable drivers (deployment-time config). See `data-storage-matrix.md`.
@@ -695,6 +709,18 @@ rejected at `sys_setattr` time.
 
 See the sudowork integration design doc (`sudowork/docs/tech/nexus-integration-architecture.md`) for the A2A messaging conventions that consume DT_LINK.
 
+### 4.6 Process-Local Kernel Caches
+
+`rust/kernel/src/cache/` holds kernel-internal process-local caches.
+These are **not** `CacheStoreABC` (§3.A.3) — they are inherent state
+on `Kernel`, scoped to one OS process, never shared across the cluster.
+Eviction is local-only; cross-zone consistency follows the metastore's
+apply-side cache coherence (§4 DLC primitive), not these caches.
+
+| File | Owns |
+|------|------|
+| `cache/index_cache.rs` | `IndexCache` — bounded TTL'd cache of `readdir` listings and metastore prefix-scan results, keyed by `(zone, path, kind)`. Invalidated by `sys_setattr` / `sys_unlink` / `sys_rename` post-hooks on the same routed metastore. |
+
 ---
 
 ## 5. Kernel-Authored Standards
@@ -859,6 +885,8 @@ syscall implementations across per-family submodules:
 | `kernel/observability.rs` | Observer registry, file-watch registry, `sys_watch`, `dispatch_mutation` shared helper. |
 | `kernel/mount.rs`   | Mount-table primitives (`add_mount`, `remove_mount`, `install_mount_metastore`, `route`, …). |
 | `kernel/federation.rs` | `DistributedCoordinator` slot accessors, `/__sys__/zones/` procfs synthesisers, blob-fetcher slot plumbing. |
+| `kernel/convenience.rs` | Tier 2 `KernelConvenience` trait composing Tier 1 syscalls — `access`, `stat_batch`, `exists_batch`, `get_content_id`, `is_directory`, `get_top_level_mounts`, `set_xattr` / `get_xattr` / `get_xattr_bulk`, Tier 2 `write` (create-or-overwrite) plus Tier 2 single-file `read` / `unlink` defaults. |
+| `kernel/write_buffer.rs` | Kernel-owned write-back buffer for DT_REG writes (§2.2 Write Coalescing Buffer) — strict pass-through and latency-coalesced policies, flush triggers (idle TTL, 4 MiB threshold, explicit barriers). |
 
 Every submodule writes its methods as `impl Kernel { … }` blocks —
 Rust treats each block as a member set of the same `Kernel` type, so

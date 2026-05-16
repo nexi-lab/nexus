@@ -82,9 +82,16 @@ class DriverLifecycleCoordinator:
         except ValueError:
             return False
 
-        # Check with Rust kernel if mount exists
-        if self._kernel is not None and not self._kernel.has_mount(normalized, zone_id):
-            return False
+        # Check with Rust kernel if mount exists (sys_stat + DT_MOUNT check)
+        if self._kernel is not None:
+            from nexus.contracts.metadata import DT_MOUNT
+
+            try:
+                stat = self._kernel.sys_stat(normalized, zone_id)
+                if stat.get("entry_type") != DT_MOUNT:
+                    return False
+            except Exception:
+                return False
 
         # Fire unmount event BEFORE removing state
         try:

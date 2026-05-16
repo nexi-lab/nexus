@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+use kernel::abi::KernelAbi;
 use kernel::kernel::{Kernel, OperationContext, ReadRequest};
 
 // ── Helpers shared with benches/read_batch.rs ───────────────────────────────
@@ -210,8 +211,7 @@ fn read_batch_meets_3x_speedup_target() {
 
     // ── Warmup — one full pass each to settle the rayon pool ────
     for i in 0..100u32 {
-        let _ = k
-            .sys_read_one(&format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
+        let _ = KernelAbi::sys_read(&k, &format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
             .expect("warmup read");
     }
     let warmup_reqs: Vec<ReadRequest> = (0..100u32)
@@ -231,8 +231,7 @@ fn read_batch_meets_3x_speedup_target() {
     for _ in 0..seq_iters {
         let t = Instant::now();
         for i in 0..100u32 {
-            let _ = k
-                .sys_read_one(&format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
+            let _ = KernelAbi::sys_read(&k, &format!("/bench/f{i:03}.txt"), &ctx, 5000, 0)
                 .expect("read");
         }
         seq_total += t.elapsed();

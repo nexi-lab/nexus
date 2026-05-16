@@ -36,6 +36,7 @@ use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use kernel::abi::KernelAbi;
 use kernel::kernel::Kernel;
 use kernel::kernel::{KernelError, OperationContext};
 
@@ -226,7 +227,7 @@ pub fn wait_for_message(
     let msg_path = &msg_path;
 
     // Read the envelope.
-    let read_result = kernel.sys_read_one(msg_path, ctx, 5000, 0)?;
+    let read_result = KernelAbi::sys_read(kernel, msg_path, ctx, 5000, 0)?;
     let data = match read_result.data {
         Some(d) => d,
         None => {

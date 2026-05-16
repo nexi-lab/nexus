@@ -27,6 +27,7 @@ use kernel::kernel::vfs_proto::{
     DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse,
     WriteRequest, WriteResponse,
 };
+use kernel::abi::KernelAbi;
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
 /// Configuration for the VFS gRPC server.
@@ -130,7 +131,7 @@ impl NexusVfsService for VfsServiceImpl {
                 "federation token: use Call dispatch (sys_read RPC) — typed Read bypasses zone authorization",
             ))));
         }
-        match self.kernel.sys_read_one(&req.path, &ctx, 5000, 0) {
+        match KernelAbi::sys_read(&*self.kernel, &req.path, &ctx, 5000, 0) {
             Ok(result) => {
                 let bytes = result.data.unwrap_or_default();
                 Ok(Response::new(ReadResponse {

@@ -3,7 +3,7 @@
 //! Run: cd rust/kernel && cargo bench read_batch
 //!
 //! Demonstrates the parallelism benefit of `sys_read` batch over sequential
-//! `sys_read_one` calls when the backend has I/O latency. The bench uses a
+//! `sys_read` calls when the backend has I/O latency. The bench uses a
 //! latency-simulating in-memory backend and clears the file cache before
 //! each measurement so reads reach the backend (cache-cold path).
 //!
@@ -17,6 +17,7 @@ use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use std::hint::black_box;
 
 use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+use kernel::abi::KernelAbi;
 use kernel::kernel::{Kernel, OperationContext, ReadRequest};
 
 // ── Latency-simulating in-memory ObjectStore ────────────────────────────────
@@ -226,7 +227,7 @@ fn bench_sequential(c: &mut Criterion) {
             |_| {
                 for i in 0..100u32 {
                     let path = format!("/bench/f{i:03}.txt");
-                    let r = k.sys_read_one(&path, &ctx, 5000, 0).expect("read");
+                    let r = KernelAbi::sys_read(&k, &path, &ctx, 5000, 0).expect("read");
                     black_box(r);
                 }
             },

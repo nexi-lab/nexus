@@ -2616,7 +2616,7 @@ impl Kernel {
                     }
                 }
             }
-            let bytes = match self.sys_read_one(&fpath, ctx, 5000, 0) {
+            let bytes = match self.sys_read_single(&fpath, ctx, 1, 5000, 0) {
                 Ok(r) => r.data.unwrap_or_default(),
                 Err(_) => continue,
             };
@@ -4126,7 +4126,7 @@ mod tests {
             }
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            match k.sys_read_one("/data/a", &ctx, 5000, 0) {
+            match k.sys_read_single("/data/a", &ctx, 1, 5000, 0) {
                 Err(KernelError::PermissionDenied(msg)) => {
                     assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
                 }
@@ -4207,7 +4207,7 @@ mod tests {
     //      composes a `WalStreamCore` over the test metastore + writes
     //      the inode + registers the stream — same code path
     //      production runs through.
-    //   3. `kernel.sys_write_one(path, …)` and `kernel.sys_read_one(path, …)`
+    //   3. `kernel.sys_write_one(path, …)` and `kernel.sys_read_single(path, …)`
     //      round-trip bytes through the wal stream, validating the
     //      stream is actually wal-backed (memory streams use a
     //      different backend type, so a memory-vs-wal mistake would
@@ -4399,7 +4399,7 @@ mod tests {
                 .sys_write_one(path, &ctx, b"federation hello", 0)
                 .expect("sys_write to wal stream");
             let read = kernel
-                .sys_read_one(path, &ctx, /* timeout_ms */ 0, 0)
+                .sys_read_single(path, &ctx, 1, /* timeout_ms */ 0, 0)
                 .expect("sys_read from wal stream");
             let bytes = read
                 .data
@@ -4451,7 +4451,7 @@ mod tests {
                 .sys_write_one(path, &ctx, b"survives reopen", 0)
                 .expect("write to reopened wal stream");
             let read = kernel
-                .sys_read_one(path, &ctx, 0, 0)
+                .sys_read_single(path, &ctx, 1, 0, 0)
                 .expect("read after idempotent reopen");
             assert_eq!(
                 read.data.unwrap().as_slice(),

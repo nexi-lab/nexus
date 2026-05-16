@@ -26,7 +26,7 @@ use super::{
 /// Per-request resolved state produced by Phase A of `sys_read` (batch path).
 /// Kept file-private; callers only see the final `Vec<Result<…>>`.
 /// `entry` is `None` when the metastore has no record yet; Phase B
-/// falls back to `sys_read_one` which retries the backend directly.
+/// falls back to `sys_read_single` which retries the backend directly.
 ///
 /// Fields are consumed by Task 4 coalescing; allow dead_code until then.
 #[allow(dead_code)]
@@ -159,23 +159,8 @@ impl Kernel {
         self.sys_read_batch_impl(reqs, ctx)
     }
 
-    /// Convenience wrapper for single-path reads.
-    ///
-    /// Kernel-internal callers (grep, etc.) and external callers
-    /// (gRPC, PyO3, services) use this for the familiar single-path API.
-    /// Will be removed once all callers migrate to the batch-capable `sys_read`.
-    pub fn sys_read_one(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        timeout_ms: u64,
-        offset: u64,
-    ) -> Result<SysReadResult, KernelError> {
-        self.sys_read_single(path, ctx, 1, timeout_ms, offset)
-    }
-
     /// Full single-read with auth + hooks + DT_LINK follow.
-    fn sys_read_single(
+    pub(crate) fn sys_read_single(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -2736,7 +2721,7 @@ impl Kernel {
                 }
             };
             // 4. Metadata lookup (best-effort; None means cold-cache /
-            //    backend-only file — Phase B falls through to sys_read_one
+            //    backend-only file — Phase B falls through to sys_read_single
             //    which has its own backend fallback path).
             let entry = self
                 .with_metastore_route(&route, |ms| ms.get(&req.path).ok().flatten())
@@ -2917,7 +2902,7 @@ impl Kernel {
                             let req = &reqs[lead];
                             // Route stability check — if the lead's mount has
                             // shifted since Phase A, fall back to full
-                            // sys_read_one so authz + hooks run against the
+                            // sys_read_single so authz + hooks run against the
                             // *current* mount. Otherwise use
                             // sys_read_content_only since Phase A already
                             // authorized this exact route.
@@ -2934,7 +2919,7 @@ impl Kernel {
                             let shared = if route_stable {
                                 self.sys_read_content_only(&req.path, ctx)
                             } else {
-                                self.sys_read_one(&req.path, ctx, 5000, 0)
+                                self.sys_read_single(&req.path, ctx, 1, 5000, 0)
                             };
                             let lead_cid = shared.as_ref().ok().and_then(|r| r.content_id.clone());
                             for &i in indices.iter() {
@@ -2949,7 +2934,7 @@ impl Kernel {
                                     .map(|r| r.mount_point == consumer_route.mount_point)
                                     .unwrap_or(false);
                                 if !consumer_route_stable {
-                                    let r = self.sys_read_one(&reqs[i].path, ctx, 5000, 0);
+                                    let r = self.sys_read_single(&reqs[i].path, ctx, 1, 5000, 0);
                                     local.push((i, slice_read_result(r, &reqs[i])));
                                     continue;
                                 }
@@ -2990,7 +2975,7 @@ impl Kernel {
                             let r = if route_stable {
                                 self.sys_read_content_only(&req.path, ctx)
                             } else {
-                                self.sys_read_one(&req.path, ctx, 5000, 0)
+                                self.sys_read_single(&req.path, ctx, 1, 5000, 0)
                             };
                             local.push((*idx, slice_read_result(r, req)));
                         }

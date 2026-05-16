@@ -2230,7 +2230,10 @@ impl PyKernel {
 
         // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_read_one(path, &rust_ctx, timeout_ms, offset));
+        let result = py.detach(|| {
+            self.inner
+                .sys_read_single(path, &rust_ctx, 1, timeout_ms, offset)
+        });
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         // 3. Convert Vec<u8> -> PyBytes
@@ -2570,9 +2573,12 @@ impl PyKernel {
     /// have a full OperationContext handy.
     fn sys_read_raw<'py>(&self, py: Python<'py>, path: &str, zone_id: &str) -> PyResult<Py<PyAny>> {
         let ctx = OperationContext::new("system", zone_id, true, None, true);
-        let result = self.inner.sys_read_one(path, &ctx, 5000, 0).map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("sys_read_raw: {:?}", e))
-        })?;
+        let result = self
+            .inner
+            .sys_read_single(path, &ctx, 1, 5000, 0)
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("sys_read_raw: {:?}", e))
+            })?;
         match result.data {
             Some(bytes) => Ok(pyo3::types::PyBytes::new(py, &bytes).into()),
             None => Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(

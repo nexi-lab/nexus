@@ -233,7 +233,7 @@ Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` patte
   sys_read/sys_write and dispatches to PipeManager/StreamManager inline — no
   VFS lock, no metastore update, no observer dispatch (matching Linux `write(2)`
   on a pipe not triggering inotify)
-- **DT_LINK**: route() follows the link target one hop with self-loop rejection (§4.5);
+- **DT_LINK**: route() follows the link target one hop with self-loop rejection (§4.4);
   hooks fire on the resolved target path so audit and access checks behave identically
   to a direct write
 - **Read**: same pipeline minus FileEvent (reads are not mutations)
@@ -602,7 +602,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | Primitive | Package | Linux Analogue | Role |
 |-----------|---------|---------------|------|
 | **VFSRouter** | `rust/kernel/src/core/vfs_router.rs` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
-| **LockManager** | `rust/kernel/src/core/lock/` (`mod.rs`, `locks.rs`, `semaphore.rs`) | `i_rwsem` + `flock(2)` | I/O lock + advisory lock in one Rust struct. I/O: per-path condvar-based RW lock (§4.1). Advisory: `sys_lock`/`sys_unlock` with TTL (§4.4). Local: VFSSemaphore. Federation: auto-upgrade via `upgrade_to_distributed()` at mount time |
+| **LockManager** | `rust/kernel/src/core/lock/` (`mod.rs`, `locks.rs`, `semaphore.rs`) | `i_rwsem` + `flock(2)` | I/O lock + advisory lock in one Rust struct (§4.1). I/O: per-path condvar-based RW lock. Advisory: `sys_lock`/`sys_unlock` with TTL. Local: VFSSemaphore. Federation: auto-upgrade via `upgrade_to_distributed()` at mount time |
 | **Dispatch (Rust Kernel + DispatchMixin)** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/dispatch/` + `core.nexus_fs_dispatch` (Python event broadcaster) | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry (pure Rust, zero Py\<PyAny\>). DispatchMixin provides Python-side registration API. Empty = zero overhead |
 | **PipeManager + StreamManager** | `rust/kernel/src/core/pipe/` + `rust/kernel/src/core/stream/` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend / SharedMemoryPipeBackend). DT_STREAM: non-destructive offset reads. Details in §4.2 |
 | **FileDescriptorTable** | `rust/kernel/src/core/fdt.rs` | fd table (`task_struct.files`) | Pre-opened fd registry for PAS backends. `sys_write` registers via `ObjectStore::resolve_physical_path()`; `sys_read` fast-path via `libc::pread`; `sys_unlink` removes; `sys_rename` re-keys. CAS/remote backends opt out (trait default `None`) |
@@ -614,17 +614,23 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 
 ### 4.1 Unified LockManager — I/O Lock + Advisory Lock
 
-Rust `LockManager` (`rust/kernel/src/lock_manager.rs`) unifies both lock
+Rust `LockManager` (`rust/kernel/src/core/lock/`) unifies both lock
 concerns in one struct. I/O lock (condvar-based, per-path RW) and advisory
-lock (TTL-based, user-facing) share one code path.
+lock (TTL-based, user-facing) share one code path. Constructed in
+`Kernel::new()`; federation upgrades via `upgrade_to_distributed(ZoneConsensus, Handle)`
+at DLC mount time.
 
 | Property | I/O Lock | Advisory Lock |
 |----------|----------|---------------|
+| Linux analogue | `i_rwsem` | `flock(2)` / `fcntl(F_SETLK)` |
 | Modes | `read` (shared) / `write` (exclusive) | exclusive (mutex), TTL-based |
 | Latency | ~200ns (Rust condvar) | ~5μs local / ~5-10ms Raft |
 | Scope | Process-scoped, crash → released | TTL-based, expire → released |
 | Visibility | Kernel-internal (sys_read/write) | User-facing (sys_lock/sys_unlock) |
 | Storage | In-memory only | redb `sm_locks` table (metastore) |
+| Local impl | per-path condvar RW | `VFSSemaphore` (Rust) — exclusive (mutex), shared (RW), counting (semaphore) |
+| Distributed impl | n/a (process-local) | replicated via Raft after `upgrade_to_distributed(ZoneConsensus, Handle)` |
+| Syscalls | implicit (taken inside sys_read / sys_write) | `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2) |
 
 See `lock-architecture.md` for full design. See `federation-memo.md` for
 distributed lock upgrade path.
@@ -682,20 +688,7 @@ See `federation-memo.md` §7j for design rationale.
 | FileWatcher (kernel-knows) | Optional `RemoteWatchProtocol` for distributed watch, set via `set_remote_watcher()` |
 | Emission point | Always AFTER lock release |
 
-### 4.4 LockManager — Advisory Lock
-
-| Property | Value |
-|----------|-------|
-| Linux analogue | `flock(2)` / `fcntl(F_SETLK)` |
-| Package | `rust/kernel/src/lock_manager.rs` |
-| Storage | `sm_locks` redb table (separate from FileMetadata) |
-| Lifecycle | Kernel-owned: Rust `LockManager` constructed in `Kernel::new()`; federation upgrades via `upgrade_to_distributed()` at DLC mount time |
-
-- **Local**: `VFSSemaphore` (Rust) — exclusive (mutex), shared (RW), counting (semaphore)
-- **Distributed**: `upgrade_to_distributed(ZoneConsensus, Handle)` — advisory locks replicated via Raft
-- **Syscalls**: `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2)
-
-### 4.5 DT_LINK — Path-Internal Symlink
+### 4.4 DT_LINK — Path-Internal Symlink
 
 | Property | Value |
 |----------|-------|
@@ -721,7 +714,7 @@ rejected at `sys_setattr` time.
 
 See the sudowork integration design doc (`sudowork/docs/tech/nexus-integration-architecture.md`) for the A2A messaging conventions that consume DT_LINK.
 
-### 4.6 Process-Local Kernel Caches
+### 4.5 Process-Local Kernel Caches
 
 `rust/kernel/src/cache/` holds kernel-internal process-local caches.
 These are **not** `CacheStoreABC` (§3.A.3) — they are inherent state

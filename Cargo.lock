@@ -2012,6 +2012,7 @@ dependencies = [
  "base64",
  "blake3",
  "bloomfilter",
+ "contracts",
  "crc32fast",
  "dashmap",
  "encoding_rs",

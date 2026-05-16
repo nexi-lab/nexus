@@ -109,3 +109,39 @@ pub mod env {
 /// mirror (`nexus.contracts.constants.MAX_GRPC_MESSAGE_BYTES`) and
 /// this constant in lockstep.
 pub const MAX_GRPC_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+
+// ── gRPC server hardening defaults ─────────────────────────────────
+//
+// Conservative production defaults shared by every tonic gRPC server
+// nexus runs (raft transport, witness, VFS). Sized for federation
+// traffic patterns: dozens of concurrent peer streams + intermittent
+// VFS client RPCs. Tune via runtime config when a workload demands
+// otherwise; the defaults stay here to keep ad-hoc Server::builder
+// sites from drifting apart.
+
+/// Maximum concurrent HTTP/2 streams the server will accept per
+/// connection. 1024 is comfortably above any expected per-peer
+/// concurrency (raft heartbeat / append / snapshot share one
+/// connection per peer); cap exists to fail closed under runaway
+/// stream creation rather than exhausting the server allocator.
+pub const GRPC_MAX_CONCURRENT_STREAMS: u32 = 1024;
+
+/// HTTP/2 keepalive ping interval. Servers send a PING every
+/// `GRPC_HTTP2_KEEPALIVE_INTERVAL_SECS` so an idle TCP connection
+/// dropped by an intermediate NAT / load balancer is detected
+/// quickly instead of hanging until the next RPC. 30s matches the
+/// gRPC default-server recommendation.
+pub const GRPC_HTTP2_KEEPALIVE_INTERVAL_SECS: u64 = 30;
+
+/// HTTP/2 keepalive PING ack deadline. If no PONG arrives within
+/// `GRPC_HTTP2_KEEPALIVE_TIMEOUT_SECS` of the PING, the connection
+/// is considered dead and torn down. 10s gives a slow peer one
+/// full retry window without holding a half-dead connection open
+/// indefinitely.
+pub const GRPC_HTTP2_KEEPALIVE_TIMEOUT_SECS: u64 = 10;
+
+/// TCP-level keepalive on each accepted connection (sent at the
+/// kernel socket layer). Catches half-open connections the HTTP/2
+/// layer can't reach (e.g. when the peer process disappears
+/// silently without RST). 60s aligns with common Linux defaults.
+pub const GRPC_TCP_KEEPALIVE_SECS: u64 = 60;

@@ -26,6 +26,11 @@ transport = [
 ]
 
 [dependencies]
+# Constants SSOT — pulled unconditionally because the crate is
+# zero-dep-cost (only `pub const` definitions). transport_primitives
+# uses it for the gRPC server-hardening defaults; other modules may
+# reach for it as the constants set grows.
+contracts = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ahash = { workspace = true }

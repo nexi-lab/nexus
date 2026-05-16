@@ -746,6 +746,29 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         }
     }
 
+    /// Block until this node becomes leader of the zone, or `timeout`
+    /// elapses.  Returns `true` if leader, `false` on timeout.
+    ///
+    /// SSOT for the "is_leader poll with sleep" primitive — both
+    /// `ZoneHandle::wait_for_leader` and any raft-internal helper that
+    /// must wait for self-election (e.g. `share_subtree_core` after a
+    /// fresh `create_zone`) call into here.  Keeps the polling shape
+    /// (atomic read + 50 ms sleep) in one place, identical to the
+    /// atomic that `submit_to_channel` checks — so a successful
+    /// `wait_for_leader` return is guaranteed to see `is_leader()=true`
+    /// at the next propose, modulo leadership being lost cluster-wide
+    /// (impossible for a 1-voter zone, normal retry path otherwise).
+    pub fn wait_for_leader(&self, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            if self.is_leader() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        self.is_leader()
+    }
+
     /// Get the current term (atomic read, no channel).
     pub fn term(&self) -> u64 {
         self.cached_term.load(Ordering::Relaxed)

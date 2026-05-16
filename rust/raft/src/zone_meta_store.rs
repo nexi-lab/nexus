@@ -523,6 +523,7 @@ mod tests {
             last_writer_address: Some("nexus-1:2126".to_string()),
             target_zone_id: None,
             link_target: None,
+            owner_id: None,
         };
 
         store.put(path, meta.clone()).expect("put from runtime");

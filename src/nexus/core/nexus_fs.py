@@ -327,14 +327,11 @@ class NexusFS(  # type: ignore[misc]
             kernel=self._kernel,
         )
 
-        # Deferred kernel wiring: bind mount table + VFS lock after all attributes exist.
+        # Deferred kernel wiring: bind mount table after all attributes exist.
         if self._kernel is not None:
             _mt = getattr(self._driver_coordinator, "_mount_table", None)
             if _mt is not None:
                 _mt.bind_kernel(self._kernel)
-            _vfs_rust = getattr(getattr(self, "_vfs_lock_manager", None), "_rust", None)
-            if _vfs_rust is not None:
-                self._kernel.set_vfs_lock(_vfs_rust)
 
         logger.info(
             "IPC primitives initialized: DriverCoordinator (self_address=%s)",

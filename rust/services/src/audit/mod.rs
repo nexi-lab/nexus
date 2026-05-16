@@ -24,16 +24,18 @@
 //! //    — install-time control plane (LSM-style EXPORT_SYMBOL).
 //! ```
 
+use std::collections::HashSet;
 use std::sync::mpsc;
 use std::sync::Arc;
 
 use chrono::SecondsFormat;
 use contracts::{is_system_path, OperationContext};
+use parking_lot::Mutex;
 use serde::Serialize;
 
 use kernel::abi::KernelAbi;
-use kernel::core::dispatch::{HookContext, NativeInterceptHook};
-use kernel::kernel::KernelError;
+use kernel::core::dispatch::{FileEvent, FileEventType, HookContext, MutationObserver, NativeInterceptHook};
+use kernel::kernel::{Kernel, KernelError};
 
 /// DT_STREAM entry-type discriminant (mirrors `kernel::core::dcache::DT_STREAM`).
 const DT_STREAM: i32 = 4;
@@ -265,6 +267,95 @@ pub fn prepare_stream_only<K: KernelAbi>(
     setup_audit_stream(kernel, zone_id, stream_path)
 }
 
+/// Boot-time install for the root zone + auto-wire for every zone
+/// that mounts later. Companion to [`install`] for deployments that
+/// want audit on every zone, not just the one named at boot.
+///
+/// Steps:
+///   1. Install AuditHook + DT_STREAM for `root_zone_id` (one call
+///      to [`install`]) so the boot-time stream is ready before any
+///      VFS op fires.
+///   2. Register a [`ZoneAuditAutoWire`] [`MutationObserver`] on
+///      `kernel` filtering [`FileEventType::Mount`]. Each Mount
+///      event maps to a per-zone [`install`] call (the same code
+///      path used at boot for `root_zone_id`), guarded by an
+///      internal `HashSet<String>` so a re-mount is a harmless
+///      no-op.
+///
+/// `K = Kernel`-specific (not generic over `K: KernelAbi`) because
+/// `kernel.register_observer` is a kernel-internal accessor — same
+/// reason `ManagedAgentService::install_returning` is gated to
+/// `K = Kernel`. Slim builds that ship a non-Kernel `K` use
+/// [`install`] for the single boot zone and don't get the auto-wire.
+///
+/// See `docs/architecture/nexus-integration-architecture.md` §5.3
+/// for the architectural rationale.
+pub fn install_root(
+    kernel: &Arc<Kernel>,
+    root_zone_id: &str,
+    stream_path: &str,
+) -> Result<(), KernelError> {
+    install(Arc::clone(kernel), root_zone_id, stream_path)?;
+
+    let mut seeded = HashSet::new();
+    seeded.insert(root_zone_id.to_string());
+
+    let auto_wire = Arc::new(ZoneAuditAutoWire {
+        kernel: Arc::clone(kernel),
+        installed: Mutex::new(seeded),
+        stream_path: stream_path.to_string(),
+    });
+    kernel.register_observer(
+        auto_wire,
+        ZoneAuditAutoWire::OBSERVER_NAME.to_string(),
+        FileEventType::Mount as u32,
+    );
+    Ok(())
+}
+
+/// [`MutationObserver`] that auto-installs AuditHook for newly
+/// mounted zones. Registered exactly once by [`install_root`] and
+/// keeps its own `HashSet` of zones it has already installed for so
+/// re-mount events are no-ops.
+struct ZoneAuditAutoWire {
+    kernel: Arc<Kernel>,
+    /// Zones the observer has already wired AuditHook for. The
+    /// root zone is seeded into this set by [`install_root`] before
+    /// the observer is registered, so a re-mount of the root zone
+    /// also no-ops.
+    installed: Mutex<HashSet<String>>,
+    stream_path: String,
+}
+
+impl ZoneAuditAutoWire {
+    pub(crate) const OBSERVER_NAME: &'static str = "audit-zone-auto-wire";
+}
+
+impl MutationObserver for ZoneAuditAutoWire {
+    fn on_mutation(&self, event: &FileEvent) {
+        let zone_id = match event.zone_id() {
+            Some(z) if !z.is_empty() => z.to_string(),
+            _ => return,
+        };
+        // First-writer wins on the HashSet — drop the lock before
+        // calling install() so a re-entrant Mount event (impossible
+        // today, defensive) wouldn't deadlock.
+        {
+            let mut guard = self.installed.lock();
+            if !guard.insert(zone_id.clone()) {
+                return;
+            }
+        }
+        if let Err(e) = install(Arc::clone(&self.kernel), &zone_id, &self.stream_path) {
+            tracing::warn!(
+                zone = %zone_id,
+                error = ?e,
+                "audit auto-wire install_for_zone failed",
+            );
+        }
+    }
+}
+
 fn setup_audit_stream<K: KernelAbi>(
     kernel: &K,
     zone_id: &str,
@@ -294,4 +385,62 @@ fn setup_audit_stream<K: KernelAbi>(
         /* remote_metastore */ None,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use kernel::kernel::Kernel;
+
+    fn fresh_kernel() -> Arc<Kernel> {
+        Arc::new(Kernel::new())
+    }
+
+    /// `ZoneAuditAutoWire` records each zone in its HashSet exactly
+    /// once and no-ops on a re-mount. Drives the observer directly
+    /// (skipping the `install` call by short-circuiting through the
+    /// HashSet-already-contains check) so the test doesn't depend on
+    /// federation being wired — `install`'s `io_profile="wal"`
+    /// requires `DistributedCoordinator`, which a bare
+    /// `Kernel::new()` doesn't have.
+    #[test]
+    fn zone_audit_auto_wire_dedups_by_zone_id() {
+        let kernel = fresh_kernel();
+        let mut seeded = HashSet::new();
+        // Pre-seed every zone we'll fire events for — the HashSet
+        // check short-circuits before install() runs, so we exercise
+        // only the dedup logic without needing federation.
+        seeded.insert("z1".to_string());
+        seeded.insert("z2".to_string());
+
+        let auto_wire = ZoneAuditAutoWire {
+            kernel,
+            installed: Mutex::new(seeded),
+            stream_path: "/__sys__/audit/traces/".to_string(),
+        };
+
+        // Fire Mount events for already-seeded zones — short-circuits
+        // via HashSet check, install() never runs, no panic on missing
+        // federation.
+        auto_wire.on_mutation(&FileEvent::with_zone(FileEventType::Mount, "/mnt/z1", "z1"));
+        auto_wire.on_mutation(&FileEvent::with_zone(FileEventType::Mount, "/mnt/z1", "z1"));
+        auto_wire.on_mutation(&FileEvent::with_zone(FileEventType::Mount, "/mnt/z2", "z2"));
+
+        // Events with an empty zone_id are ignored (early return);
+        // proves the observer doesn't index `installed` on a blank
+        // key.
+        auto_wire.on_mutation(&FileEvent::with_zone(
+            FileEventType::Mount,
+            "/mnt/no-zone",
+            "",
+        ));
+
+        let installed = auto_wire.installed.lock();
+        assert!(installed.contains("z1"));
+        assert!(installed.contains("z2"));
+        // Still exactly the two we seeded — no spurious inserts from
+        // re-mounts or from zone-less events.
+        assert_eq!(installed.len(), 2);
+    }
 }

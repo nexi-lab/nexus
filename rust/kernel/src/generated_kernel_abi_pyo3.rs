@@ -1993,7 +1993,7 @@ impl PyKernel {
         let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_pre_hook_impls(op);
         for hook in impls {
-            dispatch_pre_hook_by_op(hook.as_ref(), op, &hook_ctx)?;
+            dispatch_pre_hook_by_op(hook, op, &hook_ctx)?;
         }
         Ok(())
     }
@@ -2937,7 +2937,7 @@ impl PyKernel {
         let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_pre_hook_impls(op);
         for hook in impls {
-            dispatch_pre_hook_by_op(hook.as_ref(), op, hook_ctx)?;
+            dispatch_pre_hook_by_op(hook, op, hook_ctx)?;
         }
         Ok(())
     }
@@ -2951,7 +2951,7 @@ impl PyKernel {
         let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_post_hook_impls(op);
         for hook in impls {
-            dispatch_post_hook_by_op(hook.as_ref(), op, hook_ctx);
+            dispatch_post_hook_by_op(hook, op, hook_ctx);
         }
     }
 }

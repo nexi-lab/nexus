@@ -2514,7 +2514,6 @@ impl Kernel {
     // ── File I/O syscalls (sys_read / sys_write / sys_stat / sys_unlink /
     //    sys_rename / sys_copy / sys_mkdir / sys_rmdir) ──────────────────
     // (Moved to `kernel::io` submodule.)
-
 }
 
 // ─────────────────────────────────────────────────────────────────────

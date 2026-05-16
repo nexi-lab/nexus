@@ -675,21 +675,6 @@ class ChunkedUploadService:
                 result = await asyncio.to_thread(_write, content)
                 content_id = result.content_id
 
-            # Link content to target_path via metadata store when NexusFS is not
-            # attached. NexusFS.write handles metadata, hooks, and observers.
-            if self._nexus_fs is None and self._kernel is not None:
-                from nexus.contracts.metadata import FileMetadata
-
-                metadata = FileMetadata(
-                    path=session.target_path,
-                    size=len(content),
-                    content_id=content_id,
-                )
-                write_metadata = getattr(self._kernel, "metastore_put", None)
-                if write_metadata is None:
-                    write_metadata = self._kernel.put
-                await asyncio.to_thread(write_metadata, metadata)
-
         # Update session to completed
         completed = UploadSession(
             upload_id=session.upload_id,

@@ -154,6 +154,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "stat_batch",
         "stream_collect_all",
         "stream_read_at",
+        "stream_read_at_blocking",
         "stream_read_batch",
         "stream_write_nowait",
         "sys_copy",

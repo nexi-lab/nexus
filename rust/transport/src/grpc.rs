@@ -1406,6 +1406,7 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+    use kernel::kernel::convenience::{KernelConvenience, MountOptions};
     use kernel::kernel::vfs_proto::{
         nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
         BatchWriteItemRequest, BatchWriteRequest, StatRequest,
@@ -1465,30 +1466,13 @@ mod tests {
     fn kernel_with_mem_backend() -> Kernel {
         let k = Kernel::new();
         let backend: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(MemBackend::default());
-        k.sys_setattr(
+        k.mount(
             "/",
-            2,
-            "mem",
-            Some(backend),
-            None,
-            None,
-            "",
-            kernel::ROOT_ZONE_ID,
-            false,
-            0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            MountOptions::new("mem")
+                .with_backend(backend)
+                .with_io_profile(""),
         )
-        .expect("kernel_with_mem_backend: sys_setattr DT_MOUNT");
+        .expect("kernel_with_mem_backend: mount DT_MOUNT");
         k
     }
 

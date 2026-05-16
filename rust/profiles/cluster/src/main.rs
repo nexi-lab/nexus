@@ -25,8 +25,8 @@ use backends::storage::path_local::PathLocalBackend;
 use clap::{Parser, Subcommand};
 use kernel::abc::object_store::ObjectStore;
 use kernel::abi::KernelAbi;
+use kernel::kernel::convenience::{KernelConvenience, MountOptions};
 use kernel::kernel::Kernel;
-use kernel::meta_store::DT_MOUNT;
 
 use nexus_raft::distributed_coordinator::{
     bootstrap_or_join_zone, read_or_mint_node_id, validate_bootstrap_mode,
@@ -387,29 +387,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             .with_context(|| format!("PathLocalBackend init at {}", root_fs.display()))?,
     );
     kernel
-        .sys_setattr(
-            "/",
-            DT_MOUNT as i32,
-            "local",
-            Some(backend),
-            None,
-            None,
-            "memory",
-            contracts::ROOT_ZONE_ID,
-            false,
-            0,
-            None,
-            None,
-            None, // mime_type
-            None, // modified_at_ms
-            None, // content_id
-            None, // size
-            None, // version
-            None, // created_at_ms
-            None, // link_target
-            None, // source
-            None, // remote_metastore
-        )
+        .mount("/", MountOptions::new("local").with_backend(backend))
         .map_err(|e| anyhow::anyhow!("mount / via path_local: {:?}", e))?;
     tracing::info!(
         root_fs = %root_fs.display(),
@@ -601,28 +579,11 @@ fn run_mount(
         local_root.ok_or_else(|| anyhow::anyhow!("--root is required for driver `{driver}`"))?;
     let backend = build_local_backend(driver, root)?;
     kernel
-        .sys_setattr(
+        .mount(
             mount_point,
-            DT_MOUNT as i32,
-            backend_name,
-            Some(backend),
-            None,
-            None,
-            "memory",
-            zone,
-            false,
-            0,
-            None, // read_fd
-            None, // write_fd
-            None, // mime_type
-            None, // modified_at_ms
-            None, // content_id
-            None, // size
-            None, // version
-            None, // created_at_ms
-            None, // link_target
-            None, // source
-            None, // remote_metastore
+            MountOptions::new(backend_name)
+                .with_backend(backend)
+                .with_zone(zone),
         )
         .map_err(|e| anyhow::anyhow!("mount {mount_point}: {:?}", e))?;
     println!(

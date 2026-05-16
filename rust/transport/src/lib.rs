@@ -30,10 +30,10 @@
 //! wrappers wrap it directly — re-exported here under
 //! [`vfs::RpcTransport`] for the canonical out-bound name.
 
-/// Rust-native auth providers (`AuthProvider` / `NoAuth` / `ApiKeyAuth`)
-/// consumed by `transport::grpc::VfsServiceImpl`. Always compiled — no
-/// feature gate. Lives in `transport` because auth is a wire-surface
-/// concern, not a post-syscall hook.
+/// `AuthProvider` trait + kernel-default `NoAuth` impl. Consumed by
+/// `transport::grpc::VfsServiceImpl`. Other auth impls (API-key,
+/// JWT, OIDC, …) live in the deployment-tier service that introduces
+/// them, not here.
 pub mod auth;
 /// Federation peer client — only used by `PyFederationClient` (Python deployment).
 #[cfg(feature = "python")]

@@ -130,7 +130,7 @@ impl VfsServiceImpl {
     pub(crate) fn for_test(kernel: Arc<Kernel>) -> Self {
         Self {
             kernel,
-            auth: Arc::new(crate::auth::ApiKeyAuth::new("test-key")),
+            auth: Arc::new(crate::auth::NoAuth),
             server_started_at: Instant::now(),
             server_version: Arc::from("test"),
             started_secs: Arc::new(AtomicU64::new(0)),

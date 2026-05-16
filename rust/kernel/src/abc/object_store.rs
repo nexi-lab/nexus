@@ -228,4 +228,14 @@ pub trait ObjectStore: Send + Sync {
         let _ = path;
         Err(StorageError::NotSupported("list_dir"))
     }
+
+    /// Resolve a content_id to a physical filesystem path for pread/pwrite.
+    ///
+    /// Only path-addressed local backends (PathLocal, LocalConnector) return
+    /// `Some(path)` — CAS and remote backends return `None` (default).
+    /// Used by the FileDescriptorTable to register pre-opened fds.
+    fn resolve_physical_path(&self, content_id: &str) -> Option<std::path::PathBuf> {
+        let _ = content_id;
+        None
+    }
 }

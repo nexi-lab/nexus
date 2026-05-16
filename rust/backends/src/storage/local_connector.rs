@@ -258,4 +258,8 @@ impl ObjectStore for LocalConnectorBackend {
         entries.sort();
         Ok(entries)
     }
+
+    fn resolve_physical_path(&self, content_id: &str) -> Option<std::path::PathBuf> {
+        self.resolve_path(content_id).ok()
+    }
 }

@@ -8,6 +8,11 @@
 //!
 //! Cluster profile: PathLocalBackend + redb metastore (the only
 //! production-deployed profile as of 2026-05).
+//!
+//! Performance history (PathLocal + redb, 1KB payload):
+//!   Pre-optimization:  sys_read ~24.5us, sys_write ~20ms
+//!   Post-optimization: sys_read ~2-3us (FDT pread), sys_write ~50-200us (Durability::Eventual)
+//!   DT_PIPE baseline:  ~246ns round-trip (in-memory ring buffer)
 
 use std::path::Path;
 use std::sync::Arc;

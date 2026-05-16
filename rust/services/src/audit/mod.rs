@@ -15,7 +15,7 @@
 //! ## Boot wiring (Linux LSM analogue)
 //!
 //! ```ignore
-//! services::audit::install(&kernel, "root", "/audit/traces/")?;
+//! services::audit::install(&kernel, "root", "/__sys__/audit/traces/")?;
 //! // 1. kernel.sys_setattr(stream_path, DT_STREAM, …, "wal", zone)
 //! //    — service-side syscall; kernel composes the WAL stream.
 //! // 2. AuditHook::new(kernel, stream_path, zone)

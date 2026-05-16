@@ -628,7 +628,7 @@ audit-flush  (background Rust thread)
       ▼
 WalStreamCore  (Command::AppendStreamEntry → zone Raft cluster)
       │
-      └─► registered with StreamManager at /{zone}/audit/traces/
+      └─► registered with StreamManager at /__sys__/audit/traces/
 ```
 
 ### 5.3 Auto-wiring on zone create / join
@@ -637,17 +637,17 @@ WalStreamCore  (Command::AppendStreamEntry → zone Raft cluster)
 
 ### 5.4 Central audit zone
 
-Each production node shares a 1:1 zone with the audit-node. `AuditHook` writes formatted `AuditRecord` entries to `/audit/traces/` in that shared zone; the audit-node reads and gathers them locally.
+Each production node shares a 1:1 zone with the audit-node. `AuditHook` writes formatted `AuditRecord` entries to `/__sys__/audit/traces/` in that shared zone; the audit-node reads and gathers them locally.
 
 ```
 Production nexusd (node A)
-    │  AuditHook → /audit/traces/  (auto-wired by zone_create(audit=true))
+    │  AuditHook → /__sys__/audit/traces/  (auto-wired by zone_create(audit=true))
     │
     └──► Shared zone: zone-A-audit
               Raft cluster: [node-A voter, audit-node learner]
 
 Production nexusd (node B)
-    │  AuditHook → /audit/traces/
+    │  AuditHook → /__sys__/audit/traces/
     │
     └──► Shared zone: zone-B-audit
               Raft cluster: [node-B voter, audit-node learner]
@@ -655,7 +655,7 @@ Production nexusd (node B)
 Audit nexusd (audit-node)
     ├── learner of zone-A-audit  ← receives only node-A's audit stream
     ├── learner of zone-B-audit  ← receives only node-B's audit stream
-    └── local collect/gather: reads all /audit/traces/ streams, aggregates
+    └── local collect/gather: reads all /__sys__/audit/traces/ streams, aggregates
 ```
 
 The 1:1 zone holds `AuditRecord` only — formatted by `AuditHook`, with no production-zone metadata or lock commands. audit-node joins via `zone_join(zone_id, as_learner=true, audit=true)` so the production zone's voter quorum is unaffected; audit loss is preferable to blocking production writes.
@@ -687,7 +687,7 @@ via CAS — and dispatches by entry type:
 | Entry type | Used for | Metadata channel | Content channel |
 |-----------|----------|------------------|-----------------|
 | **DT_FILE** | sudo-code sessions, profile configs, task lists | Raft (intra-zone, strongly consistent) | Local CAS (`cas_local` backend) + on-miss lazy fetch from a peer voter via `PeerBlobClient` |
-| **DT_STREAM** (via `WalStreamBackend`) | `chat-with-me`, `/audit/traces/` | Raft (intra-zone) | Same raft log — `WalStreamBackend` writes content as `Command::AppendStreamEntry` so total order across voters is the same channel as metadata |
+| **DT_STREAM** (via `WalStreamBackend`) | `chat-with-me`, `/__sys__/audit/traces/` | Raft (intra-zone) | Same raft log — `WalStreamBackend` writes content as `Command::AppendStreamEntry` so total order across voters is the same channel as metadata |
 
 For `DT_FILE`, the file's `FileMetadata` (entry type, content hash,
 size, last-writer address, etc.) commits through raft so every voter
@@ -787,6 +787,6 @@ Command::DeleteStreamEntry     — stream cleanup
 … (others)
 ```
 
-In the audit 1:1 zone the only `AppendStreamEntry` traffic comes from `AuditHook` writes to `/audit/traces/`; the audit-node learner applies them in order and exposes the aggregated stream to its local `collect/gather` consumer.
+In the audit 1:1 zone the only `AppendStreamEntry` traffic comes from `AuditHook` writes to `/__sys__/audit/traces/`; the audit-node learner applies them in order and exposes the aggregated stream to its local `collect/gather` consumer.
 
 In a chat zone the `AppendStreamEntry` traffic is the conversation itself — every envelope (with its `from` field rewritten by `MailboxStampingHook` on `*/chat-with-me`, see §3.3) replicates to every voter and learner in the zone.

@@ -3273,64 +3273,6 @@ mod tests {
         assert_eq!(k.sys_stat("/b.txt", "root").unwrap().gen, 1);
     }
 
-    #[test]
-    fn sys_cat_pretty_prints_json_without_changing_sys_read() {
-        let k = kernel_with_root_backend();
-        let ctx = OperationContext::new("system", "root", true, None, true);
-        setattr(&k, "/doc.json", DT_REG as i32).unwrap();
-        let write = k
-            .sys_write_one("/doc.json", &ctx, br#"{"b":2,"a":1}"#, 0)
-            .unwrap();
-        assert!(write.hit);
-        let raw = k.sys_read_one("/doc.json", &ctx, 5000, 0).unwrap();
-        assert_eq!(raw.data.unwrap(), br#"{"b":2,"a":1}"#);
-
-        let cat = k.sys_cat("/doc.json", &ctx, true).unwrap();
-        assert_eq!(cat.data, b"{\n  \"a\": 1,\n  \"b\": 2\n}\n");
-        assert_eq!(cat.filetype.as_str(), "json");
-    }
-
-    #[test]
-    fn sys_cat_returns_raw_bytes_for_unknown_filetype() {
-        let k = kernel_with_root_backend();
-        let ctx = OperationContext::new("system", "root", true, None, true);
-        setattr(&k, "/plain.bin", DT_REG as i32).unwrap();
-        let write = k.sys_write_one("/plain.bin", &ctx, b"abc", 0).unwrap();
-        assert!(write.hit);
-
-        let cat = k.sys_cat("/plain.bin", &ctx, true).unwrap();
-        assert_eq!(cat.data, b"abc");
-        assert_eq!(cat.handler, "cat/default");
-    }
-
-    #[test]
-    fn sys_cat_uses_backend_fallback_when_metadata_is_missing() {
-        let k = Kernel::new();
-        let backend = std::sync::Arc::new(TestObjectStore::default());
-        backend
-            .blobs
-            .lock()
-            .insert("loose.json".to_string(), br#"{"z":0}"#.to_vec());
-        let mounted: std::sync::Arc<dyn ObjectStore> = backend;
-        k.add_mount(
-            "/",
-            contracts::ROOT_ZONE_ID,
-            Some(mounted),
-            None,
-            None,
-            false,
-        )
-        .unwrap();
-        let ctx = OperationContext::new("system", "root", true, None, true);
-
-        let raw = k.sys_read_one("/loose.json", &ctx, 5000, 0).unwrap();
-        assert_eq!(raw.data.unwrap(), br#"{"z":0}"#);
-
-        let cat = k.sys_cat("/loose.json", &ctx, true).unwrap();
-        assert_eq!(cat.data, b"{\n  \"z\": 0\n}\n");
-        assert_eq!(cat.filetype.as_str(), "json");
-    }
-
     // ── §11 OBSERVE ThreadPool tests ───────────────────────────────
 
     use crate::dispatch::{FileEvent, FileEventType, MutationObserver};

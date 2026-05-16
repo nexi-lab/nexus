@@ -10,9 +10,7 @@
 use std::sync::atomic::Ordering;
 
 use crate::cache::index_cache::{ttl_for_backend, IndexCacheKey, IndexKind};
-use crate::dispatch::ops_registry::{
-    BackendKind, CatHandlerKind, FileType, FingerprintHandlerKind, OpHandler,
-};
+use crate::dispatch::ops_registry::{BackendKind, FileType};
 use crate::dispatch::{
     DeleteHookCtx, FileEventType, HookContext, HookIdentity, Permission, ReadHookCtx,
     RenameHookCtx, WriteHookCtx,
@@ -22,8 +20,8 @@ use crate::meta_store::{FileMetadata, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STRE
 
 use super::{
     validate_path_fast, Kernel, KernelError, OpMetadataResult, OperationContext, StatResult,
-    SysCatResult, SysCopyResult, SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult,
-    SysUnlinkResult, SysWriteResult,
+    SysCopyResult, SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult, SysUnlinkResult,
+    SysWriteResult,
 };
 
 /// Per-request resolved state produced by Phase A of `sys_read` (batch path).
@@ -164,7 +162,7 @@ impl Kernel {
 
     /// Convenience wrapper for single-path reads.
     ///
-    /// Kernel-internal callers (sys_cat, grep, etc.) and external callers
+    /// Kernel-internal callers (grep, etc.) and external callers
     /// (gRPC, PyO3, services) use this for the familiar single-path API.
     /// Will be removed once all callers migrate to the batch-capable `sys_read`.
     pub fn sys_read_one(
@@ -208,73 +206,6 @@ impl Kernel {
             mime_type,
             backend_name,
         })
-    }
-
-    pub fn sys_cat(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        strict_json: bool,
-    ) -> Result<SysCatResult, KernelError> {
-        let metadata = self.op_metadata_for_path(path, ctx)?;
-        let read = self.sys_read_one(path, ctx, 5000, 0)?;
-        let data = read
-            .data
-            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
-
-        match self.resolve_op_handler("cat", &metadata.filetype, &metadata.backend) {
-            Some(OpHandler::Cat(CatHandlerKind::JsonPretty)) => {
-                match serde_json::from_slice::<serde_json::Value>(&data) {
-                    Ok(value) => {
-                        let mut pretty = serde_json::to_vec_pretty(&value)
-                            .map_err(|e| KernelError::IOError(e.to_string()))?;
-                        pretty.push(b'\n');
-                        Ok(SysCatResult {
-                            data: pretty,
-                            handler: "cat/json_pretty".to_string(),
-                            filetype: metadata.filetype,
-                            backend: metadata.backend,
-                        })
-                    }
-                    Err(e) if !strict_json => Ok(SysCatResult {
-                        data,
-                        handler: format!("cat/json_permissive_fallback:{e}"),
-                        filetype: metadata.filetype,
-                        backend: metadata.backend,
-                    }),
-                    Err(e) => Err(KernelError::IOError(format!(
-                        "cat json parse failed for {path}: {e}"
-                    ))),
-                }
-            }
-            Some(OpHandler::Cat(CatHandlerKind::Default)) | None => Ok(SysCatResult {
-                data,
-                handler: "cat/default".to_string(),
-                filetype: metadata.filetype,
-                backend: metadata.backend,
-            }),
-            Some(_) => Ok(SysCatResult {
-                data,
-                handler: "cat/default".to_string(),
-                filetype: metadata.filetype,
-                backend: metadata.backend,
-            }),
-        }
-    }
-
-    pub fn backend_fingerprint(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-    ) -> Result<Option<String>, KernelError> {
-        let metadata = self.op_metadata_for_path(path, ctx)?;
-        match self.resolve_op_handler("fingerprint", &metadata.filetype, &metadata.backend) {
-            Some(OpHandler::Fingerprint(FingerprintHandlerKind::S3)) => Ok(self
-                .sys_stat(path, &ctx.zone_id)
-                .and_then(|stat| stat.content_id)
-                .filter(|content_id| !content_id.is_empty())),
-            _ => Ok(None),
-        }
     }
 
     /// Full single-read with auth + hooks + DT_LINK follow.

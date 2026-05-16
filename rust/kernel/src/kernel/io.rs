@@ -19,8 +19,7 @@ use crate::meta_store::{FileMetadata, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STRE
 
 use super::{
     validate_path_fast, Kernel, KernelError, OperationContext, StatResult, SysCopyResult,
-    SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult, SysUnlinkResult,
-    SysWriteResult,
+    SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult, SysUnlinkResult, SysWriteResult,
 };
 
 /// Per-request resolved state produced by Phase A of `sys_read` (batch path).

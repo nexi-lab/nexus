@@ -187,10 +187,19 @@ def s3_fingerprint(req: OperationRequest) -> str | None:
             str | None,
             method(backend_path, context=_context_with_backend_path(req.context, backend_path)),
         )
+    # No backend `fingerprint` method available — fall back to the path's
+    # current `content_id` via sys_stat (the kernel-side `backend_fingerprint`
+    # wrapper was a thin shim around exactly this and has been removed to
+    # keep service-tier dispatch out of the kernel).
     kernel = req.kernel
-    if kernel is not None and hasattr(kernel, "_kernel"):
-        zone_id = getattr(req.context, "zone_id", None) or getattr(kernel, "_zone_id", "root")
-        return cast(str | None, kernel._kernel.backend_fingerprint(req.path, zone_id))
+    if kernel is not None and hasattr(kernel, "sys_stat"):
+        stat = _call_kernel_sys_stat(kernel, req.path, context=req.context)
+        if isinstance(stat, dict):
+            cid = stat.get("content_id")
+        else:
+            cid = getattr(stat, "content_id", None)
+        if isinstance(cid, str) and cid:
+            return cid
     return None
 
 
@@ -273,16 +282,11 @@ def _read_result_to_bytes(result: Any) -> bytes:
 
 
 def _metadata_from_kernel(kernel: Any, path: str, context: Any = None) -> dict[str, Any]:
-    py_kernel = getattr(kernel, "_kernel", None)
-    zone_id = getattr(context, "zone_id", None) or getattr(kernel, "_zone_id", "root")
-    metadata_for_path = getattr(py_kernel, "op_metadata_for_path", None)
-    if callable(metadata_for_path):
-        try:
-            return _attach_mounted_backend_instance(
-                dict(metadata_for_path(path, zone_id)), kernel, path
-            )
-        except FileNotFoundError:
-            pass
+    # Always construct service-tier metadata from sys_stat — the kernel-side
+    # `op_metadata_for_path` fast path was a thin wrapper that hard-coded
+    # `FileType`/`BackendKind` enums into the kernel and has been removed
+    # (it belonged in the service tier, not the kernel boundary).
+    _ = getattr(kernel, "_kernel", None)
     stat = (
         _call_kernel_sys_stat(kernel, path, context=context) if hasattr(kernel, "sys_stat") else {}
     )

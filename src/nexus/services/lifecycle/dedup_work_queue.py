@@ -252,14 +252,13 @@ class DedupWorkQueue(Generic[T]):
         """Shut down the queue gracefully.
 
         After shutdown, ``add()`` raises ``ShutdownError`` and ``get()``
-        drains remaining items then raises ``ShutdownError``.
-        Signals the kernel pipe as closed so blocked readers wake up.
+        drains remaining items then raises ``ShutdownError``. No kernel
+        call is needed — workers exit on the Python ``_shutting_down``
+        flag once ``_items`` empties. The pipe inode is removed by
+        ``close()`` (sys_unlink), not here.
         """
         async with self._lock:
             self._shutting_down = True
-
-        with contextlib.suppress(RuntimeError):
-            self._kernel.close_pipe(self._pipe_path)
 
         logger.info(
             "DedupWorkQueue shutdown (adds=%d, coalesced=%d, gets=%d)",

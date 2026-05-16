@@ -36,7 +36,14 @@ import json
 import logging
 from typing import Any
 
+from nexus.contracts.types import OperationContext
+
 logger = logging.getLogger(__name__)
+
+
+# Audit-node runs kernel-internally; bypass the permission gate but keep
+# OBSERVE/INTERCEPT pipeline intact.
+_AUDIT_CONTEXT = OperationContext(user_id="audit-node", groups=[], is_system=True)
 
 
 @dataclasses.dataclass
@@ -201,14 +208,21 @@ class AuditNode:
         ``checkpoint.offset`` and persists the new offset on success.
         """
         source_path = f"/{zone}{self._stream_path}".rstrip("/")
-        # ``stream_read_batch`` returns ``(entries, new_offset)``;
-        # record bytes are JSON-encoded ``AuditRecord`` blobs the
-        # producer wrote via ``AuditHook``.
-        entries, new_offset = self._kernel.stream_read_batch(
-            source_path,
-            checkpoint.offset,
-            self._batch_size,
-        )
+        # Drain up to ``batch_size`` DT_STREAM records via sys_read with
+        # offset chaining — each record is one ``AuditRecord`` JSON blob
+        # written by ``AuditHook``. sys_read dispatches DT_STREAM to the
+        # same StreamManager.read_at the primitive used, plus the
+        # INTERCEPT read hooks the primitive bypassed.
+        entries: list[bytes] = []
+        new_offset = checkpoint.offset
+        for _ in range(self._batch_size):
+            result = self._kernel.sys_read(
+                source_path, _AUDIT_CONTEXT, timeout_ms=0, offset=new_offset
+            )
+            if result.data is None:
+                break
+            entries.append(result.data)
+            new_offset = result.stream_next_offset
         if not entries:
             return 0
 

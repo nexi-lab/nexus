@@ -284,6 +284,26 @@ duplicate the A2A surface the rest of the system uses.
 parks on the per-pid condvar — Python supervisors get a blocking wait
 without pinning the interpreter.
 
+`AgentRegistry` is the SSOT for `AgentState`.
+`AgentRegistry::update_state(&pid, new_state)` at
+`rust/kernel/src/core/agents/registry.rs:579` is the only writer in
+the runtime path — it enforces the FSM via `can_transition_to`
+(`registry.rs:177`), updates `updated_at_ms`, and fires the
+`on_terminate` observers when a session transitions to `TERMINATED`.
+
+The runtime-path callsite is a state-observer closure constructed by
+`ManagedAgentService::start_session`. The closure captures
+`Arc<AgentRegistry>` and the new session's pid, maps the runtime
+crate's `AgentLoopState` (`WarmingUp` / `Ready` / `Busy`) onto
+`AgentState`, and calls `registry.update_state(&pid, target)` — any
+`AgentError::InvalidTransition` is logged so a runtime FSM bug is
+visible without aborting the worker. The `SpawnTask<K>::spawn` DI
+seam takes this observer as a parameter; the binary-edge adapter
+(e.g. `nexus-cdylib`'s `SudoCodeSpawnAdapter`) forwards it through to
+the runtime crate's `state_callback` parameter and never touches
+`AgentRegistry` itself. The adapter is a pure runtime-wrapper; the
+service owns the SSOT writes.
+
 ### 2.4 sudo-code state placement
 
 sudo-code's `runtime` crate already organises persistence around two

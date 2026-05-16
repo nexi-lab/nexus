@@ -98,10 +98,9 @@ impl LocalMetaStore {
             .map_err(|e| MetaStoreError::IOError(format!("redb open {}: {e}", path.display())))?;
 
         // Ensure tables exist (single empty write txn on first open)
-        let mut txn = db
+        let txn = db
             .begin_write()
             .map_err(|e| MetaStoreError::IOError(format!("redb begin_write: {e}")))?;
-        txn.set_durability(redb::Durability::Eventual);
         {
             let _table = txn
                 .open_table(METADATA_TABLE)
@@ -337,11 +336,10 @@ impl MetaStore for LocalMetaStore {
 
     fn put(&self, path: &str, metadata: FileMetadata) -> Result<(), MetaStoreError> {
         let data = serialize_metadata(&metadata);
-        let mut txn = self
+        let txn = self
             .db
             .begin_write()
             .map_err(|e| MetaStoreError::IOError(format!("redb write txn: {e}")))?;
-        txn.set_durability(redb::Durability::Eventual);
         {
             let mut table = txn
                 .open_table(METADATA_TABLE)
@@ -364,11 +362,10 @@ impl MetaStore for LocalMetaStore {
         // "store missing" depending on race timing, but never a stale
         // hit after the store delete.
         self.cache.remove(path);
-        let mut txn = self
+        let txn = self
             .db
             .begin_write()
             .map_err(|e| MetaStoreError::IOError(format!("redb write txn: {e}")))?;
-        txn.set_durability(redb::Durability::Eventual);
         let existed;
         {
             let mut table = txn
@@ -471,11 +468,10 @@ impl MetaStore for LocalMetaStore {
 
     /// Single write transaction for all items — optimal for redb.
     fn put_batch(&self, items: &[(String, FileMetadata)]) -> Result<(), MetaStoreError> {
-        let mut txn = self
+        let txn = self
             .db
             .begin_write()
             .map_err(|e| MetaStoreError::IOError(format!("redb write txn: {e}")))?;
-        txn.set_durability(redb::Durability::Eventual);
         {
             let mut table = txn
                 .open_table(METADATA_TABLE)
@@ -503,11 +499,10 @@ impl MetaStore for LocalMetaStore {
         for path in paths {
             self.cache.remove(path);
         }
-        let mut txn = self
+        let txn = self
             .db
             .begin_write()
             .map_err(|e| MetaStoreError::IOError(format!("redb write txn: {e}")))?;
-        txn.set_durability(redb::Durability::Eventual);
         let mut count = 0;
         {
             let mut table = txn
@@ -561,11 +556,10 @@ impl MetaStore for LocalMetaStore {
         let path = metadata.path.clone();
         let new_ver = metadata.version;
         let data = serialize_metadata(&metadata);
-        let mut txn = self
+        let txn = self
             .db
             .begin_write()
             .map_err(|e| MetaStoreError::IOError(format!("redb write txn: {e}")))?;
-        txn.set_durability(redb::Durability::Eventual);
         let result;
         {
             let mut table = txn
@@ -619,11 +613,10 @@ impl MetaStore for LocalMetaStore {
         }
         let old_prefix = format!("{}/", old_path.trim_end_matches('/'));
         let new_prefix = format!("{}/", new_path.trim_end_matches('/'));
-        let mut txn = self
+        let txn = self
             .db
             .begin_write()
             .map_err(|e| MetaStoreError::IOError(format!("redb write txn: {e}")))?;
-        txn.set_durability(redb::Durability::Eventual);
         {
             let mut table = txn
                 .open_table(METADATA_TABLE)
@@ -728,11 +721,10 @@ impl MetaStore for LocalMetaStore {
         value: String,
     ) -> Result<(), MetaStoreError> {
         let composite = fm_composite_key(path, key);
-        let mut txn = self
+        let txn = self
             .db
             .begin_write()
             .map_err(|e| MetaStoreError::IOError(format!("redb write txn: {e}")))?;
-        txn.set_durability(redb::Durability::Eventual);
         {
             let mut table = txn
                 .open_table(FILE_METADATA_TABLE)

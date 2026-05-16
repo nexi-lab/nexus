@@ -11,7 +11,7 @@
 //!
 //! Performance history (PathLocal + redb, 1KB payload):
 //!   Pre-optimization:  sys_read ~24.5us, sys_write ~20ms
-//!   Post-optimization: sys_read ~2-3us (FDT pread), sys_write ~50-200us (Durability::Eventual)
+//!   Post-FDT:          sys_read ~2-3us (FDT pread fast path)
 //!   DT_PIPE baseline:  ~246ns round-trip (in-memory ring buffer)
 
 use std::path::Path;

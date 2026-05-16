@@ -610,6 +610,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **ServiceRegistry** | `rust/kernel/src/core/service_registry.rs` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). BackgroundService + duck-typed hook_spec() |
 | **DriverLifecycleCoordinator** | `rust/kernel/src/core/dlc.rs` + `core.driver_lifecycle_coordinator` (Python unmount-event broadcaster) | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + lock manager upgrade. Apply-side cache coherence is metastore-internal (each `ZoneMetaStore` self-registers an invalidator on its consensus during construction; no kernel-level dcache to keep in sync). Python DLC: brick `on_unmount` event dispatch only |
 | **PermissionGate** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/permission_cache.rs` | LSM `security_inode_permission` | Kernel permission gate called before NativeInterceptHook dispatch on every `sys_*`. Decision cascade with lease cache (~100-200ns). Details in §2.4.1 |
+| **AgentRegistry** | `rust/kernel/src/core/agents/registry.rs` | Linux `task_struct` table + signal queue | Kernel SSOT for agent lifecycle: PID allocation, parent/child tree, signal semantics (SIGTERM/SIGSTOP/SIGCONT/SIGKILL/SIGUSR1), `AgentState::can_transition_to` validation, per-PID condvar wake-ups. Shared `Arc` exposed to procfs view (`AgentStatusResolver`) — no dual-write. Details in §1 Service Lifecycle |
 
 ### 4.1 Unified LockManager — I/O Lock + Advisory Lock
 

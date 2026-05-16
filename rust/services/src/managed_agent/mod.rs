@@ -203,6 +203,30 @@ pub trait SpawnHandle: Send + Sync {
     fn abort(&self);
 }
 
+/// Lifecycle-state notifications a [`SpawnTask`] body emits as the
+/// runtime loop progresses. Service-side mirror of the runtime
+/// crate's equivalent enum (today: `sudocode_runtime::spawn_task::
+/// AgentLoopState`); the binary-edge adapter maps the runtime enum
+/// to this one on the way through the [`SpawnTask::spawn`]
+/// `state_observer`.
+///
+/// Services owns this enum (not the runtime crate) because state
+/// transition semantics are a managed-agent concern — keeping the
+/// trait surface runtime-agnostic preserves the services rlib's
+/// no-cross-repo-runtime-dep boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentLoopState {
+    /// Runtime is initialising (loading prompt, system setup); maps
+    /// to [`AgentState::WarmingUp`].
+    WarmingUp,
+    /// Runtime is parked waiting for input on the mailbox; maps to
+    /// [`AgentState::Ready`].
+    Ready,
+    /// Runtime is mid-turn (LLM streaming, tool execution); maps to
+    /// [`AgentState::Busy`].
+    Busy,
+}
+
 /// Spawn-task provider. `start_session` calls
 /// [`Self::spawn`] after `register_proc_entry` succeeds to kick off
 /// the per-pid runtime body. The concrete impl wraps whatever
@@ -214,7 +238,22 @@ pub trait SpawnTask<K: KernelAbi>: Send + Sync + 'static {
     /// service stores in its `spawn_handles` sidecar; the
     /// on_terminate observer aborts via the handle on session
     /// termination.
-    fn spawn(&self, kernel: Arc<K>, desc: AgentDescriptor) -> Box<dyn SpawnHandle>;
+    ///
+    /// `state_observer` is the SSOT writer for the session's
+    /// [`AgentState`]. The closure is constructed by
+    /// `ManagedAgentService::start_session` — it captures the
+    /// service's `Arc<AgentRegistry>` and the session's pid, maps
+    /// the runtime-side [`AgentLoopState`] onto [`AgentState`], and
+    /// calls `AgentRegistry::update_state`. The spawn body's only
+    /// role w.r.t. state is to invoke the observer on each
+    /// transition; it MUST NOT write to AgentRegistry through any
+    /// other path.
+    fn spawn(
+        &self,
+        kernel: Arc<K>,
+        desc: AgentDescriptor,
+        state_observer: Arc<dyn Fn(AgentLoopState) + Send + Sync>,
+    ) -> Box<dyn SpawnHandle>;
 }
 
 // ── Service ─────────────────────────────────────────────────────────────
@@ -383,7 +422,34 @@ impl<K: KernelAbi> ManagedAgentService<K> {
             // provider (`spawn_provider: None`) skip the spawn and
             // run procfs-only.
             if let Some(provider) = self.spawn_provider.as_ref() {
-                let handle = provider.spawn(Arc::clone(&self.kernel), desc);
+                // Construct the SSOT state observer. AgentRegistry is
+                // the single writer of AgentState in the runtime path
+                // (see kernel::core::agents::registry::update_state +
+                // can_transition_to FSM); the spawn body calls this
+                // closure on each AgentLoopState transition and the
+                // closure forwards the update through update_state.
+                // InvalidTransition is logged rather than panicked so
+                // an FSM bug in the runtime body surfaces as a warning
+                // instead of taking down the worker thread.
+                let registry = Arc::clone(&self.agent_registry);
+                let pid_for_observer = pid.clone();
+                let observer: Arc<dyn Fn(AgentLoopState) + Send + Sync> =
+                    Arc::new(move |loop_state: AgentLoopState| {
+                        let target = match loop_state {
+                            AgentLoopState::WarmingUp => AgentState::WarmingUp,
+                            AgentLoopState::Ready => AgentState::Ready,
+                            AgentLoopState::Busy => AgentState::Busy,
+                        };
+                        if let Err(e) = registry.update_state(&pid_for_observer, target) {
+                            tracing::warn!(
+                                pid = %pid_for_observer,
+                                state = ?target,
+                                error = %e,
+                                "AgentRegistry.update_state rejected runtime-side transition",
+                            );
+                        }
+                    });
+                let handle = provider.spawn(Arc::clone(&self.kernel), desc, observer);
                 self.spawn_handles.insert(pid.clone(), handle);
             }
         }
@@ -663,11 +729,58 @@ mod tests {
         }
     }
 
+    /// Mock [`SpawnTask`] that invokes the injected `state_observer`
+    /// with a scripted WARMING_UP → READY → BUSY transition sequence,
+    /// then returns a no-op handle. Used by the
+    /// `state_observer_drives_agent_registry_through_loop_states`
+    /// test to verify the service-constructed observer closure is the
+    /// SSOT writer of AgentState.
+    struct ScriptedSpawn;
+    struct NoopHandle;
+    impl SpawnHandle for NoopHandle {
+        fn abort(&self) {}
+    }
+    impl SpawnTask<Kernel> for ScriptedSpawn {
+        fn spawn(
+            &self,
+            _kernel: Arc<Kernel>,
+            _desc: AgentDescriptor,
+            state_observer: Arc<dyn Fn(AgentLoopState) + Send + Sync>,
+        ) -> Box<dyn SpawnHandle> {
+            state_observer(AgentLoopState::WarmingUp);
+            state_observer(AgentLoopState::Ready);
+            state_observer(AgentLoopState::Busy);
+            Box::new(NoopHandle)
+        }
+    }
+
     #[test]
     fn service_has_canonical_name() {
         let (_kernel, _table, svc) = fresh_service();
         assert_eq!(svc.name(), "managed_agent");
         assert_eq!(ManagedAgentService::<Kernel>::NAME, "managed_agent");
+    }
+
+    #[test]
+    fn state_observer_drives_agent_registry_through_loop_states() {
+        let kernel = Arc::new(Kernel::new());
+        let registry = Arc::clone(kernel.agent_registry());
+        let svc = ManagedAgentService::<Kernel>::with_spawn(
+            Arc::clone(&kernel),
+            Arc::clone(&registry),
+            Arc::new(ScriptedSpawn),
+        );
+
+        let resp = svc.start_session(req("scode-standard")).unwrap();
+        let desc = registry
+            .get(&resp.session_id)
+            .expect("AgentRegistry record present");
+        // The scripted observer fired WARMING_UP → READY → BUSY; final
+        // state in the SSOT is BUSY. (start_session already moves
+        // REGISTERED → WARMING_UP before spawn, so a re-fired
+        // WARMING_UP from the observer is a no-op via the from==new
+        // shortcut in update_state.)
+        assert_eq!(desc.state, AgentState::Busy);
     }
 
     #[test]
@@ -1134,13 +1247,21 @@ mod tests {
                 zone_perms: vec![],
             };
 
-            kernel
-                .sys_write(&shortcut, &ctx, payload, 0)
+            // Use UFCS through KernelAbi so we get the single-path
+            // trait wrappers (sys_read_single / sys_write_with_link_depth)
+            // — the inherent Kernel::sys_read/sys_write are now batch-shaped
+            // (&[ReadRequest] / &[WriteRequest]).
+            KernelAbi::sys_write(kernel.as_ref(), &shortcut, &ctx, payload, 0)
                 .expect("sys_write through workspace shortcut DT_LINK");
 
-            let read = kernel
-                .sys_read(&canonical, &ctx, /* timeout_ms */ 0, 0)
-                .expect("sys_read on canonical chat-with-me");
+            let read = KernelAbi::sys_read(
+                kernel.as_ref(),
+                &canonical,
+                &ctx,
+                /* timeout_ms */ 0,
+                0,
+            )
+            .expect("sys_read on canonical chat-with-me");
             let bytes = read.data.expect("stream data present after write");
             assert_eq!(bytes.as_slice(), payload);
         }
@@ -1184,12 +1305,10 @@ mod tests {
                 zone_perms: vec![],
             };
 
-            kernel
-                .sys_write(&shortcut, &ctx, &llm_authored, 0)
+            KernelAbi::sys_write(kernel.as_ref(), &shortcut, &ctx, &llm_authored, 0)
                 .expect("sys_write through workspace shortcut DT_LINK");
 
-            let read = kernel
-                .sys_read(&canonical, &ctx, 0, 0)
+            let read = KernelAbi::sys_read(kernel.as_ref(), &canonical, &ctx, 0, 0)
                 .expect("sys_read on canonical chat-with-me");
             let bytes = read.data.expect("stream data present");
             let json: serde_json::Value =

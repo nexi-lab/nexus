@@ -887,7 +887,6 @@ syscall implementations across per-family submodules:
 | `kernel/mount.rs`   | Mount-table primitives (`add_mount`, `remove_mount`, `install_mount_metastore`, `route`, …). |
 | `kernel/federation.rs` | `DistributedCoordinator` slot accessors, `/__sys__/zones/` procfs synthesisers, blob-fetcher slot plumbing. |
 | `kernel/convenience.rs` | Tier 2 `KernelConvenience` trait composing Tier 1 syscalls — `access`, `mkdir`, `rmdir`, `stat_batch`, `exists_batch`, `get_content_id`, `is_directory`, `get_top_level_mounts`, `set_xattr` / `get_xattr` / `get_xattr_bulk`, Tier 2 `write` (create-or-overwrite) plus Tier 2 single-file `read` / `unlink` defaults. |
-| `kernel/write_buffer.rs` | Kernel-owned write-back buffer for DT_REG writes (§2.2 Write Coalescing Buffer) — strict pass-through and latency-coalesced policies, flush triggers (idle TTL, 4 MiB threshold, explicit barriers). |
 
 Every submodule writes its methods as `impl Kernel { … }` blocks —
 Rust treats each block as a member set of the same `Kernel` type, so

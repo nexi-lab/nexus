@@ -19,8 +19,11 @@
 //!
 //! ## Surface scope
 //!
-//! Trait methods are 1:1 with the inherent `Kernel::sys_*` syscalls —
-//! same name, same signature. No invented syscalls. No
+//! Trait methods correspond to the inherent `Kernel::sys_*` syscalls.
+//! Vectored syscalls (sys_read, sys_write, sys_unlink) expose
+//! single-path convenience wrappers here; the inherent methods accept
+//! `&[ReadRequest]` / `&[WriteRequest]` / `&[UnlinkRequest]` for
+//! batch callers. No invented syscalls. No
 //! kernel-internal struct accessors (`vfs_router_arc`,
 //! `agent_registry`, `distributed_coordinator`, …); services that
 //! need those reach them through the production-only
@@ -73,7 +76,7 @@ pub trait KernelAbi: Send + Sync + 'static {
         recursive: bool,
     ) -> Result<SysUnlinkResult, KernelError>;
 
-    /// Full inherent `sys_setattr` signature (17 args). Kernel-internal
+    /// Full inherent `sys_setattr` signature (21 params). Kernel-internal
     /// types (`Arc<dyn ObjectStore>`, `Arc<dyn MetaStore>`, `Box<dyn
     /// Any + Send + Sync>`) appear here because the trait lives in
     /// the kernel crate. Service callers that don't touch DT_MOUNT

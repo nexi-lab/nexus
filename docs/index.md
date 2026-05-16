@@ -25,12 +25,14 @@ Read the design docs before changing the storage model, service boundaries, or d
 
 - Docs: [Architecture](paths/architecture.md)
 - Deep dive: [Kernel Architecture](architecture/KERNEL-ARCHITECTURE.md)
+- External surface contract: [API/RPC Surface Coverage](architecture/api-rpc-surface-coverage.html)
 
 ## What To Trust
 
 - The quickstart in this docsite is a local embedded path that was verified against this repository.
 - Remote SDK access is a separate path. It requires `nexusd` and a configured gRPC port.
 - Permissions, memory, and federation are deployment capabilities, not implied by the basic local write/read example.
+- External CLI, gRPC, HTTP, MCP, SDK, profile, and driver surfaces should map to an owning story, test, and benchmark classification before docs claim support.
 
 ## Links
 

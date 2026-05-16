@@ -1,0 +1,1240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API/RPC Surface Coverage Architecture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18212b;
+      --muted: #5b6673;
+      --subtle: #f6f8fb;
+      --panel: #ffffff;
+      --line: #d8e0ea;
+      --line-strong: #aebccc;
+      --teal: #007c89;
+      --teal-soft: #dff3f5;
+      --blue: #285c9f;
+      --blue-soft: #e7eef9;
+      --green: #176b45;
+      --green-soft: #ddf4e8;
+      --amber: #946200;
+      --amber-soft: #fff2cc;
+      --red: #b42318;
+      --red-soft: #fde7e4;
+      --shadow: 0 10px 24px rgba(19, 31, 44, 0.08);
+      --radius: 8px;
+      --max-width: 1220px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #ffffff;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    a {
+      color: var(--teal);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    code {
+      background: var(--subtle);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+      padding: 0.08rem 0.25rem;
+    }
+
+    .page {
+      display: grid;
+      gap: 1.15rem;
+      margin: 0 auto;
+      max-width: var(--max-width);
+      padding: 1.25rem;
+    }
+
+    .topbar {
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.25rem;
+      padding-bottom: 0.85rem;
+    }
+
+    .brand {
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 700;
+    }
+
+    .toplinks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      font-size: 0.88rem;
+    }
+
+    .hero {
+      background:
+        linear-gradient(120deg, rgba(255, 255, 255, 0.94), rgba(239, 247, 248, 0.88)),
+        linear-gradient(90deg, #ffffff, #f6f8fb);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.15rem;
+    }
+
+    .eyebrow {
+      color: var(--teal);
+      font-size: 0.76rem;
+      font-weight: 800;
+      letter-spacing: 0;
+      margin: 0 0 0.35rem;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      font-size: clamp(1.8rem, 4vw, 3rem);
+      letter-spacing: 0;
+      line-height: 1.06;
+      margin-bottom: 0.65rem;
+      max-width: 14ch;
+    }
+
+    h2 {
+      font-size: 1.35rem;
+      line-height: 1.2;
+      margin-bottom: 0.45rem;
+    }
+
+    h3 {
+      font-size: 1rem;
+      line-height: 1.25;
+      margin-bottom: 0.35rem;
+    }
+
+    .lead {
+      color: var(--muted);
+      font-size: 1rem;
+      max-width: 70rem;
+    }
+
+    .issue-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.9rem;
+    }
+
+    .issue-links a,
+    .pill,
+    .tag {
+      align-items: center;
+      border-radius: 999px;
+      display: inline-flex;
+      font-size: 0.78rem;
+      font-weight: 700;
+      line-height: 1.2;
+      padding: 0.25rem 0.55rem;
+      white-space: nowrap;
+    }
+
+    .issue-links a,
+    .pill {
+      background: #ffffff;
+      border: 1px solid var(--line);
+      color: var(--ink);
+    }
+
+    .kpis {
+      display: grid;
+      gap: 0.7rem;
+      grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+      margin-top: 1rem;
+    }
+
+    .kpi {
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 0.72rem;
+    }
+
+    .kpi strong {
+      display: block;
+      font-size: 1.35rem;
+      line-height: 1.1;
+    }
+
+    .kpi span {
+      color: var(--muted);
+      display: block;
+      font-size: 0.78rem;
+      margin-top: 0.2rem;
+    }
+
+    .flow {
+      display: grid;
+      gap: 0.55rem;
+      grid-template-columns: repeat(7, minmax(6.5rem, 1fr));
+      margin-top: 1rem;
+    }
+
+    .flow-step {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      min-height: 6.2rem;
+      padding: 0.65rem;
+      position: relative;
+    }
+
+    .flow-step:not(:last-child)::after {
+      color: var(--line-strong);
+      content: "->";
+      font-weight: 800;
+      position: absolute;
+      right: -0.52rem;
+      top: 0.75rem;
+      z-index: 1;
+    }
+
+    .flow-step strong {
+      display: block;
+      font-size: 0.86rem;
+      line-height: 1.25;
+    }
+
+    .flow-step span {
+      color: var(--muted);
+      display: block;
+      font-size: 0.74rem;
+      line-height: 1.3;
+      margin-top: 0.3rem;
+    }
+
+    .toolbar {
+      align-items: center;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      padding: 0.7rem;
+      position: sticky;
+      top: 0.5rem;
+      z-index: 3;
+    }
+
+    .toolbar strong {
+      margin-right: 0.2rem;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .filter,
+    .action {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: var(--ink);
+      cursor: pointer;
+      padding: 0.42rem 0.65rem;
+    }
+
+    .filter:hover,
+    .filter[aria-pressed="true"],
+    .action:hover {
+      background: var(--teal-soft);
+      border-color: var(--teal);
+      color: #073c42;
+    }
+
+    .status-line {
+      color: var(--muted);
+      font-size: 0.83rem;
+      min-height: 1.2rem;
+    }
+
+    .band {
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 0.9rem;
+      padding-top: 1rem;
+    }
+
+    .module-layout {
+      align-items: start;
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: minmax(16rem, 0.9fr) minmax(20rem, 1.1fr);
+    }
+
+    .module-list {
+      display: grid;
+      gap: 0.55rem;
+    }
+
+    .module-button {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      cursor: pointer;
+      display: grid;
+      gap: 0.45rem;
+      padding: 0.78rem;
+      text-align: left;
+      width: 100%;
+    }
+
+    .module-button:hover,
+    .module-button.is-active {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 2px var(--teal-soft);
+    }
+
+    .module-button p {
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.35;
+      margin: 0;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+
+    .tag.ok {
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .tag.warn {
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+
+    .tag.danger {
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .tag.info {
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .inspector {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 1rem;
+      position: sticky;
+      top: 5rem;
+    }
+
+    .inspector-grid {
+      display: grid;
+      gap: 0.65rem;
+      margin-top: 0.85rem;
+    }
+
+    .fact {
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 0.2rem;
+      padding-top: 0.6rem;
+    }
+
+    .fact strong {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+    }
+
+    .fact span {
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .surface-grid {
+      display: grid;
+      gap: 0.5rem;
+      grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+      margin-top: 0.65rem;
+    }
+
+    .surface {
+      background: var(--subtle);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 0.6rem;
+    }
+
+    .surface strong {
+      display: block;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+    }
+
+    .surface span {
+      color: var(--muted);
+      display: block;
+      font-size: 0.82rem;
+      line-height: 1.35;
+      margin-top: 0.25rem;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      border-collapse: collapse;
+      min-width: 62rem;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 0.62rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 0.74rem;
+      text-transform: uppercase;
+    }
+
+    td {
+      font-size: 0.86rem;
+      line-height: 1.35;
+    }
+
+    .test-grid {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    }
+
+    .test-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      display: grid;
+      gap: 0.55rem;
+      padding: 0.78rem;
+    }
+
+    .test-card p {
+      color: var(--muted);
+      font-size: 0.83rem;
+      line-height: 1.35;
+      margin: 0;
+    }
+
+    .test-card ul,
+    .inventory-list {
+      color: var(--muted);
+      margin: 0;
+      padding-left: 1.1rem;
+    }
+
+    .draft-grid {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    .draft {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .draft summary {
+      background: var(--subtle);
+      cursor: pointer;
+      font-weight: 800;
+      padding: 0.72rem 0.85rem;
+    }
+
+    .draft-body {
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 0.6rem;
+      padding: 0.75rem;
+    }
+
+    textarea {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      min-height: 12rem;
+      padding: 0.65rem;
+      resize: vertical;
+      width: 100%;
+    }
+
+    @media (max-width: 64rem) {
+      .flow {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .flow-step:not(:last-child)::after {
+        content: "";
+      }
+
+      .module-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .inspector,
+      .toolbar {
+        position: static;
+      }
+    }
+
+    @media (max-width: 36rem) {
+      .page {
+        padding: 0.85rem;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <nav class="topbar" aria-label="Page links">
+      <div class="brand">Nexus Architecture</div>
+      <div class="toplinks">
+        <a href="../KERNEL-ARCHITECTURE/">Kernel</a>
+        <a href="../backend-architecture/">Backend</a>
+        <a href="../cli-design/">CLI Design</a>
+        <a href="../../">Docs Home</a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <p class="eyebrow">External API/RPC control plane</p>
+      <h1>API/RPC Surface Coverage Architecture</h1>
+      <p class="lead">
+        100% of external surfaces must have an owner, usage path, correctness
+        proof, performance class, and gap policy. Start with the profile, map
+        the module, pick the transport, prove behavior, and close gaps.
+      </p>
+      <div class="issue-links" aria-label="Related issues">
+        <a href="https://github.com/nexi-lab/nexus/issues/4119">#4119 lite</a>
+        <a href="https://github.com/nexi-lab/nexus/issues/4120">#4120 sandbox</a>
+        <a href="https://github.com/nexi-lab/nexus/issues/4121">#4121 full</a>
+        <a href="https://github.com/nexi-lab/nexus/issues/4139">#4139 coverage matrix</a>
+      </div>
+      <div id="kpis" class="kpis" aria-label="Coverage summary"></div>
+      <div id="mental-flow" class="flow" aria-label="Coverage flow"></div>
+    </header>
+
+    <nav class="toolbar" aria-label="Coverage filters">
+      <strong>Filter</strong>
+      <button class="filter" type="button" data-profile="all" aria-pressed="true">All profiles</button>
+      <button class="filter" type="button" data-profile="lite" aria-pressed="false">Lite</button>
+      <button class="filter" type="button" data-profile="sandbox" aria-pressed="false">Sandbox</button>
+      <button class="filter" type="button" data-profile="full" aria-pressed="false">Full</button>
+      <span id="filter-summary" class="status-line"></span>
+    </nav>
+
+    <section class="band" aria-label="Module explorer">
+      <div>
+        <p class="eyebrow">Module-first architecture</p>
+        <h2>Module -> RPC -> Test Evidence</h2>
+        <p class="lead">
+          Select a module group. The inspector shows how that group reaches CLI,
+          typed gRPC, generic gRPC, HTTP, MCP, SDK, profile gates, and driver
+          surfaces.
+        </p>
+      </div>
+      <div class="module-layout">
+        <div id="module-list" class="module-list"></div>
+        <aside class="inspector" aria-live="polite">
+          <p class="eyebrow" id="inspector-owner"></p>
+          <h2 id="inspector-title">Select a module</h2>
+          <p id="inspector-summary"></p>
+          <div id="inspector-profiles" class="tags"></div>
+          <div id="inspector-surfaces" class="surface-grid"></div>
+          <div class="inspector-grid">
+            <div class="fact">
+              <strong>How and when to use</strong>
+              <span id="inspector-use"></span>
+            </div>
+            <div class="fact">
+              <strong>Correctness proof</strong>
+              <span id="inspector-correctness"></span>
+            </div>
+            <div class="fact">
+              <strong>Performance proof</strong>
+              <span id="inspector-performance"></span>
+            </div>
+            <div class="fact">
+              <strong>Gap closure</strong>
+              <span id="inspector-gaps"></span>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="band" aria-label="Transport matrix">
+      <div>
+        <p class="eyebrow">External transport map</p>
+        <h2>CLI, gRPC, HTTP, MCP, SDK, Profiles, Drivers</h2>
+        <p class="lead">
+          #4139 should expand these rows into the exhaustive matrix. A row is
+          not complete until every advertised external name has tests and a
+          performance classification.
+        </p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Module group</th>
+              <th>CLI</th>
+              <th>Typed gRPC</th>
+              <th>Generic gRPC Call</th>
+              <th>HTTP</th>
+              <th>MCP / SDK / Drivers</th>
+              <th>Profile status</th>
+            </tr>
+          </thead>
+          <tbody id="transport-matrix"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="band" aria-label="100 percent external API testing">
+      <div>
+        <p class="eyebrow">100% external API testing</p>
+        <h2>Every external thing gets the same evidence contract.</h2>
+        <p class="lead">
+          The test suite must enumerate each inventory source and prove success,
+          failure, auth/profile behavior, docs examples, and performance class.
+          Missing tests are product gaps, not documentation gaps.
+        </p>
+      </div>
+      <div id="test-grid" class="test-grid"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Inventory</th>
+              <th>Must enumerate</th>
+              <th>Correctness requirement</th>
+              <th>Performance requirement</th>
+              <th>Gap rule</th>
+            </tr>
+          </thead>
+          <tbody id="testing-matrix"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="band" aria-label="Inventory sources">
+      <div>
+        <p class="eyebrow">Inventory sources</p>
+        <h2>Where the coverage matrix must come from</h2>
+      </div>
+      <div class="test-grid">
+        <div class="test-card">
+          <h3>Transport source of truth</h3>
+          <ul class="inventory-list">
+            <li><code>src/nexus/cli/commands/**</code> and lazy command registry</li>
+            <li><code>proto/nexus/grpc/vfs/vfs.proto</code></li>
+            <li><code>src/nexus/remote/rpc_transport.py</code></li>
+            <li><code>src/nexus/grpc/servicer.py</code></li>
+            <li><code>src/nexus/server/_kernel_syscall_dispatch.py</code></li>
+          </ul>
+        </div>
+        <div class="test-card">
+          <h3>Runtime and product source of truth</h3>
+          <ul class="inventory-list">
+            <li><code>@rpc_expose</code> service discovery</li>
+            <li>FastAPI routers under <code>src/nexus/server/api/**</code></li>
+            <li><code>src/nexus/config/tool_profiles.yaml</code></li>
+            <li><code>src/nexus/remote/**</code> SDK and domain wrappers</li>
+            <li><code>src/nexus/contracts/deployment_profile.py</code></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="band" aria-label="Issue drafts">
+      <div>
+        <p class="eyebrow">Issue update drafts</p>
+        <h2>Copyable text for the GitHub epics</h2>
+        <p class="lead">
+          GitHub issue writes may be unavailable from automation. These drafts
+          keep the high-level issue and profile epics aligned with the same
+          architecture contract.
+        </p>
+      </div>
+      <div id="drafts" class="draft-grid"></div>
+      <p id="copy-status" class="status-line" role="status"></p>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const profileOrder = ["lite", "sandbox", "full"];
+
+      const flowSteps = [
+        ["Profile", "Lite, sandbox, or full defines which capabilities exist."],
+        ["Module", "Work is grouped by product module, not by transport."],
+        ["Surface", "CLI, typed gRPC, generic gRPC, HTTP, MCP, SDK, profile gate, driver."],
+        ["Workflow", "The docs say how and when a user should call it."],
+        ["Correctness", "Success, failure, auth, profile, parity, and degraded behavior."],
+        ["Performance", "Hot path, setup path, control plane, or not sensitive."],
+        ["Gap", "Every missing or stale external name links to a build issue."]
+      ];
+
+      const modules = [
+        {
+          id: "startup",
+          name: "Startup / status / profile contract",
+          profiles: ["lite", "sandbox", "full"],
+          owner: "#4119, #4120, #4121",
+          summary: "Boot, readiness, feature discovery, profile identity, and env/status behavior.",
+          use: "Use first in every story so users know which profile is running and which surfaces are supported.",
+          surfaces: {
+            cli: "init, up, status, env, doctor, profile",
+            typedGrpc: "Ping",
+            genericGrpc: "feature/status discovery where exposed",
+            http: "/health, /api/v2/features",
+            extra: "SDK status helpers; profile gates"
+          },
+          correctness: "startup smoke, health, feature discovery, unsupported profile shape",
+          performance: "Setup path; Ping is readiness hot path.",
+          gaps: "#4144 for sandbox up/status/env runtime-state clarity",
+          status: "supported in all three profile epics"
+        },
+        {
+          id: "filesystem",
+          name: "Filesystem / metadata / locks",
+          profiles: ["lite", "sandbox", "full"],
+          owner: "#4119, #4120, #4121",
+          summary: "File content, directories, metadata, locks, rename, delete, and syscall parity.",
+          use: "Use typed gRPC for hot file content. Use generic Call for kernel syscalls and metadata/control methods.",
+          surfaces: {
+            cli: "cat, write, ls, mkdir, rmdir, rm, move, lock",
+            typedGrpc: "Read, Write, Delete",
+            genericGrpc: "read, write, sys_read, sys_write, sys_stat, sys_readdir, sys_rename, sys_unlink",
+            http: "Deprecated /api/nfs/{method}; current file REST only where intentionally supported",
+            extra: "Remote SDK read_file/write_file/delete_file; driver gates"
+          },
+          correctness: "positive read/write, missing path, auth denied, profile unavailable, CLI/RPC parity",
+          performance: "Hot path; needs file read/write/list benchmarks.",
+          gaps: "#4146 for sandbox boot integration; #4148 for auth mismatch",
+          status: "supported in all three profile epics"
+        },
+        {
+          id: "rebac",
+          name: "ReBAC / permissions / sharing",
+          profiles: ["lite", "sandbox", "full"],
+          owner: "#4119, #4120, #4121",
+          summary: "Relationship tuples, permission checks, namespaces, share links, and viewer behavior.",
+          use: "Use for access control, explainability, and share workflows. Mark unavailable surfaces by profile.",
+          surfaces: {
+            cli: "rebac and share commands where present",
+            typedGrpc: "None today",
+            genericGrpc: "rebac_*, namespace methods, sharing methods, dynamic-viewer methods",
+            http: "/api/v2/rebac/* and related sharing routes where present",
+            extra: "SDK permission helpers where exported"
+          },
+          correctness: "allow, deny, explain, namespace missing, auth denied, unsupported route shape",
+          performance: "Permission checks are hot path; tuple/admin flows are control plane.",
+          gaps: "Matrix must link any route/RPC without test evidence.",
+          status: "core support in lite; sandbox boundary support; full product support"
+        },
+        {
+          id: "search",
+          name: "Search / parsing / retrieval",
+          profiles: ["sandbox", "full"],
+          owner: "#4120, #4121",
+          summary: "Glob, grep, semantic search, indexing, stats, parser integration, and retrieval quality.",
+          use: "Use when agents or users need discovery/retrieval. Sandbox HTTP stays narrow unless expanded.",
+          surfaces: {
+            cli: "glob, grep, search, indexing commands",
+            typedGrpc: "None today",
+            genericGrpc: "glob, glob_batch, grep, semantic_search, semantic_search_index, semantic_search_stats",
+            http: "/api/v2/search/* for full; not sandbox HTTP unless allowlist changes",
+            extra: "MCP search tools; SDK search wrappers"
+          },
+          correctness: "query positive/empty/error, parser missing, profile unavailable, relevance smoke",
+          performance: "Query and indexing hot paths.",
+          gaps: "Rows must split grep/glob from semantic indexing and retrieval.",
+          status: "unavailable in lite unless deliberately added"
+        },
+        {
+          id: "mcp",
+          name: "MCP / tool profiles",
+          profiles: ["sandbox", "full"],
+          owner: "#4120, #4121",
+          summary: "Agent-visible tool lists, filtered profiles, mount tools, sync/connect, and tool-call contracts.",
+          use: "Use for agent workflows. Pair every tool with profile visibility and correctness tests.",
+          surfaces: {
+            cli: "mcp and tool/profile inspection commands where present",
+            typedGrpc: "None today",
+            genericGrpc: "mcp_list_mounts, mcp_list_tools, mcp_mount, mcp_unmount, mcp_sync, mcp_connect",
+            http: "/api/v2/mcp/* for full; sandbox HTTP remains allowlisted unless changed",
+            extra: "MCP tool profiles from tool_profiles.yaml"
+          },
+          correctness: "list, call, denied tool, profile filter, optional dependency missing",
+          performance: "Tool list/call latency is hot for agents; mount setup is control plane.",
+          gaps: "Matrix must catch stale tool-profile names.",
+          status: "unavailable in lite unless deliberately added"
+        },
+        {
+          id: "mounts",
+          name: "Mounts / connectors / OAuth credentials",
+          profiles: ["full"],
+          owner: "#4121",
+          summary: "Mount creation, connector discovery, OAuth flow, credentials, and external drivers.",
+          use: "Use when a workflow crosses local storage into external systems or saved mount state.",
+          surfaces: {
+            cli: "mounts, connectors, oauth",
+            typedGrpc: "None today",
+            genericGrpc: "add_mount, remove_mount, list_mounts, list_connectors, save_mount, load_mount, oauth_*",
+            http: "/api/v2/connectors/*, credential routes, OAuth routes",
+            extra: "Mount drivers and connector registry"
+          },
+          correctness: "add/list/remove, connector missing, auth denied, credential unavailable, driver profile gate",
+          performance: "Control plane; connector access latency measured separately.",
+          gaps: "Lite and sandbox should show unavailable-by-design unless a child story says otherwise.",
+          status: "full product surface"
+        },
+        {
+          id: "agents",
+          name: "Agents / workspace / snapshots / versioning",
+          profiles: ["sandbox", "full"],
+          owner: "#4120, #4121",
+          summary: "Agent runtime, workspace registry, snapshots, version history, rollback, and diff.",
+          use: "Use for per-agent workspaces in sandbox and shared workspace/snapshot flows in full.",
+          surfaces: {
+            cli: "agent, workspace, snapshot, versions",
+            typedGrpc: "None today",
+            genericGrpc: "agent_*, workspace_*, snapshot_*, get_version, list_versions, rollback, diff_versions",
+            http: "/api/v2/agents/*, /api/v2/registry/workspaces/*, /api/v2/snapshots/*",
+            extra: "Workspace SDK and snapshot helpers"
+          },
+          correctness: "create/list/restore/diff, missing snapshot, auth denied, profile unavailable",
+          performance: "Lifecycle control plane; snapshot/version list and diff may be scale-sensitive.",
+          gaps: "#4147 for stale memory CLI registry pattern; similar registry gaps should be split out.",
+          status: "sandbox and full"
+        },
+        {
+          id: "admin",
+          name: "Admin / auth / audit / events / governance / federation / pay",
+          profiles: ["full"],
+          owner: "#4121",
+          summary: "Operator, authentication, audit, event, governance, federation, pay, and provisioning APIs.",
+          use: "Use for full hub administration and operator workflows. Mark cloud-only or cluster-only behavior separately.",
+          surfaces: {
+            cli: "admin, auth, audit, events, governance, federation, pay",
+            typedGrpc: "None today",
+            genericGrpc: "admin_*, audit_*, events_*, governance_*, federation_*, pay_*, user provisioning",
+            http: "Relevant /api/v2/* operator routes",
+            extra: "SDK admin/provisioning helpers where exported"
+          },
+          correctness: "auth success/denied, audit export, event list, governance rule, federation/pay unavailable shape",
+          performance: "Control plane with readiness/list/export guardrails.",
+          gaps: "Anything cloud-only must not be silently marked full-supported.",
+          status: "full product surface"
+        }
+      ];
+
+      const testingCards = [
+        {
+          title: "Correctness evidence",
+          tone: "ok",
+          text: "Every advertised external name needs success, expected failure, auth denied, profile unavailable, and stable error-shape coverage.",
+          bullets: ["CLI/RPC parity when both exist", "docs example smoke where user-facing", "degraded optional dependency behavior"]
+        },
+        {
+          title: "Performance evidence",
+          tone: "info",
+          text: "Every row must be classified as hot path, setup path, control plane, or not performance-sensitive.",
+          bullets: ["hot paths need benchmarks or latency guardrails", "setup paths need startup timing", "control plane needs representative list/status/export checks"]
+        },
+        {
+          title: "Gap evidence",
+          tone: "warn",
+          text: "Unsupported, stale, missing, or profile-blocked surfaces stay visible and link to an issue.",
+          bullets: ["missing-needed requires a build issue", "deprecated routes keep migration status", "unavailable-by-design gets a stable error contract"]
+        }
+      ];
+
+      const testingMatrix = [
+        {
+          inventory: "CLI commands",
+          enumerate: "Command modules plus lazy registry entries.",
+          correctness: "command exists, help renders, success path, failure path, profile gate, JSON contract where supported",
+          performance: "hot file commands benchmarked; admin/setup commands classified",
+          gap: "stale registry entries open a gap issue"
+        },
+        {
+          inventory: "Typed gRPC",
+          enumerate: "VFS proto methods and remote transport wrappers.",
+          correctness: "success, missing resource, auth denied, unauthenticated, profile unavailable",
+          performance: "Read/Write/Delete are hot path; Ping is readiness hot path",
+          gap: "typed method without remote/docs/test row blocks closure"
+        },
+        {
+          inventory: "Generic gRPC Call",
+          enumerate: "kernel syscall names, service dispatch names, @rpc_expose discovery.",
+          correctness: "request schema, response schema, unknown method, auth/profile denial, CLI parity when applicable",
+          performance: "sys_read/sys_write/sys_readdir and search calls need benchmarks",
+          gap: "runtime-discovered names without owner stay missing-needed"
+        },
+        {
+          inventory: "HTTP routes",
+          enumerate: "FastAPI routes, sandbox allowlist, deprecated migration routes.",
+          correctness: "route exists, method/status contract, auth, profile gate, OpenAPI/docs example",
+          performance: "product hot routes benchmarked; deprecated routes classified migration-only",
+          gap: "undocumented route or unsupported sandbox route links a gap"
+        },
+        {
+          inventory: "MCP tools",
+          enumerate: "tool profile YAML, service registration, runtime tool list.",
+          correctness: "visible tool list, filtered profile, call success, denied tool, optional dependency missing",
+          performance: "tool list/call latency is agent hot path",
+          gap: "profile mismatch or stale tool name opens a gap"
+        },
+        {
+          inventory: "SDK / remote domain",
+          enumerate: "remote client methods and exported domain wrappers.",
+          correctness: "programmatic parity with CLI/RPC, errors, auth/profile behavior",
+          performance: "wrapper overhead documented for hot paths",
+          gap: "SDK method without transport owner blocks closure"
+        },
+        {
+          inventory: "Profile gates",
+          enumerate: "deployment profile bricks, drivers, unavailable features.",
+          correctness: "supported profile works; unavailable profile returns stable unsupported shape",
+          performance: "profile startup and feature discovery timing",
+          gap: "silent availability drift opens a profile-contract issue"
+        },
+        {
+          inventory: "Mount drivers / connectors",
+          enumerate: "default drivers, connector registry, mount services, OAuth credentials.",
+          correctness: "list/add/remove/connect, credential missing, auth denied, profile unavailable",
+          performance: "connector setup is control plane; connector IO measured separately",
+          gap: "driver visible without tests/docs is missing-needed"
+        }
+      ];
+
+      const issueDrafts = [
+        {
+          title: "#4139 shared architecture issue",
+          body: `## High-level API/RPC architecture coverage contract
+
+This issue should own the 100% external-surface coverage matrix used by #4119, #4120, and #4121.
+
+Every row must map:
+
+profile -> module/group -> transport surface -> user workflow -> correctness tests -> performance classification -> gap issue
+
+External inventory must include CLI commands, typed gRPC methods, generic gRPC Call names, HTTP routes, MCP tools, SDK/remote domain methods, profile gates, runtime-discovered @rpc_expose methods, and mount drivers/connectors.
+
+Required columns:
+- Surface type
+- External name
+- Owning module/group
+- Owning story issue
+- Supported profiles
+- CLI/gRPC/HTTP/MCP/SDK mapping
+- Example or user workflow
+- Correctness test link
+- Performance class and benchmark link when relevant
+- Gap issue when unsupported, stale, missing, or profile-blocked
+
+Correctness coverage must include positive flow, expected failure, auth denied, profile-unavailable behavior, CLI/RPC parity where both exist, stable unsupported error shape, and degraded optional-dependency behavior.
+
+Performance coverage must classify each row as hot path, setup path, control plane, or not performance-sensitive. Hot paths need benchmarks or an explicit latency guardrail.`
+        },
+        {
+          title: "#4119 lite profile issue",
+          body: `## Architecture scope clarification
+
+This lite-profile epic should consume #4139 and be written as module-to-surface coverage:
+
+lite profile -> module/group -> CLI/gRPC/HTTP/MCP/SDK surface -> how/when to use -> correctness tests -> performance classification -> gap issue
+
+Lite should focus on startup, health/features, filesystem, metadata, ReBAC foundation, cache, scheduler, and operational basics. Anything outside lite, such as search, MCP, connectors, workspaces, agents, pay, and governance-heavy surfaces, should be marked unavailable-by-design or linked to a gap issue.
+
+Acceptance should require 100% external rows for lite-supported surfaces, explicit gap rows for stale or unavailable surfaces, correctness tests, and benchmarks/classification for hot file and metadata paths.`
+        },
+        {
+          title: "#4120 sandbox profile issue",
+          body: `## Architecture scope clarification
+
+This sandbox-profile epic should consume #4139 and make the agent-runtime boundary explicit:
+
+sandbox profile -> module/group -> CLI/gRPC/HTTP/MCP/SDK surface -> how/when to use -> correctness tests -> performance classification -> gap issue
+
+Sandbox should focus on local workspace filesystem, ReBAC boundaries, search, MCP tool profiles, resource limits, optional hub federation, startup/status/env behavior, and degraded behavior.
+
+Important transport rule: sandbox HTTP is intentionally narrow today: /health, /api/v2/features, and docs/openapi. File/search/MCP/workspace behavior should be documented through CLI, gRPC, SDK, and MCP unless a child issue intentionally expands the HTTP allowlist.
+
+Known gap issues include #4144, #4146, #4147, and #4148. Acceptance should require 100% sandbox-supported rows, correctness tests, and performance classification for startup, hot file paths, MCP/search, and workspace operations.`
+        },
+        {
+          title: "#4121 full profile issue",
+          body: `## Architecture scope clarification
+
+This full-profile epic should consume #4139 and represent the complete hub surface:
+
+full profile -> module/group -> CLI/gRPC/HTTP/MCP/SDK surface -> how/when to use -> correctness tests -> performance classification -> gap issue
+
+Full should cover filesystem/metadata/locks, ReBAC/permissions/sharing, search/parsing/retrieval, MCP/tool profiles, mounts/connectors/OAuth credentials, agents/workspace/snapshots/versioning, and admin/auth/audit/events/governance/federation/pay where present.
+
+HTTP should be treated as current product surface only where routes are intentionally supported. Deprecated or migration-only routes, including /api/nfs/{method}, should remain visible in the matrix with migration/sunset status and should not become the default architecture path.
+
+Acceptance should require 100% full-supported rows, explicit gaps for stale/missing surfaces, correctness tests, and performance classification or benchmarks for hot file, search, mount, agent/workspace, and hub control-plane paths.`
+        }
+      ];
+
+      const qs = (selector) => document.querySelector(selector);
+      const qsa = (selector) => Array.from(document.querySelectorAll(selector));
+      const state = { profile: "all", moduleId: modules[0].id };
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function badge(text, tone = "ok") {
+        return `<span class="tag ${tone}">${escapeHtml(text)}</span>`;
+      }
+
+      function profileTone(module, profile) {
+        if (module.profiles.includes(profile)) {
+          return "ok";
+        }
+        if (profile === "lite" && ["search", "mcp"].includes(module.id)) {
+          return "warn";
+        }
+        return "danger";
+      }
+
+      function visibleModules() {
+        if (state.profile === "all") {
+          return modules;
+        }
+        return modules.filter((module) => module.profiles.includes(state.profile));
+      }
+
+      function selectedModule() {
+        return modules.find((module) => module.id === state.moduleId) || visibleModules()[0];
+      }
+
+      function renderKpis() {
+        const issueCount = new Set(modules.flatMap((module) => module.owner.split(", "))).size;
+        qs("#kpis").innerHTML = [
+          ["100%", "external API rows require evidence"],
+          [modules.length, "module groups in the architecture map"],
+          [testingMatrix.length, "inventory classes to enumerate"],
+          [issueCount, "profile and shared issue owners"]
+        ].map(([value, label]) => `
+          <div class="kpi">
+            <strong>${escapeHtml(value)}</strong>
+            <span>${escapeHtml(label)}</span>
+          </div>
+        `).join("");
+      }
+
+      function renderFlow() {
+        qs("#mental-flow").innerHTML = flowSteps.map(([title, text]) => `
+          <div class="flow-step">
+            <strong>${escapeHtml(title)}</strong>
+            <span>${escapeHtml(text)}</span>
+          </div>
+        `).join("");
+      }
+
+      function renderModuleList() {
+        const visible = visibleModules();
+        if (!visible.some((module) => module.id === state.moduleId)) {
+          state.moduleId = visible[0].id;
+        }
+
+        qs("#module-list").innerHTML = visible.map((module) => {
+          const profiles = profileOrder.map((profile) => badge(profile, profileTone(module, profile))).join("");
+          return `
+            <button class="module-button ${module.id === state.moduleId ? "is-active" : ""}" type="button" data-module="${module.id}">
+              <h3>${escapeHtml(module.name)}</h3>
+              <p>${escapeHtml(module.summary)}</p>
+              <div class="tags">${profiles}</div>
+            </button>
+          `;
+        }).join("");
+
+        qsa("[data-module]").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.moduleId = button.dataset.module;
+            renderAll();
+          });
+        });
+
+        qs("#filter-summary").textContent = `${visible.length} module groups shown`;
+      }
+
+      function renderInspector() {
+        const module = selectedModule();
+        const surfaceLabels = {
+          cli: "CLI",
+          typedGrpc: "Typed gRPC",
+          genericGrpc: "Generic gRPC Call",
+          http: "HTTP",
+          extra: "MCP / SDK / Drivers"
+        };
+
+        qs("#inspector-owner").textContent = module.owner;
+        qs("#inspector-title").textContent = module.name;
+        qs("#inspector-summary").textContent = module.summary;
+        qs("#inspector-profiles").innerHTML = profileOrder
+          .map((profile) => badge(profile, profileTone(module, profile)))
+          .join("");
+        qs("#inspector-surfaces").innerHTML = Object.entries(surfaceLabels).map(([key, label]) => `
+          <div class="surface">
+            <strong>${escapeHtml(label)}</strong>
+            <span>${escapeHtml(module.surfaces[key])}</span>
+          </div>
+        `).join("");
+        qs("#inspector-use").textContent = module.use;
+        qs("#inspector-correctness").textContent = module.correctness;
+        qs("#inspector-performance").textContent = module.performance;
+        qs("#inspector-gaps").textContent = module.gaps;
+      }
+
+      function renderTransportMatrix() {
+        qs("#transport-matrix").innerHTML = visibleModules().map((module) => `
+          <tr>
+            <td><strong>${escapeHtml(module.name)}</strong><br><span class="status-line">${escapeHtml(module.owner)}</span></td>
+            <td>${escapeHtml(module.surfaces.cli)}</td>
+            <td>${escapeHtml(module.surfaces.typedGrpc)}</td>
+            <td>${escapeHtml(module.surfaces.genericGrpc)}</td>
+            <td>${escapeHtml(module.surfaces.http)}</td>
+            <td>${escapeHtml(module.surfaces.extra)}</td>
+            <td>${escapeHtml(module.status)}</td>
+          </tr>
+        `).join("");
+      }
+
+      function renderTesting() {
+        qs("#test-grid").innerHTML = testingCards.map((card) => `
+          <div class="test-card">
+            <div>${badge(card.title, card.tone)}</div>
+            <h3>${escapeHtml(card.title)}</h3>
+            <p>${escapeHtml(card.text)}</p>
+            <ul>${card.bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          </div>
+        `).join("");
+
+        qs("#testing-matrix").innerHTML = testingMatrix.map((row) => `
+          <tr>
+            <td><strong>${escapeHtml(row.inventory)}</strong></td>
+            <td>${escapeHtml(row.enumerate)}</td>
+            <td>${escapeHtml(row.correctness)}</td>
+            <td>${escapeHtml(row.performance)}</td>
+            <td>${escapeHtml(row.gap)}</td>
+          </tr>
+        `).join("");
+      }
+
+      function renderDrafts() {
+        qs("#drafts").innerHTML = issueDrafts.map((draft, index) => `
+          <details class="draft">
+            <summary>${escapeHtml(draft.title)}</summary>
+            <div class="draft-body">
+              <textarea id="draft-${index}" readonly>${escapeHtml(draft.body)}</textarea>
+              <button class="action" type="button" data-copy="draft-${index}">Copy draft</button>
+            </div>
+          </details>
+        `).join("");
+
+        qsa("[data-copy]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            const textarea = qs(`#${button.dataset.copy}`);
+            textarea.select();
+            try {
+              await navigator.clipboard.writeText(textarea.value);
+              qs("#copy-status").textContent = "Draft copied.";
+            } catch (error) {
+              document.execCommand("copy");
+              qs("#copy-status").textContent = "Draft selected and copied with browser fallback.";
+            }
+          });
+        });
+      }
+
+      function bindFilters() {
+        qsa("[data-profile]").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.profile = button.dataset.profile;
+            qsa("[data-profile]").forEach((candidate) => {
+              candidate.setAttribute("aria-pressed", String(candidate === button));
+            });
+            renderAll();
+          });
+        });
+      }
+
+      function renderAll() {
+        renderModuleList();
+        renderInspector();
+        renderTransportMatrix();
+      }
+
+      renderKpis();
+      renderFlow();
+      renderTesting();
+      renderDrafts();
+      bindFilters();
+      renderAll();
+    })();
+  </script>
+</body>
+</html>

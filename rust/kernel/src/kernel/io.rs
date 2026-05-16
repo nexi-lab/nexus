@@ -2887,7 +2887,12 @@ impl Kernel {
     /// the root zone (global namespace).
     ///
     /// Returns Vec of (child_path, entry_type) tuples.
-    pub fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+    pub fn sys_readdir(
+        &self,
+        parent_path: &str,
+        zone_id: &str,
+        is_admin: bool,
+    ) -> Vec<(String, u8)> {
         if validate_path_fast(parent_path).is_err() {
             return Vec::new();
         }
@@ -3048,7 +3053,7 @@ impl Kernel {
         }
 
         // Normal readdir with optional pagination.
-        let all = self.readdir(parent_path, zone_id, is_admin);
+        let all = self.sys_readdir(parent_path, zone_id, is_admin);
 
         if limit == 0 {
             return super::ReadDirResult {

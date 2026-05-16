@@ -2353,8 +2353,8 @@ impl PyKernel {
     }
 
     #[pyo3(signature = (parent_path, zone_id, is_admin=false))]
-    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
-        self.inner.readdir(parent_path, zone_id, is_admin)
+    fn sys_readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+        self.inner.sys_readdir(parent_path, zone_id, is_admin)
     }
 
     /// Simplified sys_read that takes (path, zone_id) — creates a minimal

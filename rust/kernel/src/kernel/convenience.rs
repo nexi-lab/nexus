@@ -104,9 +104,9 @@ pub trait KernelConvenience: KernelAbi {
             .unwrap_or(false)
     }
 
-    /// Top-level mount names: `readdir("/")` filtered to DT_MOUNT / DT_EXTERNAL_STORAGE.
+    /// Top-level mount names: `sys_readdir("/")` filtered to DT_MOUNT / DT_EXTERNAL_STORAGE.
     fn get_top_level_mounts(&self, zone_id: &str) -> Vec<String> {
-        let entries = self.readdir("/", zone_id, true);
+        let entries = self.sys_readdir("/", zone_id, true);
         let mut names: Vec<String> = entries
             .into_iter()
             .filter(|(_, et)| *et == DT_MOUNT || *et == DT_EXTERNAL_STORAGE)

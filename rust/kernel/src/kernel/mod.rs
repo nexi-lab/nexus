@@ -3714,14 +3714,14 @@ mod tests {
                 Duration::from_secs(60),
             );
             assert_eq!(
-                k.readdir("/data", "root", false),
+                k.sys_readdir("/data", "root", false),
                 vec![("/data/stale.txt".to_string(), DT_REG)]
             );
 
             let ctx = OperationContext::new("test", "root", true, None, true);
             k.sys_mkdir("/data/fresh", &ctx, false, false).unwrap();
 
-            let entries = k.readdir("/data", "root", false);
+            let entries = k.sys_readdir("/data", "root", false);
             assert!(entries.contains(&("/data/fresh".to_string(), DT_DIR)));
             assert!(!entries.contains(&("/data/stale.txt".to_string(), DT_REG)));
         }

@@ -251,7 +251,7 @@ impl<K: KernelAbi> AcpService<K> {
     pub(crate) fn list_agent_configs(&self, zone_id: Option<&str>) -> Vec<Value> {
         let zone_id = zone_id.unwrap_or(&self.default_zone);
         let agents_dir = format!("/{zone_id}/agents");
-        let entries = self.kernel.readdir(&agents_dir, zone_id, true);
+        let entries = self.kernel.sys_readdir(&agents_dir, zone_id, true);
         let mut out = Vec::new();
         for (child_path, _etype) in entries {
             // readdir returns full child paths; append agent.json to
@@ -336,7 +336,7 @@ impl<K: KernelAbi> AcpService<K> {
     pub(crate) fn get_call_history(&self, zone_id: Option<&str>, limit: usize) -> Vec<Value> {
         let zone_id = zone_id.unwrap_or(&self.default_zone);
         let proc_dir = format!("/{zone_id}/proc");
-        let entries = self.kernel.readdir(&proc_dir, zone_id, true);
+        let entries = self.kernel.sys_readdir(&proc_dir, zone_id, true);
         let mut out = Vec::new();
         for (child_path, _etype) in entries {
             // readdir returns full child paths like /{zone}/proc/{pid}.

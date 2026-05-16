@@ -631,9 +631,26 @@ WalStreamCore  (Command::AppendStreamEntry → zone Raft cluster)
       └─► registered with StreamManager at /__sys__/audit/traces/
 ```
 
-### 5.3 Auto-wiring on zone create / join
+### 5.3 Auto-wiring on zone mount
 
-`zone_create(zone_id, audit=true)` and `zone_join(zone_id, as_learner, audit=true)` are kernel syscalls that auto-wire the AuditHook from Rust before any `sys_*` mutation can race in. The legacy Python wire-up (`_init_audit_hook` in `nexus/__init__.py`) handles the boot-time root-zone hook for federation deployments; every other zone gets its hook through the syscall flag.
+Zone creation is a raft-layer operation, not a syscall — voters in a
+zone's raft cluster agree on the zone's existence through
+`DistributedCoordinator::create_zone`. The kernel-facing entry point
+for an existing zone showing up on the local kernel is
+`kernel.sys_setattr(mount_path, DT_MOUNT, …, zone_id, …)`, which
+registers the mount with `VFSRouter` and dispatches a
+`FileEvent { event_type: FileEventType::Mount, path, zone_id, … }`
+(`rust/kernel/src/core/dispatch/mod.rs:54` for the enum variant,
+`:288` for the `MutationObserver` trait).
+
+`services::audit::install_root` (called once at boot) installs a
+`MutationObserver` that filters on `FileEventType::Mount.bit()`. Each
+fired event maps to a per-zone `install_for_zone(zone_id)` call,
+guarded by a `Mutex<HashSet<String>>` so a re-mount is a harmless
+no-op. New zones therefore wire their AuditHook + DT_STREAM the
+moment they mount on this kernel, with no zone-creation API
+duplication; the install path is purely syscall-driven. See §8 for
+the dispatch lifecycle the observer hooks into.
 
 ### 5.4 Central audit zone
 
@@ -759,6 +776,8 @@ syscall (sys_write, sys_read, …)
     └─► [OBSERVE] MutationObserver::on_mutation(FileEvent)
               → StreamEventObserver writes to DT_STREAM (sys_watch wakeup)
               → FileWatcher wakes sys_watch subscribers
+              → AuditZoneAutoWire (filter FileEventType::Mount) installs
+                AuditHook for the newly-mounted zone (§5.3)
 ```
 
 The clone gate keeps the hot path allocation-free for writes that

@@ -10,7 +10,6 @@
 use std::sync::atomic::Ordering;
 
 use crate::cache::index_cache::{ttl_for_backend, IndexCacheKey, IndexKind};
-use crate::dispatch::ops_registry::{BackendKind, FileType};
 use crate::dispatch::{
     DeleteHookCtx, FileEventType, HookContext, HookIdentity, Permission, ReadHookCtx,
     RenameHookCtx, WriteHookCtx,
@@ -19,8 +18,8 @@ use crate::lock_manager::{LockManager, LockMode};
 use crate::meta_store::{FileMetadata, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 
 use super::{
-    validate_path_fast, Kernel, KernelError, OpMetadataResult, OperationContext, StatResult,
-    SysCopyResult, SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult, SysUnlinkResult,
+    validate_path_fast, Kernel, KernelError, OperationContext, StatResult, SysCopyResult,
+    SysMkdirResult, SysReadResult, SysRenameResult, SysRmdirResult, SysUnlinkResult,
     SysWriteResult,
 };
 
@@ -173,39 +172,6 @@ impl Kernel {
         offset: u64,
     ) -> Result<SysReadResult, KernelError> {
         self.sys_read_single(path, ctx, 1, timeout_ms, offset)
-    }
-
-    pub fn op_metadata_for_path(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-    ) -> Result<OpMetadataResult, KernelError> {
-        validate_path_fast(path)?;
-        self.check_permission(path, Permission::Read, ctx)?;
-
-        let route = self
-            .vfs_router
-            .route(path, &ctx.zone_id)
-            .map_err(|_| KernelError::FileNotFound(path.to_string()))?;
-        let stat = self.sys_stat(path, &ctx.zone_id);
-
-        let mime_type = stat
-            .as_ref()
-            .and_then(|stat| (!stat.mime_type.is_empty()).then(|| stat.mime_type.clone()));
-        let backend_name = route
-            .backend
-            .as_ref()
-            .map(|backend| backend.name().to_string())
-            .unwrap_or_default();
-        let filetype = FileType::from_path_and_mime(path, mime_type.as_deref());
-        let backend = BackendKind::from_backend_name(&backend_name);
-
-        Ok(OpMetadataResult {
-            filetype,
-            backend,
-            mime_type,
-            backend_name,
-        })
     }
 
     /// Full single-read with auth + hooks + DT_LINK follow.

@@ -17,10 +17,6 @@
 
 use crate::cache::index_cache::IndexCache;
 use crate::core::permission_cache::PermissionLeaseCache;
-use crate::dispatch::ops_registry::{
-    BackendKind, CatHandlerKind, FileType, FingerprintHandlerKind, GrepHandlerKind, OpHandler,
-    OpKey, OpName, OpsRegistry,
-};
 use crate::dispatch::{MutationObserver, PermissionProvider, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
@@ -207,20 +203,6 @@ pub struct WriteRequest {
 pub struct UnlinkRequest {
     pub path: String,
     pub recursive: bool,
-}
-
-pub struct SysCatResult {
-    pub data: Vec<u8>,
-    pub handler: String,
-    pub filetype: FileType,
-    pub backend: BackendKind,
-}
-
-pub struct OpMetadataResult {
-    pub filetype: FileType,
-    pub backend: BackendKind,
-    pub mime_type: Option<String>,
-    pub backend_name: String,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -704,7 +686,6 @@ pub struct Kernel {
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     index_cache: IndexCache,
-    pub(crate) ops_registry: OpsRegistry,
     // Per-mount metastores now live inside `VFSRouter::entries` as
     // `MountEntry::metastore: Option<Arc<dyn MetaStore>>` (our v20
     // SSOT cleanup — kept against develop's legacy split map).
@@ -865,7 +846,6 @@ impl Kernel {
             agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
             index_cache: IndexCache::default(),
-            ops_registry: Self::default_ops_registry(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: RwLock::new(NativeHookRegistry::new()),
@@ -902,44 +882,6 @@ impl Kernel {
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
         k
-    }
-
-    fn default_ops_registry() -> OpsRegistry {
-        let mut registry = OpsRegistry::new();
-        registry
-            .register(
-                OpKey::new(OpName::new("cat"), None, None),
-                OpHandler::Cat(CatHandlerKind::Default),
-            )
-            .expect("default cat handler registration must be unique");
-        registry
-            .register(
-                OpKey::new(OpName::new("cat"), Some(FileType::Json), None),
-                OpHandler::Cat(CatHandlerKind::JsonPretty),
-            )
-            .expect("json cat handler registration must be unique");
-        registry
-            .register(
-                OpKey::new(OpName::new("grep"), None, None),
-                OpHandler::Grep(GrepHandlerKind::Default),
-            )
-            .expect("default grep handler registration must be unique");
-        registry
-            .register(
-                OpKey::new(OpName::new("fingerprint"), None, Some(BackendKind::S3)),
-                OpHandler::Fingerprint(FingerprintHandlerKind::S3),
-            )
-            .expect("s3 fingerprint handler registration must be unique");
-        registry
-    }
-
-    pub fn resolve_op_handler(
-        &self,
-        op: &str,
-        filetype: &FileType,
-        backend: &BackendKind,
-    ) -> Option<OpHandler> {
-        self.ops_registry.resolve(op, filetype, backend)
     }
 
     // ── Lock Manager wiring ──────────────────────────────────────────

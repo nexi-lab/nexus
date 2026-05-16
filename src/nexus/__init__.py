@@ -168,88 +168,28 @@ def __getattr__(name: str) -> Any:
 
 
 def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
-    """Return a ``PyKernel`` with the redb metastore opened (or in-memory).
+    """Return a KernelClient connected to a nexus-cluster process.
 
-    Replaces the historical ``_open_local_metastore`` factory which used
-    to wrap the kernel in a ``RustMetastoreProxy``. After the W3 SSOT
-    cleanup the kernel handle is the SSOT — every caller used to
-    immediately reach ``proxy._rust_kernel`` anyway, so we hand back the
-    kernel directly.
+    Spawns a local ``nexus-cluster`` subprocess and connects via gRPC.
+    The kernel manages its own metastore internally.
 
     Args:
         metadata_path: Filesystem path for the redb store. ``":memory:"``
-            is the SQLite-style sentinel for "no on-disk file"; the
-            kernel keeps its boot-time tempdir-backed ``LocalMetaStore``
-            so the in-memory mode still has a working metastore for the
-            session.
-        kernel: Optional pre-constructed ``PyKernel``. When ``None``, a
-            fresh kernel is built and federation/transport wiring is
-            installed.
+            means the kernel uses a tempdir-backed in-memory metastore.
+        kernel: Optional pre-constructed kernel client (for testing).
 
     Returns:
-        A ``PyKernel`` instance ready for ``kernel.metastore_*``
-        operations.
+        A ``KernelClient`` instance ready for syscall operations.
     """
-    from pathlib import Path
-
-    # ``":memory:"`` is the SQLite-style sentinel for "no on-disk file —
-    # in-memory only".  Skip ``Path`` construction in that case: on
-    # Windows the colon is parsed as a drive separator, so
-    # ``Path(":memory:").with_suffix(".redb")`` yields the syntactically
-    # invalid ``:memory:.redb`` and any later ``str(_redb_path)`` raises
-    # ``IOError`` from redb.  ``Kernel::new()`` wires a tempdir-backed
-    # LocalMetaStore as the boot-time default, so an in-memory mode
-    # works without any path at all.
-    _redb_path = None if metadata_path == ":memory:" else Path(metadata_path).with_suffix(".redb")
-
-    if kernel is None:
-        from nexus_runtime import PyKernel as _Kernel
-
-        kernel = _Kernel()
-        # Phase 4 (full): drain the federation init's blob-fetcher slot
-        # + install the real `PeerBlobClient` (replaces the kernel's
-        # boot-time Noop default).  Idempotent — no-op if the slot
-        # was never stashed (federation disabled).
-        # Skip during pytest — xdist workers compete for the same gRPC
-        # port causing hangs and preventing clean process exit.
-        import os as _os_wiring
-
-        if "pytest" not in __import__("sys").modules:
-            try:
-                import nexus_runtime as _nk
-
-                # Federation wiring runs FIRST so init_from_env can stash the
-                # raft-side `BlobFetcherSlot` into the kernel; the transport
-                # install hook below drains that slot and installs the real
-                # fetcher.  Reverse order would leave the slot empty when
-                # transport drains, falling back to "blob fetcher not installed".
-                _nk.install_federation_wiring(kernel)
-                _nk.install_transport_wiring(kernel)
-            except Exception as _wiring_exc:
-                import logging as _logging
-
-                _logging.getLogger(__name__).warning(
-                    "install_transport_wiring/install_federation_wiring failed "
-                    "(federation peer-blob fetch will fall back to Noop): %s",
-                    _wiring_exc,
-                )
-
-    if _redb_path is None:
+    if kernel is not None:
         return kernel
-    try:
-        if _redb_path.exists() or _redb_path.parent.exists():
-            kernel.set_metastore_path(str(_redb_path))
-        return kernel
-    except Exception as e:
-        # An existing on-disk store that we can't open is a hard error:
-        # silently falling back would hide previously written data.
-        if _redb_path.exists():
-            raise RuntimeError(
-                f"set_metastore_path failed for existing {_redb_path}: {e}. "
-                "Refusing to fall back to a different metadata format. "
-                "Rebuild: cd rust/kernel && maturin develop --release"
-            ) from e
-        raise
+
+    from nexus.remote.kernel_client import KernelClient
+
+    _meta = None if metadata_path == ":memory:" else metadata_path
+    client = KernelClient(metadata_path=_meta)
+    client.open()
+    return client
 
 
 # Backwards-compatible alias — pre-W3b callers imported the old name.

@@ -253,72 +253,27 @@ class NexusFS(  # type: ignore[misc]
 
             self._transport_pool = _RPCTransportPool()
 
-        # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
+        # ── Kernel (gRPC client to nexus-cluster) ──
         # Constructed BEFORE DriverLifecycleCoordinator so DLC sees the
         # kernel from birth (VFSRouter is the Rust SSOT for routing).
-        from nexus._rust_compat import RUST_AVAILABLE
-
         self._kernel = None
-        if RUST_AVAILABLE:
-            try:
-                if _provided_kernel is not None:
-                    # Caller already owns a kernel (typically from
-                    # ``nexus.connect()`` or a previous NexusFS) — reuse
-                    # it rather than constructing a parallel one. We
-                    # assume ``set_metastore_path`` is already in place
-                    # if ``_metastore_path`` is None.
-                    self._kernel = _provided_kernel
-                    if _metastore_path is not None:
-                        self._kernel.set_metastore_path(str(_metastore_path))
-                else:
-                    from nexus_runtime import PyKernel as _Kernel
-
-                    self._kernel = _Kernel()
-                    # Phase 4 (full): drain federation's blob-fetcher
-                    # slot + install real `PeerBlobClient` (idempotent).
-                    # Log on failure so a stale wheel surfaces in the
-                    # logs rather than silently disabling federation.
-                    # Skip federation wiring during pytest — parallel xdist
-                    # workers compete for the same gRPC port causing 8+ min
-                    # hangs. Federation is an integration-level concern; unit
-                    # tests pass a pre-built kernel via _provided_kernel instead.
-                    if "pytest" not in __import__("sys").modules:
-                        try:
-                            import nexus_runtime as _nk
-
-                            _nk.install_federation_wiring(self._kernel)
-                            _nk.install_transport_wiring(self._kernel)
-                        except Exception as _wiring_exc:
-                            logger.warning(
-                                "install_transport_wiring/install_federation_wiring "
-                                "failed (federation peer-blob fetch will fall back "
-                                "to Noop): %s",
-                                _wiring_exc,
-                            )
-                    # Wire redb metastore — ALL reads and writes go through
-                    # Rust redb. When the caller handed us a path, open
-                    # against it. When ``None`` was passed, fall back to a
-                    # tempfile redb (suitable for fixtures that don't care
-                    # about on-disk persistence).
-                    if _metastore_path is None:
-                        import os
-                        import tempfile
-
-                        fd, tmp_path = tempfile.mkstemp(suffix=".redb")
-                        os.close(fd)
-                        _metastore_path = tmp_path
-
+        try:
+            if _provided_kernel is not None:
+                # Caller already owns a kernel (typically from
+                # ``nexus.connect()`` or a previous NexusFS) — reuse
+                # it rather than constructing a parallel one.
+                self._kernel = _provided_kernel
+                if _metastore_path is not None:
                     self._kernel.set_metastore_path(str(_metastore_path))
-                    # All kernel wiring that depends on other NexusFS attributes
-                    # (_mount_table, _vfs_lock_manager) is deferred to after
-                    # __init__ completes — see "Deferred kernel wiring" block below.
-            except Exception as exc:
-                import logging as _logging
+            else:
+                from nexus.remote.kernel_client import KernelClient
 
-                _logging.getLogger(__name__).warning(
-                    "Kernel init failed — falling back to Python path: %s", exc
-                )
-                self._kernel = None
+                _meta = str(_metastore_path) if _metastore_path else None
+                self._kernel = KernelClient(metadata_path=_meta)
+                self._kernel.open()
+        except Exception as exc:
+            logger.warning("Kernel init failed — falling back to kernel=None: %s", exc)
+            self._kernel = None
 
         from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 

@@ -9,16 +9,48 @@
 //! Uses `libc::pread` / `libc::pwrite` — atomic, no seek state, thread-safe.
 //! Each `FileHandle` owns its `RawFd` and closes it on Drop.
 
-use dashmap::DashMap;
-use std::os::unix::io::RawFd;
 use std::path::Path;
+
+// ── Non-Unix stub ─────────────────────────────────────────────────────
+// FDT is Unix-only (libc::pread/pwrite). On Windows the struct is a
+// no-op: all reads miss, writes are no-ops. Production targets Linux/macOS.
+
+#[cfg(not(unix))]
+pub(crate) struct FileDescriptorTable;
+
+#[cfg(not(unix))]
+impl FileDescriptorTable {
+    pub(crate) fn new() -> Self {
+        Self
+    }
+    pub(crate) fn register(&self, _vfs_path: &str, _physical_path: &Path) -> bool {
+        false
+    }
+    pub(crate) fn pread(&self, _vfs_path: &str) -> Option<Vec<u8>> {
+        None
+    }
+    pub(crate) fn remove(&self, _vfs_path: &str) {}
+    pub(crate) fn rename(&self, _old_path: &str, _new_path: &str) {}
+    #[allow(dead_code)]
+    pub(crate) fn close_all(&self) {}
+}
+
+// ── Unix implementation ───────────────────────────────────────────────
+
+#[cfg(unix)]
+use dashmap::DashMap;
+#[cfg(unix)]
+use std::os::unix::io::RawFd;
+#[cfg(unix)]
 use std::sync::Arc;
 
+#[cfg(unix)]
 /// Owns a raw file descriptor; closes on drop.
 struct FileHandle {
     fd: RawFd,
 }
 
+#[cfg(unix)]
 impl FileHandle {
     /// Open `path` with O_RDWR. Returns `None` if open fails.
     fn open(path: &Path) -> Option<Self> {
@@ -56,6 +88,7 @@ impl FileHandle {
     }
 }
 
+#[cfg(unix)]
 impl Drop for FileHandle {
     fn drop(&mut self) {
         unsafe {
@@ -65,9 +98,12 @@ impl Drop for FileHandle {
 }
 
 // SAFETY: RawFd is an integer; pread/pwrite are thread-safe (no shared seek cursor).
+#[cfg(unix)]
 unsafe impl Send for FileHandle {}
+#[cfg(unix)]
 unsafe impl Sync for FileHandle {}
 
+#[cfg(unix)]
 /// Kernel-internal file descriptor table — pre-opened fds for PAS backends.
 ///
 /// Lifecycle:
@@ -80,6 +116,7 @@ pub(crate) struct FileDescriptorTable {
     fds: DashMap<String, Arc<FileHandle>>,
 }
 
+#[cfg(unix)]
 impl FileDescriptorTable {
     pub(crate) fn new() -> Self {
         Self {

@@ -689,15 +689,15 @@ def create_async_files_router(
                         _ss.validate_path_available(transaction_id, _norm_path)
                         # Capture original state for rollback
                         try:
-                            _orig_meta = fs._kernel.get(_norm_path)
+                            _orig_meta = fs._kernel.sys_stat(
+                                _norm_path, getattr(fs, "_zone_id", "root")
+                            )
                             if _orig_meta:
                                 _original_hash = _orig_meta.content_id
                                 _original_metadata = {
                                     "size": _orig_meta.size,
                                     "version": _orig_meta.version,
-                                    "modified_at": _orig_meta.modified_at.isoformat()
-                                    if _orig_meta.modified_at
-                                    else None,
+                                    "modified_at_ms": _orig_meta.modified_at_ms,
                                     "backend_name": getattr(_orig_meta, "backend_name", None),
                                 }
                         except Exception:
@@ -1256,15 +1256,15 @@ def create_async_files_router(
                         _norm_path = _normalize_path(path)
                         _ss.validate_path_available(transaction_id, _norm_path)
                         try:
-                            _orig_meta = fs._kernel.get(_norm_path)
+                            _orig_meta = fs._kernel.sys_stat(
+                                _norm_path, getattr(fs, "_zone_id", "root")
+                            )
                             if _orig_meta:
                                 _original_hash = _orig_meta.content_id
                                 _original_metadata = {
                                     "size": _orig_meta.size,
                                     "version": _orig_meta.version,
-                                    "modified_at": _orig_meta.modified_at.isoformat()
-                                    if _orig_meta.modified_at
-                                    else None,
+                                    "modified_at_ms": _orig_meta.modified_at_ms,
                                     "backend_name": getattr(_orig_meta, "backend_name", None),
                                 }
                         except Exception:

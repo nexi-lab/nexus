@@ -1,6 +1,22 @@
-# Kernel team — auto-assign kernel lead as reviewer
+# Kernel team — auto-assign kernel team as reviewer.
+# Any PR touching these paths requires kernel team (@elfenlieds7) approval to merge.
+# GitHub enforces this when "Require review from Code Owners" is enabled
+# in branch protection rules for the develop branch.
+
+# Rust crates — ALL Rust code requires kernel team review
+/rust/                    @elfenlieds7
+/Cargo.toml               @elfenlieds7
+/Cargo.lock               @elfenlieds7
+
+# Python kernel boundary
 /src/nexus/core/          @elfenlieds7
 /src/nexus/raft/          @elfenlieds7
 /src/nexus/contracts/     @elfenlieds7
 /src/nexus/lib/           @elfenlieds7
+
+# Codegen + stubs (kernel ABI surface)
+/scripts/codegen_kernel_abi.py  @elfenlieds7
+/stubs/                   @elfenlieds7
+
+# Architecture docs
 /docs/architecture/       @elfenlieds7

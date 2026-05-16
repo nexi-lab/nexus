@@ -637,6 +637,105 @@ mod tests {
         );
     }
 
+    /// Write-captured integration test: a `sys_write` to a non-
+    /// system DT_STREAM fires the AuditHook installed by
+    /// `install_root` for the root zone, which serialises the op
+    /// into an `AuditRecord` and (on the background flush thread)
+    /// appends it to `/__sys__/audit/traces/`. A subsequent
+    /// `sys_read` on the audit stream returns the captured record.
+    ///
+    /// Async note: `AuditHook` ships records to its background
+    /// flush thread via `mpsc::SyncSender::try_send`; the actual
+    /// `sys_write` to the audit stream runs off the syscall hot
+    /// path. The test polls `sys_read` for up to ~200 ms (20 × 10
+    /// ms) before giving up — the loop typically terminates on the
+    /// first or second iteration.
+    #[test]
+    fn audit_hook_captures_sys_write_through_to_audit_stream() {
+        let kernel = fresh_federated_kernel();
+
+        // Mount both the test path and /__sys__/ at root zone BEFORE
+        // install_root. Unrouted paths land in stream_manager but
+        // their metastore_get / write_stream_inode bookkeeping
+        // misses, making subsequent sys_write a no-op (`hit=false`)
+        // and sys_read return `FileNotFound`. /__sys__/ matters here
+        // because that's where install_root composes the audit
+        // DT_STREAM; we need to be able to read it back.
+        let router = kernel.vfs_router_arc();
+        router.add_mount("/test-audit", "root", None, false);
+        router.add_mount("/__sys__", "root", None, false);
+
+        install_root(&kernel, "root", "/__sys__/audit/traces/").expect("install_root");
+
+        // Create a non-system DT_STREAM to write into. AuditHook's
+        // is_system_path() short-circuit means writes to /__sys__/...
+        // are excluded from audit (self-write recursion break), so
+        // the target lives outside that prefix.
+        let target = "/test-audit/target";
+        kernel
+            .sys_setattr(
+                target,
+                DT_STREAM,
+                /* backend_name */ "",
+                /* backend */ None,
+                /* metastore */ None,
+                /* raft_backend */ None,
+                /* io_profile */ "wal",
+                /* zone_id */ "root",
+                /* is_external */ false,
+                /* capacity */ 0,
+                None, None, None, None, None, None, None, None, None, None, None,
+            )
+            .expect("setattr DT_STREAM target");
+
+        let writer_ctx = OperationContext::new(
+            /* user_id */ "alice",
+            /* zone_id */ "root",
+            /* is_admin */ false,
+            /* agent_id */ Some("agent-test"),
+            /* is_system */ false,
+        );
+        KernelAbi::sys_write(kernel.as_ref(), target, &writer_ctx, b"payload", 0)
+            .expect("sys_write target payload");
+
+        // Poll the audit stream until the flush thread has drained
+        // the record (or fail after ~200 ms).
+        let reader_ctx = OperationContext::new(
+            /* user_id */ "audit-reader",
+            /* zone_id */ "root",
+            /* is_admin */ true,
+            /* agent_id */ Some("audit-reader"),
+            /* is_system */ true,
+        );
+        let mut captured: Option<Vec<u8>> = None;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            if let Ok(read) =
+                KernelAbi::sys_read(kernel.as_ref(), "/__sys__/audit/traces/", &reader_ctx, 0, 0)
+            {
+                if let Some(data) = read.data {
+                    if !data.is_empty() {
+                        captured = Some(data);
+                        break;
+                    }
+                }
+            }
+        }
+        let bytes = captured.expect("AuditHook drained at least one record to the audit stream");
+
+        // First record decodes as JSON with the expected op + path
+        // + agent_id stamped by build_record from the writer ctx.
+        let mut decoder = serde_json::Deserializer::from_slice(&bytes).into_iter::<serde_json::Value>();
+        let record = decoder
+            .next()
+            .expect("at least one JSON record present")
+            .expect("first audit record decodes as JSON");
+        assert_eq!(record["op"], "write");
+        assert_eq!(record["path"], target);
+        assert_eq!(record["agent_id"], "agent-test");
+        assert_eq!(record["zone_id"], "root");
+    }
+
     /// `ZoneAuditAutoWire` records each zone in its HashSet exactly
     /// once and no-ops on a re-mount. Drives the observer directly
     /// (skipping the `install` call by short-circuiting through the

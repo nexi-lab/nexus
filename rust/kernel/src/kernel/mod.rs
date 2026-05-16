@@ -24,9 +24,7 @@ use crate::meta_store::LocalMetaStore;
 #[cfg(test)]
 use crate::meta_store::DT_REG;
 use crate::meta_store::{DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
-use crate::vfs_router::{
-    canonicalize_mount_path as canonicalize, RouteError, RouteResult, VFSRouter,
-};
+use crate::vfs_router::{RouteError, RouteResult, VFSRouter};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -2517,154 +2515,6 @@ impl Kernel {
     //    sys_rename / sys_copy / sys_mkdir / sys_rmdir) ──────────────────
     // (Moved to `kernel::io` submodule.)
 
-    // ── R10c: direct CAS surface ─────────────────────────────────────────
-    //
-    // These methods replace Python `CASAddressingEngine`'s hot-path bodies
-    // (`write_content`, `read_content`, `read_range`, `delete_content`,
-    // `content_exists`, `get_content_size`, `is_chunked`, `_write_at_offset`).
-    // Each resolves (mount_point, zone_id) → MountEntry → &CASEngine via
-    // `ObjectStore::as_cas`; non-CAS backends surface as `InvalidPath`.
-    // Error context enrichment: the backend_name + content_hash are baked
-    // into the returned `KernelError` so Python callers see
-    // `BackendError("CAS I/O error [mount=cas-local hash=abcd…]: …")`
-    // instead of a bare I/O message.
-    //
-    // `ttl_seconds` is accepted on `cas_write` but not routed — the flat
-    // `LocalCASTransport` has no TTL bucketing; when a TTL-aware transport
-    // (e.g. the VolumeEngine in cluster mode) is wired, the kwarg gets
-    // plumbed through without changing the PyKernel surface.
-
-    fn cas_engine_do<F, R>(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        op: &str,
-        f: F,
-    ) -> Result<R, KernelError>
-    where
-        F: FnOnce(&crate::cas_engine::CASEngine) -> Result<R, crate::cas_engine::CASError>,
-    {
-        let canonical = canonicalize(mount_point, zone_id);
-        let entry = self.vfs_router.get_canonical(&canonical).ok_or_else(|| {
-            KernelError::InvalidPath(format!(
-                "{}: mount not found: {}@{}",
-                op, mount_point, zone_id
-            ))
-        })?;
-        let cas = entry
-            .backend
-            .as_ref()
-            .and_then(|b| b.as_cas())
-            .ok_or_else(|| {
-                KernelError::InvalidPath(format!(
-                    "{}: mount '{}@{}' backend is not CAS",
-                    op, mount_point, zone_id
-                ))
-            })?;
-        f(cas).map_err(|e| cas_err_to_kernel(e, mount_point, op))
-    }
-
-    /// Write content → (hash, is_new). Fires `is_new=true` only when the
-    /// top-level manifest/blob hash was freshly written (CAS dedup miss).
-    pub fn cas_write(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        content: &[u8],
-        _ttl_seconds: Option<u64>,
-    ) -> Result<(String, bool), KernelError> {
-        self.cas_engine_do(mount_point, zone_id, "cas_write", |cas| {
-            cas.write_content_tracked(content)
-        })
-    }
-
-    /// Read content by hash. Transparently reassembles chunked manifests;
-    /// falls through to scatter-gather on local chunk miss when origins
-    /// are provided.
-    pub fn cas_read(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        content_hash: &str,
-        origins: &[String],
-    ) -> Result<Vec<u8>, KernelError> {
-        self.cas_engine_do(mount_point, zone_id, "cas_read", |cas| {
-            cas.read_content_with_origins(content_hash, origins)
-        })
-    }
-
-    /// Delete content. Dispatches to chunked-manifest delete (which sweeps
-    /// chunks + sidecars) when appropriate.
-    pub fn cas_delete(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        content_hash: &str,
-    ) -> Result<(), KernelError> {
-        self.cas_engine_do(mount_point, zone_id, "cas_delete", |cas| {
-            if cas.is_chunked(content_hash) {
-                cas.delete_chunked(content_hash)
-            } else {
-                cas.delete_content(content_hash)
-            }
-        })
-    }
-
-    /// Fast existence check — just `path.exists` against the CAS
-    /// filesystem layout (hash-as-filename).
-    pub fn cas_exists(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        content_hash: &str,
-    ) -> Result<bool, KernelError> {
-        self.cas_engine_do(mount_point, zone_id, "cas_exists", |cas| {
-            Ok(cas.content_exists(content_hash))
-        })
-    }
-
-    /// Content size. For chunked content, reads the manifest's `.meta`
-    /// sidecar (no chunk I/O). For plain blobs, stats the CAS file.
-    pub fn cas_size(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        content_hash: &str,
-    ) -> Result<u64, KernelError> {
-        self.cas_engine_do(mount_point, zone_id, "cas_size", |cas| {
-            cas.get_size(content_hash)
-        })
-    }
-
-    /// True iff this content_hash was stored as a chunked manifest.
-    /// Uses the `.meta` sidecar presence as a fast-reject.
-    pub fn cas_is_chunked(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        content_hash: &str,
-    ) -> Result<bool, KernelError> {
-        self.cas_engine_do(mount_point, zone_id, "cas_is_chunked", |cas| {
-            Ok(cas.is_chunked(content_hash))
-        })
-    }
-
-    /// Partial write — dispatches to `write_chunked_partial` when the old
-    /// blob is chunked, otherwise does a full read-modify-write in Rust.
-    /// Returns the new content_hash.
-    pub fn cas_write_partial(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        old_hash: &str,
-        buf: &[u8],
-        offset: u64,
-        origins: &[String],
-    ) -> Result<String, KernelError> {
-        self.cas_engine_do(mount_point, zone_id, "cas_write_partial", |cas| {
-            cas.write_partial(old_hash, buf, offset, origins)
-        })
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -2672,18 +2522,6 @@ impl Kernel {
 // apply-side ``mount_apply_cb`` closure can call them without a
 // back-reference to ``Kernel`` itself.
 // ─────────────────────────────────────────────────────────────────────
-
-fn cas_err_to_kernel(e: crate::cas_engine::CASError, mount_point: &str, op: &str) -> KernelError {
-    use crate::cas_engine::CASError;
-    match e {
-        CASError::NotFound(hash) => {
-            KernelError::FileNotFound(format!("{} [mount={}]: {}", op, mount_point, hash))
-        }
-        CASError::IOError(io) => {
-            KernelError::BackendError(format!("{} [mount={}]: {}", op, mount_point, io))
-        }
-    }
-}
 
 // ── Fast path validation ────────────────────────────────────────────────
 

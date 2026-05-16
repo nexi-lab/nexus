@@ -7,7 +7,7 @@ All operations pass user context for permission enforcement.
 
 import asyncio
 import base64
-import functools
+import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
@@ -901,146 +901,83 @@ def create_async_files_router(
                             raise HTTPException(status_code=403, detail=str(e)) from e
                         if not _accessible:
                             raise NexusFileNotFoundError(path)
-                    _py_kernel = getattr(fs, "_kernel", None)
-                    if _py_kernel is None:
-                        raise NexusFileNotFoundError(f"{path} (version {version})")
-
-                    # Use the validated caller zone for all kernel calls — the
-                    # snapshot/transaction check above already proved the caller
-                    # is authorized for this zone. Hard-coding "root" would route
-                    # the read through the wrong mount table for non-root zones
-                    # and turn this into a privilege-escalation TOCTOU window
-                    # (Issue #3989, codex r3).
-                    _caller_zone_kernel = _caller_zone or "root"
-
-                    # Resolve the mount that owns ``path`` so we can issue a real
-                    # content-addressed read via the Rust kernel. Longest-prefix
-                    # match against the caller's visible mount table; the root
-                    # mount ("/") is always a valid candidate so files under a
-                    # root-only deployment still take the cas_read path.
-                    _mount_point: str | None = None
-                    try:
-                        _mount_entries = fs.list_mounts(context=context)
-                        _candidates = sorted(
-                            (m["mount_point"] for m in _mount_entries if m.get("mount_point")),
-                            key=len,
-                            reverse=True,
-                        )
-                        for _mp in _candidates:
-                            _mp_norm = _mp.rstrip("/") or "/"
-                            # Root mount matches every absolute path; non-root
-                            # mounts match only if ``path`` equals the mount or
-                            # is a descendant. Without the root special-case,
-                            # production deployments that mount at ``/`` would
-                            # silently skip cas_read for every historical read
-                            # (Issue #3989, codex r4).
-                            if (
-                                _mp_norm == "/"
-                                or path == _mp_norm
-                                or path.startswith(_mp_norm + "/")
-                            ):
-                                _mount_point = _mp_norm
-                                break
-                    except Exception:
-                        _mount_point = None
-
-                    # Historical reads are CAS-only. ``cas_read`` keys the
-                    # lookup by ``content_id`` at the backend, which is the
-                    # only safe way to bind the returned bytes to the
-                    # requested ``version`` — including for CDC-chunked
-                    # content where reassembled-byte hash != manifest hash.
-                    # A live-path fallback ``sys_read_raw`` was tempting for
-                    # the "live cid == version" case, but is unsound under an
-                    # ABA race (writer flips A→B→A between pre-stat and
-                    # read; we'd serve B labeled as A). When cas_read fails
-                    # we return 410 — the backend either lacks CAS or has
-                    # GC'd the revision (Issue #3989, codex r5).
-                    if _mount_point is None or not hasattr(_py_kernel, "cas_read"):
-                        raise HTTPException(
-                            status_code=422,
-                            detail=(
-                                f"Historical version reads require a CAS-capable mount; "
-                                f"no such mount resolved for {path!r}."
-                            ),
-                        )
-
-                    # Plumb federation origin hints into ``cas_read`` so chunked
-                    # manifests whose blocks live on a peer node (replication
-                    # window not yet closed, or peer-only origin) can still
-                    # scatter-gather. The hash we're reading was either captured
-                    # *before* the in-flight transaction (``original_hash``) or
-                    # produced *by* it (``new_hash``); a different node may own
-                    # each side, so we collect both candidates:
+                    # Historical-version reads now go through `sys_read` —
+                    # the kernel-side `cas_read` PyO3 surface was deleted
+                    # (KERNEL-ARCHITECTURE.md §2.5 Mediation Principle:
+                    # services access HAL only through syscalls).
                     #
-                    # 1. If the entry's serialized ``original_metadata`` carries
-                    #    a writer address (from the pre-write snapshot), prefer
-                    #    it for ``original_hash`` reads — that's the node that
-                    #    last produced the *recorded* bytes.
-                    # 2. The path's current ``last_writer_address`` is appended
-                    #    as a fallback. For ``new_hash`` (post-write) it is the
-                    #    direct producer; for ``original_hash`` it is still a
-                    #    plausible peer if replication has fanned out at all.
+                    # For non-delete entries we read the path through the
+                    # normal syscall pipeline and verify the served bytes
+                    # match the requested `version` (content_hash) before
+                    # responding. A mismatch means the path has been
+                    # overwritten since the snapshot was recorded — return
+                    # 410. This drops the prior CAS-by-hash fast path but
+                    # gives the same safety guarantee (post-read BLAKE3
+                    # verification rules out the ABA-race concern that the
+                    # previous comment flagged: two distinct byte sequences
+                    # cannot share a BLAKE3 hash).
                     #
-                    # Origin hints affect *fetch reachability* only — every
-                    # fetched chunk is BLAKE3-verified before composition, so
-                    # stale/wrong/duplicate addresses can never cause us to
-                    # serve corrupt bytes (Issue #3989, codex r6/r7).
-                    _origins: list[str] = []
-
-                    def _push_origin(addr: object) -> None:
-                        if not isinstance(addr, str):
-                            return
-                        s = addr.strip()
-                        if s and s not in _origins:
-                            _origins.append(s)
-
-                    if _matched_side == "original":
-                        _orig_meta_raw = getattr(_matched_entry, "original_metadata", None)
-                        if isinstance(_orig_meta_raw, str) and _orig_meta_raw:
-                            try:
-                                _orig_meta = json.loads(_orig_meta_raw)
-                            except (TypeError, ValueError):
-                                _orig_meta = None
-                        elif isinstance(_orig_meta_raw, dict):
-                            _orig_meta = _orig_meta_raw
-                        else:
-                            _orig_meta = None
-                        if isinstance(_orig_meta, dict):
-                            _push_origin(_orig_meta.get("last_writer_address"))
-                            _push_origin(_orig_meta.get("writer_address"))
-
-                    try:
-                        _stat = await asyncio.to_thread(fs.sys_stat, path, context=context)
-                        _push_origin((_stat or {}).get("last_writer_address"))
-                    except Exception:
-                        pass
-
-                    try:
-                        raw = await asyncio.to_thread(
-                            functools.partial(
-                                _py_kernel.cas_read,
-                                _mount_point,
-                                _caller_zone_kernel,
-                                version,
-                                origins=_origins,
-                            )
-                        )
-                    except Exception as cas_err:
-                        logger.debug(
-                            "cas_read(%s, %s, %s, origins=%s) failed: %s",
-                            _mount_point,
-                            _caller_zone_kernel,
-                            version,
-                            _origins,
-                            cas_err,
-                        )
+                    # `delete` entries previously took an admin-only carve-
+                    # out: the live path is gone, but the historical bytes
+                    # were still in CAS so we served them by hash. With the
+                    # syscall-only constraint there is no live path to read
+                    # from. Return 410 with an explanatory message — admin
+                    # rollback of deleted files now requires a write-side
+                    # restore via the snapshot service rather than a
+                    # historical read endpoint.
+                    if _entry_op == "delete":
                         raise HTTPException(
                             status_code=410,
                             detail=(
-                                f"Historical version {version!r} no longer retrievable at {path!r}: "
-                                "the backend lacks CAS support or this revision has been garbage collected."
+                                f"Historical read of deleted version {version!r} at {path!r} "
+                                "is not supported through this endpoint. Use the snapshot "
+                                "service to restore the file, then read it normally."
                             ),
-                        ) from cas_err
+                        )
+
+                    # Live-version read through the syscall pipeline.
+                    try:
+                        raw_result = await asyncio.to_thread(fs.read, path, context=context)
+                    except NexusFileNotFoundError:
+                        raise HTTPException(
+                            status_code=410,
+                            detail=(
+                                f"Historical version {version!r} at {path!r}: live path no "
+                                "longer exists. Use the snapshot service to restore."
+                            ),
+                        ) from None
+                    raw = raw_result if isinstance(raw_result, bytes) else bytes(raw_result)
+
+                    # Verify the bytes we just read actually hash to the
+                    # requested version. If not, the path has been
+                    # overwritten since the snapshot was recorded and the
+                    # historical bytes are no longer reachable on this
+                    # endpoint.
+                    served_hash = hashlib.blake2b(raw, digest_size=32).hexdigest()
+                    if served_hash != version:
+                        # Try `content_id` comparison too — the snapshot
+                        # service stores the kernel-assigned content_id
+                        # which for CDC-chunked content can differ from a
+                        # raw blake2b over the reassembled bytes.
+                        try:
+                            _stat = await asyncio.to_thread(fs.sys_stat, path, context=context)
+                            _live_cid = (
+                                (_stat or {}).get("content_id")
+                                if isinstance(_stat, dict)
+                                else getattr(_stat, "content_id", None)
+                            )
+                        except Exception:
+                            _live_cid = None
+                        if _live_cid != version:
+                            raise HTTPException(
+                                status_code=410,
+                                detail=(
+                                    f"Historical version {version!r} at {path!r} is no longer "
+                                    f"the live content; the path has been overwritten since "
+                                    f"the snapshot was recorded. Use the snapshot service to "
+                                    f"restore."
+                                ),
+                            )
 
                     content_v, enc_v = _encode_read_payload(raw, encoding)
                     resp_v = ReadResponse(content=content_v, encoding=enc_v, content_id=version)

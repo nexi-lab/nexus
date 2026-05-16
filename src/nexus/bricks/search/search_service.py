@@ -326,11 +326,9 @@ class SearchService:
         mounts.  Falls back to hardcoded defaults when no router is available.
         """
         _rust_kernel = getattr(self._nexus_fs, "_kernel", None) if self._nexus_fs else None
-        if _rust_kernel and hasattr(_rust_kernel, "get_mount_points"):
+        if _rust_kernel and hasattr(_rust_kernel, "get_top_level_mounts"):
             try:
-                from nexus.core.path_utils import extract_zone_id
-
-                mount_points = [extract_zone_id(c)[1] for c in _rust_kernel.get_mount_points()]
+                mount_points = _rust_kernel.get_top_level_mounts()
                 # Extract top-level segments from mount points (e.g. "/workspace" -> "workspace/")
                 prefixes: set[str] = set()
                 for mp in mount_points:

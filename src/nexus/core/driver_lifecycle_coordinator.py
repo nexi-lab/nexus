@@ -36,7 +36,7 @@ import logging
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.core.path_utils import extract_zone_id, normalize_path
+from nexus.core.path_utils import normalize_path
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +118,5 @@ class DriverLifecycleCoordinator:
         """
         if self._kernel is None:
             return []
-        result: list[str] = []
-        for canonical in self._kernel.get_mount_points():
-            z, user_mp = extract_zone_id(canonical)
-            if zone_id is not None and z != zone_id:
-                continue
-            result.append(user_mp)
-        return sorted(result)
+        mounts = self._kernel.get_top_level_mounts(zone_id or "root")
+        return sorted(mounts)

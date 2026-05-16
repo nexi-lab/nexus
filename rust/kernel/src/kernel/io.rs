@@ -9,10 +9,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::cache::{
-    file_cache::FileCacheKey,
-    index_cache::{ttl_for_backend, IndexCacheKey, IndexKind},
-};
+use crate::cache::index_cache::{ttl_for_backend, IndexCacheKey, IndexKind};
 use crate::dispatch::ops_registry::{
     BackendKind, CatHandlerKind, FileType, FingerprintHandlerKind, OpHandler,
 };
@@ -517,14 +514,6 @@ impl Kernel {
             Some(id) => id,
             None => return Err(not_found()),
         };
-        let expected_fingerprint = entry
-            .content_id
-            .as_ref()
-            .filter(|id| !id.is_empty())
-            .cloned()
-            .or_else(|| (entry.version > 0).then(|| entry.version.to_string()));
-        let file_key = FileCacheKey::new(&ctx.zone_id, path, "raw");
-
         // 4. VFS lock (blocking acquire — wrapper releases GIL before calling this)
         let lock_handle =
             self.lock_manager
@@ -533,36 +522,6 @@ impl Kernel {
             return Err(KernelError::IOError(format!(
                 "vfs read lock timeout: {path}"
             )));
-        }
-
-        if let Some(bytes) = self
-            .file_cache
-            .get(&file_key, expected_fingerprint.as_deref())
-        {
-            self.lock_manager.do_release(lock_handle);
-            return Ok(SysReadResult {
-                data: Some(bytes),
-                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_id: expected_fingerprint.clone(),
-                gen: entry.gen,
-                entry_type: DT_REG,
-                stream_next_offset: None,
-            });
-        }
-        let _file_fill_guard = self.file_cache.lock(&file_key);
-        if let Some(bytes) = self
-            .file_cache
-            .get(&file_key, expected_fingerprint.as_deref())
-        {
-            self.lock_manager.do_release(lock_handle);
-            return Ok(SysReadResult {
-                data: Some(bytes),
-                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_id: expected_fingerprint.clone(),
-                gen: entry.gen,
-                entry_type: DT_REG,
-                stream_next_offset: None,
-            });
         }
 
         // 5. Backend read (Rust-native ObjectStore)
@@ -576,18 +535,14 @@ impl Kernel {
 
         // 7. Return result
         match content {
-            Some(data) => {
-                self.file_cache
-                    .put(file_key, data.clone(), expected_fingerprint.clone(), None);
-                Ok(SysReadResult {
-                    data: Some(data),
-                    post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                    content_id: entry.content_id.clone(),
-                    gen: entry.gen,
-                    entry_type: DT_REG,
-                    stream_next_offset: None,
-                })
-            }
+            Some(data) => Ok(SysReadResult {
+                data: Some(data),
+                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                content_id: entry.content_id.clone(),
+                gen: entry.gen,
+                entry_type: DT_REG,
+                stream_next_offset: None,
+            }),
             // Local backend miss + metadata exists → federation path:
             // try the origin encoded in backend_name. Otherwise it's a
             // genuine miss.
@@ -685,21 +640,6 @@ impl Kernel {
                 .as_ref()
                 .map(|b| b.write_content(&data, cache_key, ctx, 0));
         }
-        let expected_fingerprint = entry
-            .content_id
-            .as_ref()
-            .filter(|id| !id.is_empty())
-            .cloned()
-            .or_else(|| (entry.version > 0).then(|| entry.version.to_string()));
-        if expected_fingerprint.is_some() {
-            self.file_cache.put(
-                FileCacheKey::new(&ctx.zone_id, path, "raw"),
-                data.clone(),
-                expected_fingerprint.clone(),
-                None,
-            );
-        }
-
         Ok(SysReadResult {
             data: Some(data),
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,

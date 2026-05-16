@@ -397,6 +397,132 @@ mod tests {
         Arc::new(Kernel::new())
     }
 
+    // ── Test federation fixture ──────────────────────────────────────
+    //
+    // `audit::install`'s `io_profile="wal"` codepath requires a
+    // `DistributedCoordinator` so the WAL stream backend can route
+    // through `coordinator.metastore_for_zone(zone)`. A bare
+    // `Kernel::new()` ships with `NoopDistributedCoordinator` which
+    // returns `is_initialized=false` — the stream setattr rejects
+    // with `"io_profile=wal requires federation"`.
+    //
+    // `TestFederationCoordinator` is the minimal stub: reports
+    // `is_initialized=true` and hands back a single tempdir-backed
+    // `LocalMetaStore` from `metastore_for_zone` (same store for
+    // every zone — production multi-zone redb separation is not what
+    // these tests exercise). Mirrors the kernel's own federation_wal_e2e
+    // test fixture (`rust/kernel/src/kernel/mod.rs:3991-4065`); kept
+    // local to audit tests to avoid promoting it to the kernel public
+    // surface for a single peer-crate consumer.
+    mod federation_stub {
+        use std::sync::Arc;
+
+        use kernel::abc::meta_store::MetaStore;
+        use kernel::hal::distributed_coordinator::{
+            ClusterInfo, CoordinatorResult, DistributedCoordinator, ShareInfo,
+        };
+        use kernel::kernel::Kernel;
+        use kernel::meta_store::LocalMetaStore;
+        use tempfile::TempDir;
+
+        pub(super) struct TestFederationCoordinator {
+            metastore: Arc<dyn MetaStore>,
+            _tempdir: TempDir,
+        }
+
+        impl TestFederationCoordinator {
+            pub(super) fn new() -> Self {
+                let tempdir = TempDir::new().expect("tempdir for audit fed-stub");
+                let path = tempdir.path().join("audit-fed-metastore.redb");
+                let metastore: Arc<dyn MetaStore> =
+                    Arc::new(LocalMetaStore::open(&path).expect("open LocalMetaStore"));
+                Self {
+                    metastore,
+                    _tempdir: tempdir,
+                }
+            }
+        }
+
+        impl DistributedCoordinator for TestFederationCoordinator {
+            fn list_zones(&self, _kernel: &Kernel) -> Vec<String> {
+                vec!["root".to_string()]
+            }
+            fn is_initialized(&self, _kernel: &Kernel) -> bool {
+                true
+            }
+            fn cluster_info(&self, _: &Kernel, _: &str) -> CoordinatorResult<ClusterInfo> {
+                Err("test coordinator: cluster_info unused".into())
+            }
+            fn create_zone(&self, _: &Kernel, _: &str) -> CoordinatorResult<()> {
+                Ok(())
+            }
+            fn remove_zone(&self, _: &Kernel, _: &str, _: bool) -> CoordinatorResult<()> {
+                Err("test coordinator: remove_zone unused".into())
+            }
+            fn join_zone(&self, _: &Kernel, _: &str, _: bool) -> CoordinatorResult<()> {
+                Err("test coordinator: join_zone unused".into())
+            }
+            fn wire_mount(&self, _: &Kernel, _: &str, _: &str, _: &str) -> CoordinatorResult<()> {
+                Ok(())
+            }
+            fn unwire_mount(&self, _: &Kernel, _: &str, _: &str) -> CoordinatorResult<()> {
+                Err("test coordinator: unwire_mount unused".into())
+            }
+            fn share_zone(&self, _: &Kernel, _: &str, _: &str) -> CoordinatorResult<ShareInfo> {
+                Err("test coordinator: share_zone unused".into())
+            }
+            fn lookup_share(
+                &self,
+                _: &Kernel,
+                _: &str,
+            ) -> CoordinatorResult<Option<ShareInfo>> {
+                Ok(None)
+            }
+            fn metastore_for_zone(
+                &self,
+                _: &Kernel,
+                _: &str,
+            ) -> CoordinatorResult<Arc<dyn MetaStore>> {
+                Ok(Arc::clone(&self.metastore))
+            }
+            fn locks_for_zone(
+                &self,
+                _: &Kernel,
+                _: &str,
+            ) -> CoordinatorResult<Arc<dyn contracts::lock_state::Locks>> {
+                Err("test coordinator: locks_for_zone unused".into())
+            }
+        }
+    }
+
+    /// Build a `Kernel` with `TestFederationCoordinator` installed
+    /// so `is_federation_initialized()` returns true and the WAL
+    /// stream backend can route through the per-zone metastore.
+    fn fresh_federated_kernel() -> Arc<Kernel> {
+        let kernel = Arc::new(Kernel::new());
+        kernel.set_distributed_coordinator(Arc::new(
+            federation_stub::TestFederationCoordinator::new(),
+        )
+            as Arc<dyn kernel::hal::distributed_coordinator::DistributedCoordinator>);
+        kernel
+    }
+
+    /// Smoke test for the federation stub: `install_root` against a
+    /// federated kernel composes the root-zone audit DT_STREAM
+    /// successfully (and is idempotent on re-install).
+    #[test]
+    fn install_root_against_federated_kernel_composes_root_audit_stream() {
+        let kernel = fresh_federated_kernel();
+        install_root(&kernel, "root", "/__sys__/audit/traces/").expect("install_root");
+
+        // Idempotent: a second install_root call surfaces — install()
+        // re-uses the existing DT_STREAM (sys_setattr DT_STREAM is a
+        // no-op re-open), the auto-wire HashSet has "root" seeded
+        // again (no-op insert), and a second observer registration is
+        // harmless beyond a slight per-dispatch cost.
+        install_root(&kernel, "root", "/__sys__/audit/traces/").expect("install_root idempotent");
+    }
+
     /// `ZoneAuditAutoWire` records each zone in its HashSet exactly
     /// once and no-ops on a re-mount. Drives the observer directly
     /// (skipping the `install` call by short-circuiting through the

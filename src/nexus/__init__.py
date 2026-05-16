@@ -552,43 +552,10 @@ def connect(
         enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
 
         # Create Rust kernel early so RustMetastoreProxy can use it.
-        # Route through _rust_compat so stale binaries (missing Kernel methods)
-        # are caught here and never passed to RustMetastoreProxy (Issue #3712).
+        # Construct a KernelClient for the connect() path. Federation
+        # and transport wiring now happen inside the kernel process
+        # automatically (no install_*_wiring needed).
         _early_kernel = None
-        try:
-            from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
-            from nexus._rust_compat import PyKernel as _Kernel
-
-            if _RUST_AVAILABLE and _Kernel is not None:
-                _early_kernel = _Kernel()
-                # Skip federation wiring during pytest — xdist workers
-                # compete for the same gRPC port causing hangs and
-                # preventing clean process exit.
-                import os as _os_connect
-
-                if "pytest" not in __import__("sys").modules:
-                    try:
-                        import nexus_runtime as _nk
-
-                        # Federation wiring first so init_from_env stashes the
-                        # blob-fetcher slot before transport drains it.
-                        _nk.install_federation_wiring(_early_kernel)
-                        _nk.install_transport_wiring(_early_kernel)
-                    except Exception as _wiring_exc:
-                        import logging as _logging
-
-                        _logging.getLogger(__name__).warning(
-                            "install_transport_wiring/install_federation_wiring "
-                            "failed (federation peer-blob fetch will fall back to "
-                            "Noop): %s",
-                            _wiring_exc,
-                        )
-        except Exception as _early_kernel_exc:
-            import logging as _logging
-
-            _logging.getLogger(__name__).debug(
-                "early kernel construction failed: %s", _early_kernel_exc
-            )
 
         # Create metadata store — kernel owns federation bootstrap since
         # R20.18.5. When federation env vars are set (NEXUS_HOSTNAME /
@@ -789,9 +756,8 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
 
     Phase 3 (refactor/rust-workspace-parallel-layers): the audit hook
     moved out of the kernel crate into ``services::audit`` per the
-    parallel-layers split. The Python entry point is now a free function
-    on the ``nexus_runtime`` module — ``install_audit_hook(kernel, zone,
-    stream)`` — instead of a method on the Kernel pyclass. Service-tier
+    parallel-layers split. The hook is now installed automatically
+    inside the kernel process during nexus-cluster startup. Service-tier
     owns hook lifecycle; kernel composes the stream itself via the
     syscall surface (``sys_setattr DT_STREAM ... io_profile=wal``).
     """
@@ -802,16 +768,11 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     audit_zone = "root"
     audit_stream_path = "/__sys__/audit/traces/"
 
-    try:
-        import nexus_runtime
-
-        nexus_runtime.install_audit_hook(kernel, audit_zone, audit_stream_path)
-        logger.info("Audit hook started: zone=%s stream=%s", audit_zone, audit_stream_path)
-    except RuntimeError as e:
-        # Federation not active or zone not loaded — expected in standalone mode.
-        logger.debug("Audit hook not started (federation inactive): %s", e)
-    except Exception as e:
-        logger.warning("Failed to start audit hook: %s", e)
+    # Audit hook is now installed inside the kernel process automatically
+    # during nexus-cluster startup. No Python-side wiring needed.
+    logger.debug(
+        "Audit hook managed by kernel process: zone=%s stream=%s", audit_zone, audit_stream_path
+    )
 
 
 def _restore_mounts(nx_fs: "NexusFS") -> None:

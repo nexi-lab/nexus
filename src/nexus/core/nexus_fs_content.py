@@ -1494,7 +1494,7 @@ class ContentMixin:
         is_admin: bool,
     ) -> list[dict[str, Any]]:
         """Inner write_batch body — caller holds _occ_path_lock for every path."""
-        # Get existing metadata for pre-hooks and is_new detection
+        # Get existing metadata for pre-hooks
         existing_metadata = dict(
             zip(paths, self._kernel.stat_batch(list(paths), ROOT_ZONE_ID), strict=True)
         )
@@ -1514,74 +1514,40 @@ class ContentMixin:
                 ),
             )
 
-        # ── KERNEL: Rust batch write (validate + route + lock + write + metastore + dcache) ──
+        # ── KERNEL: Rust Tier 2 write_batch (create-or-overwrite per item) ──
+        # Tier 2 write_batch composes Tier 2 write() per-item, which handles
+        # create-on-miss + OBSERVE dispatch automatically. No Python fallback needed.
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        rust_results = self._kernel.sys_write_batch(validated_files, _rust_ctx)
+        rust_results = self._kernel.write_batch(validated_files, _rust_ctx)
 
         now = datetime.now(UTC)
         metadata_list: list[FileMetadata] = []
         results: list[dict[str, Any]] = []
 
-        for i, (path, content) in enumerate(validated_files):
+        for i, (path, _content) in enumerate(validated_files):
             r = rust_results[i]
-            if r.hit:
-                io_metrics.record_write_backend_rpc()
-                results.append(
-                    {
-                        "content_id": r.content_id,
-                        "version": r.version,
-                        "gen": r.gen,
-                        "modified_at": now,
-                        "size": r.size,
-                    }
+            io_metrics.record_write_backend_rpc()
+            results.append(
+                {
+                    "content_id": r.content_id,
+                    "version": r.version,
+                    "gen": r.gen,
+                    "modified_at": now,
+                    "size": r.size,
+                }
+            )
+            metadata_list.append(
+                FileMetadata(
+                    path=path,
+                    size=r.size,
+                    content_id=r.content_id,
+                    version=r.version,
+                    gen=r.gen,
+                    zone_id=zone_id or ROOT_ZONE_ID,
                 )
-                metadata_list.append(
-                    FileMetadata(
-                        path=path,
-                        size=r.size,
-                        content_id=r.content_id,
-                        version=r.version,
-                        gen=r.gen,
-                        zone_id=zone_id or ROOT_ZONE_ID,
-                    )
-                )
-            else:
-                # Fallback: Rust batch missed (new file — doesn't exist in
-                # metastore yet). Use Tier 2 self.write() which composes
-                # create-on-write + sys_write, so new files are created via
-                # route-scoped metastore put. The raw sys_write alone returns
-                # a miss (hit=false) without creating the file (POSIX write(2)
-                # contract: file must already exist).
-                #
-                # self.write() dispatches its own post-hooks for this single
-                # file — the batch post-hook below will also fire, but that
-                # is harmless (write_batch hooks expect per-item metadata
-                # that is already in metadata_list regardless).
-                wr = self.write(path, content, context=context)
-                results.append(
-                    {
-                        "content_id": wr.get("content_id", ""),
-                        "version": wr.get("version", 1),
-                        "gen": wr.get("gen", 0),
-                        "modified_at": now,
-                        "size": wr.get("size", len(content)),
-                    }
-                )
-                metadata_list.append(
-                    FileMetadata(
-                        path=path,
-                        size=wr.get("size", len(content)),
-                        content_id=wr.get("content_id", ""),
-                        version=wr.get("version", 1),
-                        gen=wr.get("gen", 0),
-                        zone_id=zone_id or ROOT_ZONE_ID,
-                    )
-                )
+            )
 
-        # Rust sys_write_batch already persisted metadata (commit_metadata per-mount
-        # + ms.put_batch for global items) and updated dcache. No Python put needed.
-
-        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
+        # POST-INTERCEPT: batch post-hooks
         items = [
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
@@ -1591,13 +1557,6 @@ class ContentMixin:
             "write_batch",
             WriteBatchHookContext(items=items, context=context, zone_id=zone_id, agent_id=agent_id),
         )
-
-        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        for metadata in metadata_list:
-            old_meta = existing_metadata.get(metadata.path)
-            _ = old_meta is None  # is_new removed with notify
-
-        # Issue #1682: Hierarchy tuples + owner grants moved to post_write_batch hooks.
 
         return results
 

@@ -99,6 +99,23 @@ pub trait KernelConvenience: KernelAbi {
         names
     }
 
+    /// Tier 2 batch write: composes `write()` per-item.
+    ///
+    /// Each item goes through `KernelConvenience::write()` which handles
+    /// create-or-overwrite, hooks, and OBSERVE dispatch per-item
+    /// automatically. Callers needing the raw Tier 1 batch path (sorted
+    /// VFS locks, single redb txn) should use `sys_write` directly.
+    fn write_batch(
+        &self,
+        items: &[(String, Vec<u8>)],
+        ctx: &OperationContext,
+    ) -> Vec<Result<SysWriteResult, KernelError>> {
+        items
+            .iter()
+            .map(|(path, content)| self.write(path, ctx, content, 0))
+            .collect()
+    }
+
     /// Batch existence check: `stat_batch` → `Vec<bool>`.
     fn exists_batch(&self, paths: &[String], zone_id: &str) -> Vec<bool> {
         self.stat_batch(paths, zone_id)

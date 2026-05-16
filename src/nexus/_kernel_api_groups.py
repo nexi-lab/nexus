@@ -191,5 +191,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "unregister_watch",
         "wait_zone_revision",
         "write",
+        "write_batch",
     }
 )

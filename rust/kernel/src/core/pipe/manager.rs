@@ -30,6 +30,29 @@ impl PipeNotify {
             not_full: Condvar::new(),
         }
     }
+
+    /// Wake one blocked reader (after push). Acquires mutex to avoid
+    /// lost-wakeup race — see `write_nowait` comment.
+    #[inline]
+    fn wake_readers(&self) {
+        let _g = self.mutex.lock();
+        self.not_empty.notify_one();
+    }
+
+    /// Wake one blocked writer (after pop). Acquires mutex.
+    #[inline]
+    fn wake_writers(&self) {
+        let _g = self.mutex.lock();
+        self.not_full.notify_one();
+    }
+
+    /// Wake all waiters (shutdown / close). Acquires mutex.
+    #[inline]
+    fn wake_all(&self) {
+        let _g = self.mutex.lock();
+        self.not_empty.notify_all();
+        self.not_full.notify_all();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -85,9 +108,7 @@ impl PipeManager {
                 buf.close();
                 // Wake all waiters before removing notify
                 if let Some((_, n)) = self.notify.remove(path) {
-                    let _guard = n.mutex.lock();
-                    n.not_empty.notify_all();
-                    n.not_full.notify_all();
+                    n.wake_all();
                 }
                 Ok(())
             }
@@ -102,9 +123,7 @@ impl PipeManager {
                 buf.close();
                 // Wake all waiters so they see the closed state
                 if let Some(n) = self.notify.get(path) {
-                    let _guard = n.mutex.lock();
-                    n.not_empty.notify_all();
-                    n.not_full.notify_all();
+                    n.wake_all();
                 }
                 Ok(())
             }
@@ -124,24 +143,9 @@ impl PipeManager {
             .get(path)
             .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?;
         let n = buf.push(data).map_err(PipeManagerError::Backend)?;
-        // Wake blocked readers. We MUST acquire `notify.mutex` before
-        // calling `notify_one` to avoid a lost-wakeup race against
-        // `read_blocking`'s slow path:
-        //
-        //   T1 reader  T2 writer
-        //   lock(mu)
-        //   pop -> Empty
-        //              push(data)
-        //              notify_one()    ← no waiter parked → LOST
-        //   wait_for() ← parks; misses notification → blocks until timeout
-        //
-        // parking_lot::Condvar::notify_one is unbuffered (see rustdoc).
-        // Acquiring `mu` here serializes with the reader's atomic
-        // `wait_for(mu, …)` release/park, so the notification can never
-        // arrive between the reader's predicate check and parking.
+        // Wake blocked readers — see PipeNotify::wake_readers doc.
         if let Some(notify) = self.notify.get(path) {
-            let _guard = notify.mutex.lock();
-            notify.not_empty.notify_one();
+            notify.wake_readers();
         }
         Ok(n)
     }
@@ -154,11 +158,9 @@ impl PipeManager {
             .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?;
         match buf.pop() {
             Ok(data) => {
-                // Wake blocked writers. Same lost-wakeup race as in
-                // `write_nowait` — see the comment there.
+                // Wake blocked writers — see PipeNotify::wake_writers doc.
                 if let Some(notify) = self.notify.get(path) {
-                    let _guard = notify.mutex.lock();
-                    notify.not_full.notify_one();
+                    notify.wake_writers();
                 }
                 Ok(Some(data))
             }
@@ -315,8 +317,7 @@ impl PipeManager {
 
         if moved > 0 {
             if let Some(notify) = self.notify.get(to) {
-                let _guard = notify.mutex.lock();
-                notify.not_empty.notify_one();
+                notify.wake_readers();
             }
         }
 
@@ -330,9 +331,7 @@ impl PipeManager {
         }
         // Wake all waiters
         for entry in self.notify.iter() {
-            let _guard = entry.mutex.lock();
-            entry.not_empty.notify_all();
-            entry.not_full.notify_all();
+            entry.wake_all();
         }
     }
 }

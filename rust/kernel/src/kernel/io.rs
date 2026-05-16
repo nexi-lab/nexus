@@ -1102,8 +1102,6 @@ impl Kernel {
         };
         if let Ok(result) = &result {
             if result.hit {
-                self.file_cache
-                    .invalidate_path(&input.ctx.zone_id, input.path, "raw");
                 self.index_cache
                     .invalidate_parent_listing(&input.ctx.zone_id, input.path);
             }
@@ -1511,7 +1509,6 @@ impl Kernel {
             .backend
             .as_ref()
             .map(|b| b.delete_file(&route.backend_path));
-        self.file_cache.invalidate_path(&ctx.zone_id, path, "raw");
         self.index_cache
             .invalidate_parent_listing(&ctx.zone_id, path);
 
@@ -1803,10 +1800,6 @@ impl Kernel {
         // already invalidated old_path / repopulated new_path during
         // ``rename_path`` above. The kernel side has nothing left to do
         // — there is no kernel-global metadata cache to keep in sync.
-        self.file_cache
-            .invalidate_path(&ctx.zone_id, old_path, "raw");
-        self.file_cache
-            .invalidate_path(&ctx.zone_id, new_path, "raw");
         self.index_cache
             .invalidate_parent_listing(&ctx.zone_id, old_path);
         self.index_cache

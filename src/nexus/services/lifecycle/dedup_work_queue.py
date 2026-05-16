@@ -174,8 +174,8 @@ class DedupWorkQueue(Generic[T]):
         The caller MUST call ``done(key)`` when processing is complete,
         even if processing fails.  Use a try/finally block.
 
-        Polls the kernel pipe with ``sys_read``.  If the pipe is
-        empty, yields to the event loop briefly (10 ms) and retries.
+        Polls the kernel pipe with non-blocking ``sys_read``. If the pipe
+        is empty, yields to the event loop briefly (10 ms) and retries.
 
         Returns:
             The next key to process.
@@ -188,12 +188,14 @@ class DedupWorkQueue(Generic[T]):
                 raise ShutdownError("DedupWorkQueue has been shut down")
 
             try:
-                result = self._kernel.sys_read(self._pipe_path, self._sys_ctx, timeout_ms=0)
-                data = result.data
+                result = self._kernel.sys_read(
+                    self._pipe_path, self._sys_ctx, timeout_ms=0, offset=0
+                )
             except RuntimeError as exc:
                 if "PipeClosed" in str(exc):
                     raise ShutdownError("DedupWorkQueue has been shut down") from None
                 raise
+            data = result.data
 
             if data is None or data == b"":
                 # Pipe empty — yield and retry
@@ -238,11 +240,7 @@ class DedupWorkQueue(Generic[T]):
                 self._items[seq] = key
                 self._kernel.sys_write(
                     self._pipe_path,
-<<<<<<< HEAD
                     self._sys_ctx,
-=======
-                    self._pipe_context,
->>>>>>> 9361446d5 (refactor(dedup-queue): pipe_write_nowait → sys_write)
                     seq.to_bytes(self._TOKEN_SIZE, "little"),
                 )
             except RuntimeError:

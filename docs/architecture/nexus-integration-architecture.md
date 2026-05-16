@@ -218,14 +218,37 @@ for the same outcome — orphan auto-reap removes the descriptor, the
 observer reaps the procfs subtree.
 
 After the procfs entries are in place, ManagedAgentService hands off
-to the sudo-code crate by calling `sudo_code::spawn_task(pid, ...)` —
-a direct in-process Rust call into a crate linked into the same nexusd
-binary.  The crate spawns a tokio task on the kernel's shared runtime
-(`kernel.runtime()`); the task is the per-pid agent loop.  Tokio is
-the I/O-concurrency model (LLM HTTP round-trips run seconds; many pids
-share a small worker pool); the call surface between
-ManagedAgentService and sudo-code is plain Rust function calls,
-sharing the address space with the kernel.
+to the runtime crate through the `SpawnTask<K: KernelAbi>` DI seam.
+The seam is one indirect call per session start — the binary edge
+(cluster binary, or `nexus-cdylib` for the Python wheel) constructs
+a concrete `SpawnTask<Kernel>` adapter wrapping
+`sudocode_runtime::spawn_task` and registers it via
+`install_managed_agent_with_spawn(kernel, Arc::new(adapter))`.
+`start_session` then calls `provider.spawn(kernel, desc, observer)`
+through `Arc<dyn SpawnTask<K>>`: exactly one vtable dispatch per
+session. The returned `Box<dyn SpawnHandle>` lands in the service's
+`spawn_handles` sidecar so the on_terminate observer can abort the
+worker on session reap.
+
+Inside the spawn body the call surface is plain monomorphic Rust.
+`sudocode_runtime::spawn_task::spawn_task::<K: KernelAbi + Send +
+Sync + 'static>` (and its inner `run_loop<K, C, T, F>` at
+`rust/crates/runtime/src/spawn_task.rs` in the
+[sudocode repo](https://github.com/sudoprivacy/sudocode)) is generic
+over `K`; binary-edge
+monomorphisation specialises it against the concrete `Kernel`. Every
+`kernel.sys_read`, `kernel.sys_write`, and `kernel.sys_watch` in the
+mailbox poll loop is an inline direct call — no per-syscall vtable
+cost. Tokio supplies the I/O-concurrency model (LLM HTTP round-trips
+run seconds; many pids share a small worker pool) on the kernel's
+shared runtime.
+
+The services rlib stays runtime-agnostic: it depends on the
+`SpawnTask` trait only, not on `sudocode_runtime` or any other
+concrete runtime crate. Pure-Rust slim builds that ship managed-agent
+without a runtime body call `install_managed_agent` instead of
+`install_managed_agent_with_spawn`; `start_session` then leaves
+`spawn_provider == None` and no per-pid task is launched.
 
 After spawn, prompts and responses flow through the chat-with-me VFS
 surface — same A2A primitive every other agent uses (§3). sudowork
@@ -260,13 +283,6 @@ duplicate the A2A surface the rest of the system uses.
 `kernel.agent_wait(pid, target_state, timeout_ms)` releases the GIL and
 parks on the per-pid condvar — Python supervisors get a blocking wait
 without pinning the interpreter.
-
-ManagedAgentService dispatches to the runtime through a direct
-in-process call — `sudo_code::spawn_task(pid, ...)` — keeping the
-dispatch surface a single named function for the one-runtime
-configuration. The dispatch site is the place a trait lands the day
-a second in-process runtime joins; the existing call slots in as
-the first trait impl with no behavior change.
 
 ### 2.4 sudo-code state placement
 

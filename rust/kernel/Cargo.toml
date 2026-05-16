@@ -30,8 +30,6 @@ parking_lot = "0.12"
 redb = "4"
 uuid = { version = "1", features = ["v4"] }
 lru = "0.18"
-simdutf8 = "0.1"
-simsimd = "6"
 crc32fast = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }

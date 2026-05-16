@@ -32,15 +32,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 
-#[cfg(feature = "python")]
-use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
-#[cfg(feature = "python")]
-use pyo3::prelude::*;
-#[cfg(feature = "python")]
-use std::sync::Mutex;
-
-/// Outcome of [`TofuTrustStore::verify_or_trust`]. Serialized as
-/// ``"trusted_new"`` / ``"trusted_known"`` over the PyO3 boundary.
+/// Outcome of [`TofuTrustStore::verify_or_trust`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TofuResult {
     /// First contact with this ``zone_id`` — fingerprint was pinned.
@@ -133,8 +125,7 @@ pub struct TrustedZone {
 /// File-backed TOFU trust store.
 ///
 /// Safe for shared use behind a [`Mutex`] — the struct itself is
-/// `!Sync` via the owned [`HashMap`], and the PyO3 wrapper
-/// [`PyTofuTrustStore`] serializes access through `Mutex`.
+/// `!Sync` via the owned [`HashMap`].
 pub struct TofuTrustStore {
     path: PathBuf,
     entries: HashMap<String, TrustedZone>,
@@ -311,142 +302,6 @@ impl TofuTrustStore {
     /// Filesystem path this store persists to (for debug / error messages).
     pub fn path(&self) -> &Path {
         &self.path
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// PyO3 surface — only compiled when the ``python`` feature is on.
-// Server-only builds (e.g. ``nexus-witness`` / ``nexus-federation-server``)
-// skip this block and link against the pure-Rust ``TofuTrustStore``.
-// ─────────────────────────────────────────────────────────────────────
-
-#[cfg(feature = "python")]
-/// Read-only view of a trusted zone entry exposed to Python.
-#[pyclass(get_all, from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyTrustedZone {
-    pub zone_id: String,
-    pub ca_fingerprint: String,
-    pub ca_pem: String,
-    pub first_seen: String,
-    pub last_verified: String,
-    pub peer_addresses: Vec<String>,
-}
-
-#[cfg(feature = "python")]
-impl From<TrustedZone> for PyTrustedZone {
-    fn from(t: TrustedZone) -> Self {
-        Self {
-            zone_id: t.zone_id,
-            ca_fingerprint: t.ca_fingerprint,
-            ca_pem: t.ca_pem,
-            first_seen: t.first_seen,
-            last_verified: t.last_verified,
-            peer_addresses: t.peer_addresses,
-        }
-    }
-}
-
-/// PyO3 wrapper for the file-backed trust store. Serializes concurrent
-/// writes through an internal ``Mutex`` so callers can hand the same
-/// instance to multiple threads without guarding it themselves.
-#[cfg(feature = "python")]
-#[pyclass]
-pub struct PyTofuTrustStore {
-    inner: Mutex<TofuTrustStore>,
-}
-
-#[cfg(feature = "python")]
-#[pymethods]
-impl PyTofuTrustStore {
-    /// Open (or create-on-first-write) a trust store at ``path``.
-    #[new]
-    pub fn py_new(path: &str) -> PyResult<Self> {
-        let inner = TofuTrustStore::open(path).map_err(tofu_error_to_py)?;
-        Ok(Self {
-            inner: Mutex::new(inner),
-        })
-    }
-
-    /// Verify or pin a peer zone's CA. ``ca_pem`` must be the
-    /// PEM-encoded zone CA certificate bytes.
-    ///
-    /// Returns ``"trusted_new"`` (first contact, pinned) or
-    /// ``"trusted_known"`` (fingerprint matched). Raises ``RuntimeError``
-    /// with the SSH-style "@@@@ ZONE CERTIFICATE CHANGED @@@@" banner
-    /// on fingerprint mismatch.
-    pub fn verify_or_trust(
-        &self,
-        zone_id: &str,
-        ca_pem: &[u8],
-        peer_address: &str,
-    ) -> PyResult<String> {
-        let mut guard = self.lock_inner()?;
-        let result = guard
-            .verify_or_trust(zone_id, ca_pem, peer_address)
-            .map_err(tofu_error_to_py)?;
-        Ok(result.as_str().to_string())
-    }
-
-    /// Drop a zone from the store. Returns ``True`` if it existed.
-    pub fn remove(&self, zone_id: &str) -> PyResult<bool> {
-        let mut guard = self.lock_inner()?;
-        guard.remove(zone_id).map_err(tofu_error_to_py)
-    }
-
-    /// Look up a zone's trusted CA PEM, as ``bytes``. Returns
-    /// ``None`` when the zone is not in the store.
-    pub fn get_ca_pem(&self, zone_id: &str) -> PyResult<Option<Vec<u8>>> {
-        let guard = self.lock_inner()?;
-        Ok(guard.ca_pem(zone_id).map(|s| s.as_bytes().to_vec()))
-    }
-
-    /// Snapshot every trusted zone (preserves insertion order via
-    /// ``HashMap`` values — callers that need deterministic ordering
-    /// should sort by ``zone_id``).
-    pub fn list_trusted(&self) -> PyResult<Vec<PyTrustedZone>> {
-        let guard = self.lock_inner()?;
-        Ok(guard
-            .list_trusted()
-            .into_iter()
-            .map(PyTrustedZone::from)
-            .collect())
-    }
-
-    /// Write ``ca-bundle.pem`` alongside the store file containing
-    /// the local CA and every trusted zone CA. Returns the path
-    /// written, as a string.
-    pub fn build_ca_bundle(&self, local_ca_path: &str) -> PyResult<String> {
-        let guard = self.lock_inner()?;
-        let path = guard
-            .build_ca_bundle(Path::new(local_ca_path))
-            .map_err(tofu_error_to_py)?;
-        Ok(path.to_string_lossy().into_owned())
-    }
-
-    /// Path this store persists to (for debugging / error messages).
-    pub fn path(&self) -> PyResult<String> {
-        let guard = self.lock_inner()?;
-        Ok(guard.path().to_string_lossy().into_owned())
-    }
-}
-
-#[cfg(feature = "python")]
-impl PyTofuTrustStore {
-    fn lock_inner(&self) -> PyResult<std::sync::MutexGuard<'_, TofuTrustStore>> {
-        self.inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("TofuTrustStore mutex poisoned"))
-    }
-}
-
-#[cfg(feature = "python")]
-fn tofu_error_to_py(e: TofuError) -> PyErr {
-    match e {
-        TofuError::FingerprintMismatch { .. } => PyRuntimeError::new_err(e.to_string()),
-        TofuError::InvalidCertificate(_) => PyValueError::new_err(e.to_string()),
-        TofuError::Io(_) => PyIOError::new_err(e.to_string()),
-        TofuError::Serde(_) => PyRuntimeError::new_err(e.to_string()),
     }
 }
 

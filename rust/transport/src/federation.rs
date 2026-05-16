@@ -22,12 +22,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-#[cfg(feature = "python")]
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
-#[cfg(feature = "python")]
-use pyo3::prelude::*;
-#[cfg(feature = "python")]
-use pyo3::types::{PyBytes, PyDict};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 use kernel::kernel::vfs_proto;
@@ -36,7 +30,7 @@ use nexus_raft::transport::proto::nexus::raft::{
     zone_api_service_client::ZoneApiServiceClient, JoinZoneRequest,
 };
 
-/// mTLS material supplied by the caller (Python ``ZoneTlsConfig``).
+/// mTLS material for federation peer channels.
 ///
 /// PEM bytes are stored directly; ``tonic`` re-parses them on each
 /// channel build which is fine for the rare-event federation path.
@@ -51,10 +45,7 @@ struct TlsMaterial {
 }
 
 /// Per-peer channel cache + shared runtime.
-///
-/// Kept private to this module — the PyO3 wrapper [`PyFederationClient`]
-/// is the only entry point exposed to Python.
-struct FederationClient {
+pub struct FederationClient {
     runtime: Arc<tokio::runtime::Runtime>,
     channels: DashMap<String, Channel>,
     tls_material: Option<TlsMaterial>,
@@ -62,7 +53,7 @@ struct FederationClient {
 }
 
 impl FederationClient {
-    fn new(runtime: Arc<tokio::runtime::Runtime>, tls_material: Option<TlsMaterial>) -> Self {
+    pub fn new(runtime: Arc<tokio::runtime::Runtime>, tls_material: Option<TlsMaterial>) -> Self {
         Self {
             runtime,
             channels: DashMap::new(),
@@ -258,198 +249,6 @@ fn build_ca_bundle_pem(
     Ok(bundle)
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// PyO3 surface
-// ─────────────────────────────────────────────────────────────────────
-
-/// Python-facing federation client.
-///
-/// One instance per ``NexusFederation`` — holds a shared tokio runtime
-/// plus the TLS identity. Discover / join RPCs block on the runtime so
-/// Python callers can use plain sync ``asyncio.to_thread`` if they
-/// need to await alongside other async work.
-#[cfg(feature = "python")]
-#[pyclass]
-pub struct PyFederationClient {
-    inner: Arc<FederationClient>,
-}
-
-#[cfg(feature = "python")]
-#[pymethods]
-impl PyFederationClient {
-    /// Construct a new federation client.
-    ///
-    /// All PEM inputs are caller-supplied ``bytes``. Pass ``None`` for
-    /// the whole TLS set (``local_ca_pem`` / ``node_cert_pem`` /
-    /// ``node_key_pem``) to run plaintext — matches the insecure
-    /// channel path that Python's ``_build_channel`` took when
-    /// ``_tls_config`` was ``None``.
-    ///
-    /// ``tofu_store_path`` is optional: when set, its trusted zone CAs
-    /// are appended to the ``local_ca_pem`` into a single CA bundle.
-    #[new]
-    #[pyo3(signature = (
-        local_ca_pem=None,
-        node_cert_pem=None,
-        node_key_pem=None,
-        tofu_store_path=None,
-    ))]
-    pub fn py_new(
-        local_ca_pem: Option<&[u8]>,
-        node_cert_pem: Option<&[u8]>,
-        node_key_pem: Option<&[u8]>,
-        tofu_store_path: Option<&str>,
-    ) -> PyResult<Self> {
-        let tls_material =
-            match (local_ca_pem, node_cert_pem, node_key_pem) {
-                (Some(ca), Some(cert), Some(key)) => {
-                    let bundle = build_ca_bundle_pem(ca, tofu_store_path)
-                        .map_err(PyRuntimeError::new_err)?;
-                    Some(TlsMaterial {
-                        ca_bundle_pem: bundle,
-                        node_cert_pem: cert.to_vec(),
-                        node_key_pem: key.to_vec(),
-                    })
-                }
-                (None, None, None) => None,
-                _ => return Err(PyValueError::new_err(
-                    "TLS requires all three: local_ca_pem, node_cert_pem, node_key_pem (or none)",
-                )),
-            };
-
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .thread_name("nexus-federation-client")
-                .enable_all()
-                .build()
-                .map_err(|e| PyRuntimeError::new_err(format!("tokio runtime: {e}")))?,
-        );
-
-        Ok(Self {
-            inner: Arc::new(FederationClient::new(runtime, tls_material)),
-        })
-    }
-
-    /// Discover a peer zone via VFS ``sys_stat``. Returns a dict with
-    /// keys ``is_mount``, ``entry_type``, ``target_zone_id``, ... on
-    /// success, or ``None`` if the peer reports the path is missing /
-    /// the call errors gracefully.
-    pub fn discover_mount<'py>(
-        &self,
-        py: Python<'py>,
-        peer_addr: &str,
-        path: &str,
-    ) -> PyResult<Option<Bound<'py, PyDict>>> {
-        let peer_addr = peer_addr.to_string();
-        let path_owned = path.to_string();
-        let inner = Arc::clone(&self.inner);
-
-        let value: Option<serde_json::Value> = py.detach(|| {
-            inner
-                .runtime
-                .block_on(inner.discover_mount(&peer_addr, &path_owned))
-                .map_err(PyRuntimeError::new_err)
-        })?;
-
-        let Some(value) = value else {
-            return Ok(None);
-        };
-        let obj = value
-            .as_object()
-            .ok_or_else(|| PyRuntimeError::new_err("sys_stat response is not a JSON object"))?;
-
-        let dict = PyDict::new(py);
-        for (k, v) in obj {
-            let item = json_value_to_py(py, v)?;
-            dict.set_item(k, item)?;
-        }
-        Ok(Some(dict))
-    }
-
-    /// Request peer membership for a zone. Raises on RPC / leader-
-    /// redirect / cluster errors; returns cleanly on success.
-    pub fn request_join_zone(
-        &self,
-        py: Python<'_>,
-        peer_addr: &str,
-        zone_id: &str,
-        node_id: u64,
-        node_address: &str,
-        as_learner: bool,
-    ) -> PyResult<()> {
-        let peer_addr = peer_addr.to_string();
-        let zone_id = zone_id.to_string();
-        let node_address = node_address.to_string();
-        let inner = Arc::clone(&self.inner);
-
-        py.detach(|| {
-            inner
-                .runtime
-                .block_on(inner.request_join_zone(
-                    &peer_addr,
-                    &zone_id,
-                    node_id,
-                    &node_address,
-                    as_learner,
-                    0,
-                ))
-                .map_err(PyRuntimeError::new_err)
-        })
-    }
-}
-
-/// Convert a ``serde_json::Value`` to a Python object. Federation
-/// responses are plain JSON (strings, numbers, bools, nested dicts /
-/// lists), so the mapping stays narrow — no ``__type__`` escape-hatch
-/// is needed.
-#[cfg(feature = "python")]
-fn json_value_to_py<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
-    use pyo3::types::{PyBool, PyFloat, PyList, PyString};
-    use pyo3::IntoPyObjectExt;
-
-    match v {
-        serde_json::Value::Null => Ok(py.None().into_bound(py)),
-        serde_json::Value::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(i.into_bound_py_any(py)?)
-            } else if let Some(u) = n.as_u64() {
-                Ok(u.into_bound_py_any(py)?)
-            } else if let Some(f) = n.as_f64() {
-                Ok(PyFloat::new(py, f).into_any())
-            } else {
-                Err(PyRuntimeError::new_err(format!(
-                    "JSON number not representable: {n}"
-                )))
-            }
-        }
-        serde_json::Value::String(s) => Ok(PyString::new(py, s).into_any()),
-        serde_json::Value::Array(items) => {
-            let list = PyList::empty(py);
-            for item in items {
-                list.append(json_value_to_py(py, item)?)?;
-            }
-            Ok(list.into_any())
-        }
-        serde_json::Value::Object(map) => {
-            let dict = PyDict::new(py);
-            for (k, v) in map {
-                dict.set_item(k, json_value_to_py(py, v)?)?;
-            }
-            Ok(dict.into_any())
-        }
-    }
-}
-
-// Silence unused-import warnings when features change. `PyInt` /
-// `PyBytes` are kept reachable so downstream growth (e.g. surfacing
-// raw bytes payloads from Call responses) is friction-free.
-#[cfg(feature = "python")]
-#[allow(dead_code)]
-fn _keep_imports_live(py: Python<'_>) {
-    let _ = PyBytes::new(py, b"");
-}
 
 // ─────────────────────────────────────────────────────────────────────
 // Tests

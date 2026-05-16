@@ -27,9 +27,3 @@ pub mod types;
 
 #[cfg(feature = "transport")]
 pub mod transport_primitives;
-
-// PyO3 wrappers around the algorithms above. Compiled only when the
-// `python` feature is on (kernel cdylib is the sole consumer today).
-// Pure-Rust algorithm files remain WASM-clean.
-#[cfg(feature = "python")]
-pub mod python;

@@ -18,7 +18,6 @@
 //!
 //! | Flag | Default | Description |
 //! |------|---------|-------------|
-//! | `python` | off | PyO3 bindings for ~5μs metadata/lock ops (production path) |
 //! | `consensus` | off | Raft consensus via tikv/raft-rs (experimental) |
 //! | `grpc` | off | gRPC transport for Raft messages (experimental) |
 //! | `async` | off | Tokio async runtime |
@@ -63,11 +62,11 @@ pub mod raft;
 #[cfg(feature = "grpc")]
 pub mod federation;
 
-/// Pure-Rust zone handle — kernel-internal, not exposed to Python.
+/// Pure-Rust zone handle — kernel-internal.
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod zone_handle;
 
-/// Pure-Rust zone manager — kernel-internal, not exposed to Python.
+/// Pure-Rust zone manager — kernel-internal.
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod zone_manager;
 
@@ -95,15 +94,6 @@ pub use zone_manager::{ClusterStatus, TlsFiles, ZoneManager};
 /// ```
 #[cfg(feature = "grpc")]
 pub mod transport;
-
-/// Python bindings via PyO3 (requires `python` feature).
-///
-/// Raft is an rlib inside the ``nexus_runtime`` cdylib; the PyO3
-/// classes are registered by calling
-/// ``_nexus_raft::register_python_classes(m)`` from kernel's
-/// ``#[pymodule]`` entry point.
-#[cfg(feature = "python")]
-pub mod pyo3_bindings;
 
 // Driver-layer impls of kernel HAL surfaces:
 //

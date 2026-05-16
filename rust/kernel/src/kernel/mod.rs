@@ -751,7 +751,7 @@ pub struct Kernel {
     //
     // Type is `Arc<dyn hal::peer::PeerBlobClient>`; the concrete impl
     // lives in `transport::blob::peer_client::PeerBlobClient`. Default
-    // at boot is `NoopPeerBlobClient`; nexus-cdylib boot installs the
+    // at boot is `NoopPeerBlobClient`; the binary boot path installs the
     // real transport impl via `Kernel::set_peer_client`.
     pub(crate) peer_client: parking_lot::RwLock<Arc<dyn crate::hal::peer::PeerBlobClient>>,
     // Control-Plane HAL §3.B.1 slot. `Arc<dyn DistributedCoordinator>` so
@@ -759,7 +759,7 @@ pub struct Kernel {
     // lock / WAL-stream / Raft-MetaStore construction, mount wiring,
     // share registry, cluster introspection) is reachable through a trait
     // boundary rather than direct `nexus_raft::*` types. Default at boot
-    // is `NoopDistributedCoordinator`; nexus-cdylib boot installs the real
+    // is `NoopDistributedCoordinator`; the binary boot path installs the real
     // raft-side impl via `Kernel::set_distributed_coordinator`. Same DI
     // shape as the PeerBlobClient slot above.
     pub(crate) distributed_coordinator:

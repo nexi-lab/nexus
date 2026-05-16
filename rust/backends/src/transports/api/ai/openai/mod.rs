@@ -251,5 +251,4 @@ mod tests {
 }
 
 // ── sibling sub-modules ──────────────────────────────────────────
-pub mod inference;
 pub mod streaming;

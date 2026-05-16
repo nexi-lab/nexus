@@ -6,8 +6,7 @@
 //!   envelope helpers.
 //! * Out-bound (driver-side clients): peer-blob fetch client
 //!   implementing `lib::transport_primitives::PeerBlobClient`,
-//!   federation peer client (`PyFederationClient`) for discover/join
-//!   flows.
+//!   federation peer client for discover/join flows.
 //!
 //! Module layout:
 //!
@@ -17,8 +16,6 @@
 //!   ipc.rs          — IPC message envelope helpers
 //!   peer_blob.rs    — peer-blob fetch client (out-bound)
 //!   federation.rs   — federation peer client (out-bound)
-//!   python/
-//!     mod.rs        — register() + install_transport_wiring
 //! ```
 //!
 //! Direction: `transport -> {kernel, lib, raft, services}`. Transport
@@ -30,16 +27,12 @@
 //! wrappers wrap it directly — re-exported here under
 //! [`vfs::RpcTransport`] for the canonical out-bound name.
 
-/// Federation peer client — only used by `PyFederationClient` (Python deployment).
-#[cfg(feature = "python")]
+/// Federation peer client — discover/join RPCs for cross-zone membership.
 pub mod federation;
 /// VFS gRPC server (in-bound). Always compiled — zero PyO3 coupling.
 pub mod grpc;
 pub mod ipc;
 pub mod peer_blob;
-
-#[cfg(feature = "python")]
-pub mod python;
 
 /// Out-bound VFS gRPC client. Re-exported from `kernel::rpc_transport`
 /// where the type is declared (kernel-internal `RemoteMetaStore`

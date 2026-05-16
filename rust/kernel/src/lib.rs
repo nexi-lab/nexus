@@ -35,22 +35,13 @@ pub mod hal;
 pub mod llm_streaming;
 
 // ── Flat re-exports of `core::*` ─────────────────────────────────────
-// `pyclass` registrations in `python.rs` use `m.add_class::<MOD::Name>()`
-// where the codegen `add_class::<MOD::Name>` regex captures exactly two
-// `::`-separated segments, so each pyclass-bearing submodule is re-
-// exported under a single-segment name here.  Visibility tracks the
-// original module (`pub mod` stays `pub use`, private `mod` stays
-// `pub(crate) use`).
 pub(crate) use core::dispatch;
-#[cfg(feature = "python")]
-pub(crate) use core::dispatch::hook_registry;
 pub(crate) use core::dlc;
 pub(crate) use core::file_watch;
 pub use core::lock as lock_manager;
 pub use core::lock::locks;
 pub use core::meta_store;
 pub use core::vfs_router;
-// VFSSemaphore pyclass deleted — Python access goes through syscalls.
 // The pure Rust API lives at `core::lock::semaphore::VFSSemaphore`.
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
@@ -58,8 +49,7 @@ pub(crate) use core::pipe::manager as pipe_manager;
 // `acp` and `managed_agent` modules used to live here; both moved to
 // the `services` crate (`rust/services/src/{acp,managed_agent}/`) so
 // the kernel↔services dep direction stays one-way (services depends
-// on kernel, never the reverse). Boot-time installation is wired
-// through PyO3 hooks the cdylib calls (see `services::python::register`).
+// on kernel, never the reverse).
 
 pub(crate) use core::fdt;
 #[cfg(unix)]
@@ -85,8 +75,7 @@ pub mod cas_transport;
 // Kernel struct + syscalls.  `pub` so peer crates (`services`,
 // `transport`, `backends`) hold `&kernel::Kernel` and call the
 // in-tree Rust API directly (`register_native_hook`,
-// `prepare_audit_stream`, `sys_*`).  PyKernel mirrors the surface
-// to Python through `generated_kernel_abi_pyo3`.
+// `prepare_audit_stream`, `sys_*`).
 pub mod kernel;
 
 // `KernelAbi` trait — generic-over-K syscall surface that every
@@ -96,34 +85,12 @@ pub mod kernel;
 // calls (no vtable, no perf cost vs holding `Arc<Kernel>` directly).
 pub mod abi;
 
-// PyO3 surface generated from `kernel.rs` syscalls by
-// `scripts/codegen_kernel_abi.py`.  Other rlibs (`raft`,
-// `transport`) reference `PyKernel` here for cross-crate PyO3
-// borrows used by install-hook pyfunctions.
-#[cfg(feature = "python")]
-pub mod generated_kernel_abi_pyo3;
-#[cfg(feature = "python")]
-pub use generated_kernel_abi_pyo3 as generated_pyo3;
-
-// Python-facing AgentRegistry sub-pyclass — wraps the kernel's
-// `Arc<core::agents::registry::AgentRegistry>` so in-process Python
-// callers can reach `kernel.agent_registry.X` without going through the
-// flat `agent_*` syscalls. Hand-written; codegen owns the PyKernel
-// getter that returns an instance.
-#[cfg(feature = "python")]
-pub mod agent_registry_py;
-
-// PyO3 helper for batch-read error classification (Issue #4058).
-// Provides `batch_err_kind_msg` used by `generated_kernel_abi_pyo3`.
-#[cfg(feature = "python")]
-pub mod batch_read_py;
-
 // kernel↔raft Cargo edge direction: `raft → kernel`. Raft state-machine
 // impls (zone_meta_store) and the
 // `RaftDistributedCoordinator` trait impl live in the raft crate.
 // Kernel reaches them through the
 // `kernel::hal::distributed_coordinator::DistributedCoordinator`
-// trait dispatch installed by the cdylib boot path.
+// trait dispatch installed by the binary boot path.
 
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that
@@ -134,12 +101,3 @@ pub mod batch_read_py;
 // `RemotePipeBackend` / `RemoteStreamBackend` wrappers also wrap
 // `RpcTransport` directly.
 pub mod rpc_transport;
-
-// `#[pymodule] fn nexus_runtime` lives in `rust/nexus-cdylib/` (the
-// dedicated cdylib build artifact). Kernel's pyclass / pyfunction
-// surface is registered through `kernel::python::register`, called by
-// the cdylib alongside `lib::python::register`,
-// `nexus_raft::pyo3_bindings::register_python_classes`, and the
-// parallel-crate registers.
-#[cfg(feature = "python")]
-pub mod python;

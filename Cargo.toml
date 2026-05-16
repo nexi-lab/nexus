@@ -16,8 +16,6 @@ members = [
     "rust/raft",
     # Deployment binaries.
     "rust/profiles/cluster",
-    # Build artifact: Python wheel cdylib.
-    "rust/nexus-cdylib",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 exclude = ["nexus-fuse"]
@@ -34,22 +32,14 @@ transport = { path = "rust/transport" }
 services = { path = "rust/services" }
 # Driver impls. `default-features = false` so transitive workspace
 # consumers (e.g. `nexus-cluster`) can pick a slim driver set without
-# fighting Cargo's feature unification.  Crates that want the full
-# driver matrix (`nexus-cdylib`) opt back in via
-# `default-features = true` plus the `python` feature.
+# fighting Cargo's feature unification.
 backends = { path = "rust/backends", default-features = false }
-# `kernel` is rlib-only — the Python entry-point cdylib
-# `nexus_runtime.so` lives in `rust/nexus-cdylib/`. `default-features =
-# false` keeps the kernel runtime defaults (mimalloc allocator, HTTP
-# connector stack, py-hook adapters) off in transitive consumers
-# (backends / services / transport rlibs); `nexus-cdylib` opts back in
-# explicitly. This is the cycle break that lets `<peer-crate> -> kernel`
-# coexist with cdylib registration of peer-crate `#[pyclass]`es.
+# `kernel` is rlib-only. `default-features = false` keeps the kernel
+# runtime defaults (mimalloc allocator, HTTP connector stack) off in
+# transitive consumers (backends / services / transport rlibs);
+# deployment binaries opt back in explicitly.
 kernel = { path = "rust/kernel", default-features = false }
-# raft is an rlib pulled into the `nexus_runtime.so` cdylib via the
-# nexus-cdylib build artifact (alongside kernel). Other crates use raft
-# as a workspace dep too; the `python` + `grpc` feature flags here apply
-# uniformly.
+# raft is an rlib used by the cluster binary and other crates.
 raft = { path = "rust/raft", default-features = false, features = ["grpc"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -91,24 +81,3 @@ strip = "symbols"
 # the Linux artifact.
 [profile.release.package.nexus-cluster]
 opt-level = "z"
-
-# ── Cross-repo dep deduplication ──────────────────────────────────────
-#
-# `nexus-cdylib` git-deps on the sudocode runtime crate (PR-C v1
-# `spawn_task` integration). That sudocode crate in turn git-deps on
-# *this* nexus repo's `kernel` rlib (because sudocode needs the
-# `KernelAbi` trait declaration). Without this `[patch]`, cargo sees
-# the two `kernel` crates — our local path-based `rust/kernel` and
-# sudocode's git-based copy — as distinct, and the `AgentDescriptor`
-# struct sudocode-runtime hands back from `spawn_task` no longer
-# matches the one our cdylib service code uses (E0308 mismatched
-# types pointing at "two different versions of crate kernel").
-#
-# `[patch."https://github.com/nexi-lab/nexus"]` redirects every
-# transitive git-dep on the nexus repo to our workspace member at
-# `rust/kernel`, so kernel-typed values flow through one canonical
-# struct definition end-to-end. Same trick the standard cargo
-# dedup playbook uses for vendored deps.
-[patch."https://github.com/nexi-lab/nexus"]
-kernel = { path = "rust/kernel" }
-contracts = { path = "rust/contracts" }

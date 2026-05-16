@@ -18,7 +18,7 @@
 //!   audit/           — AuditHook (NativeInterceptHook) + factory
 //!   managed_agent/   — ManagedAgentService (mailbox + workspace hooks
 //!                      plus session lifecycle for AgentKind::MANAGED)
-//!   python/          — `#[cfg(feature = "python")]` PyO3 sub-module
+//!   tasks/           — durable task queue engine (fjall-backed)
 //! ```
 //!
 //! ## Hard invariant: `services` ⊥ `backends`
@@ -41,15 +41,12 @@
 
 // Rust-native authentication providers (ApiKeyAuth / NoAuth / JwtAuth).
 // Always compiled — no feature gate. The transport tier consumes
-// `Arc<dyn AuthProvider>` to resolve bearer tokens without PyO3.
+// `Arc<dyn AuthProvider>` to resolve bearer tokens.
 pub mod auth;
 
 // AcpService — subprocess + ACP-over-stdio host for
-// `AgentKind::UNMANAGED` agents (claude / codex / …).  Currently
-// pyo3-laden internally, so the per-service gate also requires the
-// `python` feature; once the pyo3-coupling is unwound it becomes
-// `service-acp`-only.
-#[cfg(all(feature = "service-acp", feature = "python"))]
+// `AgentKind::UNMANAGED` agents (claude / codex / gemini / …).
+#[cfg(feature = "service-acp")]
 pub mod acp;
 #[cfg(feature = "service-agents")]
 pub mod agents;
@@ -61,15 +58,9 @@ pub mod audit;
 // `get_session_v1` lifecycle for `AgentKind::MANAGED` agents.
 #[cfg(feature = "service-managed-agent")]
 pub mod managed_agent;
-// `tasks` lives in this crate so the runtime ships a single Python
-// wheel; `services::python::register` exposes the PyTaskEngine /
-// PyTaskRecord / PyQueueStats pyclasses.  Internal pyo3 use today, so
-// the per-service gate also requires `python`.
-#[cfg(all(feature = "service-tasks", feature = "python"))]
+// Durable task queue engine (fjall-backed).
+#[cfg(feature = "service-tasks")]
 pub mod tasks;
-// `permission` module deleted — PermissionProvider trait removed in
-// kernel primitive integrity audit. Enforcement runs via
-// NativeInterceptHook chain (dispatch_native_pre).
 // Matrix Client-Server v3 adapter — exposes nexus chat-with-me
 // DT_STREAMs as Matrix rooms so stock chat clients (Element /
 // FluffyChat / Cinny) participate in nexus conversations through the
@@ -78,6 +69,3 @@ pub mod tasks;
 // here lands skeleton + auth (`login` / `logout` / `whoami`).
 #[cfg(feature = "service-matrix-adapter")]
 pub mod matrix_adapter;
-
-#[cfg(feature = "python")]
-pub mod python;

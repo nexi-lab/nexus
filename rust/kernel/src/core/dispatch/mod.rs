@@ -1,18 +1,11 @@
 //! KernelDispatch — pure Rust dispatch traits + PathTrie.
 //!
-//! Zero PyO3 dependency. All Python-dependent types (InterceptHook trait,
-//! HookRegistry, ObserverRegistry) live in hook_registry.rs.
-//!
 //! Contains:
 //!   - PathResolver: virtual path short-circuit (PRE-DISPATCH phase, procfs-style)
 //!   - MutationObserver: fire-and-forget event notification (OBSERVE phase, fsnotify-style)
-//!   - FileEvent / FileEventType: kernel I/O event mirror of Python `FileEvent`
+//!   - FileEvent / FileEventType: kernel I/O event types
+//!   - NativeInterceptHook: INTERCEPT hook trait (pre/post syscall interception)
 //!   - PathTrie: O(path_depth) lookup (~50ns) for virtual path resolvers
-//!
-//! Pure Rust — no PyO3 dependency.
-
-#[cfg(feature = "python")]
-pub mod hook_registry;
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -311,9 +304,7 @@ impl Permission {
 
 // ── INTERCEPT hook context structs (§11) ─────────────────────────────
 //
-// Pure Rust equivalents of Python vfs_hooks dataclasses.
-// Used by InterceptHook trait — eliminates GIL crossing for Rust hooks.
-// Python hooks use PyInterceptHookAdapter which converts to Py<PyAny>.
+// Pure Rust hook context structs used by the NativeInterceptHook trait.
 
 /// Caller identity extracted from OperationContext.
 #[derive(Debug, Clone, Default)]
@@ -463,10 +454,6 @@ impl HookContext {
 }
 
 // ── INTERCEPT hook trait (§11) ───────────────────────────────────────
-//
-// Pure Rust hook trait — no GIL crossing for Rust-native hooks.
-// Python hooks wrap via PyInterceptHookAdapter (generated_pyo3.rs)
-// which converts HookContext → Py<PyAny>.
 
 /// Outcome of a pre-intercept call. `Pass` lets the operation proceed
 /// unchanged; `Replace(bytes)` substitutes the bytes for the original

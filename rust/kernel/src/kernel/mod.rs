@@ -179,6 +179,28 @@ pub struct SysReadResult {
     pub stream_next_offset: Option<usize>,
 }
 
+impl SysReadResult {
+    /// Construct an IPC read result (DT_PIPE / DT_STREAM).
+    ///
+    /// All IPC reads share `post_hook_needed: false`, `content_id: None`,
+    /// `gen: 0` — only `entry_type`, `data`, and `stream_next_offset` vary.
+    #[inline]
+    pub(crate) fn ipc(
+        entry_type: u8,
+        data: Option<Vec<u8>>,
+        stream_next_offset: Option<usize>,
+    ) -> Self {
+        Self {
+            data,
+            post_hook_needed: false,
+            content_id: None,
+            gen: 0,
+            entry_type,
+            stream_next_offset,
+        }
+    }
+}
+
 /// Per-request entry for `Kernel::sys_read` (batch variant).
 ///
 /// `offset` = byte offset into the file; `len = None` means "to EOF".

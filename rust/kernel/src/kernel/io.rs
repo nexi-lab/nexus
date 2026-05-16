@@ -289,46 +289,18 @@ impl Kernel {
         if entry.entry_type == DT_PIPE {
             match self.pipe_read_nowait(path) {
                 Ok(Some(data)) => {
-                    return Ok(SysReadResult {
-                        data: Some(data),
-                        post_hook_needed: false,
-                        content_id: None,
-                        gen: 0,
-                        entry_type: DT_PIPE,
-                        stream_next_offset: None,
-                    });
+                    return Ok(SysReadResult::ipc(DT_PIPE, Some(data), None));
                 }
                 Ok(None) => {
                     if timeout_ms == 0 {
-                        return Ok(SysReadResult {
-                            data: None,
-                            post_hook_needed: false,
-                            content_id: None,
-                            gen: 0,
-                            entry_type: DT_PIPE,
-                            stream_next_offset: None,
-                        });
+                        return Ok(SysReadResult::ipc(DT_PIPE, None, None));
                     }
                     match self.pipe_read_blocking(path, timeout_ms) {
                         Ok(data) => {
-                            return Ok(SysReadResult {
-                                data: Some(data),
-                                post_hook_needed: false,
-                                content_id: None,
-                                gen: 0,
-                                entry_type: DT_PIPE,
-                                stream_next_offset: None,
-                            });
+                            return Ok(SysReadResult::ipc(DT_PIPE, Some(data), None));
                         }
                         Err(KernelError::WouldBlock(_)) => {
-                            return Ok(SysReadResult {
-                                data: None,
-                                post_hook_needed: false,
-                                content_id: None,
-                                gen: 0,
-                                entry_type: DT_PIPE,
-                                stream_next_offset: None,
-                            });
+                            return Ok(SysReadResult::ipc(DT_PIPE, None, None));
                         }
                         Err(e) => return Err(e),
                     }
@@ -341,46 +313,22 @@ impl Kernel {
         if entry.entry_type == DT_STREAM {
             match self.stream_read_at(path, offset as usize) {
                 Ok(Some((data, next_offset))) => {
-                    return Ok(SysReadResult {
-                        data: Some(data),
-                        post_hook_needed: false,
-                        content_id: None,
-                        gen: 0,
-                        entry_type: DT_STREAM,
-                        stream_next_offset: Some(next_offset),
-                    });
+                    return Ok(SysReadResult::ipc(DT_STREAM, Some(data), Some(next_offset)));
                 }
                 Ok(None) => {
                     if timeout_ms == 0 {
-                        return Ok(SysReadResult {
-                            data: None,
-                            post_hook_needed: false,
-                            content_id: None,
-                            gen: 0,
-                            entry_type: DT_STREAM,
-                            stream_next_offset: None,
-                        });
+                        return Ok(SysReadResult::ipc(DT_STREAM, None, None));
                     }
                     match self.stream_read_at_blocking(path, offset as usize, timeout_ms) {
                         Ok((data, next_offset)) => {
-                            return Ok(SysReadResult {
-                                data: Some(data),
-                                post_hook_needed: false,
-                                content_id: None,
-                                gen: 0,
-                                entry_type: DT_STREAM,
-                                stream_next_offset: Some(next_offset),
-                            });
+                            return Ok(SysReadResult::ipc(
+                                DT_STREAM,
+                                Some(data),
+                                Some(next_offset),
+                            ));
                         }
                         Err(KernelError::WouldBlock(_)) => {
-                            return Ok(SysReadResult {
-                                data: None,
-                                post_hook_needed: false,
-                                content_id: None,
-                                gen: 0,
-                                entry_type: DT_STREAM,
-                                stream_next_offset: None,
-                            });
+                            return Ok(SysReadResult::ipc(DT_STREAM, None, None));
                         }
                         Err(e) => return Err(e),
                     }

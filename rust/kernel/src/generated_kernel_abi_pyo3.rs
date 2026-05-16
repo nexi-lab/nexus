@@ -1815,10 +1815,6 @@ impl PyKernel {
         self.inner.trie_lookup(path)
     }
 
-    fn trie_len(&self) -> usize {
-        self.inner.trie_len()
-    }
-
     // ── Hook proxy methods ─────────────────────────────────────────────
 
     fn register_hook(&self, py: Python<'_>, op: &str, hook: Py<PyAny>) -> PyResult<()> {

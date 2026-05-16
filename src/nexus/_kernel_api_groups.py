@@ -163,7 +163,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "sys_watch",
         "sys_write",
         "sys_write_batch",
-        "trie_len",
         "trie_lookup",
         "trie_register",
         "trie_unregister",

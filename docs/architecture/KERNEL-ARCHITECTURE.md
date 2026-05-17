@@ -93,8 +93,8 @@ One-click contract: implement protocol / `hook_spec()` →
 `ServiceRegistry.enlist()` → kernel handles the rest. `ServiceRegistry`
 (kernel-owned, lifecycle integrated) scans the registry and auto-calls
 the appropriate methods during `NexusFS.bootstrap()` / `NexusFS.close()`.
-Rust `ServiceRegistry` calls `start()/stop()` via `asyncio.run()` (Python
-stdlib only, zero nexus bridge imports).
+Rust `ServiceRegistry` calls `start()/stop()` on registered services
+during bootstrap/shutdown.
 
 `swap_service()` supports all services. Unified path: refcount drain → unhook
 old → replace → rehook new.
@@ -108,7 +108,7 @@ live here. Python callers reach the registry through the
 `agent_registry` getter on the Rust kernel handle —
 `kernel.agent_registry.spawn(...)` / `signal(...)` / `get(...)`
 return [`PyAgentDescriptor`] instances exposed under
-`nexus_runtime.AgentDescriptor` with field names that mirror
+`AgentDescriptor` field names mirror
 `contracts/process_types.py:AgentDescriptor`. The IPC provisioner is
 late-bound through `set_provisioner(callable)`; the registry stores
 the reference and `agent_registration.py` awaits its async
@@ -188,9 +188,9 @@ program against the contract, kernel implements it.
 primitives (§4) into user-facing operations. NexusFS contains **no service
 business logic**.
 
-All kernel methods are synchronous (`def`, not `async def`). Blocking
-waits (advisory locks, stream reads, `sys_watch`) use Rust Condvar with
-GIL release. Async exists only at the transport layer (gRPC, HTTP).
+All kernel methods are synchronous. Blocking waits (advisory locks,
+stream reads, `sys_watch`) use Rust Condvar. Async exists only at the
+transport layer (gRPC, HTTP).
 
 Kernel syscalls, all POSIX-aligned, all path-addressed:
 
@@ -261,7 +261,7 @@ etag ownership and zone isolation.
 **Boundary note (§2.5 Mediation Principle):** Hash-addressed access is
 kernel-internal Tier 2 — used by federation cross-node fetch
 (`KernelBlobFetcher` in `rust/raft/`) reaching `Arc<dyn ObjectStore>::read_content`
-directly. **Services do NOT have a hash-addressed PyO3 surface.** A service
+directly. **Services do NOT have a hash-addressed kernel surface.** A service
 caller that needs historical-version bytes must go through `sys_read(path)` and
 verify the served content_hash matches the requested version. If the path no
 longer maps to the requested version, the bytes are not reachable through this
@@ -347,8 +347,8 @@ Source of truth: `rust/kernel/src/kernel/dispatch.rs` (gate),
 
 **Why separate the Permission Gate from INTERCEPT PRE?** The gate runs in
 ~100-200ns pure Rust (AtomicBool + DashMap lease cache); full ReBAC evaluation
-in INTERCEPT PRE requires metadata access and GIL crossing. Separating them
-lets cached grants bypass INTERCEPT entirely.
+in INTERCEPT PRE requires metadata access. Separating them lets cached
+grants bypass INTERCEPT entirely.
 
 **Per-syscall dispatch matrix** (source of truth: `io.rs`):
 
@@ -367,14 +367,10 @@ lets cached grants bypass INTERCEPT entirely.
 **Zero-overhead invariant:** Empty callback list = no-op dispatch = zero overhead
 when no services are registered.
 
-**Rust/Python boundary crossing budget:**
-
-| Path | Crossings | Notes |
-|------|-----------|-------|
-| Pillar calls (Metastore, ObjectStore, CacheStore) | 0 | Pure Rust trait dispatch |
-| Hook dispatch (read/write/unlink/rename/copy/mkdir) | 2+N | Context build + per-hook call, GIL held pre-detach |
-| Service lifecycle (enlist auto-start, start_all, stop_all) | 4/service | isinstance + call_method0 + asyncio.wait_for + asyncio.run (stdlib only). Not on syscall hot path |
-| Zero-crossing syscalls | 0 | sys_lock, sys_unlock, sys_watch, sys_stat (chrono), sys_setattr, sys_readdir, sys_write IPC (DT_PIPE/DT_STREAM) |
+**Python-to-kernel boundary:** Python reaches the Rust kernel via
+gRPC to the `nexus-cluster` process. Each `sys_*` call is one gRPC
+round-trip. Inside the Rust process, pillar calls, hook dispatch,
+and service lifecycle are all pure Rust with zero FFI crossings.
 
 ### 2.5 Mediation Principle
 
@@ -421,12 +417,7 @@ three ABC pillars.  Phase 0.5 of
 `refactor/rust-workspace-parallel-layers` renamed the Rust trait from
 `Metastore` (one word) to `MetaStore` (two words); the Python ABC
 stays `MetastoreABC` because the Python tier is on a sunset path and
-not worth ripple-renaming.  The cross-language asymmetry is anchored
-at exactly one PyO3 boundary
-(`raft/src/pyo3_bindings.rs`'s `#[pyclass(name = "Metastore")]`),
-which disappears wholesale when the Rust-ification of every
-Metastore caller (Phase J / `kernel.sys_*` syscalls) retires the
-last Python `MetastoreABC` reference.
+not worth ripple-renaming.
 
 **Rust-side strict layout:** `kernel/src/abc/` contains exactly the
 3 §3.A ABC pillar trait files. `kernel/src/hal/` contains the §3.B
@@ -469,6 +460,14 @@ kernel owns the concept. `owner_id` is the kernel's posix_uid — used by
 `PermissionEnforcerProtocol.check_owner()` for O(1) DAC before service-layer
 hooks run. Audit trail (who created a file) is a service concern tracked by
 VersionRecorder, not a kernel inode field.
+
+**Rust naming note:** the Rust trait `MetaStore` (two-word PascalCase)
+matches `ObjectStore` / `CacheStore` for visual symmetry across the
+three ABC pillars.  Phase 0.5 of
+`refactor/rust-workspace-parallel-layers` renamed the Rust trait from
+`Metastore` (one word) to `MetaStore` (two words); the Python ABC
+stays `MetastoreABC` because the Python tier is on a sunset path and
+not worth ripple-renaming.
 
 #### 3.A.2 ObjectStoreABC (= Backend) — Blob I/O
 
@@ -522,7 +521,7 @@ Storage HAL (§3.A) is the persistent-data flavor of HAL; Control-Plane HAL is
 the in-memory coordination flavor. The kernel calls a trait method, an
 external crate's impl handles the actual work. Same DI shape on both sides:
 trait declared in `kernel/src/hal/`, concrete impl in the owner crate, an
-`Arc<dyn Trait>` slot the cdylib boots before any syscall fires.
+`Arc<dyn Trait>` slot the process boots before any syscall fires.
 
 | Trait | Capability | Default Impl | Reference Impl |
 |-------|------------|--------------|----------------|
@@ -574,7 +573,7 @@ Single method: `construct(args: ObjectStoreProviderArgs) -> Arc<dyn ObjectStore>
 
 `Kernel::sys_setattr("backend", …)` and the mount path use this to instantiate
 backends through trait dispatch. Cycle break is identical to the §3.A pattern:
-kernel declares the trait, backends crate provides the impl, cdylib boot wires
+kernel declares the trait, backends crate provides the impl, process boot wires
 the slot.
 
 The trait name describes the capability ("provides ObjectStore instances"), in
@@ -593,7 +592,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 |-----------|---------|---------------|------|
 | **VFSRouter** | `core.router` + `rust/kernel/src/mount_table.rs` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
 | **LockManager** | `rust/kernel/src/lock_manager.rs` | `i_rwsem` + `flock(2)` | I/O lock + advisory lock in one Rust struct. I/O: per-path condvar-based RW lock (§4.1). Advisory: `sys_lock`/`sys_unlock` with TTL (§4.4). Local: VFSSemaphore. Federation: auto-upgrade via `upgrade_to_distributed()` at mount time |
-| **Dispatch (Rust Kernel + DispatchMixin)** | `core.nexus_fs_dispatch` + `rust/kernel/src/dispatch.rs` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry (pure Rust, zero Py\<PyAny\>). DispatchMixin provides Python-side registration API. Empty = zero overhead |
+| **Dispatch (Rust Kernel + DispatchMixin)** | `core.nexus_fs_dispatch` + `rust/kernel/src/dispatch.rs` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry (pure Rust). Empty = zero overhead |
 | **PipeManager + StreamManager** | `rust/kernel/src/pipe_manager.rs` + `rust/kernel/src/stream_manager.rs` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend / SharedMemoryPipeBackend). DT_STREAM: non-destructive offset reads. Details in §4.2 |
 | **FileDescriptorTable** | `rust/kernel/src/core/fdt.rs` | fd table (`task_struct.files`) | Pre-opened fd registry for PAS backends. `sys_write` registers via `ObjectStore::resolve_physical_path()`; `sys_read` fast-path via `libc::pread`; `sys_unlink` removes; `sys_rename` re-keys. CAS/remote backends opt out (trait default `None`) |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
@@ -790,7 +789,7 @@ See `ops-scenario-matrix.md` §2–§3 for full enumeration and affinity matchin
 | POSIX analogue | `sem_t` (named semaphore, extended with TTL + holder tracking) |
 | Kernel role | Kernel **defines** the protocol and provides the implementation in `lib/`; kernel does NOT own it as a primitive |
 | Modes | Counting (N holders), mutex (max_holders=1) |
-| Latency | ~200ns (Rust PyO3) / ~500ns-1us (Python fallback) |
+| Latency | ~200ns (Rust) / ~500ns-1us (Python fallback) |
 | Scope | In-memory, process-scoped, TTL-based lazy expiry |
 | Consumers | Advisory lock layer (`LocalLockManager`), CAS metadata RMW |
 
@@ -823,11 +822,7 @@ jumping between the two trees finds the same module in the same place.
 | `lib`                | `src/nexus/lib`       | `rust/lib/`        |
 
 `rust/lib/` builds against `wasm32-unknown-unknown` with default
-features. PyO3 wrappers for the algorithms (rebac, search, trigram,
-glob, io, prefix, simd, path_utils, bitmap, bloom, hash) live behind
-the optional `python` feature in `rust/lib/src/python/*.rs`.
-`rust/nexus-cdylib` enables that feature so the wheel registers them
-through a single `lib::python::register(m)` call.
+features.
 
 `rust/lib/` also carries the `transport_primitives` module — TLS
 config, peer addressing, connection pooling, channel creation, the
@@ -839,17 +834,17 @@ enables `lib`'s `transport` feature.
 
 ### 6.1 Workspace composition
 
-The Rust workspace splits into three Cargo artifact roles:
+The Rust workspace splits into two Cargo artifact roles:
 
 | Cargo role      | Cargo type   | Purpose                                                                  |
 |-----------------|--------------|--------------------------------------------------------------------------|
-| Library crates  | `rlib`       | Compose into Python wheel + standalone binaries.                         |
-| Wheel artifact  | `cdylib`     | `rust/nexus-cdylib/` — produces `nexus_runtime.so` / `.pyd` for Python.   |
+| Library crates  | `rlib`       | Compose into deployment binaries.                                        |
 | Profile binary  | binary       | `rust/profiles/<name>/` — standalone deployment binaries (see §7.1).     |
 
-The Linux analogue is `make bzImage`: rlibs compile into one of two
-final artifacts (Python wheel or deployment binary) the same way
-`fs/built-in.a` and `kernel/built-in.a` link into `vmlinuz`.
+The Linux analogue is `make bzImage`: rlibs compile into the final
+deployment binary the same way `fs/built-in.a` and `kernel/built-in.a`
+link into `vmlinuz`. Python communicates with the kernel over gRPC
+(the `nexus-cluster` process), not FFI.
 
 #### Crate role taxonomy
 
@@ -922,31 +917,20 @@ Boot wiring:
 Coordinator methods all take `kernel: &Kernel` so the unit-struct impl
 forwards into kernel-side primitives without holding back-references.
 The §3.B.2 `ObjectStoreProvider` slot uses the same pattern: trait in
-`kernel::hal::object_store_provider`, impl in `backends::python::factory`,
-boot hook in cdylib.
+`kernel::hal::object_store_provider`, impl in `backends::factory`,
+boot hook in `nexus-cluster` main.
 
-#### Wheel composition
+#### Kernel boundary — gRPC (not FFI)
 
-`rust/nexus-cdylib/src/lib.rs` is the sole `#[pymodule] fn
-nexus_runtime`; it aggregates each peer's PyO3 surface through that
-peer's `python::register` entry:
-
-```rust
-#[pymodule]
-fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
-    lib::python::register(m)?;
-    kernel::python::register(m)?;
-    nexus_raft::pyo3_bindings::register_python_classes(m)?;
-    services::python::register(m)?;
-    backends::python::register(m)?;
-    transport::python::register(m)?;
-    Ok(())
-}
-```
+Python communicates with the Rust kernel via gRPC over the
+`nexus-cluster` process (profile binary at `rust/profiles/cluster/`).
+The kernel boundary is a network protocol (gRPC): Python spawns or
+connects to `nexus-cluster` and dispatches syscalls via typed RPCs
+(`Read`, `Write`, `Delete`, `BatchRead`) and a generic `Call` RPC.
 
 This split lets each peer crate depend on `kernel` (for trait
 declarations: `abc::ObjectStore`, `hal::distributed_coordinator::DistributedCoordinator`,
-…) while the wheel-side dependency `nexus-cdylib → {kernel, peers}`
+…) while the binary-side dependency `nexus-cluster → {kernel, peers}`
 flows in only one direction. `PeerBlobClient` lives in
 `lib::transport_primitives` so both raft (server-side handler) and
 transport (client-side fetch) can depend on it without depending on
@@ -968,11 +952,7 @@ each other.
               ↑    ↑    ↑    ↑                kernel + lib; transport
               │    │    │    │                additionally depends on raft
               │    │    │    │                for federation proto stubs)
-              └────┴────┴────┴── nexus-cdylib  (Python wheel sink)
-
-                              raft         (used by profile binaries)
-                               ↑
-                       rust/profiles/cluster  (deployment binary sink)
+              └────┴────┴────┴── rust/profiles/cluster  (deployment binary sink)
 ```
 
 Edge invariants:
@@ -983,7 +963,6 @@ Edge invariants:
 | `kernel ↔ lib`                                | one-way: `kernel → lib`                        |
 | `raft ↔ transport`                            | one-way: `transport → raft` for federation client proto stubs (Postgres-client-references-libpq shape) |
 | `kernel → raft`                               | trait-only: kernel reaches raft through `DistributedCoordinator` dispatch |
-| `nexus-cdylib`                                | sink (Python wheel)                            |
 | `rust/profiles/<name>`                        | sink (deployment binary)                       |
 
 `lib` (default features) keeps a zero peer-crate footprint so it builds
@@ -1001,7 +980,7 @@ plus raft for the federation server fabric.
 | Side   | Crate                       | Module                         | Role                                                                                  |
 |--------|-----------------------------|--------------------------------|---------------------------------------------------------------------------------------|
 | Server | `transport`                 | `grpc` / `ipc`                 | VFS gRPC server (port 2028) + IPC envelope helpers                                    |
-| Server | `raft`                      | `blob_fetcher_handler` / `pyo3_bindings` | Federation peer mesh + per-zone routers + blob-fetcher server handler         |
+| Server | `raft`                      | `blob_fetcher_handler`       | Federation peer mesh + per-zone routers + blob-fetcher server handler         |
 | Client | `transport`                 | `vfs` / `peer_blob` / `federation` | Driver-outgoing clients: VFS gRPC for `RemoteBackend`, peer-blob fetch, federation peer client |
 | Shared | `lib::transport_primitives` | (whole module)                 | TLS, connection pool, addressing, TOFU trust store, `PeerBlobClient` trait — consumed by both sides |
 
@@ -1072,10 +1051,9 @@ binary mounts host-fs at `/` via `PathLocalBackend` at boot
 (`--root-path`) and exposes runtime `mount` / `unmount` subcommands
 that drive the same DLC syscalls.
 
-`rust/nexus-cdylib/` lives at workspace top level rather than under
-`profiles/` because the Python wheel is a different artifact category:
-it loads into an external Python process, where profile binaries each
-run as their own process.
+Profile binaries each run as their own OS process. Python
+communicates with the kernel via gRPC to the `nexus-cluster` process
+(see §6.1 "Kernel boundary").
 
 ### 7.2 Compile-time features vs runtime driver gate
 
@@ -1087,10 +1065,7 @@ the work for any given deployment:
 | **Compile-time** | `backends`/`services` Cargo features (`driver-path-local`, `service-audit`, …) | `cargo build` | binary size on disk | `CONFIG_FOO=y` in `.config` |
 | **Runtime** | `kernel::hal::object_store_provider::set_enabled_drivers` (Python `nx_set_enabled_drivers`) | Boot, before first `sys_setattr(DT_MOUNT)` | runtime error if a profile asks for a missing driver | `/sys/module/<name>/parameters` |
 
-`nexus-cdylib` (Python wheel) compiles every driver in (`features =
-["python", "connectors", "driver-*"]`) and uses the runtime gate to
-limit what an active `DeploymentProfile` is allowed to mount.  The
-runtime gate is the SSOT — every dispatch goes through
+The runtime gate is the SSOT — every dispatch goes through
 `is_driver_enabled`, no implicit local-default skip-branch.
 
 `nexusd-cluster` (slim Rust binary) compiles only the drivers it needs
@@ -1151,16 +1126,13 @@ cases.
 
 | Service name | Source | Methods |
 |--------------|--------|---------|
-| `managed_agent` | `rust/kernel/src/managed_agent/` | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `kernel::core::agents::registry::AgentRegistry` directly (no PyO3). |
+| `managed_agent` | `rust/kernel/src/managed_agent/` | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `kernel::core::agents::registry::AgentRegistry` directly. |
 | `acp` | `rust/kernel/src/acp/` | `acp_call`, `acp_kill`, `acp_list_agents`, `acp_list_processes`, `acp_set_system_prompt`, `acp_get_system_prompt`, `acp_set_enabled_skills`, `acp_get_enabled_skills`, `acp_history` — stateless coding-agent CLI caller via ACP JSON-RPC. `call_agent` orchestrates `AcpSubprocess` (tokio Command + DT_PIPE) + `AcpConnection` + `AcpSubservice` lifecycle. The AgentRegistry trait bridge wired by `nx_acp_set_agent_registry` is satisfied by `kernel.agent_registry` (the Rust SSOT itself), so spawn / kill / list calls go straight to `kernel::core::agents::registry::AgentRegistry`. |
 
-In-process Python callers reach any Rust service through the generic
-`nexus_runtime.nx_kernel_dispatch_rust_call(kernel, service, method,
-payload)` (releases the GIL during the call). One primitive — no
-per-service `nx_<svc>_dispatch` shortcuts — so audit / permission
-hooks added to the dispatch path land in one place. External callers
-come in over the tonic `Call` handler and follow the §8.1 dispatch
-order.
+Python callers reach any Rust service through the gRPC `Call(method,
+payload)` RPC on the `nexus-cluster` process. One dispatch path — no
+per-service shortcuts — so audit / permission hooks added to the
+dispatch path land in one place.
 
 ---
 

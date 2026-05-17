@@ -20,7 +20,7 @@
 //! # Usage
 //!
 //! ```no_run
-//! use nexus_runtime::ipc::{send_message, wait_for_message, MessageEnvelope};
+//! use kernel::ipc::{send_message, wait_for_message, MessageEnvelope};
 //!
 //! // Send
 //! let envelope = MessageEnvelope::new("agent:sender", "agent:reviewer", "task", payload);

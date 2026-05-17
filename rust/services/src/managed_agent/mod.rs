@@ -62,7 +62,7 @@ use proc_entry::{register_proc_entry, unregister_proc_entry};
 
 /// Install ManagedAgentService on `kernel` with an injected
 /// [`SpawnTask`] provider. This is the entry the binary edge
-/// (`nexus-cdylib`'s pyo3 wrapper for the Python wheel,
+/// (`profiles/cluster` binary,
 /// `profiles/cluster` for the cluster binary) calls with a
 /// concrete adapter that wraps a runtime crate (e.g.
 /// `sudocode_runtime::spawn_task`).
@@ -183,7 +183,7 @@ impl std::error::Error for ManagedAgentError {}
 // which is the wrong layer for cross-repo coupling — same reason
 // `KernelAbi` lives at the trait boundary). Instead, services
 // declares a small DI trait that nexus's binary edge
-// (`profiles/cluster` for cluster builds, `nexus-cdylib` for the
+// (`profiles/cluster` for all builds — the sole binary edge
 // Python wheel) implements by wrapping `sudocode_runtime::spawn_task`.
 // The trait method is `dyn`-dispatched but only fires once per
 // `start_session` call (out of the hot path); the spawn body itself
@@ -260,7 +260,7 @@ impl<K: KernelAbi> ManagedAgentService<K> {
     }
 
     /// Constructor variant that injects a [`SpawnTask`] provider.
-    /// The binary edge (`profiles/cluster` / `nexus-cdylib`) calls
+    /// The binary edge (`profiles/cluster`) calls
     /// this with a concrete adapter (e.g. sudocode-runtime
     /// `spawn_task` wrapper) so `start_session` actually kicks off a
     /// runtime body. Pure-Rust slim builds without a runtime body
@@ -377,7 +377,7 @@ impl<K: KernelAbi> ManagedAgentService<K> {
             // services rlib free of a hard dep on any specific
             // runtime crate (sudocode today, future runtimes
             // tomorrow); the concrete adapter lives at the binary
-            // edge (`profiles/cluster` / `nexus-cdylib`) and
+            // edge (`profiles/cluster`) and
             // monomorphises `spawn_task::<K>` internally — no
             // per-`sys_read` vtable cost. Slim builds without a
             // provider (`spawn_provider: None`) skip the spawn and
@@ -491,7 +491,7 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
     }
 
     /// Install variant that injects a [`SpawnTask`] provider. Used
-    /// by the binary edge (`profiles/cluster` / `nexus-cdylib`) to
+    /// by the binary edge (`profiles/cluster`) to
     /// wire the sudocode-runtime adapter — the actual managed-agent
     /// runtime body. Slim builds without a runtime body call
     /// [`Self::install`] which leaves `spawn_provider = None` and

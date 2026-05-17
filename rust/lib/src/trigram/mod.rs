@@ -14,7 +14,7 @@
 //! - **writer** — Serialize index to bytes (WASM-safe, no file I/O)
 //! - **error** — Error types
 //!
-//! The I/O layer (mmap, file read/write) lives in `nexus_runtime::trigram`.
+//! The I/O layer (mmap, file read/write) lives in `lib::trigram`.
 
 pub mod builder;
 pub mod error;

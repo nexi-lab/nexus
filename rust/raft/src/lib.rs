@@ -44,7 +44,7 @@
 //! Part of Issue #1159: P2P Federation and Consensus Zones
 
 // The mimalloc `#[global_allocator]` lives in the final cdylib
-// (nexus_runtime). An rlib cannot declare a global allocator — only the
+// (nexus-cluster). An rlib cannot declare a global allocator — only the
 // final binary (cdylib/bin) can.
 
 pub mod storage;

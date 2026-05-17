@@ -4,7 +4,7 @@
 #        just doctor       # verify env is healthy
 #        just build-kernel # rebuild kernel binary
 
-# Build the nexus-cluster binary (replaces the old maturin wheel build).
+# Build the nexus-cluster binary.
 # The kernel now runs as a separate process; Python communicates via gRPC.
 # Run after: git clone, git pull, or switching branches with Rust changes.
 setup:

@@ -30,7 +30,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # ---------- build ----------
-# maturin removed — kernel runs as nexus-cluster binary
+# kernel runs as nexus-cluster binary
 
 # ---------- Install Python dependencies ----------
 COPY requirements-minimal.txt /tmp/requirements-minimal.txt

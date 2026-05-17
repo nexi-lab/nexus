@@ -119,7 +119,7 @@ impl BlobFetcher for KernelBlobFetcher {
     }
 }
 
-/// Install hook called from `nexus-cdylib`'s `#[pymodule]` boot after
+/// Install hook called during kernel process boot after
 /// `kernel::python::register` so the raft server's `BlobFetcherSlot`
 /// carries a kernel-backed fetcher before the first federation read.
 ///

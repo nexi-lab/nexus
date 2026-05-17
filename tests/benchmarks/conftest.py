@@ -20,7 +20,7 @@ def _build_kernel_metastore(db_path) -> tuple[object, object]:
     from. Returns ``(kernel, kernel)`` for API symmetry with the old
     ``(kernel, proxy)`` shape.
     """
-    from nexus_runtime import PyKernel as _Kernel
+    from nexus.remote.kernel_client import KernelClient as _Kernel
 
     redb_path = str(db_path).replace(".db", "") + ".redb"
     kernel = _Kernel()

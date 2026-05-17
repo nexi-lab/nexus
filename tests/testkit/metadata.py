@@ -36,7 +36,7 @@ def DictMetastore(  # noqa: N802
     A new ``PyKernel`` is constructed per call with its redb store opened
     against either ``storage_path`` (when supplied) or a tempfile.
     """
-    from nexus_runtime import PyKernel
+    from nexus.remote.kernel_client import KernelClient as PyKernel
 
     if storage_path is None:
         redb_path = str(Path(tempfile.mkdtemp()) / "dict.redb")

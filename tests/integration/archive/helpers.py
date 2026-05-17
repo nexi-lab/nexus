@@ -45,16 +45,10 @@ def boot_lightweight_nexus(db_path: Path) -> Any:
 
     backend = PathLocalBackend(root_path=str(data_dir))
 
-    from nexus_runtime import PyKernel
+    from nexus.remote.kernel_client import KernelClient as PyKernel
 
     kernel = PyKernel()
-    try:
-        import nexus_runtime as _nk
-
-        _nk.install_transport_wiring(kernel)
-        _nk.install_federation_wiring(kernel)
-    except Exception:
-        pass
+    # Federation wiring managed internally by kernel process
 
     metadata_store = kernel.set_metastore_path(str(db_path)) or kernel
 

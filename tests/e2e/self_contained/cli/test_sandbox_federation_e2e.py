@@ -488,7 +488,7 @@ class TestSandboxLocalOnlyFallback:
                 stderr = proc.stderr.read() if proc.stderr else ""
                 if "nexus_kernel" in stderr or "No module named" in stderr:
                     pytest.skip(
-                        "nexusd requires built Rust kernel — run `maturin develop --release`"
+                        "nexusd requires nexus-cluster binary — run cargo build --release -p nexus-cluster"
                     )
                 pytest.skip(f"nexusd exited immediately: {stderr[:500]}")
 

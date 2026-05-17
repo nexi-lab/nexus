@@ -21,7 +21,7 @@ def _make_store(zone_id: str = ROOT_ZONE_ID) -> Any:  # noqa: ARG001
     ``zone_id`` is accepted for API compatibility — every call yields a
     separate kernel + redb so distinct stores are naturally isolated.
     """
-    from nexus_runtime import PyKernel as _Kernel
+    from nexus.remote.kernel_client import KernelClient as _Kernel
 
     tmpdir = tempfile.mkdtemp()
     kernel = _Kernel()

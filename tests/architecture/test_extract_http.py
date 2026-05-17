@@ -35,3 +35,12 @@ def test_extract_http_real_file_smoke(repo_root: Path):
         return
     results = extract_http_routes(real)
     assert isinstance(results, list)
+
+
+def test_extract_http_recursive_real_tree_smoke(repo_root: Path):
+    """v3: recursive scan should find many more routes than just fastapi_server.py."""
+    real_routers = repo_root / "src/nexus/server/api"
+    if not real_routers.exists():
+        return
+    results = extract_http_routes(real_routers)
+    assert len(results) >= 50, f"expected many HTTP routes from recursive scan, got {len(results)}"

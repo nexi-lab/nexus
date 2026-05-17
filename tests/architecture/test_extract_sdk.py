@@ -25,3 +25,12 @@ def test_extract_sdk_real_file_smoke(repo_root: Path):
         return
     results = extract_sdk_methods(real, class_names=("BaseRemoteNexusFS",))
     assert isinstance(results, list)
+
+
+def test_extract_sdk_recursive_real_tree_smoke(repo_root: Path):
+    """v3: recursive walk of remote/ should find many SDK methods."""
+    real = repo_root / "src/nexus/remote"
+    if not real.exists():
+        return
+    results = extract_sdk_methods(real)
+    assert len(results) >= 20, f"expected many SDK methods, got {len(results)}"

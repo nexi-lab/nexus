@@ -45,6 +45,7 @@ class Module:
     id: str
     name: str
     description: str
+    layer: str = ""  # one of the 5 architectural layers
     depends_on: list[str] = field(default_factory=list)
 
 

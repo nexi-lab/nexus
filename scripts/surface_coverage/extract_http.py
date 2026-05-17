@@ -1,7 +1,7 @@
 """Extract HTTP routes from FastAPI files via AST.
 
-Recognizes @<obj>.{get,post,put,patch,delete}('/path/...') decorators
-where <obj> is any router-like instance.
+v3: recursively scans server/api/ for any *.py files that register routes
+via `@router.{get,post,put,patch,delete}('/path/...')` decorators.
 """
 
 from __future__ import annotations
@@ -15,13 +15,27 @@ _HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 
 @dataclass(frozen=True)
 class RawHttpRoute:
-    method: str  # uppercase
+    method: str
     path: str
-    source: str  # "file.py:line"
+    source: str
 
 
-def extract_http_routes(py_path: Path) -> list[RawHttpRoute]:
-    tree = ast.parse(py_path.read_text())
+def extract_http_routes(py_path_or_dir: Path) -> list[RawHttpRoute]:
+    """Accept a single file (legacy) or a directory (v3 recursive scan)."""
+    out: list[RawHttpRoute] = []
+    if py_path_or_dir.is_file():
+        out.extend(_extract_from_file(py_path_or_dir))
+    elif py_path_or_dir.is_dir():
+        for py in sorted(py_path_or_dir.rglob("*.py")):
+            out.extend(_extract_from_file(py))
+    return sorted(out, key=lambda r: (r.path, r.method))
+
+
+def _extract_from_file(py_path: Path) -> list[RawHttpRoute]:
+    try:
+        tree = ast.parse(py_path.read_text())
+    except (SyntaxError, UnicodeDecodeError):
+        return []
     out: list[RawHttpRoute] = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -38,7 +52,7 @@ def extract_http_routes(py_path: Path) -> list[RawHttpRoute]:
                     source=f"{py_path}:{deco.lineno}",
                 )
             )
-    return sorted(out, key=lambda r: (r.path, r.method))
+    return out
 
 
 def _route_from_decorator(deco: ast.AST) -> tuple[str, str] | None:

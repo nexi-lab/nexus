@@ -1,20 +1,25 @@
-"""Taxonomy: classification rules + module list invariants."""
+"""Taxonomy: layered architecture + classification rules."""
 
 import pytest
 
 from scripts.surface_coverage.taxonomy import (
-    CATEGORIES,
+    BRICK_CATEGORIES,
+    LAYERS,
     MODULES,
     all_module_ids,
+    bricks_by_category,
     classify_op_id,
-    module_categories,
+    modules_by_layer,
 )
 
 
-def test_every_module_in_a_category():
-    seen = {mid for mids in CATEGORIES.values() for mid in mids}
-    declared = {m.id for m in MODULES}
-    assert seen == declared, f"declared - categorized: {declared - seen}; extra: {seen - declared}"
+def test_layers_in_canonical_order():
+    assert LAYERS == ("transport", "cross", "brick", "nexus_fs", "rust_kernel")
+
+
+def test_every_module_has_known_layer():
+    for m in MODULES:
+        assert m.layer in LAYERS, f"{m.id} has unknown layer {m.layer!r}"
 
 
 def test_no_duplicate_module_ids():
@@ -29,36 +34,63 @@ def test_depends_on_targets_exist():
             assert dep in ids, f"{m.id} depends on unknown module {dep}"
 
 
+def test_every_brick_in_a_category():
+    brick_ids = {m.id for m in MODULES if m.layer == "brick"}
+    categorized = {bid for ids in BRICK_CATEGORIES.values() for bid in ids}
+    assert brick_ids == categorized, (
+        f"bricks not in any category: {brick_ids - categorized}; "
+        f"category entries that aren't bricks: {categorized - brick_ids}"
+    )
+
+
+def test_28_bricks_present():
+    brick_ids = {m.id for m in MODULES if m.layer == "brick"}
+    assert len(brick_ids) == 28, f"expected 28 bricks, got {len(brick_ids)}: {sorted(brick_ids)}"
+
+
+def test_modules_by_layer_returns_all_layers():
+    by_layer = modules_by_layer()
+    assert set(by_layer.keys()) == set(LAYERS)
+    assert len(by_layer["brick"]) == 28
+
+
+def test_bricks_by_category_omits_empty():
+    cats = bricks_by_category()
+    for cat, mods in cats.items():
+        assert mods, f"category {cat} has no bricks"
+
+
 @pytest.mark.parametrize(
     "op_id,expected_module",
     [
-        ("fs.read", "fs"),
+        # explicit module prefixes win
         ("rebac.grant", "rebac"),
         ("workspace.snapshot_create", "workspace"),
-        ("kernel.read", "kernel"),  # explicit kernel prefix
-        ("oauth_list_providers", "oauth"),  # rpc_expose-style
-        ("oauth.list_providers", "oauth"),
-        ("access.share_link", "share_link"),  # access. -> share_link via "share_link" substring
-        ("create.share_link", "share_link"),
         ("snapshot.list", "snapshot"),
+        ("filesystem.read", "filesystem"),
+        # @rpc_expose style
+        ("oauth_list_providers", "auth"),
+        ("rebac_write", "rebac"),
         ("workspace_create", "workspace"),
-        ("read", "fs"),  # bare verb in fs family
-        ("write", "fs"),
-        ("ping", "kernel"),  # uncategorized -> kernel
-        ("unknown_thing", "kernel"),
-        ("audit_log_dump", "audit"),
-        ("mounts_list", "mounts"),
-        ("mcp_tool_invoke", "mcp"),
-        ("semantic_query", "semantic"),
-        ("search.grep", "search"),
+        ("snapshot_create", "snapshot"),
+        ("audit_log_dump", "agent_log"),
+        # bare verbs go to filesystem
+        ("read", "filesystem"),
+        ("write", "filesystem"),
+        ("delete", "filesystem"),
+        # sys_* syscalls -> nexus_fs
+        ("sys_read", "nexus_fs"),
+        ("sys_write", "nexus_fs"),
+        # transports
+        ("share_link.create", "share_link"),
+        ("create.share_link", "share_link"),  # substring
+        ("upload_chunk", "upload"),
+        ("workflow_trigger", "workflows"),
+        ("task_run", "task_manager"),
+        ("agent_register", "agent_log"),
+        # uncategorized fallback
+        ("nonsense_xyz_no_match", "uncategorized"),
     ],
 )
 def test_classify_op_id(op_id, expected_module):
     assert classify_op_id(op_id) == expected_module
-
-
-def test_module_categories_returns_module_objects():
-    cats = module_categories()
-    fs_mod = cats["Data plane"][0]
-    assert fs_mod.id == "fs"
-    assert fs_mod.name == "Filesystem"

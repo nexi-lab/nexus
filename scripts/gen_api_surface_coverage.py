@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import argparse  # noqa: E402
 
 from scripts.surface_coverage import (  # noqa: E402
+    extract_bricks,
     extract_cli,
     extract_grpc_call,
     extract_grpc_typed,
@@ -44,6 +45,8 @@ from scripts.surface_coverage.taxonomy import (  # noqa: E402
     classify_op_id,
 )
 
+_KNOWN_BRICK_IDS = {m.id for m in TAXONOMY_MODULES if m.layer == "brick"}
+
 
 def generate_coverage(
     *,
@@ -68,14 +71,31 @@ def generate_coverage(
                     continue
             _upsert(operations, op_id, "cli", raw.name, raw.source)
 
-    # --- HTTP ---
-    fastapi = repo_root / "src/nexus/server/fastapi_server.py"
-    if fastapi.exists():
-        for raw in extract_http.extract_http_routes(fastapi):
+    # --- HTTP (v3: recursive scan of server/api/ + server/ subdirs) ---
+    # Also include server/ for routes in auth/, health/, middleware/ subdirs.
+    _http_scanned: set[Path] = set()
+    for http_root in (
+        repo_root / "src/nexus/server/api",
+        repo_root / "src/nexus/server/auth",
+        repo_root / "src/nexus/server/health",
+    ):
+        if not http_root.exists():
+            continue
+        for raw in extract_http.extract_http_routes(http_root):
             try:
                 op_id = normalize.normalize_http(raw.method, raw.path)
             except ValueError:
-                continue
+                # Relative path (no /api/v<N>/ prefix) — infer module from the
+                # router file stem (e.g. "rebac.py" -> "rebac").
+                source_file = Path(raw.source.split(":")[0])
+                stem = source_file.stem.replace("-", "_")
+                # Collapse path segments into a verb string.
+                path_parts = [p for p in raw.path.strip("/").split("/") if p]
+                if not path_parts:
+                    verb = raw.method.lower()
+                else:
+                    verb = "_".join(p.strip("{}").replace("-", "_") for p in path_parts[:2])
+                op_id = f"{stem}.{verb}"
             _upsert(operations, op_id, "http", f"{raw.method} {raw.path}", raw.source)
 
     # --- MCP ---
@@ -130,13 +150,26 @@ def generate_coverage(
                 op_id = raw.name  # classifier handles unprefixed names
             _upsert(operations, op_id, "grpc_expose", raw.name, raw.source)
 
-    # --- SDK ---
-    bc = repo_root / "src/nexus/remote/base_client.py"
-    if bc.exists():
-        # Real class is BaseRemoteNexusFS; tolerate variations.
-        for raw in extract_sdk.extract_sdk_methods(
-            bc, class_names=("BaseRemoteNexusFS", "BaseRemoteClient")
-        ):
+    # --- Bricks (metadata-only; each brick becomes a module via taxonomy) ---
+    bricks_root = repo_root / "src/nexus/bricks"
+    if bricks_root.exists():
+        for raw in extract_bricks.extract_bricks(bricks_root):
+            # Each brick is represented as an Operation for visibility in YAML even
+            # without its own external surfaces. Op-id "brick.<name>".
+            op_id = f"{raw.id}.brick"
+            _upsert(operations, op_id, "grpc_expose", f"brick:{raw.id}", raw.source)
+            # Override module to match brick id (classifier may have placed it elsewhere)
+            operations[op_id].module = raw.id if raw.id in _KNOWN_BRICK_IDS else "uncategorized"
+            # Stash brick metadata in summary if available
+            if raw.brick_name:
+                operations[
+                    op_id
+                ].summary = f"brick gate: {raw.brick_name}, tier: {raw.tier or 'n/a'}"
+
+    # --- SDK (v3: walk the whole remote/ tree) ---
+    remote_root = repo_root / "src/nexus/remote"
+    if remote_root.exists():
+        for raw in extract_sdk.extract_sdk_methods(remote_root):
             try:
                 op_id = normalize.normalize_sdk(raw.class_name, raw.method_name)
             except ValueError:
@@ -169,7 +202,11 @@ def generate_coverage(
             [
                 # convert CuratedModule -> schema.Module for serialization
                 Module(
-                    id=m.id, name=m.name, description=m.description, depends_on=list(m.depends_on)
+                    id=m.id,
+                    name=m.name,
+                    description=m.description,
+                    layer=m.layer,
+                    depends_on=list(m.depends_on),
                 )
                 for m in TAXONOMY_MODULES
             ],

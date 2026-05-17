@@ -1,16 +1,30 @@
-"""Curated module taxonomy + op-id classification rules.
+"""Curated layered architecture taxonomy for Nexus.
 
-Replaces the v1 auto-discovery that produced 63 garbage modules. v2 has a
-fixed set of ~15 real modules organized into ~7 categories, and every op-id
-is classified into exactly one module via the ordered rule list below.
+Five layers (bottom-up):
+    rust_kernel  -> Rust kernel (managed mounts, metadata, cache stores)
+    nexus_fs     -> Python NexusFS mixin stack (core/nexus_fs.py)
+    brick        -> 28 plugin-style features under src/nexus/bricks/
+    cross        -> auth middleware, profile gates
+    transport    -> CLI / HTTP / gRPC / MCP / SDK exposures
 
-Ops that don't match any rule land in `kernel` (catch-all syscall-like surface)
-rather than spawning a new module.
+Bricks are first-class. Each declares its profile gate (e.g. BRICK_REBAC) and
+category for visual grouping. Ops classify into the brick (or kernel/transport)
+they belong to.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+# layers in display order, top-down
+LAYERS = ("transport", "cross", "brick", "nexus_fs", "rust_kernel")
+LAYER_LABELS = {
+    "transport": "Transports",
+    "cross": "Cross-cutting",
+    "brick": "Bricks",
+    "nexus_fs": "NexusFS wrapper",
+    "rust_kernel": "Rust kernel",
+}
 
 
 @dataclass(frozen=True)
@@ -18,163 +32,501 @@ class CuratedModule:
     id: str
     name: str
     description: str
+    layer: str  # one of LAYERS
+    category: str = ""  # within layer, e.g. "access", "discovery"
+    brick_gate: str | None = None  # e.g. "BRICK_REBAC" for brick-layer modules
+    tier: str | None = None  # "independent" | "dependent" for bricks
     depends_on: tuple[str, ...] = ()
 
 
-# Order matters in some categories for visual placement, not semantics.
-MODULES: list[CuratedModule] = [
-    # Data plane — core read/write/metadata
-    CuratedModule(
-        "fs", "Filesystem", "Read, write, stat, list, copy, move, delete on virtual paths."
-    ),
-    CuratedModule(
-        "kernel", "Kernel", "Low-level syscalls and uncategorized surfaces.", depends_on=("fs",)
-    ),
-    # Access control
-    CuratedModule("rebac", "ReBAC", "Permissions and access control.", depends_on=("fs",)),
-    CuratedModule(
+# Brick categories — purely for grouping in UI
+BRICK_CATEGORIES: dict[str, list[str]] = {
+    "Access control": ["rebac", "auth", "identity", "secrets", "delegation", "access_manifest"],
+    "Storage & layout": [
+        "filesystem",
+        "mount",
         "share_link",
-        "Share Links",
-        "Public/scoped share URLs for files and folders.",
-        depends_on=("rebac",),
-    ),
-    CuratedModule(
-        "oauth", "OAuth", "Credentials, providers, token lifecycle.", depends_on=("rebac",)
-    ),
-    # Discovery
-    CuratedModule("search", "Search", "BM25 / sqlite-vec / hybrid retrieval.", depends_on=("fs",)),
-    CuratedModule(
-        "semantic",
-        "Semantic Index",
-        "Embedding-backed lookups and reranking.",
-        depends_on=("search",),
-    ),
-    # Workspaces
-    CuratedModule(
         "workspace",
-        "Workspaces",
-        "Local + remote workspaces, federation roots.",
-        depends_on=("fs", "rebac"),
-    ),
-    CuratedModule(
         "snapshot",
-        "Snapshots & Versions",
-        "Point-in-time captures, version history.",
-        depends_on=("workspace",),
-    ),
-    # Federation & storage
-    CuratedModule("mounts", "Mounts", "Volume drivers, path mappings.", depends_on=("fs",)),
+        "versioning",
+        "archive",
+    ],
+    "Discovery": ["search", "discovery", "catalog", "parsers", "context_manifest"],
+    "Agent runtime": ["mcp", "sandbox", "agent_log"],
+    "Process & policy": ["workflows", "approvals", "task_manager", "governance"],
+    "Commerce": ["pay"],
+    "Data movement": ["upload", "portability"],
+}
+
+
+# Curated modules — every layer must have at least one entry.
+MODULES: list[CuratedModule] = [
+    # ── Rust kernel ──
     CuratedModule(
-        "connectors",
-        "Connectors",
-        "External system bridges (GDrive, SharePoint, etc.).",
-        depends_on=("mounts", "oauth"),
+        "rust_kernel",
+        "Rust kernel",
+        "Mounts, metadata store, cache store. PyO3 FFI surface.",
+        layer="rust_kernel",
     ),
-    # Agent runtime
+    # ── NexusFS wrapper ──
+    CuratedModule(
+        "nexus_fs",
+        "NexusFS",
+        "Python mixin stack: Content/Dispatch/Metadata/Watch. Calls Rust kernel.",
+        layer="nexus_fs",
+        depends_on=("rust_kernel",),
+    ),
+    # ── 28 bricks ──
+    CuratedModule(
+        "access_manifest",
+        "Access manifest",
+        "Pre-computed access decisions for fast path checks.",
+        layer="brick",
+        category="Access control",
+        depends_on=("nexus_fs", "rebac"),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "agent_log",
+        "Agent log",
+        "Append-only agent activity log.",
+        layer="brick",
+        category="Agent runtime",
+        depends_on=("nexus_fs",),
+        tier="independent",
+    ),
+    CuratedModule(
+        "approvals",
+        "Approvals",
+        "Workflow approval gates.",
+        layer="brick",
+        category="Process & policy",
+        depends_on=("rebac", "workflows"),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "archive",
+        "Archive",
+        "Signed zone snapshots / archives.",
+        layer="brick",
+        category="Storage & layout",
+        depends_on=("snapshot", "nexus_fs"),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "auth",
+        "Auth",
+        "OAuth providers + identity tokens.",
+        layer="brick",
+        category="Access control",
+        brick_gate="BRICK_AUTH",
+        tier="independent",
+    ),
+    CuratedModule(
+        "catalog",
+        "Catalog",
+        "Schema extraction (CSV/JSON/Parquet).",
+        layer="brick",
+        category="Discovery",
+        depends_on=("nexus_fs", "parsers"),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "context_manifest",
+        "Context manifest",
+        "Deterministic pre-execution context.",
+        layer="brick",
+        category="Discovery",
+        depends_on=("nexus_fs",),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "delegation",
+        "Delegation",
+        "Agent identity delegation modes.",
+        layer="brick",
+        category="Access control",
+        depends_on=("identity",),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "discovery",
+        "Discovery",
+        "BM25-based tool / surface discovery.",
+        layer="brick",
+        category="Discovery",
+        depends_on=("search",),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "filesystem",
+        "Filesystem brick",
+        "Path-scoping wrappers for NexusFS.",
+        layer="brick",
+        category="Storage & layout",
+        depends_on=("nexus_fs",),
+        tier="independent",
+    ),
+    CuratedModule(
+        "governance",
+        "Governance",
+        "Anti-fraud, policy enforcement.",
+        layer="brick",
+        category="Process & policy",
+        depends_on=("rebac", "agent_log"),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "identity",
+        "Identity",
+        "Identity resolution + subject mapping.",
+        layer="brick",
+        category="Access control",
+        tier="independent",
+    ),
     CuratedModule(
         "mcp",
         "MCP",
-        "Model Context Protocol tools for agents.",
-        depends_on=("fs", "rebac", "search"),
+        "Model Context Protocol tools and provider registry.",
+        layer="brick",
+        category="Agent runtime",
+        depends_on=("nexus_fs", "rebac"),
+        tier="dependent",
     ),
     CuratedModule(
-        "agent", "Agents", "Agent identity, registry, observability.", depends_on=("rebac",)
+        "mount",
+        "Mount",
+        "Backend mount lifecycle + driver registration.",
+        layer="brick",
+        category="Storage & layout",
+        depends_on=("nexus_fs",),
+        tier="independent",
     ),
-    # Admin & ops
-    CuratedModule("admin", "Admin", "Bootstrap, user provisioning, status, configuration."),
-    CuratedModule("audit", "Audit", "Activity logs, event sourcing.", depends_on=("rebac",)),
-    CuratedModule("events", "Events", "Pub/sub, notifications.", depends_on=("audit",)),
     CuratedModule(
-        "governance", "Governance", "Policy, compliance, retention.", depends_on=("rebac", "audit")
+        "parsers",
+        "Parsers",
+        "Content parsers (code, docs, structured data).",
+        layer="brick",
+        category="Discovery",
+        tier="independent",
     ),
-    CuratedModule("pay", "Pay", "Billing, quotas, plan enforcement.", depends_on=("rebac",)),
+    CuratedModule(
+        "pay",
+        "Pay",
+        "NexusPay credits + X402 payment rails.",
+        layer="brick",
+        category="Commerce",
+        brick_gate="BRICK_PAY",
+        tier="independent",
+    ),
+    CuratedModule(
+        "portability",
+        "Portability",
+        "Data export/import bundles.",
+        layer="brick",
+        category="Data movement",
+        depends_on=("nexus_fs",),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "rebac",
+        "ReBAC",
+        "Zanzibar-style relation-based access control.",
+        layer="brick",
+        category="Access control",
+        brick_gate="BRICK_REBAC",
+        tier="independent",
+    ),
+    CuratedModule(
+        "sandbox",
+        "Sandbox",
+        "Docker/E2B/Monty code execution.",
+        layer="brick",
+        category="Agent runtime",
+        brick_gate="BRICK_SANDBOX",
+        tier="independent",
+    ),
+    CuratedModule(
+        "search",
+        "Search",
+        "Zoekt / BM25 / semantic search daemon.",
+        layer="brick",
+        category="Discovery",
+        brick_gate="BRICK_SEARCH",
+        tier="independent",
+    ),
+    CuratedModule(
+        "secrets",
+        "Secrets",
+        "Encrypted vault for credentials.",
+        layer="brick",
+        category="Access control",
+        tier="independent",
+    ),
+    CuratedModule(
+        "share_link",
+        "Share Link",
+        "Public/scoped share URLs for paths.",
+        layer="brick",
+        category="Storage & layout",
+        depends_on=("rebac",),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "snapshot",
+        "Snapshot",
+        "Transactional filesystem snapshots.",
+        layer="brick",
+        category="Storage & layout",
+        depends_on=("nexus_fs",),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "task_manager",
+        "Task manager",
+        "Async task scheduling + tracking.",
+        layer="brick",
+        category="Process & policy",
+        tier="independent",
+    ),
+    CuratedModule(
+        "upload",
+        "Upload",
+        "TUS / chunked upload handling.",
+        layer="brick",
+        category="Data movement",
+        depends_on=("nexus_fs",),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "versioning",
+        "Versioning",
+        "File history + revert.",
+        layer="brick",
+        category="Storage & layout",
+        depends_on=("nexus_fs",),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "workflows",
+        "Workflows",
+        "Event-driven workflow engine.",
+        layer="brick",
+        category="Process & policy",
+        brick_gate="BRICK_WORKFLOWS",
+        depends_on=("task_manager",),
+        tier="dependent",
+    ),
+    CuratedModule(
+        "workspace",
+        "Workspace",
+        "Multi-workspace isolation + federation.",
+        layer="brick",
+        category="Storage & layout",
+        depends_on=("nexus_fs", "rebac"),
+        tier="dependent",
+    ),
+    # ── Cross-cutting ──
+    CuratedModule(
+        "auth_middleware",
+        "Auth middleware",
+        "JWT extraction, OperationContext population.",
+        layer="cross",
+        depends_on=("auth",),
+    ),
+    CuratedModule(
+        "profile_gates",
+        "Profile gates",
+        "DeploymentProfile-based brick enable/disable.",
+        layer="cross",
+    ),
+    # ── Transports ──
+    CuratedModule(
+        "cli", "CLI", "nexus command-line interface, lazy command registry.", layer="transport"
+    ),
+    CuratedModule(
+        "http",
+        "HTTP",
+        "FastAPI routers under server/api/. Per-feature route groups.",
+        layer="transport",
+    ),
+    CuratedModule(
+        "grpc",
+        "gRPC",
+        "NexusVFSService: generic Call dispatch + typed Read/Write/Delete.",
+        layer="transport",
+    ),
+    CuratedModule(
+        "mcp_transport",
+        "MCP transport",
+        "MCP server endpoint wrapping the mcp brick's provider registry.",
+        layer="transport",
+        depends_on=("mcp",),
+    ),
+    CuratedModule(
+        "sdk", "SDK", "Python remote clients (RPCProxyBase + domain clients).", layer="transport"
+    ),
 ]
 
-# Display order = category buckets. Each category lists module ids in display order.
-CATEGORIES: dict[str, list[str]] = {
-    "Data plane": ["fs", "kernel"],
-    "Access control": ["rebac", "share_link", "oauth"],
-    "Discovery": ["search", "semantic"],
-    "Workspaces": ["workspace", "snapshot"],
-    "Federation & storage": ["mounts", "connectors"],
-    "Agent runtime": ["mcp", "agent"],
-    "Admin & ops": ["admin", "audit", "events", "governance", "pay"],
+
+# Aliases: surface names that should map to a specific module
+# (avoids needing classify_op_id rules for every individual op)
+_EXPLICIT_ALIASES: dict[str, str] = {
+    # CLI commands often use top-level verbs without a module prefix
+    # — these classify under the appropriate brick
+    "init": "admin_misc",  # bootstrap
 }
+
 
 _MODULES_BY_ID: dict[str, CuratedModule] = {m.id: m for m in MODULES}
 
 
+# A pseudo-module to collect uncategorized ops without polluting the diagram
+_UNCATEGORIZED = CuratedModule(
+    id="uncategorized",
+    name="Uncategorized",
+    description="Operations the classifier couldn't place. Add a rule in taxonomy.py.",
+    layer="brick",
+    category="(unclassified)",
+)
+
+
 def all_module_ids() -> set[str]:
-    return set(_MODULES_BY_ID)
+    return set(_MODULES_BY_ID) | {"uncategorized"}
 
 
 def get_module(module_id: str) -> CuratedModule:
+    if module_id == "uncategorized":
+        return _UNCATEGORIZED
     return _MODULES_BY_ID[module_id]
 
 
+def modules_by_layer() -> dict[str, list[CuratedModule]]:
+    """Return modules grouped by layer in LAYERS display order."""
+    out: dict[str, list[CuratedModule]] = {layer: [] for layer in LAYERS}
+    for m in MODULES:
+        out[m.layer].append(m)
+    return out
+
+
+def bricks_by_category() -> dict[str, list[CuratedModule]]:
+    """Return brick-layer modules grouped by BRICK_CATEGORIES."""
+    by_id = {m.id: m for m in MODULES if m.layer == "brick"}
+    out: dict[str, list[CuratedModule]] = {}
+    for category, ids in BRICK_CATEGORIES.items():
+        cat_mods = [by_id[i] for i in ids if i in by_id]
+        if cat_mods:
+            out[category] = cat_mods
+    return out
+
+
+# ---------------------------------------------------------------------------
+# v2 compatibility shims — render.py still imports these until the view layer
+# redesign lands in a later dispatch.  Do NOT remove until render.py is updated.
+# ---------------------------------------------------------------------------
+
+# CATEGORIES: maps display-category name -> list of module ids in that category.
+# For v3 we expose all brick categories + transport/cross/kernel groups.
+CATEGORIES: dict[str, list[str]] = {
+    **dict(BRICK_CATEGORIES),
+    "Infrastructure": ["rust_kernel", "nexus_fs"],
+    "Cross-cutting": ["auth_middleware", "profile_gates"],
+    "Transports": ["cli", "http", "grpc", "mcp_transport", "sdk"],
+}
+
+
+def module_categories() -> dict[str, list[CuratedModule]]:
+    """v2 compat: return categories with resolved CuratedModule lists."""
+    by_id = _MODULES_BY_ID
+    out: dict[str, list[CuratedModule]] = {}
+    for cat, ids in CATEGORIES.items():
+        mods = [by_id[i] for i in ids if i in by_id]
+        if mods:
+            out[cat] = mods
+    return out
+
+
 def classify_op_id(op_id: str) -> str:
-    """Return the curated module-id for an op-id. Ops without a clear home -> 'kernel'."""
-    # Try canonical "module.verb" prefix first.
+    """Return the curated module-id for an op-id. Uncategorized -> 'uncategorized'."""
+    # 1. Exact alias match
+    if op_id in _EXPLICIT_ALIASES:
+        return _EXPLICIT_ALIASES[op_id]
+
+    # 2. canonical "module.verb" prefix maps directly if the head is a known module
     head = op_id.split(".", 1)[0]
     if head in _MODULES_BY_ID:
         return head
 
-    # Substring/prefix heuristics on the full id (lowercased).
+    # 3. Substring/prefix heuristics. Order matters — more specific rules first.
     lid = op_id.lower()
     rules: list[tuple[str, str]] = [
-        # (substring or prefix, module id) — first match wins
+        # Bricks (with disambiguation order)
         ("share_link", "share_link"),
-        ("share.", "share_link"),
         ("sharelink", "share_link"),
-        ("oauth", "oauth"),
+        ("oauth", "auth"),
+        ("auth_", "auth"),
         ("rebac", "rebac"),
         ("permission", "rebac"),
         ("namespace", "rebac"),
+        ("identity", "identity"),
+        ("subject", "identity"),
+        ("delegation", "delegation"),
+        ("delegate", "delegation"),
+        ("secret", "secrets"),
+        ("vault", "secrets"),
         ("workspace", "workspace"),
         ("snapshot", "snapshot"),
-        ("version", "snapshot"),
-        ("connector", "connectors"),
-        ("mount", "mounts"),
-        ("semantic", "semantic"),
-        ("embedding", "semantic"),
-        ("rerank", "semantic"),
+        ("version", "versioning"),
+        ("archive", "archive"),
+        ("connector", "mount"),
+        ("mount", "mount"),
+        ("catalog", "catalog"),
+        ("schema", "catalog"),
+        ("parser", "parsers"),
+        ("semantic", "search"),
+        ("embedding", "search"),
+        ("rerank", "search"),
         ("search", "search"),
         ("grep", "search"),
         ("glob", "search"),
+        ("discovery", "discovery"),
         ("mcp", "mcp"),
-        ("agent", "agent"),
-        ("audit", "audit"),
-        ("event", "events"),
+        ("sandbox", "sandbox"),
+        ("agent", "agent_log"),
+        ("audit", "agent_log"),
+        ("event", "agent_log"),
+        ("workflow", "workflows"),
+        ("approval", "approvals"),
+        ("task", "task_manager"),
         ("governance", "governance"),
         ("policy", "governance"),
         ("compliance", "governance"),
         ("pay", "pay"),
         ("billing", "pay"),
         ("quota", "pay"),
-        ("admin", "admin"),
-        ("init", "admin"),
-        ("provision", "admin"),
-        ("config", "admin"),
-        ("fs.", "fs"),
-        ("file", "fs"),
-        ("read", "fs"),
-        ("write", "fs"),
-        ("delete", "fs"),
-        ("stat", "fs"),
-        ("list", "fs"),
-        ("rename", "fs"),
-        ("copy", "fs"),
-        ("move", "fs"),
-        ("metadata", "fs"),
-        ("xattr", "fs"),
+        ("upload", "upload"),
+        ("portability", "portability"),
+        ("export", "portability"),
+        ("import", "portability"),
+        ("share", "share_link"),
+        # NexusFS / kernel ops (sys_*, fs.*, plain syscalls)
+        ("sys_", "nexus_fs"),
+        ("fs.", "filesystem"),
+        ("file", "filesystem"),
+        ("path", "filesystem"),
+        ("read", "filesystem"),
+        ("write", "filesystem"),
+        ("delete", "filesystem"),
+        ("stat", "filesystem"),
+        ("list", "filesystem"),
+        ("rename", "filesystem"),
+        ("copy", "filesystem"),
+        ("move", "filesystem"),
+        ("metadata", "filesystem"),
+        ("xattr", "filesystem"),
     ]
     for needle, mod in rules:
         if needle in lid:
             return mod
-    # Catch-all
-    return "kernel"
 
-
-def module_categories() -> dict[str, list[CuratedModule]]:
-    """Return categories with resolved CuratedModule lists in display order."""
-    return {cat: [_MODULES_BY_ID[mid] for mid in mids] for cat, mids in CATEGORIES.items()}
+    return "uncategorized"

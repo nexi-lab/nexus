@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nexus API/RPC Surface Map</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 1100px; margin: 2em auto; padding: 0 1em; color: #222; }
+  h1 { border-bottom: 2px solid #444; padding-bottom: .3em; }
+  h2 { margin-top: 2em; }
+  .module { border: 1px solid #ddd; border-radius: 6px; padding: .5em 1em; margin: 1em 0; }
+  .module summary { cursor: pointer; font-weight: 600; font-size: 1.1em; }
+  .op { margin: 1em 0 1em 1em; padding-left: 1em; border-left: 3px solid #eee; }
+  .op-id { font-family: monospace; font-weight: 600; }
+  .op-summary { color: #555; margin-left: .5em; }
+  .transport { font-family: monospace; font-size: .9em; margin: .15em 0; }
+  .transport-key { display: inline-block; width: 5em; color: #888; }
+  .profile-supported { color: #2a7a2a; }
+  .profile-unavailable { color: #aaa; text-decoration: line-through; }
+  .profile-other { color: #b07000; }
+  .todo { color: #b00; font-style: italic; }
+  .meta { color: #777; font-size: .9em; }
+  #search { width: 100%; padding: .5em; font-size: 1em; border: 1px solid #aaa; border-radius: 4px; }
+  .hidden { display: none; }
+  a { color: #1466b8; }
+</style>
+</head>
+<body>
+<h1>Nexus API/RPC Surface Map</h1>
+
+<input id="search" placeholder="Search by op-id, module, or transport name..." />
+
+<h2 id="how-to-read">§1 How to read this page</h2>
+<p>
+Each module groups external surfaces. Each <strong>surface</strong> is one logical
+operation exposed across CLI / RPC / HTTP / MCP / SDK. Subissues fill <em>usage,
+test, perf, gap</em> fields. Full contract:
+<a href="api-rpc-surface-contract.md">api-rpc-surface-contract.md</a>.
+</p>
+
+<h2 id="architecture">§2 Architecture</h2>
+<div class="mermaid">
+graph LR
+{% for m in modules -%}
+  {{ m.id }}["{{ m.name }}"]
+{% endfor -%}
+{% for m in modules -%}
+{% for dep in m.depends_on -%}
+  {{ dep }} --> {{ m.id }}
+{% endfor -%}
+{% endfor -%}
+</div>
+
+<h2 id="modules">§3 Modules</h2>
+{% for m in modules %}
+<details class="module" {% if loop.first %}open{% endif %}>
+  <summary>{{ m.id }} — {{ m.name }} ({{ ops_by_module.get(m.id, []) | length }} ops)</summary>
+  <p class="meta">{{ m.description }}</p>
+  {% for op in ops_by_module.get(m.id, []) %}
+  <div class="op" data-op-id="{{ op.id }}">
+    <div><span class="op-id">{{ op.id }}</span><span class="op-summary"> — {{ op.summary or '(no summary)' }}</span></div>
+    {% for tkey, tname in transport_display %}
+    {% if tkey in op.transports %}
+    <div class="transport"><span class="transport-key">{{ tname }}:</span> {{ op.transports[tkey].name }}</div>
+    {% endif %}
+    {% endfor %}
+    <div class="transport">
+      profiles:
+      {% for pkey in ('lite', 'sandbox', 'full') %}
+      {% set status = op.profiles[pkey].value %}
+      {% if status == 'supported' %}<span class="profile-supported">{{ pkey }} ✓</span>
+      {% elif status == 'unavailable' %}<span class="profile-unavailable">{{ pkey }} ✗</span>
+      {% else %}<span class="profile-other">{{ pkey }} ({{ status }})</span>{% endif %}
+      {% endfor %}
+    </div>
+    <div class="transport">
+      usage: {% if op.usage_example %}<code>{{ op.usage_example }}</code>{% else %}<span class="todo">TODO</span>{% endif %}
+      &nbsp; test: {% if op.correctness_test %}<a href="../../{{ op.correctness_test }}">{{ op.correctness_test }}</a>{% else %}<span class="todo">TODO</span>{% endif %}
+      &nbsp; perf: {% if op.perf_class %}{{ op.perf_class.value }}{% else %}<span class="todo">TODO</span>{% endif %}
+    </div>
+    <div class="transport meta">
+      owner: {% if op.owning_issue %}<a href="https://github.com/nexi-lab/nexus/issues/{{ op.owning_issue }}">#{{ op.owning_issue }}</a>{% else %}—{% endif %}
+      &nbsp; gap: {% if op.gap_issue %}<a href="https://github.com/nexi-lab/nexus/issues/{{ op.gap_issue }}">#{{ op.gap_issue }}</a>{% else %}—{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</details>
+{% endfor %}
+
+<h2 id="subissues">§4 Subissues filling this map</h2>
+<ul>
+  <li><a href="https://github.com/nexi-lab/nexus/issues/4119">#4119 lite</a></li>
+  <li><a href="https://github.com/nexi-lab/nexus/issues/4120">#4120 sandbox</a></li>
+  <li><a href="https://github.com/nexi-lab/nexus/issues/4121">#4121 full</a></li>
+  <li><a href="https://github.com/nexi-lab/nexus/issues/4139">#4139 coverage matrix</a></li>
+</ul>
+
+<script>
+{{ mermaid_js | safe }}
+mermaid.initialize({ startOnLoad: true, theme: 'default' });
+
+const search = document.getElementById('search');
+search.addEventListener('input', () => {
+  const q = search.value.trim().toLowerCase();
+  document.querySelectorAll('.op').forEach(el => {
+    const text = el.textContent.toLowerCase();
+    el.classList.toggle('hidden', q.length > 0 && !text.includes(q));
+  });
+  if (q.length > 0) {
+    document.querySelectorAll('details.module').forEach(d => {
+      const anyVisible = Array.from(d.querySelectorAll('.op')).some(op => !op.classList.contains('hidden'));
+      d.open = anyVisible;
+    });
+  }
+});
+</script>
+</body>
+</html>

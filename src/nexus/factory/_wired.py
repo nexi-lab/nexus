@@ -5,8 +5,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
-
 logger = logging.getLogger(__name__)
 
 
@@ -492,38 +490,13 @@ def _boot_post_kernel_services(
         except Exception as exc:
             logger.warning("[BOOT:WIRED] EvictionManager unavailable: %s", exc)
 
-    # AcpService is owned by the Rust kernel. Install once, then late-bind
-    # the Python AgentRegistry (still Python this PR -- planned migration
-    # tracked separately) and the permission-lease termination callback.
+    # AcpService + ManagedAgentService installation is now managed internally
+    # by the nexus-cluster process. The Rust kernel installs these services
+    # during its own boot sequence — no Python-side PyO3 calls needed.
     if _agent_reg is not None:
-        try:
-            import nexus_runtime
-
-            _kernel_handle = getattr(nx, "_kernel", None)
-            if _kernel_handle is not None:
-                # ManagedAgentService — registers the chat-with-me +
-                # workspace-boundary hooks and enlists the service into
-                # ServiceRegistry. Must run before any AgentKind::MANAGED
-                # agent spawns.
-                nexus_runtime.nx_managed_agent_install(_kernel_handle)
-                logger.debug("[BOOT:WIRED] ManagedAgentService (Rust) installed")
-                # AcpService — host for AgentKind::UNMANAGED agents
-                # (subprocess + ACP-over-stdio). Late-binds the Python
-                # AgentRegistry behind the trait so call_agent can
-                # spawn / kill / list pids until the AgentRegistry
-                # SSOT migration to Rust lands.
-                nexus_runtime.nx_acp_install(_kernel_handle, ROOT_ZONE_ID)
-                nexus_runtime.nx_acp_set_agent_registry(_kernel_handle, _agent_reg)
-                logger.debug("[BOOT:WIRED] AcpService (Rust) installed")
-                _perm_lease_table = getattr(nx, "_permission_lease_table", None)
-                if _perm_lease_table is not None:
-                    nexus_runtime.nx_acp_register_on_terminate(
-                        _kernel_handle,
-                        "perm-lease-revoke",
-                        _perm_lease_table.invalidate_agent,
-                    )
-        except Exception as exc:
-            logger.warning("[BOOT:WIRED] managed_agent / acp Rust install failed: %s", exc)
+        logger.debug(
+            "[BOOT:WIRED] AcpService + ManagedAgentService managed internally by nexus-cluster"
+        )
 
     user_provisioning_service: Any = None
     try:

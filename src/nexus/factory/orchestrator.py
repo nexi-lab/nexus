@@ -550,7 +550,7 @@ def _register_vfs_hooks(
         logger.warning(
             "[BOOT:HOOKS] PyKernel.agent_registry unavailable — Rust extension is "
             "stale or built without it. Rebuild with: "
-            "maturin develop -m rust/nexus-cdylib/Cargo.toml --features full"
+            "cargo build --release -p nexus-cluster"
         )
     if _proc_table is not None:
         try:

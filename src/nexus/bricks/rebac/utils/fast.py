@@ -96,7 +96,7 @@ def check_permissions_bulk_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
+            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
         )
 
     try:
@@ -116,7 +116,7 @@ def check_permissions_bulk_rust(
             else:
                 raise
 
-        return result  # type: ignore[no-any-return]  # allowed
+        return result  # allowed
     except (RuntimeError, ValueError) as e:
         logger.error(f"Rust permission check failed: {e}", exc_info=True)
         raise
@@ -329,13 +329,13 @@ def check_permission_single_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
+            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
         )
 
     if _compute_permission_single is None:
         raise RuntimeError(
             "Rust single permission check not available. "
-            "Install nexus_runtime: cd rust/kernel && maturin develop"
+            "Install nexus_runtime: cargo build --release -p nexus-cluster"
         )
 
     try:
@@ -466,13 +466,13 @@ def expand_subjects_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
+            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
         )
 
     if _expand_subjects is None:
         raise RuntimeError(
             "Rust expand_subjects not available. "
-            "Install nexus_runtime: cd rust/kernel && maturin develop"
+            "Install nexus_runtime: cargo build --release -p nexus-cluster"
         )
 
     try:
@@ -583,13 +583,13 @@ def list_objects_for_subject_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
+            "Rust acceleration not available. Install with: cargo build --release -p nexus-cluster"
         )
 
     if _list_objects_for_subject is None:
         raise RuntimeError(
             "Rust list_objects_for_subject not available. "
-            "Install nexus_runtime: cd rust/kernel && maturin develop"
+            "Install nexus_runtime: cargo build --release -p nexus-cluster"
         )
 
     try:

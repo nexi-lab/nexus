@@ -43,7 +43,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # =========================================================================
-# PyO3 FFI: Metastore (direct redb access, built by maturin)
+# Metastore (managed by nexus-cluster process)
 # =========================================================================
 _HAS_METASTORE = False
 Metastore: Any = None
@@ -79,7 +79,7 @@ def require_metastore() -> None:
     if not _HAS_METASTORE:
         raise RuntimeError(
             "Metastore is not available. Build with:\n"
-            "  maturin develop -m rust/nexus-cdylib/Cargo.toml\n"
+            "  cargo build --release -p nexus-cluster\n"
             "Or install the pre-built wheel:\n"
             "  pip install nexus-ai-fs"
         )

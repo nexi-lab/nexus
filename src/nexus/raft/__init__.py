@@ -4,18 +4,18 @@ This module provides Python bindings to Rust Raft nodes for metadata
 and lock operations.
 
 Two access modes:
-1. Metastore (PyO3 FFI) - Direct redb access for embedded mode (~5μs)
-2. ZoneManager + ZoneHandle (PyO3 FFI) - Multi-zone Raft consensus (~2-10ms)
+1. KernelClient (gRPC) - Kernel access via the nexus-cluster process
+2. ZoneHandle (Rust-internal) - Multi-zone Raft consensus (~2-10ms)
 
 REMOTE profile uses RPCTransport → NexusVFSService (see nexus.remote).
 Federation lives entirely in the Rust kernel now — the cluster
 profile binary (`nexusd-cluster`) owns the orchestrator; Python
-callers reach it through `nexus_runtime.ZoneManager` / `ZoneHandle` or
-the federation_* RPCs in `nexus.server.rpc.services.federation_rpc`.
+callers reach it through KernelClient gRPC or the federation_* RPCs
+in `nexus.server.rpc.services.federation_rpc`.
 
 Architecture:
-    Embedded:   NexusFS -> Metastore (PyO3) -> redb (~5μs)
-    Consensus:  NexusFS -> nexus_runtime.ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
+    Embedded:   NexusFS -> KernelClient (gRPC) -> nexus-cluster -> redb (~5μs + RPC)
+    Consensus:  NexusFS -> KernelClient (gRPC) -> nexus-cluster -> Raft -> redb (~2-10ms)
     Remote:     NexusFS -> RPCTransport -> NexusVFSService (gRPC) -> server (~50-100ms)
 
 Example (Metastore - embedded mode):
@@ -26,9 +26,9 @@ Example (Metastore - embedded mode):
     metadata = store.get_metadata("/path/to/file")
 
 Example (consensus mode — via syscalls + federation control-plane):
-    import nexus_runtime
-    kernel = nexus_runtime.PyKernel()
-    nexus_runtime.install_federation_wiring(kernel)
+    from nexus.remote.kernel_client import KernelClient
+    kernel = KernelClient(...)
+    kernel.open()
     # Mount-tied lifecycle: sys_setattr DT_MOUNT auto-creates zones.
     kernel.sys_setattr("/data", entry_type=2, backend_name="federation",
                        zone_id="shared-zone")
@@ -51,35 +51,14 @@ LockState: Any = None
 LockInfo: Any = None
 HolderInfo: Any = None
 
-try:
-    # F2 C8 (Option A): raft's PyO3 classes were moved into the
-    # ``nexus_runtime`` cdylib. A single .so holds Kernel + Metastore +
-    # ZoneManager + ZoneHandle so raft's ``kernel::Metastore`` impls can
-    # be installed as true Rust trait objects without cross-cdylib
-    # duplication. Use ``getattr`` so mypy doesn't trip on stale stubs
-    # while a locally-installed wheel lags behind.
-    import nexus_runtime as _pyo3_mod
-
-    Metastore = getattr(_pyo3_mod, "PyMetaStore", None)
-    LockState = getattr(_pyo3_mod, "PyLockState", None)
-    LockInfo = getattr(_pyo3_mod, "PyLockInfo", None)
-    HolderInfo = getattr(_pyo3_mod, "PyHolderInfo", None)
-    _HAS_METASTORE = Metastore is not None
-except ImportError:
-    logger.debug(
-        "Metastore not available. Install with: maturin develop -m rust/nexus-cdylib/Cargo.toml"
-    )
+# PyO3 FFI classes no longer exist — the kernel is fully Rust and
+# accessed via gRPC (KernelClient). These symbols are kept as None
+# for any remaining type-check or isinstance guards in downstream code.
 
 # =========================================================================
-# ZoneHandle: Per-zone Raft node handle (requires --features full)
+# ZoneHandle: Per-zone Raft node handle — now internal to the Rust kernel
 # =========================================================================
 ZoneHandle: Any = None
-try:
-    import nexus_runtime as _pyo3_mod2
-
-    ZoneHandle = getattr(_pyo3_mod2, "ZoneHandle", None)
-except (ImportError, AttributeError):
-    pass
 
 # Multi-zone federation: orchestration moved into the cluster binary
 # (rust/cluster/) and the federation_* RPCs in
@@ -109,8 +88,8 @@ def require_metastore() -> None:
 __all__ = [
     # PyO3 FFI: Metastore driver (embedded mode)
     "Metastore",
-    # Per-zone Raft node handle (cdylib-loaded if nexus_runtime is built
-    # with the full feature; None otherwise — matches Metastore semantics)
+    # Per-zone Raft node handle (now internal to the Rust kernel; kept as
+    # None for type-check compatibility)
     "ZoneHandle",
     # Lock types
     "LockState",

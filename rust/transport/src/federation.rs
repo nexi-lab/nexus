@@ -18,6 +18,11 @@
 //! module) and ``transport.proto`` ships in the raft rlib that rpc
 //! depends on for proto stubs.
 
+// Federation client is wired by the cluster binary's gRPC transport
+// layer; temporarily unused after PyO3 removal until pure-Rust wiring
+// lands.
+#![allow(dead_code, private_interfaces)]
+
 use std::sync::Arc;
 use std::time::Duration;
 

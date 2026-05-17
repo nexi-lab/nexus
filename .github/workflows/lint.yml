@@ -7,9 +7,6 @@ on:
     branches: [main, develop]
   merge_group:
 
-env:
-  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -36,17 +33,6 @@ jobs:
 
       - name: Create virtual environment
         run: uv venv --python 3.14
-
-      - name: Build Rust extensions
-        uses: ./.github/actions/build-rust-extensions
-        with:
-          profile: dev
-          rust-cache-shared-key: "rust-lint-py"
-          output-dir: dist
-          github-token: ${{ github.token }}
-
-      - name: Install Rust extensions
-        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: |
@@ -78,14 +64,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Python (for PyO3 crates)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-
-      - name: Install Python dev headers
-        run: sudo apt-get update && sudo apt-get install -y python3-dev
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -125,8 +103,6 @@ jobs:
           echo "::endgroup::"
 
       - name: Run Rust tests
-        env:
-          PYO3_PYTHON: python3
         run: |
           for crate in lib kernel; do
             echo "::group::test $crate"
@@ -143,7 +119,4 @@ jobs:
       - name: Verify WASM compilation (lib)
         run: |
           rustup target add wasm32-unknown-unknown
-          # Phase A renamed `library` → `lib`. The default-features
-          # build of `lib` is the WASM-clean surface; PyO3 wrappers
-          # under `lib::python` sit behind the optional `python` feature.
           cargo check --target wasm32-unknown-unknown -p lib --no-default-features

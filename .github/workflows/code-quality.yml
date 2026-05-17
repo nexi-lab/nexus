@@ -10,11 +10,6 @@ on:
       - 'src/**/*.py'
       - 'tests/**/*.py'
       - 'rust/kernel/src/**/*.rs'
-      - 'scripts/codegen_kernel_abi.py'
-      - 'stubs/**/*.pyi'
-
-env:
-  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 permissions:
   contents: read
@@ -193,39 +188,6 @@ jobs:
         if: failure()
         run: |
           echo "::error::Brick import boundary violations detected. See NEXUS-LEGO-ARCHITECTURE.md §1.2."
-
-  codegen-sync:
-    name: Codegen Sync Check
-    needs: detect-changes
-    if: needs.detect-changes.outputs.python_changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-
-      - name: Install Rust toolchain (for rustfmt)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Install ruff
-        run: pip install ruff
-
-      - name: Verify codegen outputs are up-to-date
-        run: python3 scripts/codegen_kernel_abi.py --check
-
-  # Skip-pass job for branch protection when no Python files changed
-  codegen-sync-skip:
-    name: Codegen Sync Check
-    needs: detect-changes
-    if: needs.detect-changes.outputs.python_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No Python files changed — skipping codegen sync check"
 
   import-linter:
     name: Architecture Boundary Check (import-linter)

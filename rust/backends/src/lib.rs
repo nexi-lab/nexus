@@ -33,6 +33,12 @@
 //! `kernel::hal::object_store_provider::ObjectStoreProvider` trait.
 //! Kernel holds an `Arc<dyn ObjectStoreProvider>` set at boot.
 
+// Backends are wired dynamically by the ObjectStoreProvider at boot.
+// After PyO3 removal the only consumer is the cluster binary's
+// provider impl — individual backends appear unused at the crate level
+// but are reachable via trait objects.
+#![allow(dead_code)]
+
 pub mod addressing;
 pub mod storage;
 pub mod transports;

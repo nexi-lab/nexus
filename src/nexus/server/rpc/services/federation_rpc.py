@@ -9,12 +9,11 @@ crosses kernel layering.  Federation reads go through the
     mount-tied lifecycle (auto-creates the zone via the kernel's
     `DistributedCoordinator` HAL trait).
   * ``kernel.sys_unlink(<mount_path>)`` for unmount.
-  * ``nexus_runtime.federation_create_zone / remove_zone / join_zone``
-    module-level functions for standalone zone-control operations
-    that do not involve a mount path — analogous to Linux userspace
-    utilities like ``mkfs`` / ``zfs``: control-plane bridges that
-    reach kernel internals via the DistributedCoordinator trait without
-    being kernel methods themselves.
+  * ``kernel._call("federation_*", {...})`` gRPC Call dispatches for
+    standalone zone-control operations that do not involve a mount
+    path — analogous to Linux userspace utilities like ``mkfs`` /
+    ``zfs``: control-plane bridges that reach kernel internals via the
+    DistributedCoordinator trait without being kernel methods themselves.
 
 Registered in ``fastapi_server.create_app`` when federation is active.
 """
@@ -336,9 +335,7 @@ class FederationRPCService(FederationRPCMixin):
         # Cascade-unmount happens inside the DistributedCoordinator impl.
         # `force=true` honors the POSIX-style `unlink while i_links > 0`
         # bypass for replication races on followers.
-        import nexus_runtime as _nr
-
-        _nr.federation_remove_zone(self._kernel, zone_id, force)
+        self._kernel._call("federation_remove_zone", {"zone_id": zone_id, "force": force})
         return {"zone_id": zone_id, "removed": True}
 
     @rpc_expose(admin_only=True)
@@ -372,9 +369,7 @@ class FederationRPCService(FederationRPCMixin):
             )
 
         # Join the zone's raft group via the federation control-plane.
-        import nexus_runtime as _nr
-
-        _nr.federation_join_zone(self._kernel, zone_id, False)
+        self._kernel._call("federation_join_zone", {"zone_id": zone_id, "as_learner": False})
 
         # Mount the shared zone at `local_path` so VFS routing reaches
         # it. Derive the local parent zone via sys_stat on the parent
@@ -459,21 +454,19 @@ class FederationRPCService(FederationRPCMixin):
         # Standard sys_unlink on a DT_MOUNT entry → unmount.
         # Already-unmounted / never-mounted is a no-op (matches POSIX
         # `umount` of a non-mounted path).
-        from nexus_runtime import PyOperationContext as _RustCtx
-
-        ctx = _RustCtx(
-            user_id="federation-rpc",
-            zone_id=parent_zone or "root",
-            is_admin=True,
-            agent_id=None,
-            is_system=True,
-            groups=[],
-            admin_capabilities=[],
-            subject_type="user",
-            subject_id=None,
-            request_id="",
-            context_zone_id=None,
-        )
+        ctx = {
+            "user_id": "federation-rpc",
+            "zone_id": parent_zone or "root",
+            "is_admin": True,
+            "agent_id": None,
+            "is_system": True,
+            "groups": [],
+            "admin_capabilities": [],
+            "subject_type": "user",
+            "subject_id": None,
+            "request_id": "",
+            "context_zone_id": None,
+        }
         with contextlib.suppress(Exception):
             self._kernel.sys_unlink(path, ctx)
         # Mirror into Python DLC removal: without this the
@@ -512,14 +505,15 @@ class FederationRPCService(FederationRPCMixin):
         """
         import uuid
 
-        import nexus_runtime as _nr
-
         new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
         # Atomic create + copy + register through the
         # DistributedCoordinator trait. Path decomposition (parent
         # zone, prefix) happens inside the impl via VFSRouter.
         info: dict[str, Any] = dict(
-            _nr.federation_share_zone(self._kernel, local_path, new_zone_id)
+            self._kernel._call(
+                "federation_share_zone",
+                {"local_path": local_path, "zone_id": new_zone_id},
+            )
         )
         return info
 
@@ -527,9 +521,7 @@ class FederationRPCService(FederationRPCMixin):
 
     def _cluster_info(self, zone_id: str) -> dict[str, Any]:
         try:
-            import nexus_runtime as _nr
-
-            return dict(_nr.federation_cluster_info(self._kernel, zone_id))
+            return dict(self._kernel._call("federation_cluster_info", {"zone_id": zone_id}))
         except Exception:
             return {}
 
@@ -554,6 +546,4 @@ class FederationRPCService(FederationRPCMixin):
     def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
         # Bundled cluster status (term, commit_index, voters, links_count …)
         # — single round-trip through the federation control-plane helper.
-        import nexus_runtime as _nr
-
-        return dict(_nr.federation_cluster_info(self._kernel, zone_id))
+        return dict(self._kernel._call("federation_cluster_info", {"zone_id": zone_id}))

@@ -332,7 +332,7 @@ class MountService:
                     is_mount_point = i == len(parts)
                     self.nexus_fs._kernel.sys_setattr(
                         dir_path,
-                        entry_type if is_mount_point else DT_DIR,
+                        entry_type=entry_type if is_mount_point else DT_DIR,
                         zone_id=zone_id,
                     )
                     logger.info(f"Created directory entry: {dir_path}")

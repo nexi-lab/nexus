@@ -627,7 +627,7 @@ class ZoneImportService:
             # Store metadata via sys_setattr DT_REG upsert
             self.nexus_fs._kernel.sys_setattr(
                 path,
-                0,  # DT_REG upsert
+                entry_type=0,  # DT_REG upsert
                 content_id=record.content_id,
                 size=record.size_bytes,
                 mime_type=record.file_type,

@@ -471,7 +471,7 @@ class TransactionalSnapshotService:
                     )
                     self._kernel.sys_setattr(
                         entry.path,
-                        0,  # UPDATE existing entry
+                        entry_type=0,  # UPDATE existing entry
                         content_id=restored.content_id,
                         size=restored.size,
                         version=restored.version,
@@ -490,7 +490,7 @@ class TransactionalSnapshotService:
                         now_ms = int(datetime.now(UTC).timestamp() * 1000)
                         self._kernel.sys_setattr(
                             entry.path,
-                            0,  # UPDATE existing entry
+                            entry_type=0,  # UPDATE existing entry
                             content_id=entry.original_hash,
                             size=current_stat.get("size", 0) if current_stat else 0,
                             version=current_stat.get("version", 1) if current_stat else 1,
@@ -525,7 +525,7 @@ class TransactionalSnapshotService:
                         )
                         self._kernel.sys_setattr(
                             entry.path,
-                            0,  # DT_REG upsert (re-create deleted entry)
+                            entry_type=0,  # DT_REG upsert (re-create deleted entry)
                             content_id=entry.original_hash,
                             size=meta_dict.get("size", 0),
                             version=meta_dict.get("version", 1),

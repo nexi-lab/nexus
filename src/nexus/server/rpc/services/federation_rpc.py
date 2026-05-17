@@ -208,13 +208,13 @@ class FederationRPCService(FederationRPCMixin):
                 # contextlib.suppress (fall through to setattr below).
                 self._kernel.sys_setattr(
                     "/__fed_import__",
-                    1,  # DT_DIR
-                    "",  # backend_name (unused for DT_DIR)
+                    entry_type=1,  # DT_DIR
+                    backend_name="",  # unused for DT_DIR
                 )
             try:
                 self._kernel.sys_setattr(
                     f"/__fed_import__/{target_zone}",
-                    DT_MOUNT,
+                    entry_type=DT_MOUNT,
                     backend_name="",
                     zone_id=target_zone,
                 )
@@ -313,14 +313,14 @@ class FederationRPCService(FederationRPCMixin):
         with contextlib.suppress(Exception):
             self._kernel.sys_setattr(
                 "/__fed_zones__",
-                1,  # DT_DIR
-                "",  # backend_name (unused for DT_DIR)
+                entry_type=1,  # DT_DIR
+                backend_name="",  # unused for DT_DIR
             )
         synthetic_path = f"/__fed_zones__/{zone_id}"
         try:
             self._kernel.sys_setattr(
                 synthetic_path,
-                DT_MOUNT,
+                entry_type=DT_MOUNT,
                 backend_name="",
                 zone_id=zone_id,
             )

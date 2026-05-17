@@ -121,7 +121,7 @@ class FailingMetastore:
         self._maybe_fail("put")
         return self._inner.sys_setattr(
             metadata.path,
-            metadata.entry_type if hasattr(metadata, "entry_type") else 1,
+            entry_type=metadata.entry_type if hasattr(metadata, "entry_type") else 1,
         )
 
     def delete(self, path: str) -> Any:

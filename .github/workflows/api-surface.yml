@@ -12,6 +12,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Required for third-party PyO3 sdist builds (e.g. pdf-inspector).
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 jobs:
   api-surface-check:
     name: Detect API Breaking Changes

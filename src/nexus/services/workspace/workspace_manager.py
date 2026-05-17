@@ -325,7 +325,7 @@ class WorkspaceManager:
                 now_ms = int(datetime.now(UTC).timestamp() * 1000)
                 self._kernel.sys_setattr(
                     full_path,
-                    0,  # DT_REG upsert
+                    entry_type=0,  # DT_REG upsert
                     content_id=entry.content_id,
                     size=entry.size,
                     mime_type=entry.mime_type,

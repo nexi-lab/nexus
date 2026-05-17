@@ -718,6 +718,8 @@ pub struct Kernel {
     pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
     pub(crate) stream_manager: Arc<crate::stream_manager::StreamManager>,
+    // FileDescriptorTable — pre-opened fds for PAS backend fast-path reads.
+    pub(crate) fdt: crate::fdt::FileDescriptorTable,
     // Native hook registry — pure Rust hooks dispatched lock-free.
     #[allow(dead_code)]
     // RwLock (not Mutex) so concurrent + recursive read-locks are allowed.
@@ -868,6 +870,7 @@ impl Kernel {
             index_cache: IndexCache::default(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
+            fdt: crate::fdt::FileDescriptorTable::new(),
             native_hooks: RwLock::new(NativeHookRegistry::new()),
             self_address: parking_lot::RwLock::new(None),
             runtime,

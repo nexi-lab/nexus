@@ -47,3 +47,6 @@ pub mod meta_store;
 // §4.2 — DT_PIPE / DT_STREAM IPC pillars.
 pub mod pipe;
 pub mod stream;
+
+// §4.8 — FileDescriptorTable (pre-opened fds for PAS fast-path reads).
+pub mod fdt;

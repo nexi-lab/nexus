@@ -61,6 +61,7 @@ pub(crate) use core::pipe::manager as pipe_manager;
 // on kernel, never the reverse). Boot-time installation is wired
 // through PyO3 hooks the cdylib calls (see `services::python::register`).
 
+pub(crate) use core::fdt;
 #[cfg(unix)]
 pub(crate) use core::pipe::shm as shm_pipe;
 #[cfg(unix)]

@@ -304,6 +304,21 @@ impl Kernel {
             }
         }
 
+        // FDT fast path: pread from pre-opened fd (PAS backends).
+        // Skips VFS lock + backend I/O entirely (same as DT_PIPE pattern).
+        if entry.entry_type == DT_REG {
+            if let Some(data) = self.fdt.pread(path) {
+                return Ok(SysReadResult {
+                    data: Some(data),
+                    post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                    content_id: entry.content_id.clone(),
+                    gen: entry.gen,
+                    entry_type: DT_REG,
+                    stream_next_offset: None,
+                });
+            }
+        }
+
         // Content identifier: CAS backends use content_id (hash). Path-addressed
         // backends derive their physical path from `path - mount_prefix`
         // inside the backend itself; the kernel always passes the content_id.
@@ -779,6 +794,16 @@ impl Kernel {
         // 6. After write -> build metadata + metastore.put + dcache update
         let result = match write_result {
             Some(wr) => {
+                // FDT: register pre-opened fd for PAS backends (fast-path reads).
+                if let Some(phys) = input
+                    .route
+                    .backend
+                    .as_ref()
+                    .and_then(|b| b.resolve_physical_path(&wr.content_id))
+                {
+                    let _ = self.fdt.register(input.path, &phys);
+                }
+
                 // Snapshot old state for OBSERVE event payload + Python
                 // post-hook dispatch (is_new, old_content_id, old_size, etc.).
                 // DCache → metastore fallback ensures accuracy even on cold
@@ -1282,6 +1307,9 @@ impl Kernel {
         self.index_cache
             .invalidate_parent_listing(&ctx.zone_id, path);
 
+        // 7b. FDT cleanup — close pre-opened fd (if any).
+        self.fdt.remove(path);
+
         // 8. Release VFS lock
         self.lock_manager.do_release(lock_handle);
 
@@ -1574,6 +1602,9 @@ impl Kernel {
             .invalidate_parent_listing(&ctx.zone_id, old_path);
         self.index_cache
             .invalidate_parent_listing(&ctx.zone_id, new_path);
+
+        // 9b. FDT: re-key pre-opened fd (Unix rename keeps fd valid).
+        self.fdt.rename(old_path, new_path);
 
         // 10. Release sorted locks
         release_locks(&self.lock_manager, lock1, lock2);

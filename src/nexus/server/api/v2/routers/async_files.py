@@ -2172,7 +2172,11 @@ def create_async_files_router(
 
                 # Try Rust mmap grep first
                 results = await asyncio.to_thread(
-                    grep_files_mmap, pattern, all_paths, ignore_case, limit
+                    grep_files_mmap,
+                    pattern,
+                    all_paths,
+                    ignore_case=ignore_case,
+                    max_results=limit,
                 )
 
                 # Fallback to Python re if Rust is unavailable

@@ -30,7 +30,7 @@ PyKernel = None
 # ---------------------------------------------------------------------------
 # BlobPackEngine — None (requires native binary)
 # ---------------------------------------------------------------------------
-BlobPackEngine = None
+BlobPackEngine: type[Any] | None = None
 
 # ---------------------------------------------------------------------------
 # Path utilities — pure Python implementations
@@ -393,6 +393,13 @@ def glob_match_bulk(patterns: list[str], paths: list[str]) -> list[str]:
                 break
     return matched
 
+
+# ---------------------------------------------------------------------------
+# Prefix / path batch helpers — None sentinels (requires native binary)
+# ---------------------------------------------------------------------------
+
+batch_prefix_check = None
+any_path_starts_with = None
 
 # ---------------------------------------------------------------------------
 # Trigram index — None sentinels (requires native binary)

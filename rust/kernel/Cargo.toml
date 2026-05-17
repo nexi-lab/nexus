@@ -69,10 +69,6 @@ libc = "0.2"
 
 
 [[bench]]
-name = "prefix_bench"
-harness = false
-
-[[bench]]
 name = "read_batch"
 harness = false
 

@@ -1,0 +1,4843 @@
+schema_version: 1
+modules:
+- id: admin
+  name: Admin
+  description: Admin / governance / audit
+  depends_on: []
+- id: fs
+  name: Filesystem
+  description: Core read/write/stat/list operations
+  depends_on: []
+- id: kernel
+  name: Kernel
+  description: Kernel-level syscalls
+  depends_on: []
+- id: mcp
+  name: MCP
+  description: Model Context Protocol tooling
+  depends_on: []
+- id: mounts
+  name: Mounts
+  description: Mount drivers + connectors
+  depends_on: []
+- id: oauth
+  name: OAuth
+  description: Credential management
+  depends_on: []
+- id: rebac
+  name: ReBAC
+  description: Permissions and access control
+  depends_on: []
+- id: search
+  name: Search
+  description: BM25S / sqlite-vec / semantic
+  depends_on: []
+- id: workspace
+  name: Workspace
+  description: Local + remote workspaces, snapshots
+  depends_on: []
+operations:
+- id: access.share_link
+  module: access
+  summary: ''
+  transports:
+    grpc_expose:
+      name: access_share_link
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/share_link/share_link_service.py:490
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: add.mount
+  module: add
+  summary: ''
+  transports:
+    grpc_expose:
+      name: add_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:861
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agent.heartbeat
+  module: agent
+  summary: ''
+  transports:
+    grpc_expose:
+      name: agent_heartbeat
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/agents/agent_rpc_service.py:781
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agent.id
+  module: agent
+  summary: ''
+  transports:
+    sdk:
+      name: BaseRemoteNexusFS.agent_id
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/remote/base_client.py:133
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agent.list_by_zone
+  module: agent
+  summary: ''
+  transports:
+    grpc_expose:
+      name: agent_list_by_zone
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/agents/agent_rpc_service.py:789
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agent.transition
+  module: agent
+  summary: ''
+  transports:
+    grpc_expose:
+      name: agent_transition
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/agents/agent_rpc_service.py:715
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: audit.export
+  module: audit
+  summary: ''
+  transports:
+    grpc_expose:
+      name: audit_export
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/audit_rpc.py:44
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: audit.list
+  module: audit
+  summary: ''
+  transports:
+    grpc_expose:
+      name: audit_list
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/audit_rpc.py:20
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: backfill.directory_index
+  module: backfill
+  summary: ''
+  transports:
+    grpc_expose:
+      name: backfill_directory_index
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1890
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: create.share_link
+  module: create
+  summary: ''
+  transports:
+    grpc_expose:
+      name: create_share_link
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/share_link/share_link_service.py:145
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: delete.agent
+  module: delete
+  summary: ''
+  transports:
+    grpc_expose:
+      name: delete_agent
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/agents/agent_rpc_service.py:607
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: delete.batch
+  module: delete
+  summary: ''
+  transports:
+    grpc_expose:
+      name: delete_batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1414
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: delete.connector
+  module: delete
+  summary: ''
+  transports:
+    grpc_expose:
+      name: delete_connector
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:933
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: delete.file
+  module: delete
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_delete_file
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: delete.saved_mount
+  module: delete
+  summary: ''
+  transports:
+    grpc_expose:
+      name: delete_saved_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:1379
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: deprovision.user
+  module: deprovision
+  summary: ''
+  transports:
+    grpc_expose:
+      name: deprovision_user
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/lifecycle/user_provisioning.py:311
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: diff.versions
+  module: diff
+  summary: ''
+  transports:
+    grpc_expose:
+      name: diff_versions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/versioning/version_service.py:363
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: discovery.get_tool_details
+  module: discovery
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_discovery_get_tool_details
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: discovery.list_servers
+  module: discovery
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_discovery_list_servers
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: discovery.load_tools
+  module: discovery
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_discovery_load_tools
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: discovery.search_tools
+  module: discovery
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_discovery_search_tools
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: edit.file
+  module: edit
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_edit_file
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: events.replay
+  module: events
+  summary: ''
+  transports:
+    grpc_expose:
+      name: events_replay
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/events_rpc.py:20
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: execute.workflow
+  module: execute
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_execute_workflow
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exists.batch
+  module: exists
+  summary: ''
+  transports:
+    grpc_expose:
+      name: exists_batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1309
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: export.metadata
+  module: export
+  summary: ''
+  transports:
+    grpc_expose:
+      name: export_metadata
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/metadata_export.py:47
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.client_whoami
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_client_whoami
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:34
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.cluster_info
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_cluster_info
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:553
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.create_zone
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_create_zone
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:303
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.export_zone
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_export_zone
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:87
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.import_zone
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_import_zone
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:157
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.join
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_join
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:344
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.list_zones
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_list_zones
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:536
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.mount
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:404
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.remove_zone
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_remove_zone
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:334
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.share
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_share
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:489
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.unmount
+  module: federation
+  summary: ''
+  transports:
+    grpc_expose:
+      name: federation_unmount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/federation_rpc.py:453
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: file.info
+  module: file
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_file_info
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: flush.write_observer
+  module: flush
+  summary: ''
+  transports:
+    grpc_expose:
+      name: flush_write_observer
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1920
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.access
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: access
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:46
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.close
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: close
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:47
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.delete
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: delete
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:48
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.exists
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: exists
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:49
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.list
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: list
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:51
+    grpc_expose:
+      name: list
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:447
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.read
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: read
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:54
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.stat
+  module: fs
+  summary: ''
+  transports:
+    grpc_expose:
+      name: stat
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1089
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.write
+  module: fs
+  summary: ''
+  transports:
+    cli:
+      name: nexus write
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+    grpc_call:
+      name: write
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:69
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.agent
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_agent
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/agents/agent_rpc_service.py:553
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.content_id
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_content_id
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:613
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.dynamic_viewer_config
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_dynamic_viewer_config
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1492
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.mount
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:1179
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.namespace
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_namespace
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1046
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.rebac_option
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_rebac_option
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:954
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.share_link
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_share_link
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/share_link/share_link_service.py:261
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.share_link_access_logs
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_share_link_access_logs
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/share_link/share_link_service.py:636
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.top_level_mounts
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_top_level_mounts
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:268
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.version
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_version
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/versioning/version_service.py:123
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.workspace_info
+  module: get
+  summary: ''
+  transports:
+    grpc_expose:
+      name: get_workspace_info
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:360
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: glob.batch
+  module: glob
+  summary: ''
+  transports:
+    grpc_expose:
+      name: glob_batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:1844
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: governance.alerts
+  module: governance
+  summary: ''
+  transports:
+    grpc_expose:
+      name: governance_alerts
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/governance_rpc.py:25
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: governance.rings
+  module: governance
+  summary: ''
+  transports:
+    grpc_expose:
+      name: governance_rings
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/governance_rpc.py:46
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: governance.status
+  module: governance
+  summary: ''
+  transports:
+    grpc_expose:
+      name: governance_status
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/governance_rpc.py:62
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: grant.consent
+  module: grant
+  summary: ''
+  transports:
+    grpc_expose:
+      name: grant_consent
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1163
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: has.mount
+  module: has
+  summary: ''
+  transports:
+    grpc_expose:
+      name: has_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:1196
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: hub.admin
+  module: hub
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_hub_admin
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: import.metadata
+  module: import
+  summary: ''
+  transports:
+    grpc_expose:
+      name: import_metadata
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/metadata_export.py:130
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: initialize.semantic_search
+  module: initialize
+  summary: ''
+  transports:
+    grpc_expose:
+      name: initialize_semantic_search
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:4112
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: is.admin
+  module: is
+  summary: ''
+  transports:
+    sdk:
+      name: BaseRemoteNexusFS.is_admin
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/remote/base_client.py:153
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.append
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus append
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+    grpc_expose:
+      name: append
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_content.py:1042
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.archive
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus archive
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/archive.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.aspects
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus aspects
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/aspects.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.cache
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus cache
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/cache.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.cat
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus cat
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.catalog
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus catalog
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/catalog.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.config
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus config
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/config_cmd.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.connect
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus connect
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/connect_cmd.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.connectors
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus connectors
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/connectors.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.context
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus context
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/context.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.copy
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus copy
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.cp
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus cp
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.doctor
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus doctor
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/doctor.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.down
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus down
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/stack.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.edit
+  module: kernel
+  summary: ''
+  transports:
+    grpc_expose:
+      name: edit
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_content.py:1163
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.env
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus env
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/env_cmd.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.info
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus info
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/inspect.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.init
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus init
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.is_directory
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: is_directory
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:50
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.lineage
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus lineage
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/lineage.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.llm
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus llm
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/llm.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.lock_acquire
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: lock_acquire
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:52
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.logs
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus logs
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/stack.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.ls
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus ls
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/directory.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.mcp
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus mcp
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/mcp.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.migrate
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus migrate
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/migrate.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.mkdir
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus mkdir
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/directory.py:1
+    grpc_call:
+      name: mkdir
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:53
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.mounts
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus mounts
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/mounts.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.move
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus move
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.network
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus network
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/network.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.ops
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus ops
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/operations.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.path-context
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus path-context
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/path_context.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.plugins
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus plugins
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/plugins.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.profile
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus profile
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/profile.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.rebac
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus rebac
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/rebac.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.reindex
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus reindex
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/reindex.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.rename
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: rename
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:55
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.restart
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus restart
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/stack.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.rm
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus rm
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.rmdir
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus rmdir
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/directory.py:1
+    grpc_call:
+      name: rmdir
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:56
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.rollback
+  module: kernel
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rollback
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/versioning/version_service.py:268
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.run
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus run
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/env_cmd.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.size
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus size
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/inspect.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.start
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus start
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/stack.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.status
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus status
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/status.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.stop
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus stop
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/stack.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.stream
+  module: kernel
+  summary: ''
+  transports:
+    grpc_expose:
+      name: stream
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_content.py:457
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sync
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus sync
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_copy
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_copy
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:57
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_lock
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_lock
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:58
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_mkdir
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_mkdir
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:59
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_read
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_read
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:60
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_readdir
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_readdir
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:61
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_rename
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_rename
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:62
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_rmdir
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_rmdir
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:63
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_setattr
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_setattr
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:64
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_stat
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_stat
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:65
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_unlink
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_unlink
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:66
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_unlock
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_unlock
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:67
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.sys_write
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_write
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:68
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.tls
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus tls
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/tls.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.tree
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus tree
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/directory.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.undo
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus undo
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/operations.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.up
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus up
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/stack.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.upgrade
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus upgrade
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/stack.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.version
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus version
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/inspect.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.versions
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus versions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/versions.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.workflows
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus workflows
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/workflows.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.workspace
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus workspace
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/workspace.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.write-batch
+  module: kernel
+  summary: ''
+  transports:
+    cli:
+      name: nexus write-batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.agents
+  module: list
+  summary: ''
+  transports:
+    grpc_expose:
+      name: list_agents
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/agents/agent_rpc_service.py:497
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.connectors
+  module: list
+  summary: ''
+  transports:
+    grpc_expose:
+      name: list_connectors
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:991
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.files
+  module: list
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_list_files
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.incoming_shares
+  module: list
+  summary: ''
+  transports:
+    grpc_expose:
+      name: list_incoming_shares
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1448
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.mounts
+  module: list
+  summary: ''
+  transports:
+    grpc_expose:
+      name: list_mounts
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:1163
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.outgoing_shares
+  module: list
+  summary: ''
+  transports:
+    grpc_expose:
+      name: list_outgoing_shares
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1414
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.saved_mounts
+  module: list
+  summary: ''
+  transports:
+    grpc_expose:
+      name: list_saved_mounts
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:1283
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.share_links
+  module: list
+  summary: ''
+  transports:
+    grpc_expose:
+      name: list_share_links
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/share_link/share_link_service.py:339
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.versions
+  module: list
+  summary: ''
+  transports:
+    grpc_expose:
+      name: list_versions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/versioning/version_service.py:205
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.workflows
+  module: list
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_list_workflows
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: list.workspaces
+  module: list
+  summary: ''
+  transports:
+    grpc_expose:
+      name: list_workspaces
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:341
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: load.mount
+  module: load
+  summary: ''
+  transports:
+    grpc_expose:
+      name: load_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:1331
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: load.workspace_config
+  module: load
+  summary: ''
+  transports:
+    grpc_expose:
+      name: load_workspace_config
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:260
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: make.private
+  module: make
+  summary: ''
+  transports:
+    grpc_expose:
+      name: make_private
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1253
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: make.public
+  module: make
+  summary: ''
+  transports:
+    grpc_expose:
+      name: make_public
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1222
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: mcp.connect
+  module: mcp
+  summary: ''
+  transports:
+    grpc_expose:
+      name: mcp_connect
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mcp/mcp_service.py:528
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: mcp.list_mounts
+  module: mcp
+  summary: ''
+  transports:
+    grpc_expose:
+      name: mcp_list_mounts
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mcp/mcp_service.py:139
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: mcp.list_tools
+  module: mcp
+  summary: ''
+  transports:
+    grpc_expose:
+      name: mcp_list_tools
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mcp/mcp_service.py:205
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: mcp.mount
+  module: mcp
+  summary: ''
+  transports:
+    grpc_expose:
+      name: mcp_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mcp/mcp_service.py:297
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: mcp.sync
+  module: mcp
+  summary: ''
+  transports:
+    grpc_expose:
+      name: mcp_sync
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mcp/mcp_service.py:469
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: mcp.unmount
+  module: mcp
+  summary: ''
+  transports:
+    grpc_expose:
+      name: mcp_unmount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mcp/mcp_service.py:420
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: metadata.batch
+  module: metadata
+  summary: ''
+  transports:
+    grpc_expose:
+      name: metadata_batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1319
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: namespace.delete
+  module: namespace
+  summary: ''
+  transports:
+    grpc_expose:
+      name: namespace_delete
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1091
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: namespace.list
+  module: namespace
+  summary: ''
+  transports:
+    grpc_expose:
+      name: namespace_list
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1067
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.batch_read
+  module: nexus_v_f_s_service
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.BatchRead
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/vfs/vfs.proto:32
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.call
+  module: nexus_v_f_s_service
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Call
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/vfs/vfs.proto:20
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.delete
+  module: nexus_v_f_s_service
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Delete
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/vfs/vfs.proto:25
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.ping
+  module: nexus_v_f_s_service
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Ping
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/vfs/vfs.proto:28
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.read
+  module: nexus_v_f_s_service
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Read
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/vfs/vfs.proto:23
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: nexus_v_f_s_service.write
+  module: nexus_v_f_s_service
+  summary: ''
+  transports:
+    grpc_typed:
+      name: NexusVFSService.Write
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/vfs/vfs.proto:24
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: oauth.exchange_code
+  module: oauth
+  summary: ''
+  transports:
+    grpc_expose:
+      name: oauth_exchange_code
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/auth/oauth/credential_service.py:149
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: oauth.get_auth_url
+  module: oauth
+  summary: ''
+  transports:
+    grpc_expose:
+      name: oauth_get_auth_url
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/auth/oauth/credential_service.py:127
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: oauth.list_credentials
+  module: oauth
+  summary: ''
+  transports:
+    grpc_expose:
+      name: oauth_list_credentials
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/auth/oauth/credential_service.py:245
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: oauth.list_providers
+  module: oauth
+  summary: ''
+  transports:
+    grpc_expose:
+      name: oauth_list_providers
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/auth/oauth/credential_service.py:99
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: oauth.revoke_credential
+  module: oauth
+  summary: ''
+  transports:
+    grpc_expose:
+      name: oauth_revoke_credential
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/auth/oauth/credential_service.py:290
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: oauth.test_credential
+  module: oauth
+  summary: ''
+  transports:
+    grpc_expose:
+      name: oauth_test_credential
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/auth/oauth/credential_service.py:371
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: pay.balance
+  module: pay
+  summary: ''
+  transports:
+    grpc_expose:
+      name: pay_balance
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/pay_rpc.py:21
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: pay.history
+  module: pay
+  summary: ''
+  transports:
+    grpc_expose:
+      name: pay_history
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/pay_rpc.py:56
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: pay.transfer
+  module: pay
+  summary: ''
+  transports:
+    grpc_expose:
+      name: pay_transfer
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/pay_rpc.py:31
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: provision.user
+  module: provision
+  summary: ''
+  transports:
+    grpc_expose:
+      name: provision_user
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/lifecycle/user_provisioning.py:71
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: read.batch
+  module: read
+  summary: ''
+  transports:
+    grpc_expose:
+      name: read_batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_content.py:1569
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: read.bulk
+  module: read
+  summary: ''
+  transports:
+    grpc_expose:
+      name: read_bulk
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_content.py:219
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: read.file
+  module: read
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_read_file
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: read.range
+  module: read
+  summary: ''
+  transports:
+    grpc_expose:
+      name: read_range
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_content.py:392
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: read.with_dynamic_viewer
+  module: read
+  summary: ''
+  transports:
+    grpc_expose:
+      name: read_with_dynamic_viewer
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1559
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: reauth.mount
+  module: reauth
+  summary: ''
+  transports:
+    grpc_expose:
+      name: reauth_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:1081
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rebac.check
+  module: rebac
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rebac_check
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:381
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rebac.check_batch
+  module: rebac
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rebac_check_batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:604
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rebac.create
+  module: rebac
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rebac_create
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:166
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rebac.delete
+  module: rebac
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rebac_delete
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:719
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rebac.expand
+  module: rebac
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rebac_expand
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:468
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rebac.expand_with_privacy
+  module: rebac
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rebac_expand_with_privacy
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1126
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rebac.explain
+  module: rebac
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rebac_explain
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:524
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rebac.list_objects
+  module: rebac
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rebac_list_objects
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:862
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rebac.list_tuples
+  module: rebac
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rebac_list_tuples
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:761
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: register.agent
+  module: register
+  summary: ''
+  transports:
+    grpc_expose:
+      name: register_agent
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/agents/agent_rpc_service.py:326
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: register.namespace
+  module: register
+  summary: ''
+  transports:
+    grpc_expose:
+      name: register_namespace
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:985
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: register.workspace
+  module: register
+  summary: ''
+  transports:
+    grpc_expose:
+      name: register_workspace
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:290
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: remove.mount
+  module: remove
+  summary: ''
+  transports:
+    grpc_expose:
+      name: remove_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:905
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rename.batch
+  module: rename
+  summary: ''
+  transports:
+    grpc_expose:
+      name: rename_batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1553
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: rename.file
+  module: rename
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_rename_file
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: revoke.consent
+  module: revoke
+  summary: ''
+  transports:
+    grpc_expose:
+      name: revoke_consent
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1197
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: revoke.share
+  module: revoke
+  summary: ''
+  transports:
+    grpc_expose:
+      name: revoke_share
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1365
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: revoke.share_by_id
+  module: revoke
+  summary: ''
+  transports:
+    grpc_expose:
+      name: revoke_share_by_id
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1395
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: revoke.share_link
+  module: revoke
+  summary: ''
+  transports:
+    grpc_expose:
+      name: revoke_share_link
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/share_link/share_link_service.py:420
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sandbox.create
+  module: sandbox
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_sandbox_create
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sandbox.list
+  module: sandbox
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_sandbox_list
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sandbox.stop
+  module: sandbox
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_sandbox_stop
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: save.mount
+  module: save
+  summary: ''
+  transports:
+    grpc_expose:
+      name: save_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:1212
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: search.glob
+  module: search
+  summary: ''
+  transports:
+    cli:
+      name: nexus glob
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/search.py:1
+    grpc_expose:
+      name: glob
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:1659
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: search.grep
+  module: search
+  summary: ''
+  transports:
+    cli:
+      name: nexus grep
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/search.py:1
+    grpc_expose:
+      name: grep
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:1901
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: search.search
+  module: search
+  summary: ''
+  transports:
+    cli:
+      name: nexus search
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/search.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: semantic.search
+  module: semantic
+  summary: ''
+  transports:
+    grpc_expose:
+      name: semantic_search
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:3712
+    mcp:
+      name: nexus_semantic_search
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: semantic.search_index
+  module: semantic
+  summary: ''
+  transports:
+    grpc_expose:
+      name: semantic_search_index
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:4027
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: semantic.search_stats
+  module: semantic
+  summary: ''
+  transports:
+    grpc_expose:
+      name: semantic_search_stats
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:4064
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: set.rebac_option
+  module: set
+  summary: ''
+  transports:
+    grpc_expose:
+      name: set_rebac_option
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:917
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: share.with_group
+  module: share
+  summary: ''
+  transports:
+    grpc_expose:
+      name: share_with_group
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1325
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: share.with_user
+  module: share
+  summary: ''
+  transports:
+    grpc_expose:
+      name: share_with_user
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:1285
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshot.begin
+  module: snapshot
+  summary: ''
+  transports:
+    grpc_expose:
+      name: snapshot_begin
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:196
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshot.commit
+  module: snapshot
+  summary: ''
+  transports:
+    grpc_expose:
+      name: snapshot_commit
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/snapshots_rpc.py:52
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshot.create
+  module: snapshot
+  summary: ''
+  transports:
+    grpc_expose:
+      name: snapshot_create
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/snapshots_rpc.py:20
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshot.get
+  module: snapshot
+  summary: ''
+  transports:
+    grpc_expose:
+      name: snapshot_get
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/snapshots_rpc.py:45
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshot.list
+  module: snapshot
+  summary: ''
+  transports:
+    grpc_expose:
+      name: snapshot_list
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/snapshots_rpc.py:32
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshot.list_entries
+  module: snapshot
+  summary: ''
+  transports:
+    grpc_expose:
+      name: snapshot_list_entries
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/snapshots_rpc.py:57
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshot.restore
+  module: snapshot
+  summary: ''
+  transports:
+    grpc_expose:
+      name: snapshot_restore
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/snapshots_rpc.py:40
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshot.rollback
+  module: snapshot
+  summary: ''
+  transports:
+    grpc_expose:
+      name: snapshot_rollback
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:237
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: stat.bulk
+  module: stat
+  summary: ''
+  transports:
+    grpc_expose:
+      name: stat_bulk
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1177
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: stream.range
+  module: stream
+  summary: ''
+  transports:
+    grpc_expose:
+      name: stream_range
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_content.py:505
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: subject.id
+  module: subject
+  summary: ''
+  transports:
+    sdk:
+      name: BaseRemoteNexusFS.subject_id
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/remote/base_client.py:138
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: subject.type
+  module: subject
+  summary: ''
+  transports:
+    sdk:
+      name: BaseRemoteNexusFS.subject_type
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/remote/base_client.py:148
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.watch
+  module: sys
+  summary: ''
+  transports:
+    grpc_expose:
+      name: sys_watch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_watch.py:26
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: unregister.workspace
+  module: unregister
+  summary: ''
+  transports:
+    grpc_expose:
+      name: unregister_workspace
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:324
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: update.agent
+  module: update
+  summary: ''
+  transports:
+    grpc_expose:
+      name: update_agent
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/agents/agent_rpc_service.py:414
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: update.mount
+  module: update
+  summary: ''
+  transports:
+    grpc_expose:
+      name: update_mount
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:1008
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: update.workspace
+  module: update
+  summary: ''
+  transports:
+    grpc_expose:
+      name: update_workspace
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:329
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workspace.diff
+  module: workspace
+  summary: ''
+  transports:
+    grpc_expose:
+      name: workspace_diff
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:141
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workspace.log
+  module: workspace
+  summary: ''
+  transports:
+    grpc_expose:
+      name: workspace_log
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:119
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workspace.restore
+  module: workspace
+  summary: ''
+  transports:
+    grpc_expose:
+      name: workspace_restore
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:98
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workspace.snapshot
+  module: workspace
+  summary: ''
+  transports:
+    grpc_expose:
+      name: workspace_snapshot
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:71
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: write.batch
+  module: write
+  summary: ''
+  transports:
+    grpc_expose:
+      name: write_batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_content.py:1407
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: write.file
+  module: write
+  summary: ''
+  transports:
+    mcp:
+      name: nexus_write_file
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: write.stream
+  module: write
+  summary: ''
+  transports:
+    grpc_expose:
+      name: write_stream
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_content.py:547
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone.id
+  module: zone
+  summary: ''
+  transports:
+    sdk:
+      name: BaseRemoteNexusFS.zone_id
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/remote/base_client.py:123
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+parity_warnings:
+- operation_id: agent.id
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: delete.file
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: discovery.get_tool_details
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: discovery.list_servers
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: discovery.load_tools
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: discovery.search_tools
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: edit.file
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: execute.workflow
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: file.info
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: fs.write
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: hub.admin
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: is.admin
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: kernel.append
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.archive
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.aspects
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.cache
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.cat
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.catalog
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.config
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.connect
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.connectors
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.context
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.copy
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.cp
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.doctor
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.down
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.env
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.info
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.init
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.lineage
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.llm
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.logs
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.ls
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.mcp
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.migrate
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.mkdir
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.mounts
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.move
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.network
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.ops
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.path-context
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.plugins
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.profile
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.rebac
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.reindex
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.restart
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.rm
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.rmdir
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.run
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.size
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.start
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.status
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.stop
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.sync
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.tls
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.tree
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.undo
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.up
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.upgrade
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.version
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.versions
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.workflows
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.workspace
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: kernel.write-batch
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: list.files
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: list.workflows
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: nexus_v_f_s_service.batch_read
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.call
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.delete
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.ping
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.read
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: nexus_v_f_s_service.write
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: read.file
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: rename.file
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: sandbox.create
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: sandbox.list
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: sandbox.stop
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: search.glob
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: search.grep
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: search.search
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: semantic.search
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: subject.id
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: subject.type
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: write.file
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - sdk
+- operation_id: zone.id
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+unmapped_surfaces: []
+stale_rows: []

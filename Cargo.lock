@@ -1936,7 +1936,6 @@ name = "kernel"
 version = "0.10.0"
 dependencies = [
  "ahash",
- "backends",
  "base64",
  "blake3",
  "bloomfilter",

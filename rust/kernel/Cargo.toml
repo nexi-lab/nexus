@@ -98,8 +98,6 @@ rcgen = { version = "0.14", features = ["pem", "x509-parser"] }  # Self-signed C
 tempfile = "3"
 libc = "0.2"
 
-[target.'cfg(unix)'.dev-dependencies]
-backends = { workspace = true, default-features = false, features = ["driver-path-local"] }
 
 [[bench]]
 name = "prefix_bench"

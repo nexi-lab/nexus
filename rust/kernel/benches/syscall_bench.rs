@@ -22,9 +22,61 @@ use std::hint::black_box;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use contracts::operation_context::OperationContext;
-use kernel::abc::object_store::ObjectStore;
+use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
 use kernel::kernel::{Kernel, ReadRequest, UnlinkRequest, WriteRequest};
 use kernel::meta_store::{DT_DIR, DT_PIPE};
+
+// ── Inline PathLocal for bench (avoids cyclic kernel↔backends dep) ────
+
+struct BenchPathLocal {
+    root: std::path::PathBuf,
+}
+
+impl BenchPathLocal {
+    fn new(root: &Path) -> Self {
+        std::fs::create_dir_all(root).unwrap();
+        Self {
+            root: root.to_path_buf(),
+        }
+    }
+    fn resolve(&self, id: &str) -> std::path::PathBuf {
+        self.root.join(id.trim_start_matches('/'))
+    }
+}
+
+impl ObjectStore for BenchPathLocal {
+    fn name(&self) -> &str {
+        "bench_path_local"
+    }
+    fn write_content(
+        &self,
+        content: &[u8],
+        content_id: &str,
+        _ctx: &kernel::kernel::OperationContext,
+        _offset: u64,
+    ) -> Result<WriteResult, StorageError> {
+        let p = self.resolve(content_id);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).map_err(StorageError::IOError)?;
+        }
+        std::fs::write(&p, content).map_err(StorageError::IOError)?;
+        Ok(WriteResult {
+            content_id: content_id.to_string(),
+            version: content_id.to_string(),
+            size: content.len() as u64,
+        })
+    }
+    fn read_content(
+        &self,
+        content_id: &str,
+        _ctx: &kernel::kernel::OperationContext,
+    ) -> Result<Vec<u8>, StorageError> {
+        std::fs::read(self.resolve(content_id)).map_err(|e| StorageError::NotFound(e.to_string()))
+    }
+    fn resolve_physical_path(&self, content_id: &str) -> Option<std::path::PathBuf> {
+        Some(self.resolve(content_id))
+    }
+}
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -54,9 +106,8 @@ fn setup_kernel(tmp: &Path) -> Kernel {
     let kernel = Kernel::new();
     let _ = kernel.set_metastore_path(redb_path.to_str().unwrap());
 
-    // Mount PathLocalBackend at "/" via VFS router (mirrors cluster profile boot)
-    let backend: Arc<dyn ObjectStore> =
-        Arc::new(backends::storage::path_local::PathLocalBackend::new(&data_dir, false).unwrap());
+    // Mount path-local backend at "/" via VFS router (mirrors cluster profile boot)
+    let backend: Arc<dyn ObjectStore> = Arc::new(BenchPathLocal::new(&data_dir));
     kernel
         .vfs_router_arc()
         .add_mount("/", "root", Some(backend), false);

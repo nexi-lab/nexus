@@ -56,6 +56,11 @@ modules:
   layer: brick
   depends_on:
   - nexus_fs
+- id: daemon
+  name: Daemon
+  description: Long-running process model. nexus daemon up/status/enroll/refresh.
+  layer: deployment
+  depends_on: []
 - id: delegation
   name: Delegation
   description: Agent identity delegation modes.
@@ -68,6 +73,13 @@ modules:
   layer: brick
   depends_on:
   - search
+- id: federation
+  name: Federation
+  description: 'Cross-zone protocol: zone create/join/share/mount/list/export/import.'
+  layer: deployment
+  depends_on:
+  - zone
+  - rebac
 - id: filesystem
   name: Filesystem brick
   description: Path-scoping wrappers for NexusFS.
@@ -90,6 +102,11 @@ modules:
   name: HTTP
   description: FastAPI routers under server/api/. Per-feature route groups.
   layer: transport
+  depends_on: []
+- id: hub
+  name: Hub
+  description: Shared Nexus instance that other nodes connect to. Manages multi-tenant zones + admin RPCs.
+  layer: deployment
   depends_on: []
 - id: identity
   name: Identity
@@ -142,6 +159,12 @@ modules:
   description: DeploymentProfile-based brick enable/disable.
   layer: cross
   depends_on: []
+- id: raft
+  name: Raft consensus
+  description: Zone consensus for HA clusters (cluster profile).
+  layer: deployment
+  depends_on:
+  - zone
 - id: rebac
   name: ReBAC
   description: Zanzibar-style relation-based access control.
@@ -214,6 +237,11 @@ modules:
   depends_on:
   - nexus_fs
   - rebac
+- id: zone
+  name: Zone
+  description: Basic unit of multi-tenancy. Workspaces and bricks scope by zone.
+  layer: deployment
+  depends_on: []
 operations:
 - id: access.share_link
   module: share_link
@@ -369,7 +397,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: admin_bootstrap.daemon_bootstrap
-  module: auth
+  module: daemon
   summary: ''
   transports:
     http:
@@ -623,7 +651,7 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: archive.archive
+- id: archive.cli
   module: archive
   summary: ''
   transports:
@@ -1425,7 +1453,7 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: catalog.catalog
+- id: catalog.cli
   module: catalog
   summary: ''
   transports:
@@ -1800,7 +1828,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: daemon.enroll
-  module: auth
+  module: daemon
   summary: ''
   transports:
     http:
@@ -1817,7 +1845,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: daemon.refresh
-  module: auth
+  module: daemon
   summary: ''
   transports:
     http:
@@ -2412,7 +2440,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.client_whoami
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2429,7 +2457,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.cluster_info
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2446,7 +2474,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.create_zone
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2463,7 +2491,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.export_zone
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2480,7 +2508,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.import_zone
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2497,7 +2525,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.join
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2514,7 +2542,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.list_zones
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2531,7 +2559,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.mount
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2548,7 +2576,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.remove_zone
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2565,7 +2593,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.share
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -2582,7 +2610,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.unmount
-  module: identity
+  module: federation
   summary: ''
   transports:
     grpc_expose:
@@ -3906,7 +3934,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: hub.admin
-  module: uncategorized
+  module: hub
   summary: ''
   transports:
     mcp:
@@ -4503,6 +4531,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: mcp.cli
+  module: mcp
+  summary: ''
+  transports:
+    cli:
+      name: nexus mcp
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/mcp.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: mcp.connect
   module: mcp
   summary: ''
@@ -4561,23 +4606,6 @@ operations:
     cli:
       name: nexus llm
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/llm.py:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: mcp.mcp
-  module: mcp
-  summary: ''
-  transports:
-    cli:
-      name: nexus mcp
-      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/mcp.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -5988,6 +6016,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: rebac.cli
+  module: rebac
+  summary: ''
+  transports:
+    cli:
+      name: nexus rebac
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/rebac.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: rebac.create
   module: rebac
   summary: ''
@@ -6097,23 +6142,6 @@ operations:
     grpc_expose:
       name: rebac_list_tuples
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/rebac/rebac_service.py:761
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: rebac.rebac
-  module: rebac
-  summary: ''
-  transports:
-    cli:
-      name: nexus rebac
-      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/rebac.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -6515,6 +6543,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: search.cli
+  module: search
+  summary: ''
+  transports:
+    cli:
+      name: nexus search
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/search.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: search.expand
   module: search
   summary: ''
@@ -6755,23 +6800,6 @@ operations:
     cli:
       name: nexus reindex
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/reindex.py:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: search.search
-  module: search
-  summary: ''
-  transports:
-    cli:
-      name: nexus search
-      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/search.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -7754,6 +7782,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: workflows.cli
+  module: workflows
+  summary: ''
+  transports:
+    cli:
+      name: nexus workflows
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/workflows.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: workflows.get
   module: workflows
   summary: ''
@@ -7873,13 +7918,13 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: workflows.workflows
-  module: workflows
+- id: workspace.cli
+  module: workspace
   summary: ''
   transports:
     cli:
-      name: nexus workflows
-      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/workflows.py:1
+      name: nexus workspace
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/workspace.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -8009,23 +8054,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: workspace.workspace
-  module: workspace
-  summary: ''
-  transports:
-    cli:
-      name: nexus workspace
-      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/workspace.py:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: write.batch
   module: filesystem
   summary: ''
@@ -8129,7 +8157,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: zone_routes.get
-  module: workspace
+  module: zone
   summary: ''
   transports:
     http:
@@ -8146,7 +8174,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: zone_routes.post
-  module: workspace
+  module: zone
   summary: ''
   transports:
     http:
@@ -8163,7 +8191,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: zone_routes.zone_id
-  module: workspace
+  module: zone
   summary: ''
   transports:
     http:
@@ -8324,7 +8352,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: archive.archive
+- operation_id: archive.cli
   has:
   - cli
   missing:
@@ -8676,7 +8704,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: catalog.catalog
+- operation_id: catalog.cli
   has:
   - cli
   missing:
@@ -9588,7 +9616,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: mcp.llm
+- operation_id: mcp.cli
   has:
   - cli
   missing:
@@ -9596,7 +9624,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: mcp.mcp
+- operation_id: mcp.llm
   has:
   - cli
   missing:
@@ -9988,7 +10016,7 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: rebac.rebac
+- operation_id: rebac.cli
   has:
   - cli
   missing:
@@ -10100,6 +10128,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: search.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: search.expand
   has:
   - http
@@ -10205,14 +10241,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: search.reindex
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: search.search
   has:
   - cli
   missing:
@@ -10508,6 +10536,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: workflows.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: workflows.get
   has:
   - http
@@ -10564,7 +10600,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: workflows.workflows
+- operation_id: workspace.cli
   has:
   - cli
   missing:
@@ -10594,14 +10630,6 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: workspace.workspace
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: write.file

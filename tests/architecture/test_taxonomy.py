@@ -14,7 +14,7 @@ from scripts.surface_coverage.taxonomy import (
 
 
 def test_layers_in_canonical_order():
-    assert LAYERS == ("transport", "cross", "brick", "nexus_fs", "rust_kernel")
+    assert LAYERS == ("transport", "cross", "brick", "deployment", "nexus_fs", "rust_kernel")
 
 
 def test_every_module_has_known_layer():
@@ -93,4 +93,31 @@ def test_bricks_by_category_omits_empty():
     ],
 )
 def test_classify_op_id(op_id, expected_module):
+    assert classify_op_id(op_id) == expected_module
+
+
+def test_deployment_layer_has_5_modules():
+    deployment = [m for m in MODULES if m.layer == "deployment"]
+    assert len(deployment) == 5
+    assert {m.id for m in deployment} == {"hub", "federation", "zone", "daemon", "raft"}
+
+
+def test_layers_include_deployment():
+    assert "deployment" in LAYERS
+
+
+@pytest.mark.parametrize(
+    "op_id,expected_module",
+    [
+        ("federation.client_whoami", "federation"),
+        ("federation.create_zone", "federation"),  # "federation" wins over "zone"
+        ("zone.list", "zone"),
+        ("create_zone", "zone"),
+        ("hub.admin", "hub"),
+        ("hub_admin_tool", "hub"),
+        ("daemon.enroll", "daemon"),
+        ("raft_node_join", "raft"),
+    ],
+)
+def test_classify_deployment(op_id, expected_module):
     assert classify_op_id(op_id) == expected_module

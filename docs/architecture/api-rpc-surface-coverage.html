@@ -29,6 +29,7 @@
     --layer-transport: #fef3c7;
     --layer-cross: #ddd6fe;
     --layer-brick: #d1fae5;
+    --layer-deployment: #fed7aa;
     --layer-nexus_fs: #dbeafe;
     --layer-rust_kernel: #fce7f3;
   }
@@ -112,6 +113,7 @@
   .legend .l-transport { background: var(--layer-transport); }
   .legend .l-cross { background: var(--layer-cross); }
   .legend .l-brick { background: var(--layer-brick); }
+  .legend .l-deployment { background: var(--layer-deployment); }
   .legend .l-nexus_fs { background: var(--layer-nexus_fs); }
   .legend .l-rust_kernel { background: var(--layer-rust_kernel); }
 
@@ -132,8 +134,8 @@
     <h2>Bricks (26)</h2>
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Access control</h2>
     <a href="#m-rebac">rebac<span class="count">21</span></a>
-    <a href="#m-auth">auth<span class="count">47</span></a>
-    <a href="#m-identity">identity<span class="count">16</span></a>
+    <a href="#m-auth">auth<span class="count">44</span></a>
+    <a href="#m-identity">identity<span class="count">5</span></a>
     <a href="#m-secrets">secrets<span class="count">10</span></a>
     <a href="#m-delegation">delegation<span class="count">7</span></a>
     <a href="#m-access_manifest">access_manifest<span class="count">6</span></a>
@@ -141,7 +143,7 @@
     <a href="#m-filesystem">filesystem<span class="count">95</span></a>
     <a href="#m-mount">mount<span class="count">32</span></a>
     <a href="#m-share_link">share_link<span class="count">12</span></a>
-    <a href="#m-workspace">workspace<span class="count">17</span></a>
+    <a href="#m-workspace">workspace<span class="count">14</span></a>
     <a href="#m-snapshot">snapshot<span class="count">14</span></a>
     <a href="#m-versioning">versioning<span class="count">7</span></a>
     <a href="#m-archive">archive<span class="count">1</span></a>
@@ -164,16 +166,21 @@
     <a href="#m-upload">upload<span class="count">2</span></a>
     <a href="#m-portability">portability<span class="count">2</span></a>
 
+    <h2>Deployment topology</h2>
+    <a href="#m-hub">hub<span class="count">1</span></a>
+    <a href="#m-federation">federation<span class="count">11</span></a>
+    <a href="#m-zone">zone<span class="count">3</span></a>
+    <a href="#m-daemon">daemon<span class="count">3</span></a>
     <h2>NexusFS wrapper</h2>
     <a href="#m-nexus_fs">nexus_fs<span class="count">20</span></a>
   </aside>
 
   <main>
     <h1>Nexus API/RPC Architecture Map</h1>
-    <p class="subtitle">A high-level view of every external surface exposed by Nexus, organized around its real layered architecture: Rust kernel &rarr; NexusFS wrapper &rarr; 28 plugin-style <strong>bricks</strong> &rarr; cross-cutting auth/profiles &rarr; transports (CLI / HTTP / gRPC / MCP / SDK).</p>
+    <p class="subtitle">A high-level view of every external surface exposed by Nexus, organized around its real layered architecture: Rust kernel &rarr; NexusFS wrapper &rarr; 28 plugin-style <strong>bricks</strong> &rarr; deployment topology (hub / federation / zone / daemon / raft) &rarr; cross-cutting auth/profiles &rarr; transports (CLI / HTTP / gRPC / MCP / SDK).</p>
 
     <div class="stats">
-      <div class="stat"><div class="stat-value">5</div><div class="stat-label">layers</div></div>
+      <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
       <div class="stat"><div class="stat-value">28</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">5</div><div class="stat-label">transports</div></div>
       <div class="stat"><div class="stat-value">466</div><div class="stat-label">operations</div></div>
@@ -199,6 +206,9 @@
 
         <h3>Profile gating</h3>
         <p>Each brick carries a <code>brick_gate</code> (e.g. <code>BRICK_REBAC</code>, <code>BRICK_PAY</code>) checked at boot. The <code>embedded &sub; lite &sub; sandbox &sub; full &sube; cloud</code> profile hierarchy controls which bricks are enabled. Surfaces exposed by a disabled brick fail with a stable error code so callers can detect the unsupported case.</p>
+
+        <h3>Deployment topology</h3>
+        <p>Beyond features, Nexus has a deployment dimension: <strong>zones</strong> are multi-tenancy units, a <strong>hub</strong> is an instance other nodes connect to, <strong>federation</strong> moves data and permissions between zones, the <strong>daemon</strong> hosts the runtime as a long-running process, and <strong>raft</strong> provides consensus for HA clusters. These cross-cut the bricks above and are visible as a separate layer in the architecture diagram.</p>
       </div>
     </section>
 
@@ -262,6 +272,13 @@ graph TB
       portability["Portability"]
     end
   end
+  subgraph layer_deployment ["Deployment topology"]
+    hub["Hub"]
+    federation["Federation"]
+    zone["Zone"]
+    daemon["Daemon"]
+    raft["Raft consensus"]
+  end
   subgraph layer_nexus_fs ["NexusFS wrapper"]
     nexus_fs["NexusFS"]
   end
@@ -288,6 +305,7 @@ graph TB
   parsers --> catalog
   rebac --> access_manifest
   rebac --> approvals
+  rebac --> federation
   rebac --> governance
   rebac --> mcp
   rebac --> share_link
@@ -297,11 +315,14 @@ graph TB
   snapshot --> archive
   task_manager --> workflows
   workflows --> approvals
+  zone --> federation
+  zone --> raft
         </div>
         <div class="legend">
           <span class="l-transport">Transports</span>
           <span class="l-cross">Cross-cutting</span>
           <span class="l-brick">Bricks (28)</span>
+          <span class="l-deployment">Deployment topology</span>
           <span class="l-nexus_fs">NexusFS</span>
           <span class="l-rust_kernel">Rust kernel</span>
         </div>
@@ -530,6 +551,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="rebac.cli" data-op-text="rebac.cli  nexus rebac ">
+  <div class="op-header">
+    <span class="op-id">rebac.cli</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus rebac</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="rebac.create" data-op-text="rebac.create  rebac_create ">
   <div class="op-header">
     <span class="op-id">rebac.create</span>
@@ -677,27 +719,6 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.rebac" data-op-text="rebac.rebac  nexus rebac ">
-  <div class="op-header">
-    <span class="op-id">rebac.rebac</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus rebac</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
 <div class="op" data-op-id="rebac.tuples" data-op-text="rebac.tuples  POST /tuples ">
   <div class="op-header">
     <span class="op-id">rebac.tuples</span>
@@ -768,31 +789,10 @@ graph TB
           <span class="mod-name">auth</span>
           <span class="mod-desc">&mdash; OAuth providers + identity tokens.</span>
           <span class="mod-meta">
-<span class="gate-badge">BRICK_AUTH</span><span class="tier-badge tier-independent">independent</span>            <span>47 ops</span>
+<span class="gate-badge">BRICK_AUTH</span><span class="tier-badge tier-independent">independent</span>            <span>44 ops</span>
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="admin_bootstrap.daemon_bootstrap" data-op-text="admin_bootstrap.daemon_bootstrap  POST /daemon-bootstrap ">
-  <div class="op-header">
-    <span class="op-id">admin_bootstrap.daemon_bootstrap</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /daemon-bootstrap</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
 <div class="op" data-op-id="auth.brick" data-op-text="auth.brick  brick:auth ">
   <div class="op-header">
     <span class="op-id">auth.brick</span>
@@ -1339,48 +1339,6 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="daemon.enroll" data-op-text="daemon.enroll  POST /enroll ">
-  <div class="op-header">
-    <span class="op-id">daemon.enroll</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /enroll</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="daemon.refresh" data-op-text="daemon.refresh  POST /refresh ">
-  <div class="op-header">
-    <span class="op-id">daemon.refresh</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /refresh</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
 <div class="op" data-op-id="exchange.code" data-op-text="exchange.code  OAuthClient.exchange_code ">
   <div class="op-header">
     <span class="op-id">exchange.code</span>
@@ -1766,7 +1724,7 @@ graph TB
           <span class="mod-name">identity</span>
           <span class="mod-desc">&mdash; Identity resolution + subject mapping.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-independent">independent</span>            <span>16 ops</span>
+<span class="tier-badge tier-independent">independent</span>            <span>5 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -1777,237 +1735,6 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>deprovision_user</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.client_whoami" data-op-text="federation.client_whoami  federation_client_whoami ">
-  <div class="op-header">
-    <span class="op-id">federation.client_whoami</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_client_whoami</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.cluster_info" data-op-text="federation.cluster_info  federation_cluster_info ">
-  <div class="op-header">
-    <span class="op-id">federation.cluster_info</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_cluster_info</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.create_zone" data-op-text="federation.create_zone  federation_create_zone ">
-  <div class="op-header">
-    <span class="op-id">federation.create_zone</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_create_zone</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.export_zone" data-op-text="federation.export_zone  federation_export_zone ">
-  <div class="op-header">
-    <span class="op-id">federation.export_zone</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_export_zone</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.import_zone" data-op-text="federation.import_zone  federation_import_zone ">
-  <div class="op-header">
-    <span class="op-id">federation.import_zone</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_import_zone</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.join" data-op-text="federation.join  federation_join ">
-  <div class="op-header">
-    <span class="op-id">federation.join</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_join</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.list_zones" data-op-text="federation.list_zones  federation_list_zones ">
-  <div class="op-header">
-    <span class="op-id">federation.list_zones</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_list_zones</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.mount" data-op-text="federation.mount  federation_mount ">
-  <div class="op-header">
-    <span class="op-id">federation.mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_mount</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.remove_zone" data-op-text="federation.remove_zone  federation_remove_zone ">
-  <div class="op-header">
-    <span class="op-id">federation.remove_zone</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_remove_zone</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.share" data-op-text="federation.share  federation_share ">
-  <div class="op-header">
-    <span class="op-id">federation.share</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_share</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="federation.unmount" data-op-text="federation.unmount  federation_unmount ">
-  <div class="op-header">
-    <span class="op-id">federation.unmount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_unmount</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5588,7 +5315,7 @@ graph TB
           <span class="mod-name">workspace</span>
           <span class="mod-desc">&mdash; Multi-workspace isolation + federation.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-dependent">dependent</span>            <span>17 ops</span>
+<span class="tier-badge tier-dependent">dependent</span>            <span>14 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -5704,6 +5431,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>update_workspace</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="workspace.cli" data-op-text="workspace.cli  nexus workspace ">
+  <div class="op-header">
+    <span class="op-id">workspace.cli</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus workspace</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5851,90 +5599,6 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>workspace_snapshot</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="workspace.workspace" data-op-text="workspace.workspace  nexus workspace ">
-  <div class="op-header">
-    <span class="op-id">workspace.workspace</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus workspace</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="zone_routes.get" data-op-text="zone_routes.get  GET  ">
-  <div class="op-header">
-    <span class="op-id">zone_routes.get</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET </span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="zone_routes.post" data-op-text="zone_routes.post  POST  ">
-  <div class="op-header">
-    <span class="op-id">zone_routes.post</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST </span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="zone_routes.zone_id" data-op-text="zone_routes.zone_id  GET /{zone_id} ">
-  <div class="op-header">
-    <span class="op-id">zone_routes.zone_id</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /{zone_id}</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -6423,9 +6087,9 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="archive.archive" data-op-text="archive.archive  nexus archive ">
+<div class="op" data-op-id="archive.cli" data-op-text="archive.cli  nexus archive ">
   <div class="op-header">
-    <span class="op-id">archive.archive</span>
+    <span class="op-id">archive.cli</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
@@ -6611,6 +6275,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /download</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="search.cli" data-op-text="search.cli  nexus search ">
+  <div class="op-header">
+    <span class="op-id">search.cli</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus search</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -6923,27 +6608,6 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.search" data-op-text="search.search  nexus search ">
-  <div class="op-header">
-    <span class="op-id">search.search</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus search</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
 <div class="op" data-op-id="search.stats" data-op-text="search.stats  GET /stats ">
   <div class="op-header">
     <span class="op-id">search.stats</span>
@@ -7198,9 +6862,9 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="catalog.catalog" data-op-text="catalog.catalog  nexus catalog ">
+<div class="op" data-op-id="catalog.cli" data-op-text="catalog.cli  nexus catalog ">
   <div class="op-header">
-    <span class="op-id">catalog.catalog</span>
+    <span class="op-id">catalog.cli</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
@@ -7515,6 +7179,27 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
+<div class="op" data-op-id="mcp.cli" data-op-text="mcp.cli  nexus mcp ">
+  <div class="op-header">
+    <span class="op-id">mcp.cli</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus mcp</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="mcp.connect" data-op-text="mcp.connect  mcp_connect ">
   <div class="op-header">
     <span class="op-id">mcp.connect</span>
@@ -7585,27 +7270,6 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus llm</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="mcp.mcp" data-op-text="mcp.mcp  nexus mcp ">
-  <div class="op-header">
-    <span class="op-id">mcp.mcp</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus mcp</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -8515,6 +8179,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="workflows.cli" data-op-text="workflows.cli  nexus workflows ">
+  <div class="op-header">
+    <span class="op-id">workflows.cli</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus workflows</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="workflows.get" data-op-text="workflows.get  GET  ">
   <div class="op-header">
     <span class="op-id">workflows.get</span>
@@ -8648,27 +8333,6 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST </span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="workflows.workflows" data-op-text="workflows.workflows  nexus workflows ">
-  <div class="op-header">
-    <span class="op-id">workflows.workflows</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus workflows</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -9399,6 +9063,429 @@ graph TB
 
     <section>
       <h2 class="section">&sect;4 Other layers</h2>
+      <h3 class="category">Deployment topology</h3>
+      <details id="m-hub" class="module">
+        <summary>
+          <span class="mod-name">hub</span>
+          <span class="mod-desc">&mdash; Shared Nexus instance that other nodes connect to. Manages multi-tenant zones + admin RPCs.</span>
+          <span class="mod-meta">
+            <span>1 ops</span>
+          </span>
+        </summary>
+        <div class="module-body">
+<div class="op" data-op-id="hub.admin" data-op-text="hub.admin  nexus_hub_admin ">
+  <div class="op-header">
+    <span class="op-id">hub.admin</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_hub_admin</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+        </div>
+      </details>
+      <details id="m-federation" class="module">
+        <summary>
+          <span class="mod-name">federation</span>
+          <span class="mod-desc">&mdash; Cross-zone protocol: zone create/join/share/mount/list/export/import.</span>
+          <span class="mod-meta">
+            <span>11 ops</span>
+          </span>
+        </summary>
+        <div class="module-body">
+<div class="op" data-op-id="federation.client_whoami" data-op-text="federation.client_whoami  federation_client_whoami ">
+  <div class="op-header">
+    <span class="op-id">federation.client_whoami</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_client_whoami</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.cluster_info" data-op-text="federation.cluster_info  federation_cluster_info ">
+  <div class="op-header">
+    <span class="op-id">federation.cluster_info</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_cluster_info</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.create_zone" data-op-text="federation.create_zone  federation_create_zone ">
+  <div class="op-header">
+    <span class="op-id">federation.create_zone</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_create_zone</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.export_zone" data-op-text="federation.export_zone  federation_export_zone ">
+  <div class="op-header">
+    <span class="op-id">federation.export_zone</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_export_zone</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.import_zone" data-op-text="federation.import_zone  federation_import_zone ">
+  <div class="op-header">
+    <span class="op-id">federation.import_zone</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_import_zone</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.join" data-op-text="federation.join  federation_join ">
+  <div class="op-header">
+    <span class="op-id">federation.join</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_join</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.list_zones" data-op-text="federation.list_zones  federation_list_zones ">
+  <div class="op-header">
+    <span class="op-id">federation.list_zones</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_list_zones</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.mount" data-op-text="federation.mount  federation_mount ">
+  <div class="op-header">
+    <span class="op-id">federation.mount</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_mount</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.remove_zone" data-op-text="federation.remove_zone  federation_remove_zone ">
+  <div class="op-header">
+    <span class="op-id">federation.remove_zone</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_remove_zone</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.share" data-op-text="federation.share  federation_share ">
+  <div class="op-header">
+    <span class="op-id">federation.share</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_share</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="federation.unmount" data-op-text="federation.unmount  federation_unmount ">
+  <div class="op-header">
+    <span class="op-id">federation.unmount</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_unmount</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+        </div>
+      </details>
+      <details id="m-zone" class="module">
+        <summary>
+          <span class="mod-name">zone</span>
+          <span class="mod-desc">&mdash; Basic unit of multi-tenancy. Workspaces and bricks scope by zone.</span>
+          <span class="mod-meta">
+            <span>3 ops</span>
+          </span>
+        </summary>
+        <div class="module-body">
+<div class="op" data-op-id="zone_routes.get" data-op-text="zone_routes.get  GET  ">
+  <div class="op-header">
+    <span class="op-id">zone_routes.get</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET </span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="zone_routes.post" data-op-text="zone_routes.post  POST  ">
+  <div class="op-header">
+    <span class="op-id">zone_routes.post</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST </span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="zone_routes.zone_id" data-op-text="zone_routes.zone_id  GET /{zone_id} ">
+  <div class="op-header">
+    <span class="op-id">zone_routes.zone_id</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /{zone_id}</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+        </div>
+      </details>
+      <details id="m-daemon" class="module">
+        <summary>
+          <span class="mod-name">daemon</span>
+          <span class="mod-desc">&mdash; Long-running process model. nexus daemon up/status/enroll/refresh.</span>
+          <span class="mod-meta">
+            <span>3 ops</span>
+          </span>
+        </summary>
+        <div class="module-body">
+<div class="op" data-op-id="admin_bootstrap.daemon_bootstrap" data-op-text="admin_bootstrap.daemon_bootstrap  POST /daemon-bootstrap ">
+  <div class="op-header">
+    <span class="op-id">admin_bootstrap.daemon_bootstrap</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /daemon-bootstrap</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="daemon.enroll" data-op-text="daemon.enroll  POST /enroll ">
+  <div class="op-header">
+    <span class="op-id">daemon.enroll</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /enroll</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="daemon.refresh" data-op-text="daemon.refresh  POST /refresh ">
+  <div class="op-header">
+    <span class="op-id">daemon.refresh</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /refresh</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+        </div>
+      </details>
       <h3 class="category">NexusFS wrapper</h3>
       <details id="m-nexus_fs" class="module">
         <summary>

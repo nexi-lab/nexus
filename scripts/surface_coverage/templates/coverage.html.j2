@@ -29,6 +29,7 @@
     --layer-transport: #fef3c7;
     --layer-cross: #ddd6fe;
     --layer-brick: #d1fae5;
+    --layer-deployment: #fed7aa;
     --layer-nexus_fs: #dbeafe;
     --layer-rust_kernel: #fce7f3;
   }
@@ -112,6 +113,7 @@
   .legend .l-transport { background: var(--layer-transport); }
   .legend .l-cross { background: var(--layer-cross); }
   .legend .l-brick { background: var(--layer-brick); }
+  .legend .l-deployment { background: var(--layer-deployment); }
   .legend .l-nexus_fs { background: var(--layer-nexus_fs); }
   .legend .l-rust_kernel { background: var(--layer-rust_kernel); }
 
@@ -147,10 +149,10 @@
 
   <main>
     <h1>Nexus API/RPC Architecture Map</h1>
-    <p class="subtitle">A high-level view of every external surface exposed by Nexus, organized around its real layered architecture: Rust kernel &rarr; NexusFS wrapper &rarr; 28 plugin-style <strong>bricks</strong> &rarr; cross-cutting auth/profiles &rarr; transports (CLI / HTTP / gRPC / MCP / SDK).</p>
+    <p class="subtitle">A high-level view of every external surface exposed by Nexus, organized around its real layered architecture: Rust kernel &rarr; NexusFS wrapper &rarr; 28 plugin-style <strong>bricks</strong> &rarr; deployment topology (hub / federation / zone / daemon / raft) &rarr; cross-cutting auth/profiles &rarr; transports (CLI / HTTP / gRPC / MCP / SDK).</p>
 
     <div class="stats">
-      <div class="stat"><div class="stat-value">5</div><div class="stat-label">layers</div></div>
+      <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
       <div class="stat"><div class="stat-value">{{ total_bricks }}</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">{{ total_transports }}</div><div class="stat-label">transports</div></div>
       <div class="stat"><div class="stat-value">{{ total_ops }}</div><div class="stat-label">operations</div></div>
@@ -176,6 +178,9 @@
 
         <h3>Profile gating</h3>
         <p>Each brick carries a <code>brick_gate</code> (e.g. <code>BRICK_REBAC</code>, <code>BRICK_PAY</code>) checked at boot. The <code>embedded &sub; lite &sub; sandbox &sub; full &sube; cloud</code> profile hierarchy controls which bricks are enabled. Surfaces exposed by a disabled brick fail with a stable error code so callers can detect the unsupported case.</p>
+
+        <h3>Deployment topology</h3>
+        <p>Beyond features, Nexus has a deployment dimension: <strong>zones</strong> are multi-tenancy units, a <strong>hub</strong> is an instance other nodes connect to, <strong>federation</strong> moves data and permissions between zones, the <strong>daemon</strong> hosts the runtime as a long-running process, and <strong>raft</strong> provides consensus for HA clusters. These cross-cut the bricks above and are visible as a separate layer in the architecture diagram.</p>
       </div>
     </section>
 
@@ -189,6 +194,7 @@
           <span class="l-transport">Transports</span>
           <span class="l-cross">Cross-cutting</span>
           <span class="l-brick">Bricks (28)</span>
+          <span class="l-deployment">Deployment topology</span>
           <span class="l-nexus_fs">NexusFS</span>
           <span class="l-rust_kernel">Rust kernel</span>
         </div>

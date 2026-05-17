@@ -63,10 +63,19 @@ def generate_coverage(
             try:
                 op_id = normalize.normalize_cli(raw.name)
             except ValueError:
-                # Two-token form "nexus <verb>" — classifier handles flat names.
-                parts = raw.name.strip().split()
-                if len(parts) == 2 and parts[0] == "nexus":
-                    op_id = parts[1]  # classifier handles flat names
+                # 2-token CLI like "nexus hub" / "nexus zone" / "nexus daemon".
+                # For deployment-topology verbs, use "verb.cli" so the classifier
+                # routes them to the correct deployment module (classify_op_id("hub.cli")
+                # returns "hub" because "hub" is in _MODULES_BY_ID as a known module id).
+                # For all other bare verbs, keep the old behavior (no suffix) so
+                # _upsert's "module.verb" prefixing stays stable.
+                tokens = raw.name.split()
+                if len(tokens) == 2 and tokens[0] == "nexus":
+                    verb = tokens[1]
+                    candidate = classify_op_id(f"{verb}.cli")
+                    # verb IS a known module id → use "verb.cli" so classifier routes it;
+                    # otherwise keep bare verb so _upsert's "module.verb" prefixing works.
+                    op_id = f"{verb}.cli" if candidate == verb else verb
                 else:
                     continue
             _upsert(operations, op_id, "cli", raw.name, raw.source)

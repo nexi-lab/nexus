@@ -1,9 +1,10 @@
 """Curated layered architecture taxonomy for Nexus.
 
-Five layers (bottom-up):
+Six layers (bottom-up):
     rust_kernel  -> Rust kernel (managed mounts, metadata, cache stores)
     nexus_fs     -> Python NexusFS mixin stack (core/nexus_fs.py)
     brick        -> 28 plugin-style features under src/nexus/bricks/
+    deployment   -> Deployment topology (hub, federation, zone, daemon, raft)
     cross        -> auth middleware, profile gates
     transport    -> CLI / HTTP / gRPC / MCP / SDK exposures
 
@@ -17,11 +18,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # layers in display order, top-down
-LAYERS = ("transport", "cross", "brick", "nexus_fs", "rust_kernel")
+LAYERS = ("transport", "cross", "brick", "deployment", "nexus_fs", "rust_kernel")
 LAYER_LABELS = {
     "transport": "Transports",
     "cross": "Cross-cutting",
     "brick": "Bricks",
+    "deployment": "Deployment topology",
     "nexus_fs": "NexusFS wrapper",
     "rust_kernel": "Rust kernel",
 }
@@ -326,6 +328,39 @@ MODULES: list[CuratedModule] = [
         depends_on=("nexus_fs", "rebac"),
         tier="dependent",
     ),
+    # ── Deployment topology ──
+    CuratedModule(
+        "hub",
+        "Hub",
+        "Shared Nexus instance that other nodes connect to. Manages multi-tenant zones + admin RPCs.",
+        layer="deployment",
+    ),
+    CuratedModule(
+        "federation",
+        "Federation",
+        "Cross-zone protocol: zone create/join/share/mount/list/export/import.",
+        layer="deployment",
+        depends_on=("zone", "rebac"),
+    ),
+    CuratedModule(
+        "zone",
+        "Zone",
+        "Basic unit of multi-tenancy. Workspaces and bricks scope by zone.",
+        layer="deployment",
+    ),
+    CuratedModule(
+        "daemon",
+        "Daemon",
+        "Long-running process model. nexus daemon up/status/enroll/refresh.",
+        layer="deployment",
+    ),
+    CuratedModule(
+        "raft",
+        "Raft consensus",
+        "Zone consensus for HA clusters (cluster profile).",
+        layer="deployment",
+        depends_on=("zone",),
+    ),
     # ── Cross-cutting ──
     CuratedModule(
         "auth_middleware",
@@ -491,6 +526,22 @@ def classify_op_id(op_id: str) -> str:
     # 3. Substring/prefix heuristics. Order matters — more specific rules first.
     lid = op_id.lower()
     rules: list[tuple[str, str]] = [
+        # --- Deployment topology - check before brick rules ---
+        ("federation", "federation"),
+        ("hub_admin", "hub"),
+        ("hub.", "hub"),
+        ("raft", "raft"),
+        ("cluster_info", "federation"),  # cluster topology
+        ("cluster.", "raft"),
+        ("zone.", "zone"),
+        ("zone_", "zone"),
+        ("create_zone", "zone"),
+        ("list_zones", "zone"),
+        ("remove_zone", "zone"),
+        ("export_zone", "zone"),
+        ("import_zone", "zone"),
+        ("daemon.", "daemon"),
+        ("daemon_", "daemon"),
         # --- HTTP-route-derived module prefixes (whole first token matches) ---
         # These appear as "<stem>.<verb>" where the stem is the router file name.
         # More specific patterns first.

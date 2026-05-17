@@ -40,21 +40,694 @@ test, perf, gap</em> fields. Full contract:
 <h2 id="architecture">§2 Architecture</h2>
 <div class="mermaid">
 graph LR
+access["Access"]
+add["Add"]
 admin["Admin"]
+agent["Agent"]
+audit["Audit"]
+backfill["Backfill"]
+create["Create"]
+delete["Delete"]
+deprovision["Deprovision"]
+diff["Diff"]
+discovery["Discovery"]
+edit["Edit"]
+events["Events"]
+execute["Execute"]
+exists["Exists"]
+export["Export"]
+federation["Federation"]
+file["File"]
+flush["Flush"]
 fs["Filesystem"]
+get["Get"]
+glob["Glob"]
+governance["Governance"]
+grant["Grant"]
+has["Has"]
+hub["Hub"]
+import["Import"]
+initialize["Initialize"]
+is["Is"]
 kernel["Kernel"]
+list["List"]
+load["Load"]
+make["Make"]
 mcp["MCP"]
+metadata["Metadata"]
 mounts["Mounts"]
+namespace["Namespace"]
+nexus_v_f_s_service["Nexus V F S Service"]
 oauth["OAuth"]
+pay["Pay"]
+provision["Provision"]
+read["Read"]
+reauth["Reauth"]
 rebac["ReBAC"]
+register["Register"]
+remove["Remove"]
+rename["Rename"]
+revoke["Revoke"]
+sandbox["Sandbox"]
+save["Save"]
 search["Search"]
+semantic["Semantic"]
+set["Set"]
+share["Share"]
+snapshot["Snapshot"]
+stat["Stat"]
+stream["Stream"]
+subject["Subject"]
+sys["Sys"]
+unregister["Unregister"]
+update["Update"]
 workspace["Workspace"]
+write["Write"]
+zone["Zone"]
 </div>
 
 <h2 id="modules">§3 Modules</h2>
 <details class="module" open>
+  <summary>access — Access (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="access.share_link">
+    <div><span class="op-id">access.share_link</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> access_share_link</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>add — Add (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="add.mount">
+    <div><span class="op-id">add.mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> add_mount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
   <summary>admin — Admin (0 ops)</summary>
   <p class="meta">Admin / governance / audit</p>
+</details>
+<details class="module" >
+  <summary>agent — Agent (4 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="agent.heartbeat">
+    <div><span class="op-id">agent.heartbeat</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> agent_heartbeat</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="agent.id">
+    <div><span class="op-id">agent.id</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">SDK:</span> BaseRemoteNexusFS.agent_id</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="agent.list_by_zone">
+    <div><span class="op-id">agent.list_by_zone</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> agent_list_by_zone</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="agent.transition">
+    <div><span class="op-id">agent.transition</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> agent_transition</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>audit — Audit (2 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="audit.export">
+    <div><span class="op-id">audit.export</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> audit_export</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="audit.list">
+    <div><span class="op-id">audit.list</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> audit_list</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>backfill — Backfill (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="backfill.directory_index">
+    <div><span class="op-id">backfill.directory_index</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> backfill_directory_index</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>create — Create (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="create.share_link">
+    <div><span class="op-id">create.share_link</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> create_share_link</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>delete — Delete (5 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="delete.agent">
+    <div><span class="op-id">delete.agent</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> delete_agent</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="delete.batch">
+    <div><span class="op-id">delete.batch</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> delete_batch</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="delete.connector">
+    <div><span class="op-id">delete.connector</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> delete_connector</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="delete.file">
+    <div><span class="op-id">delete.file</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_delete_file</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="delete.saved_mount">
+    <div><span class="op-id">delete.saved_mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> delete_saved_mount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>deprovision — Deprovision (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="deprovision.user">
+    <div><span class="op-id">deprovision.user</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> deprovision_user</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>diff — Diff (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="diff.versions">
+    <div><span class="op-id">diff.versions</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> diff_versions</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>discovery — Discovery (4 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="discovery.get_tool_details">
+    <div><span class="op-id">discovery.get_tool_details</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_discovery_get_tool_details</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="discovery.list_servers">
+    <div><span class="op-id">discovery.list_servers</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_discovery_list_servers</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="discovery.load_tools">
+    <div><span class="op-id">discovery.load_tools</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_discovery_load_tools</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="discovery.search_tools">
+    <div><span class="op-id">discovery.search_tools</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_discovery_search_tools</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>edit — Edit (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="edit.file">
+    <div><span class="op-id">edit.file</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_edit_file</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>events — Events (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="events.replay">
+    <div><span class="op-id">events.replay</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> events_replay</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>execute — Execute (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="execute.workflow">
+    <div><span class="op-id">execute.workflow</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_execute_workflow</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>exists — Exists (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="exists.batch">
+    <div><span class="op-id">exists.batch</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> exists_batch</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>export — Export (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="export.metadata">
+    <div><span class="op-id">export.metadata</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> export_metadata</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>federation — Federation (11 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="federation.client_whoami">
+    <div><span class="op-id">federation.client_whoami</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_client_whoami</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.cluster_info">
+    <div><span class="op-id">federation.cluster_info</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_cluster_info</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.create_zone">
+    <div><span class="op-id">federation.create_zone</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_create_zone</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.export_zone">
+    <div><span class="op-id">federation.export_zone</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_export_zone</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.import_zone">
+    <div><span class="op-id">federation.import_zone</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_import_zone</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.join">
+    <div><span class="op-id">federation.join</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_join</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.list_zones">
+    <div><span class="op-id">federation.list_zones</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_list_zones</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.mount">
+    <div><span class="op-id">federation.mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_mount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.remove_zone">
+    <div><span class="op-id">federation.remove_zone</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_remove_zone</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.share">
+    <div><span class="op-id">federation.share</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_share</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="federation.unmount">
+    <div><span class="op-id">federation.unmount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> federation_unmount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>file — File (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="file.info">
+    <div><span class="op-id">file.info</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_file_info</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>flush — Flush (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="flush.write_observer">
+    <div><span class="op-id">flush.write_observer</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> flush_write_observer</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
 </details>
 <details class="module" >
   <summary>fs — Filesystem (8 ops)</summary>
@@ -162,6 +835,336 @@ workspace["Workspace"]
     <div><span class="op-id">fs.write</span><span class="op-summary"> — (no summary)</span></div>
     <div class="transport"><span class="transport-key">CLI:</span> nexus write</div>
     <div class="transport"><span class="transport-key">Call:</span> write</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>get — Get (11 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="get.agent">
+    <div><span class="op-id">get.agent</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_agent</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.content_id">
+    <div><span class="op-id">get.content_id</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_content_id</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.dynamic_viewer_config">
+    <div><span class="op-id">get.dynamic_viewer_config</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_dynamic_viewer_config</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.mount">
+    <div><span class="op-id">get.mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_mount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.namespace">
+    <div><span class="op-id">get.namespace</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_namespace</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.rebac_option">
+    <div><span class="op-id">get.rebac_option</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_rebac_option</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.share_link">
+    <div><span class="op-id">get.share_link</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_share_link</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.share_link_access_logs">
+    <div><span class="op-id">get.share_link_access_logs</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_share_link_access_logs</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.top_level_mounts">
+    <div><span class="op-id">get.top_level_mounts</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_top_level_mounts</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.version">
+    <div><span class="op-id">get.version</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_version</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="get.workspace_info">
+    <div><span class="op-id">get.workspace_info</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> get_workspace_info</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>glob — Glob (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="glob.batch">
+    <div><span class="op-id">glob.batch</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> glob_batch</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>governance — Governance (3 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="governance.alerts">
+    <div><span class="op-id">governance.alerts</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> governance_alerts</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="governance.rings">
+    <div><span class="op-id">governance.rings</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> governance_rings</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="governance.status">
+    <div><span class="op-id">governance.status</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> governance_status</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>grant — Grant (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="grant.consent">
+    <div><span class="op-id">grant.consent</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> grant_consent</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>has — Has (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="has.mount">
+    <div><span class="op-id">has.mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> has_mount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>hub — Hub (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="hub.admin">
+    <div><span class="op-id">hub.admin</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_hub_admin</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>import — Import (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="import.metadata">
+    <div><span class="op-id">import.metadata</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> import_metadata</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>initialize — Initialize (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="initialize.semantic_search">
+    <div><span class="op-id">initialize.semantic_search</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> initialize_semantic_search</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>is — Is (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="is.admin">
+    <div><span class="op-id">is.admin</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">SDK:</span> BaseRemoteNexusFS.is_admin</div>
     <div class="transport">
       profiles:
 <span class="profile-supported">lite ✓</span>
@@ -1162,6 +2165,228 @@ workspace["Workspace"]
   </div>
 </details>
 <details class="module" >
+  <summary>list — List (11 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="list.agents">
+    <div><span class="op-id">list.agents</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> list_agents</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.connectors">
+    <div><span class="op-id">list.connectors</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> list_connectors</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.files">
+    <div><span class="op-id">list.files</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_list_files</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.incoming_shares">
+    <div><span class="op-id">list.incoming_shares</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> list_incoming_shares</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.mounts">
+    <div><span class="op-id">list.mounts</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> list_mounts</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.outgoing_shares">
+    <div><span class="op-id">list.outgoing_shares</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> list_outgoing_shares</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.saved_mounts">
+    <div><span class="op-id">list.saved_mounts</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> list_saved_mounts</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.share_links">
+    <div><span class="op-id">list.share_links</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> list_share_links</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.versions">
+    <div><span class="op-id">list.versions</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> list_versions</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.workflows">
+    <div><span class="op-id">list.workflows</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_list_workflows</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="list.workspaces">
+    <div><span class="op-id">list.workspaces</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> list_workspaces</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>load — Load (2 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="load.mount">
+    <div><span class="op-id">load.mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> load_mount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="load.workspace_config">
+    <div><span class="op-id">load.workspace_config</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> load_workspace_config</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>make — Make (2 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="make.private">
+    <div><span class="op-id">make.private</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> make_private</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="make.public">
+    <div><span class="op-id">make.public</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> make_public</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
   <summary>mcp — MCP (6 ops)</summary>
   <p class="meta">Model Context Protocol tooling</p>
   <div class="op" data-op-id="mcp.connect">
@@ -1250,8 +2475,146 @@ workspace["Workspace"]
   </div>
 </details>
 <details class="module" >
+  <summary>metadata — Metadata (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="metadata.batch">
+    <div><span class="op-id">metadata.batch</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> metadata_batch</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
   <summary>mounts — Mounts (0 ops)</summary>
   <p class="meta">Mount drivers + connectors</p>
+</details>
+<details class="module" >
+  <summary>namespace — Namespace (2 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="namespace.delete">
+    <div><span class="op-id">namespace.delete</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> namespace_delete</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="namespace.list">
+    <div><span class="op-id">namespace.list</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> namespace_list</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>nexus_v_f_s_service — Nexus V F S Service (6 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="nexus_v_f_s_service.batch_read">
+    <div><span class="op-id">nexus_v_f_s_service.batch_read</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">RPC:</span> NexusVFSService.BatchRead</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="nexus_v_f_s_service.call">
+    <div><span class="op-id">nexus_v_f_s_service.call</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">RPC:</span> NexusVFSService.Call</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="nexus_v_f_s_service.delete">
+    <div><span class="op-id">nexus_v_f_s_service.delete</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">RPC:</span> NexusVFSService.Delete</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="nexus_v_f_s_service.ping">
+    <div><span class="op-id">nexus_v_f_s_service.ping</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">RPC:</span> NexusVFSService.Ping</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="nexus_v_f_s_service.read">
+    <div><span class="op-id">nexus_v_f_s_service.read</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">RPC:</span> NexusVFSService.Read</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="nexus_v_f_s_service.write">
+    <div><span class="op-id">nexus_v_f_s_service.write</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">RPC:</span> NexusVFSService.Write</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
 </details>
 <details class="module" >
   <summary>oauth — OAuth (6 ops)</summary>
@@ -1329,6 +2692,162 @@ workspace["Workspace"]
   <div class="op" data-op-id="oauth.test_credential">
     <div><span class="op-id">oauth.test_credential</span><span class="op-summary"> — (no summary)</span></div>
     <div class="transport"><span class="transport-key">expose:</span> oauth_test_credential</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>pay — Pay (3 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="pay.balance">
+    <div><span class="op-id">pay.balance</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> pay_balance</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="pay.history">
+    <div><span class="op-id">pay.history</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> pay_history</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="pay.transfer">
+    <div><span class="op-id">pay.transfer</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> pay_transfer</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>provision — Provision (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="provision.user">
+    <div><span class="op-id">provision.user</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> provision_user</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>read — Read (5 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="read.batch">
+    <div><span class="op-id">read.batch</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> read_batch</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="read.bulk">
+    <div><span class="op-id">read.bulk</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> read_bulk</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="read.file">
+    <div><span class="op-id">read.file</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_read_file</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="read.range">
+    <div><span class="op-id">read.range</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> read_range</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="read.with_dynamic_viewer">
+    <div><span class="op-id">read.with_dynamic_viewer</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> read_with_dynamic_viewer</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>reauth — Reauth (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="reauth.mount">
+    <div><span class="op-id">reauth.mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> reauth_mount</div>
     <div class="transport">
       profiles:
 <span class="profile-supported">lite ✓</span>
@@ -1472,6 +2991,226 @@ workspace["Workspace"]
   </div>
 </details>
 <details class="module" >
+  <summary>register — Register (3 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="register.agent">
+    <div><span class="op-id">register.agent</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> register_agent</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="register.namespace">
+    <div><span class="op-id">register.namespace</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> register_namespace</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="register.workspace">
+    <div><span class="op-id">register.workspace</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> register_workspace</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>remove — Remove (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="remove.mount">
+    <div><span class="op-id">remove.mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> remove_mount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>rename — Rename (2 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="rename.batch">
+    <div><span class="op-id">rename.batch</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> rename_batch</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="rename.file">
+    <div><span class="op-id">rename.file</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_rename_file</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>revoke — Revoke (4 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="revoke.consent">
+    <div><span class="op-id">revoke.consent</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> revoke_consent</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="revoke.share">
+    <div><span class="op-id">revoke.share</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> revoke_share</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="revoke.share_by_id">
+    <div><span class="op-id">revoke.share_by_id</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> revoke_share_by_id</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="revoke.share_link">
+    <div><span class="op-id">revoke.share_link</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> revoke_share_link</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>sandbox — Sandbox (3 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="sandbox.create">
+    <div><span class="op-id">sandbox.create</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_sandbox_create</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="sandbox.list">
+    <div><span class="op-id">sandbox.list</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_sandbox_list</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="sandbox.stop">
+    <div><span class="op-id">sandbox.stop</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_sandbox_stop</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>save — Save (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="save.mount">
+    <div><span class="op-id">save.mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> save_mount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
   <summary>search — Search (3 ops)</summary>
   <p class="meta">BM25S / sqlite-vec / semantic</p>
   <div class="op" data-op-id="search.glob">
@@ -1507,6 +3246,369 @@ workspace["Workspace"]
   <div class="op" data-op-id="search.search">
     <div><span class="op-id">search.search</span><span class="op-summary"> — (no summary)</span></div>
     <div class="transport"><span class="transport-key">CLI:</span> nexus search</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>semantic — Semantic (3 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="semantic.search">
+    <div><span class="op-id">semantic.search</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> semantic_search</div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_semantic_search</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="semantic.search_index">
+    <div><span class="op-id">semantic.search_index</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> semantic_search_index</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="semantic.search_stats">
+    <div><span class="op-id">semantic.search_stats</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> semantic_search_stats</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>set — Set (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="set.rebac_option">
+    <div><span class="op-id">set.rebac_option</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> set_rebac_option</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>share — Share (2 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="share.with_group">
+    <div><span class="op-id">share.with_group</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> share_with_group</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="share.with_user">
+    <div><span class="op-id">share.with_user</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> share_with_user</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>snapshot — Snapshot (8 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="snapshot.begin">
+    <div><span class="op-id">snapshot.begin</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> snapshot_begin</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="snapshot.commit">
+    <div><span class="op-id">snapshot.commit</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> snapshot_commit</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="snapshot.create">
+    <div><span class="op-id">snapshot.create</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> snapshot_create</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="snapshot.get">
+    <div><span class="op-id">snapshot.get</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> snapshot_get</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="snapshot.list">
+    <div><span class="op-id">snapshot.list</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> snapshot_list</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="snapshot.list_entries">
+    <div><span class="op-id">snapshot.list_entries</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> snapshot_list_entries</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="snapshot.restore">
+    <div><span class="op-id">snapshot.restore</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> snapshot_restore</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="snapshot.rollback">
+    <div><span class="op-id">snapshot.rollback</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> snapshot_rollback</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>stat — Stat (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="stat.bulk">
+    <div><span class="op-id">stat.bulk</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> stat_bulk</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>stream — Stream (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="stream.range">
+    <div><span class="op-id">stream.range</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> stream_range</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>subject — Subject (2 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="subject.id">
+    <div><span class="op-id">subject.id</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">SDK:</span> BaseRemoteNexusFS.subject_id</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="subject.type">
+    <div><span class="op-id">subject.type</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">SDK:</span> BaseRemoteNexusFS.subject_type</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>sys — Sys (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="sys.watch">
+    <div><span class="op-id">sys.watch</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> sys_watch</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>unregister — Unregister (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="unregister.workspace">
+    <div><span class="op-id">unregister.workspace</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> unregister_workspace</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>update — Update (3 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="update.agent">
+    <div><span class="op-id">update.agent</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> update_agent</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="update.mount">
+    <div><span class="op-id">update.mount</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> update_mount</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="update.workspace">
+    <div><span class="op-id">update.workspace</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> update_workspace</div>
     <div class="transport">
       profiles:
 <span class="profile-supported">lite ✓</span>
@@ -1567,6 +3669,70 @@ workspace["Workspace"]
   <div class="op" data-op-id="workspace.snapshot">
     <div><span class="op-id">workspace.snapshot</span><span class="op-summary"> — (no summary)</span></div>
     <div class="transport"><span class="transport-key">expose:</span> workspace_snapshot</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>write — Write (3 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="write.batch">
+    <div><span class="op-id">write.batch</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> write_batch</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="write.file">
+    <div><span class="op-id">write.file</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">MCP:</span> nexus_write_file</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+  <div class="op" data-op-id="write.stream">
+    <div><span class="op-id">write.stream</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">expose:</span> write_stream</div>
+    <div class="transport">
+      profiles:
+<span class="profile-supported">lite ✓</span>
+<span class="profile-supported">sandbox ✓</span>
+<span class="profile-supported">full ✓</span>
+    </div>
+    <div class="transport">
+      usage: <span class="todo">TODO</span>      &nbsp; test: <span class="todo">TODO</span>      &nbsp; perf: <span class="todo">TODO</span>    </div>
+    <div class="transport meta">
+      owner: —      &nbsp; gap: —    </div>
+  </div>
+</details>
+<details class="module" >
+  <summary>zone — Zone (1 ops)</summary>
+  <p class="meta"></p>
+  <div class="op" data-op-id="zone.id">
+    <div><span class="op-id">zone.id</span><span class="op-summary"> — (no summary)</span></div>
+    <div class="transport"><span class="transport-key">SDK:</span> BaseRemoteNexusFS.zone_id</div>
     <div class="transport">
       profiles:
 <span class="profile-supported">lite ✓</span>

@@ -80,6 +80,27 @@ def _map_flat_syscall(name: str) -> str:
     return f"kernel.{name}"
 
 
+def _merged_modules(seed: list[Module], operations) -> list[Module]:
+    """Return seed modules + auto-generated Module entries for any op.module
+    not already in the seed list.
+
+    Auto-generated modules have name == id (titlecased), empty description,
+    no dependencies. Subissues or overrides can refine later.
+    """
+    seen_ids = {m.id for m in seed}
+    discovered: dict[str, Module] = {}
+    for op in operations:
+        if op.module in seen_ids or op.module in discovered:
+            continue
+        discovered[op.module] = Module(
+            id=op.module,
+            name=op.module.replace("_", " ").title(),
+            description="",
+            depends_on=[],
+        )
+    return sorted(seed, key=lambda m: m.id) + sorted(discovered.values(), key=lambda m: m.id)
+
+
 def generate_coverage(
     *,
     repo_root: Path,
@@ -200,7 +221,7 @@ def generate_coverage(
 
     fresh = SurfaceCoverage(
         schema_version=1,
-        modules=sorted(_SEED_MODULES, key=lambda m: m.id),
+        modules=_merged_modules(list(_SEED_MODULES), operations.values()),
         operations=sorted(operations.values(), key=lambda o: o.id),
         parity_warnings=sorted(parity_warnings, key=lambda w: w.operation_id),
         unmapped_surfaces=[],

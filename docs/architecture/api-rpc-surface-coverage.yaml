@@ -1,40 +1,260 @@
 schema_version: 1
 modules:
+- id: access
+  name: Access
+  description: ''
+  depends_on: []
+- id: add
+  name: Add
+  description: ''
+  depends_on: []
 - id: admin
   name: Admin
   description: Admin / governance / audit
+  depends_on: []
+- id: agent
+  name: Agent
+  description: ''
+  depends_on: []
+- id: audit
+  name: Audit
+  description: ''
+  depends_on: []
+- id: backfill
+  name: Backfill
+  description: ''
+  depends_on: []
+- id: create
+  name: Create
+  description: ''
+  depends_on: []
+- id: delete
+  name: Delete
+  description: ''
+  depends_on: []
+- id: deprovision
+  name: Deprovision
+  description: ''
+  depends_on: []
+- id: diff
+  name: Diff
+  description: ''
+  depends_on: []
+- id: discovery
+  name: Discovery
+  description: ''
+  depends_on: []
+- id: edit
+  name: Edit
+  description: ''
+  depends_on: []
+- id: events
+  name: Events
+  description: ''
+  depends_on: []
+- id: execute
+  name: Execute
+  description: ''
+  depends_on: []
+- id: exists
+  name: Exists
+  description: ''
+  depends_on: []
+- id: export
+  name: Export
+  description: ''
+  depends_on: []
+- id: federation
+  name: Federation
+  description: ''
+  depends_on: []
+- id: file
+  name: File
+  description: ''
+  depends_on: []
+- id: flush
+  name: Flush
+  description: ''
   depends_on: []
 - id: fs
   name: Filesystem
   description: Core read/write/stat/list operations
   depends_on: []
+- id: get
+  name: Get
+  description: ''
+  depends_on: []
+- id: glob
+  name: Glob
+  description: ''
+  depends_on: []
+- id: governance
+  name: Governance
+  description: ''
+  depends_on: []
+- id: grant
+  name: Grant
+  description: ''
+  depends_on: []
+- id: has
+  name: Has
+  description: ''
+  depends_on: []
+- id: hub
+  name: Hub
+  description: ''
+  depends_on: []
+- id: import
+  name: Import
+  description: ''
+  depends_on: []
+- id: initialize
+  name: Initialize
+  description: ''
+  depends_on: []
+- id: is
+  name: Is
+  description: ''
+  depends_on: []
 - id: kernel
   name: Kernel
   description: Kernel-level syscalls
+  depends_on: []
+- id: list
+  name: List
+  description: ''
+  depends_on: []
+- id: load
+  name: Load
+  description: ''
+  depends_on: []
+- id: make
+  name: Make
+  description: ''
   depends_on: []
 - id: mcp
   name: MCP
   description: Model Context Protocol tooling
   depends_on: []
+- id: metadata
+  name: Metadata
+  description: ''
+  depends_on: []
 - id: mounts
   name: Mounts
   description: Mount drivers + connectors
+  depends_on: []
+- id: namespace
+  name: Namespace
+  description: ''
+  depends_on: []
+- id: nexus_v_f_s_service
+  name: Nexus V F S Service
+  description: ''
   depends_on: []
 - id: oauth
   name: OAuth
   description: Credential management
   depends_on: []
+- id: pay
+  name: Pay
+  description: ''
+  depends_on: []
+- id: provision
+  name: Provision
+  description: ''
+  depends_on: []
+- id: read
+  name: Read
+  description: ''
+  depends_on: []
+- id: reauth
+  name: Reauth
+  description: ''
+  depends_on: []
 - id: rebac
   name: ReBAC
   description: Permissions and access control
+  depends_on: []
+- id: register
+  name: Register
+  description: ''
+  depends_on: []
+- id: remove
+  name: Remove
+  description: ''
+  depends_on: []
+- id: rename
+  name: Rename
+  description: ''
+  depends_on: []
+- id: revoke
+  name: Revoke
+  description: ''
+  depends_on: []
+- id: sandbox
+  name: Sandbox
+  description: ''
+  depends_on: []
+- id: save
+  name: Save
+  description: ''
   depends_on: []
 - id: search
   name: Search
   description: BM25S / sqlite-vec / semantic
   depends_on: []
+- id: semantic
+  name: Semantic
+  description: ''
+  depends_on: []
+- id: set
+  name: Set
+  description: ''
+  depends_on: []
+- id: share
+  name: Share
+  description: ''
+  depends_on: []
+- id: snapshot
+  name: Snapshot
+  description: ''
+  depends_on: []
+- id: stat
+  name: Stat
+  description: ''
+  depends_on: []
+- id: stream
+  name: Stream
+  description: ''
+  depends_on: []
+- id: subject
+  name: Subject
+  description: ''
+  depends_on: []
+- id: sys
+  name: Sys
+  description: ''
+  depends_on: []
+- id: unregister
+  name: Unregister
+  description: ''
+  depends_on: []
+- id: update
+  name: Update
+  description: ''
+  depends_on: []
 - id: workspace
   name: Workspace
   description: Local + remote workspaces, snapshots
+  depends_on: []
+- id: write
+  name: Write
+  description: ''
+  depends_on: []
+- id: zone
+  name: Zone
+  description: ''
   depends_on: []
 operations:
 - id: access.share_link

@@ -37,73 +37,12 @@ from scripts.surface_coverage.schema import (  # noqa: E402
     dump_yaml,
     load_yaml,
 )
-
-# Modules seeded in the architecture graph; extractor output may add more.
-_SEED_MODULES = [
-    Module(id="fs", name="Filesystem", description="Core read/write/stat/list operations"),
-    Module(id="rebac", name="ReBAC", description="Permissions and access control"),
-    Module(id="search", name="Search", description="BM25S / sqlite-vec / semantic"),
-    Module(id="workspace", name="Workspace", description="Local + remote workspaces, snapshots"),
-    Module(id="mounts", name="Mounts", description="Mount drivers + connectors"),
-    Module(id="oauth", name="OAuth", description="Credential management"),
-    Module(id="mcp", name="MCP", description="Model Context Protocol tooling"),
-    Module(id="admin", name="Admin", description="Admin / governance / audit"),
-    Module(id="kernel", name="Kernel", description="Kernel-level syscalls"),
-]
-
-# Flat gRPC Call names -> canonical module (since the names don't carry one).
-_SYSCALL_NAME_TO_MODULE: dict[str, str] = {
-    "read": "fs",
-    "write": "fs",
-    "list": "fs",
-    "delete": "fs",
-    "exists": "fs",
-    "close": "fs",
-    "open": "fs",
-    "stat": "fs",
-    "access": "fs",
-    "search": "search",
-    "grep": "search",
-    "glob": "search",
-    "ping": "kernel",
-}
-
-
-def _map_flat_syscall(name: str) -> str:
-    """Map a flat syscall name (e.g. 'read') to a canonical op-id ('fs.read').
-
-    Honors explicit table; otherwise infers module from common prefixes; otherwise
-    falls back to 'kernel.<name>'.
-    """
-    if "." in name:
-        return name  # already canonical
-    if name in _SYSCALL_NAME_TO_MODULE:
-        return f"{_SYSCALL_NAME_TO_MODULE[name]}.{name}"
-    for module_prefix, module in (("rebac_", "rebac"), ("fs_", "fs"), ("search_", "search")):
-        if name.startswith(module_prefix):
-            return f"{module}.{name[len(module_prefix) :]}"
-    return f"kernel.{name}"
-
-
-def _merged_modules(seed: list[Module], operations) -> list[Module]:
-    """Return seed modules + auto-generated Module entries for any op.module
-    not already in the seed list.
-
-    Auto-generated modules have name == id (titlecased), empty description,
-    no dependencies. Subissues or overrides can refine later.
-    """
-    seen_ids = {m.id for m in seed}
-    discovered: dict[str, Module] = {}
-    for op in operations:
-        if op.module in seen_ids or op.module in discovered:
-            continue
-        discovered[op.module] = Module(
-            id=op.module,
-            name=op.module.replace("_", " ").title(),
-            description="",
-            depends_on=[],
-        )
-    return sorted(seed, key=lambda m: m.id) + sorted(discovered.values(), key=lambda m: m.id)
+from scripts.surface_coverage.taxonomy import (
+    MODULES as TAXONOMY_MODULES,
+)
+from scripts.surface_coverage.taxonomy import (  # noqa: E402
+    classify_op_id,
+)
 
 
 def generate_coverage(
@@ -121,10 +60,10 @@ def generate_coverage(
             try:
                 op_id = normalize.normalize_cli(raw.name)
             except ValueError:
-                # Two-token form "nexus <verb>" — infer module via heuristic.
+                # Two-token form "nexus <verb>" — classifier handles flat names.
                 parts = raw.name.strip().split()
                 if len(parts) == 2 and parts[0] == "nexus":
-                    op_id = _map_flat_syscall(parts[1])
+                    op_id = parts[1]  # classifier handles flat names
                 else:
                     continue
             _upsert(operations, op_id, "cli", raw.name, raw.source)
@@ -175,7 +114,7 @@ def generate_coverage(
             except ValueError:
                 continue
             for raw in names:
-                op_id = _map_flat_syscall(raw.name)
+                op_id = raw.name  # classifier handles flat names
                 _upsert(operations, op_id, "grpc_call", raw.name, raw.source)
             break
 
@@ -188,7 +127,7 @@ def generate_coverage(
             try:
                 op_id = normalize.normalize_mcp("nexus_" + raw.name)
             except ValueError:
-                op_id = _map_flat_syscall(raw.name)
+                op_id = raw.name  # classifier handles unprefixed names
             _upsert(operations, op_id, "grpc_expose", raw.name, raw.source)
 
     # --- SDK ---
@@ -226,7 +165,16 @@ def generate_coverage(
 
     fresh = SurfaceCoverage(
         schema_version=1,
-        modules=_merged_modules(list(_SEED_MODULES), operations.values()),
+        modules=sorted(
+            [
+                # convert CuratedModule -> schema.Module for serialization
+                Module(
+                    id=m.id, name=m.name, description=m.description, depends_on=list(m.depends_on)
+                )
+                for m in TAXONOMY_MODULES
+            ],
+            key=lambda m: m.id,
+        ),
         operations=sorted(operations.values(), key=lambda o: o.id),
         parity_warnings=sorted(parity_warnings, key=lambda w: w.operation_id),
         unmapped_surfaces=[],
@@ -250,7 +198,11 @@ def _upsert(
     name: str,
     source: str,
 ) -> None:
-    module = op_id.split(".", 1)[0]
+    module = classify_op_id(op_id)
+    # Ensure canonical "module.verb" form. Bare verb names (no ".") get prefixed
+    # with their classified module so op-ids are stable and human-readable.
+    if "." not in op_id:
+        op_id = f"{module}.{op_id}"
     if op_id not in ops:
         ops[op_id] = Operation(
             id=op_id,

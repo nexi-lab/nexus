@@ -58,5 +58,7 @@ def test_render_is_deterministic():
 def test_render_includes_module_graph_edges():
     coverage = _sample_coverage()
     html = render_html(coverage)
-    # rebac depends_on=[fs] should appear as an edge fs --> rebac
-    assert "fs --> rebac" in html or "rebac --> fs" in html or "fs-->rebac" in html
+    # The taxonomy declares rebac depends_on=["fs"], so edge fs --> rebac must appear
+    assert "fs --> rebac" in html
+    # Subgraph wrapping by category should be present
+    assert "subgraph" in html

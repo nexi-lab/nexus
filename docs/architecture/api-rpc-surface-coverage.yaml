@@ -1,264 +1,101 @@
 schema_version: 1
 modules:
-- id: access
-  name: Access
-  description: ''
-  depends_on: []
-- id: add
-  name: Add
-  description: ''
-  depends_on: []
 - id: admin
   name: Admin
-  description: Admin / governance / audit
+  description: Bootstrap, user provisioning, status, configuration.
   depends_on: []
 - id: agent
-  name: Agent
-  description: ''
-  depends_on: []
+  name: Agents
+  description: Agent identity, registry, observability.
+  depends_on:
+  - rebac
 - id: audit
   name: Audit
-  description: ''
-  depends_on: []
-- id: backfill
-  name: Backfill
-  description: ''
-  depends_on: []
-- id: create
-  name: Create
-  description: ''
-  depends_on: []
-- id: delete
-  name: Delete
-  description: ''
-  depends_on: []
-- id: deprovision
-  name: Deprovision
-  description: ''
-  depends_on: []
-- id: diff
-  name: Diff
-  description: ''
-  depends_on: []
-- id: discovery
-  name: Discovery
-  description: ''
-  depends_on: []
-- id: edit
-  name: Edit
-  description: ''
-  depends_on: []
+  description: Activity logs, event sourcing.
+  depends_on:
+  - rebac
+- id: connectors
+  name: Connectors
+  description: External system bridges (GDrive, SharePoint, etc.).
+  depends_on:
+  - mounts
+  - oauth
 - id: events
   name: Events
-  description: ''
-  depends_on: []
-- id: execute
-  name: Execute
-  description: ''
-  depends_on: []
-- id: exists
-  name: Exists
-  description: ''
-  depends_on: []
-- id: export
-  name: Export
-  description: ''
-  depends_on: []
-- id: federation
-  name: Federation
-  description: ''
-  depends_on: []
-- id: file
-  name: File
-  description: ''
-  depends_on: []
-- id: flush
-  name: Flush
-  description: ''
-  depends_on: []
+  description: Pub/sub, notifications.
+  depends_on:
+  - audit
 - id: fs
   name: Filesystem
-  description: Core read/write/stat/list operations
-  depends_on: []
-- id: get
-  name: Get
-  description: ''
-  depends_on: []
-- id: glob
-  name: Glob
-  description: ''
+  description: Read, write, stat, list, copy, move, delete on virtual paths.
   depends_on: []
 - id: governance
   name: Governance
-  description: ''
-  depends_on: []
-- id: grant
-  name: Grant
-  description: ''
-  depends_on: []
-- id: has
-  name: Has
-  description: ''
-  depends_on: []
-- id: hub
-  name: Hub
-  description: ''
-  depends_on: []
-- id: import
-  name: Import
-  description: ''
-  depends_on: []
-- id: initialize
-  name: Initialize
-  description: ''
-  depends_on: []
-- id: is
-  name: Is
-  description: ''
-  depends_on: []
+  description: Policy, compliance, retention.
+  depends_on:
+  - rebac
+  - audit
 - id: kernel
   name: Kernel
-  description: Kernel-level syscalls
-  depends_on: []
-- id: list
-  name: List
-  description: ''
-  depends_on: []
-- id: load
-  name: Load
-  description: ''
-  depends_on: []
-- id: make
-  name: Make
-  description: ''
-  depends_on: []
+  description: Low-level syscalls and uncategorized surfaces.
+  depends_on:
+  - fs
 - id: mcp
   name: MCP
-  description: Model Context Protocol tooling
-  depends_on: []
-- id: metadata
-  name: Metadata
-  description: ''
-  depends_on: []
+  description: Model Context Protocol tools for agents.
+  depends_on:
+  - fs
+  - rebac
+  - search
 - id: mounts
   name: Mounts
-  description: Mount drivers + connectors
-  depends_on: []
-- id: namespace
-  name: Namespace
-  description: ''
-  depends_on: []
-- id: nexus_v_f_s_service
-  name: Nexus V F S Service
-  description: ''
-  depends_on: []
+  description: Volume drivers, path mappings.
+  depends_on:
+  - fs
 - id: oauth
   name: OAuth
-  description: Credential management
-  depends_on: []
+  description: Credentials, providers, token lifecycle.
+  depends_on:
+  - rebac
 - id: pay
   name: Pay
-  description: ''
-  depends_on: []
-- id: provision
-  name: Provision
-  description: ''
-  depends_on: []
-- id: read
-  name: Read
-  description: ''
-  depends_on: []
-- id: reauth
-  name: Reauth
-  description: ''
-  depends_on: []
+  description: Billing, quotas, plan enforcement.
+  depends_on:
+  - rebac
 - id: rebac
   name: ReBAC
-  description: Permissions and access control
-  depends_on: []
-- id: register
-  name: Register
-  description: ''
-  depends_on: []
-- id: remove
-  name: Remove
-  description: ''
-  depends_on: []
-- id: rename
-  name: Rename
-  description: ''
-  depends_on: []
-- id: revoke
-  name: Revoke
-  description: ''
-  depends_on: []
-- id: sandbox
-  name: Sandbox
-  description: ''
-  depends_on: []
-- id: save
-  name: Save
-  description: ''
-  depends_on: []
+  description: Permissions and access control.
+  depends_on:
+  - fs
 - id: search
   name: Search
-  description: BM25S / sqlite-vec / semantic
-  depends_on: []
+  description: BM25 / sqlite-vec / hybrid retrieval.
+  depends_on:
+  - fs
 - id: semantic
-  name: Semantic
-  description: ''
-  depends_on: []
-- id: set
-  name: Set
-  description: ''
-  depends_on: []
-- id: share
-  name: Share
-  description: ''
-  depends_on: []
+  name: Semantic Index
+  description: Embedding-backed lookups and reranking.
+  depends_on:
+  - search
+- id: share_link
+  name: Share Links
+  description: Public/scoped share URLs for files and folders.
+  depends_on:
+  - rebac
 - id: snapshot
-  name: Snapshot
-  description: ''
-  depends_on: []
-- id: stat
-  name: Stat
-  description: ''
-  depends_on: []
-- id: stream
-  name: Stream
-  description: ''
-  depends_on: []
-- id: subject
-  name: Subject
-  description: ''
-  depends_on: []
-- id: sys
-  name: Sys
-  description: ''
-  depends_on: []
-- id: unregister
-  name: Unregister
-  description: ''
-  depends_on: []
-- id: update
-  name: Update
-  description: ''
-  depends_on: []
+  name: Snapshots & Versions
+  description: Point-in-time captures, version history.
+  depends_on:
+  - workspace
 - id: workspace
-  name: Workspace
-  description: Local + remote workspaces, snapshots
-  depends_on: []
-- id: write
-  name: Write
-  description: ''
-  depends_on: []
-- id: zone
-  name: Zone
-  description: ''
-  depends_on: []
+  name: Workspaces
+  description: Local + remote workspaces, federation roots.
+  depends_on:
+  - fs
+  - rebac
 operations:
 - id: access.share_link
-  module: access
+  module: share_link
   summary: ''
   transports:
     grpc_expose:
@@ -275,12 +112,46 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: add.mount
-  module: add
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
       name: add_mount
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/mount/mount_service.py:861
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: admin.config
+  module: admin
+  summary: ''
+  transports:
+    cli:
+      name: nexus config
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/config_cmd.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: admin.init
+  module: admin
+  summary: ''
+  transports:
+    cli:
+      name: nexus init
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -394,7 +265,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: backfill.directory_index
-  module: backfill
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -410,8 +281,25 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: connectors.connectors
+  module: connectors
+  summary: ''
+  transports:
+    cli:
+      name: nexus connectors
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/connectors.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: create.share_link
-  module: create
+  module: share_link
   summary: ''
   transports:
     grpc_expose:
@@ -428,7 +316,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: delete.agent
-  module: delete
+  module: agent
   summary: ''
   transports:
     grpc_expose:
@@ -445,7 +333,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: delete.batch
-  module: delete
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -462,7 +350,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: delete.connector
-  module: delete
+  module: connectors
   summary: ''
   transports:
     grpc_expose:
@@ -479,7 +367,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: delete.file
-  module: delete
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -496,7 +384,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: delete.saved_mount
-  module: delete
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -513,7 +401,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: deprovision.user
-  module: deprovision
+  module: admin
   summary: ''
   transports:
     grpc_expose:
@@ -530,7 +418,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: diff.versions
-  module: diff
+  module: snapshot
   summary: ''
   transports:
     grpc_expose:
@@ -547,7 +435,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: discovery.get_tool_details
-  module: discovery
+  module: kernel
   summary: ''
   transports:
     mcp:
@@ -564,7 +452,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: discovery.list_servers
-  module: discovery
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -581,7 +469,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: discovery.load_tools
-  module: discovery
+  module: kernel
   summary: ''
   transports:
     mcp:
@@ -598,7 +486,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: discovery.search_tools
-  module: discovery
+  module: search
   summary: ''
   transports:
     mcp:
@@ -615,7 +503,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: edit.file
-  module: edit
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -649,7 +537,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: execute.workflow
-  module: execute
+  module: kernel
   summary: ''
   transports:
     mcp:
@@ -666,7 +554,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: exists.batch
-  module: exists
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -683,7 +571,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: export.metadata
-  module: export
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -700,7 +588,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.client_whoami
-  module: federation
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -717,7 +605,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.cluster_info
-  module: federation
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -734,7 +622,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.create_zone
-  module: federation
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -751,7 +639,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.export_zone
-  module: federation
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -768,7 +656,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.import_zone
-  module: federation
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -785,7 +673,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.join
-  module: federation
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -802,7 +690,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.list_zones
-  module: federation
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -819,7 +707,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.mount
-  module: federation
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -836,7 +724,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.remove_zone
-  module: federation
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -853,7 +741,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.share
-  module: federation
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -870,7 +758,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: federation.unmount
-  module: federation
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -887,7 +775,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: file.info
-  module: file
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -904,7 +792,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: flush.write_observer
-  module: flush
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -944,6 +832,23 @@ operations:
     grpc_call:
       name: close
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:47
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.copy
+  module: fs
+  summary: ''
+  transports:
+    cli:
+      name: nexus copy
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -1008,6 +913,40 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: fs.move
+  module: fs
+  summary: ''
+  transports:
+    cli:
+      name: nexus move
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.profile
+  module: fs
+  summary: ''
+  transports:
+    cli:
+      name: nexus profile
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/profile.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.read
   module: fs
   summary: ''
@@ -1025,6 +964,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: fs.rename
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: rename
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:55
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.stat
   module: fs
   summary: ''
@@ -1032,6 +988,125 @@ operations:
     grpc_expose:
       name: stat
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1089
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.status
+  module: fs
+  summary: ''
+  transports:
+    cli:
+      name: nexus status
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/status.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.sys_copy
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_copy
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:57
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.sys_read
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_read
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:60
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.sys_readdir
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_readdir
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:61
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.sys_rename
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_rename
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:62
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.sys_stat
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_stat
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:65
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.sys_write
+  module: fs
+  summary: ''
+  transports:
+    grpc_call:
+      name: sys_write
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:68
   profiles:
     lite: supported
     sandbox: supported
@@ -1062,8 +1137,25 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: fs.write-batch
+  module: fs
+  summary: ''
+  transports:
+    cli:
+      name: nexus write-batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: get.agent
-  module: get
+  module: agent
   summary: ''
   transports:
     grpc_expose:
@@ -1080,7 +1172,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.content_id
-  module: get
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -1097,7 +1189,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.dynamic_viewer_config
-  module: get
+  module: admin
   summary: ''
   transports:
     grpc_expose:
@@ -1114,7 +1206,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.mount
-  module: get
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -1131,7 +1223,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.namespace
-  module: get
+  module: rebac
   summary: ''
   transports:
     grpc_expose:
@@ -1148,7 +1240,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.rebac_option
-  module: get
+  module: rebac
   summary: ''
   transports:
     grpc_expose:
@@ -1165,7 +1257,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.share_link
-  module: get
+  module: share_link
   summary: ''
   transports:
     grpc_expose:
@@ -1182,7 +1274,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.share_link_access_logs
-  module: get
+  module: share_link
   summary: ''
   transports:
     grpc_expose:
@@ -1199,7 +1291,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.top_level_mounts
-  module: get
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -1216,7 +1308,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.version
-  module: get
+  module: snapshot
   summary: ''
   transports:
     grpc_expose:
@@ -1233,7 +1325,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.workspace_info
-  module: get
+  module: workspace
   summary: ''
   transports:
     grpc_expose:
@@ -1250,7 +1342,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: glob.batch
-  module: glob
+  module: search
   summary: ''
   transports:
     grpc_expose:
@@ -1318,7 +1410,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: grant.consent
-  module: grant
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -1335,7 +1427,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: has.mount
-  module: has
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -1352,7 +1444,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: hub.admin
-  module: hub
+  module: admin
   summary: ''
   transports:
     mcp:
@@ -1369,7 +1461,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: import.metadata
-  module: import
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -1386,7 +1478,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: initialize.semantic_search
-  module: initialize
+  module: semantic
   summary: ''
   transports:
     grpc_expose:
@@ -1403,12 +1495,29 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: is.admin
-  module: is
+  module: admin
   summary: ''
   transports:
     sdk:
       name: BaseRemoteNexusFS.is_admin
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/remote/base_client.py:153
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.access
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: access
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:46
   profiles:
     lite: supported
     sandbox: supported
@@ -1514,6 +1623,23 @@ operations:
     cli:
       name: nexus catalog
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/catalog.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.close
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: close
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:47
   profiles:
     lite: supported
     sandbox: supported
@@ -1684,6 +1810,23 @@ operations:
     cli:
       name: nexus env
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/env_cmd.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: kernel.exists
+  module: kernel
+  summary: ''
+  transports:
+    grpc_call:
+      name: exists
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/_kernel_syscall_dispatch.py:49
   profiles:
     lite: supported
     sandbox: supported
@@ -2619,7 +2762,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.agents
-  module: list
+  module: agent
   summary: ''
   transports:
     grpc_expose:
@@ -2636,7 +2779,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.connectors
-  module: list
+  module: connectors
   summary: ''
   transports:
     grpc_expose:
@@ -2653,7 +2796,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.files
-  module: list
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -2670,7 +2813,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.incoming_shares
-  module: list
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -2687,7 +2830,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.mounts
-  module: list
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -2704,7 +2847,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.outgoing_shares
-  module: list
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -2721,7 +2864,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.saved_mounts
-  module: list
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -2738,7 +2881,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.share_links
-  module: list
+  module: share_link
   summary: ''
   transports:
     grpc_expose:
@@ -2755,7 +2898,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.versions
-  module: list
+  module: snapshot
   summary: ''
   transports:
     grpc_expose:
@@ -2772,7 +2915,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.workflows
-  module: list
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -2789,7 +2932,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.workspaces
-  module: list
+  module: workspace
   summary: ''
   transports:
     grpc_expose:
@@ -2806,7 +2949,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: load.mount
-  module: load
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -2823,7 +2966,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: load.workspace_config
-  module: load
+  module: workspace
   summary: ''
   transports:
     grpc_expose:
@@ -2840,7 +2983,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: make.private
-  module: make
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -2857,7 +3000,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: make.public
-  module: make
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -2924,6 +3067,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: mcp.mcp
+  module: mcp
+  summary: ''
+  transports:
+    cli:
+      name: nexus mcp
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/mcp.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: mcp.mount
   module: mcp
   summary: ''
@@ -2976,7 +3136,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: metadata.batch
-  module: metadata
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -2992,8 +3152,25 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: mounts.mounts
+  module: mounts
+  summary: ''
+  transports:
+    cli:
+      name: nexus mounts
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/mounts.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: namespace.delete
-  module: namespace
+  module: rebac
   summary: ''
   transports:
     grpc_expose:
@@ -3010,7 +3187,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: namespace.list
-  module: namespace
+  module: rebac
   summary: ''
   transports:
     grpc_expose:
@@ -3027,7 +3204,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: nexus_v_f_s_service.batch_read
-  module: nexus_v_f_s_service
+  module: fs
   summary: ''
   transports:
     grpc_typed:
@@ -3044,7 +3221,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: nexus_v_f_s_service.call
-  module: nexus_v_f_s_service
+  module: kernel
   summary: ''
   transports:
     grpc_typed:
@@ -3061,7 +3238,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: nexus_v_f_s_service.delete
-  module: nexus_v_f_s_service
+  module: fs
   summary: ''
   transports:
     grpc_typed:
@@ -3078,7 +3255,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: nexus_v_f_s_service.ping
-  module: nexus_v_f_s_service
+  module: kernel
   summary: ''
   transports:
     grpc_typed:
@@ -3095,7 +3272,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: nexus_v_f_s_service.read
-  module: nexus_v_f_s_service
+  module: fs
   summary: ''
   transports:
     grpc_typed:
@@ -3112,7 +3289,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: nexus_v_f_s_service.write
-  module: nexus_v_f_s_service
+  module: fs
   summary: ''
   transports:
     grpc_typed:
@@ -3282,7 +3459,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: provision.user
-  module: provision
+  module: admin
   summary: ''
   transports:
     grpc_expose:
@@ -3299,7 +3476,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: read.batch
-  module: read
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -3316,7 +3493,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: read.bulk
-  module: read
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -3333,7 +3510,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: read.file
-  module: read
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -3350,7 +3527,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: read.range
-  module: read
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -3367,7 +3544,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: read.with_dynamic_viewer
-  module: read
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -3384,7 +3561,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: reauth.mount
-  module: reauth
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -3553,8 +3730,25 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: rebac.rebac
+  module: rebac
+  summary: ''
+  transports:
+    cli:
+      name: nexus rebac
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/rebac.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: register.agent
-  module: register
+  module: agent
   summary: ''
   transports:
     grpc_expose:
@@ -3571,7 +3765,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: register.namespace
-  module: register
+  module: rebac
   summary: ''
   transports:
     grpc_expose:
@@ -3588,7 +3782,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: register.workspace
-  module: register
+  module: workspace
   summary: ''
   transports:
     grpc_expose:
@@ -3605,7 +3799,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: remove.mount
-  module: remove
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -3622,7 +3816,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: rename.batch
-  module: rename
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -3639,7 +3833,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: rename.file
-  module: rename
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -3656,7 +3850,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: revoke.consent
-  module: revoke
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -3673,7 +3867,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: revoke.share
-  module: revoke
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -3690,7 +3884,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: revoke.share_by_id
-  module: revoke
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -3707,7 +3901,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: revoke.share_link
-  module: revoke
+  module: share_link
   summary: ''
   transports:
     grpc_expose:
@@ -3724,7 +3918,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: sandbox.create
-  module: sandbox
+  module: kernel
   summary: ''
   transports:
     mcp:
@@ -3741,7 +3935,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: sandbox.list
-  module: sandbox
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -3758,7 +3952,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: sandbox.stop
-  module: sandbox
+  module: kernel
   summary: ''
   transports:
     mcp:
@@ -3775,7 +3969,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: save.mount
-  module: save
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -3903,7 +4097,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: set.rebac_option
-  module: set
+  module: rebac
   summary: ''
   transports:
     grpc_expose:
@@ -3920,7 +4114,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: share.with_group
-  module: share
+  module: share_link
   summary: ''
   transports:
     grpc_expose:
@@ -3937,7 +4131,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: share.with_user
-  module: share
+  module: share_link
   summary: ''
   transports:
     grpc_expose:
@@ -4089,8 +4283,42 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: snapshot.version
+  module: snapshot
+  summary: ''
+  transports:
+    cli:
+      name: nexus version
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/inspect.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshot.versions
+  module: snapshot
+  summary: ''
+  transports:
+    cli:
+      name: nexus versions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/versions.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: stat.bulk
-  module: stat
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -4107,7 +4335,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: stream.range
-  module: stream
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -4124,7 +4352,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: subject.id
-  module: subject
+  module: kernel
   summary: ''
   transports:
     sdk:
@@ -4141,7 +4369,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: subject.type
-  module: subject
+  module: kernel
   summary: ''
   transports:
     sdk:
@@ -4158,7 +4386,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: sys.watch
-  module: sys
+  module: kernel
   summary: ''
   transports:
     grpc_expose:
@@ -4175,7 +4403,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: unregister.workspace
-  module: unregister
+  module: workspace
   summary: ''
   transports:
     grpc_expose:
@@ -4192,7 +4420,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: update.agent
-  module: update
+  module: agent
   summary: ''
   transports:
     grpc_expose:
@@ -4209,7 +4437,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: update.mount
-  module: update
+  module: mounts
   summary: ''
   transports:
     grpc_expose:
@@ -4226,7 +4454,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: update.workspace
-  module: update
+  module: workspace
   summary: ''
   transports:
     grpc_expose:
@@ -4310,8 +4538,25 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: workspace.workspace
+  module: workspace
+  summary: ''
+  transports:
+    cli:
+      name: nexus workspace
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/workspace.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: write.batch
-  module: write
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -4328,7 +4573,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: write.file
-  module: write
+  module: fs
   summary: ''
   transports:
     mcp:
@@ -4345,7 +4590,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: write.stream
-  module: write
+  module: fs
   summary: ''
   transports:
     grpc_expose:
@@ -4362,7 +4607,7 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: zone.id
-  module: zone
+  module: kernel
   summary: ''
   transports:
     sdk:
@@ -4379,6 +4624,22 @@ operations:
   gap_issue: null
   owning_issue: null
 parity_warnings:
+- operation_id: admin.config
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: admin.init
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: agent.id
   has:
   - sdk
@@ -4387,6 +4648,14 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: connectors.connectors
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: delete.file
   has:
   - mcp
@@ -4451,7 +4720,47 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
+- operation_id: fs.copy
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: fs.move
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: fs.profile
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: fs.status
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: fs.write
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: fs.write-batch
   has:
   - cli
   missing:
@@ -4523,14 +4832,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: kernel.config
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: kernel.connect
   has:
   - cli
@@ -4539,23 +4840,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: kernel.connectors
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: kernel.context
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: kernel.copy
   has:
   - cli
   missing:
@@ -4603,14 +4888,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: kernel.init
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: kernel.lineage
   has:
   - cli
@@ -4643,14 +4920,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: kernel.mcp
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: kernel.migrate
   has:
   - cli
@@ -4660,22 +4929,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: kernel.mkdir
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: kernel.mounts
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: kernel.move
   has:
   - cli
   missing:
@@ -4708,22 +4961,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: kernel.plugins
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: kernel.profile
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: kernel.rebac
   has:
   - cli
   missing:
@@ -4787,14 +5024,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: kernel.status
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: kernel.stop
   has:
   - cli
@@ -4851,39 +5080,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: kernel.version
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: kernel.versions
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: kernel.workflows
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: kernel.workspace
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: kernel.write-batch
   has:
   - cli
   missing:
@@ -4906,6 +5103,22 @@ parity_warnings:
   - cli
   - grpc_typed
   - http
+  - sdk
+- operation_id: mcp.mcp
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: mounts.mounts
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
   - sdk
 - operation_id: nexus_v_f_s_service.batch_read
   has:
@@ -4962,6 +5175,14 @@ parity_warnings:
   - cli
   - grpc_typed
   - http
+  - sdk
+- operation_id: rebac.rebac
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
   - sdk
 - operation_id: rename.file
   has:
@@ -5027,6 +5248,22 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
+- operation_id: snapshot.version
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: snapshot.versions
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: subject.id
   has:
   - sdk
@@ -5043,6 +5280,14 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: workspace.workspace
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: write.file
   has:
   - mcp
@@ -5060,4 +5305,52 @@ parity_warnings:
   - http
   - mcp
 unmapped_surfaces: []
-stale_rows: []
+stale_rows:
+- operation_id: fs.access
+  reason: present in committed YAML but not detected by extractor
+- operation_id: fs.close
+  reason: present in committed YAML but not detected by extractor
+- operation_id: fs.exists
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.config
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.connectors
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.copy
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.init
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.mcp
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.mounts
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.move
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.profile
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.rebac
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.rename
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.status
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.sys_copy
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.sys_read
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.sys_readdir
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.sys_rename
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.sys_stat
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.sys_write
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.version
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.versions
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.workspace
+  reason: present in committed YAML but not detected by extractor
+- operation_id: kernel.write-batch
+  reason: present in committed YAML but not detected by extractor

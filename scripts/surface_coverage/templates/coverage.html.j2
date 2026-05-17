@@ -4,113 +4,210 @@
 <meta charset="utf-8">
 <title>Nexus API/RPC Surface Map</title>
 <style>
-  body { font-family: -apple-system, system-ui, sans-serif; max-width: 1100px; margin: 2em auto; padding: 0 1em; color: #222; }
-  h1 { border-bottom: 2px solid #444; padding-bottom: .3em; }
-  h2 { margin-top: 2em; }
-  .module { border: 1px solid #ddd; border-radius: 6px; padding: .5em 1em; margin: 1em 0; }
-  .module summary { cursor: pointer; font-weight: 600; font-size: 1.1em; }
-  .op { margin: 1em 0 1em 1em; padding-left: 1em; border-left: 3px solid #eee; }
-  .op-id { font-family: monospace; font-weight: 600; }
-  .op-summary { color: #555; margin-left: .5em; }
-  .transport { font-family: monospace; font-size: .9em; margin: .15em 0; }
-  .transport-key { display: inline-block; width: 5em; color: #888; }
-  .profile-supported { color: #2a7a2a; }
-  .profile-unavailable { color: #aaa; text-decoration: line-through; }
-  .profile-other { color: #b07000; }
-  .todo { color: #b00; font-style: italic; }
-  .meta { color: #777; font-size: .9em; }
-  #search { width: 100%; padding: .5em; font-size: 1em; border: 1px solid #aaa; border-radius: 4px; }
-  .hidden { display: none; }
-  a { color: #1466b8; }
+  :root {
+    --bg: #fafafa;
+    --surface: #fff;
+    --border: #e2e2e6;
+    --text: #1a1a1f;
+    --text-muted: #6b7280;
+    --text-faint: #9ca3af;
+    --accent: #1466b8;
+    --supported: #15803d;
+    --unavailable: #9ca3af;
+    --other: #b45309;
+    --todo: #dc2626;
+    --t-cli: #2563eb;
+    --t-rpc: #059669;
+    --t-call: #047857;
+    --t-expose: #0891b2;
+    --t-http: #ea580c;
+    --t-mcp: #7c3aed;
+    --t-sdk: #db2777;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+  .layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+  aside { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 1.5rem 1rem; border-right: 1px solid var(--border); background: var(--surface); }
+  aside h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 1.2rem 0 0.4rem; }
+  aside h2:first-child { margin-top: 0; }
+  aside a { display: block; color: var(--text); text-decoration: none; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
+  aside a:hover { background: var(--bg); color: var(--accent); }
+  aside .count { color: var(--text-faint); font-size: 0.75rem; margin-left: 0.4rem; }
+  main { padding: 2rem 2.5rem; max-width: 1100px; }
+  h1 { font-size: 1.6rem; margin: 0 0 0.5rem; }
+  .subtitle { color: var(--text-muted); margin: 0 0 1.5rem; }
+  .stats { display: flex; gap: 1.5rem; margin: 0 0 2rem; padding: 0.75rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+  .stat { display: flex; flex-direction: column; }
+  .stat-value { font-size: 1.3rem; font-weight: 600; }
+  .stat-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  section { margin: 2rem 0 3rem; }
+  h2.section { font-size: 1.15rem; margin: 0 0 1rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }
+  h3.category { font-size: 1rem; margin: 2rem 0 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  #search { width: 100%; padding: 0.6rem 0.85rem; font-size: 0.95rem; border: 1px solid var(--border); border-radius: 6px; margin: 0 0 2rem; background: var(--surface); }
+  #search:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+  .mermaid-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; overflow-x: auto; }
+  details.module { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin: 0.5rem 0; overflow: hidden; }
+  details.module summary { cursor: pointer; padding: 0.85rem 1rem; font-weight: 600; display: flex; gap: 0.75rem; align-items: baseline; list-style: none; }
+  details.module summary::-webkit-details-marker { display: none; }
+  details.module summary::before { content: "▶"; font-size: 0.7rem; color: var(--text-faint); transition: transform 0.15s; }
+  details.module[open] summary::before { transform: rotate(90deg); display: inline-block; }
+  details.module summary:hover { background: var(--bg); }
+  .mod-name { font-family: ui-monospace, monospace; }
+  .mod-desc { color: var(--text-muted); font-weight: 400; flex: 1; }
+  .mod-count { color: var(--text-faint); font-size: 0.85rem; font-weight: 400; }
+  .module-body { padding: 0.5rem 1rem 1rem; border-top: 1px solid var(--border); }
+  .op { padding: 0.85rem 0; border-bottom: 1px dashed var(--border); }
+  .op:last-child { border-bottom: none; }
+  .op-header { display: flex; gap: 0.75rem; align-items: baseline; margin-bottom: 0.5rem; }
+  .op-id { font-family: ui-monospace, monospace; font-weight: 600; color: var(--text); }
+  .op-summary { color: var(--text-muted); font-size: 0.9rem; }
+  .transports { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0; }
+  .transport-pill { display: inline-flex; gap: 0.3rem; align-items: center; padding: 0.15rem 0.55rem; border-radius: 999px; font-family: ui-monospace, monospace; font-size: 0.75rem; background: var(--surface); border: 1px solid var(--border); }
+  .transport-pill .label { font-weight: 600; }
+  .transport-pill[data-t="cli"] { border-color: var(--t-cli); color: var(--t-cli); }
+  .transport-pill[data-t="rpc"] { border-color: var(--t-rpc); color: var(--t-rpc); }
+  .transport-pill[data-t="call"] { border-color: var(--t-call); color: var(--t-call); }
+  .transport-pill[data-t="expose"] { border-color: var(--t-expose); color: var(--t-expose); }
+  .transport-pill[data-t="http"] { border-color: var(--t-http); color: var(--t-http); }
+  .transport-pill[data-t="mcp"] { border-color: var(--t-mcp); color: var(--t-mcp); }
+  .transport-pill[data-t="sdk"] { border-color: var(--t-sdk); color: var(--t-sdk); }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.3rem; font-size: 0.8rem; color: var(--text-muted); }
+  .profiles { display: flex; gap: 0.3rem; }
+  .profile-badge { padding: 0.05rem 0.45rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+  .profile-supported { background: rgba(21, 128, 61, 0.12); color: var(--supported); }
+  .profile-unavailable { background: rgba(156, 163, 175, 0.2); color: var(--unavailable); text-decoration: line-through; }
+  .profile-other { background: rgba(180, 83, 9, 0.12); color: var(--other); }
+  .todo { color: var(--todo); font-style: italic; }
+  .hidden { display: none !important; }
+  a { color: var(--accent); }
+  code { font-family: ui-monospace, monospace; font-size: 0.85em; }
+  .empty-list { color: var(--text-faint); font-style: italic; padding: 1rem; text-align: center; }
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main { padding: 1.5rem 1rem; }
+  }
 </style>
 </head>
 <body>
-<h1>Nexus API/RPC Surface Map</h1>
+<div class="layout">
+  <aside>
+    <h2>Modules</h2>
+    {% for category, mods in categories.items() %}
+    <h2>{{ category }}</h2>
+    {% for m in mods %}
+    <a href="#m-{{ m.id }}">{{ m.id }}<span class="count">{{ ops_by_module.get(m.id, []) | length }}</span></a>
+    {% endfor %}
+    {% endfor %}
+  </aside>
 
-<input id="search" placeholder="Search by op-id, module, or transport name..." />
+  <main>
+    <h1>Nexus API/RPC Surface Map</h1>
+    <p class="subtitle">High-level view of external surfaces grouped by module. Each row is one logical operation exposed across CLI / RPC / HTTP / MCP / SDK.</p>
 
-<h2 id="how-to-read">§1 How to read this page</h2>
-<p>
-Each module groups external surfaces. Each <strong>surface</strong> is one logical
-operation exposed across CLI / RPC / HTTP / MCP / SDK. Subissues fill <em>usage,
-test, perf, gap</em> fields. Full contract:
-<a href="api-rpc-surface-contract.md">api-rpc-surface-contract.md</a>.
-</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-value">{{ total_categories }}</span><span class="stat-label">categories</span></div>
+      <div class="stat"><span class="stat-value">{{ total_modules }}</span><span class="stat-label">modules</span></div>
+      <div class="stat"><span class="stat-value">{{ total_ops }}</span><span class="stat-label">operations</span></div>
+    </div>
 
-<h2 id="architecture">§2 Architecture</h2>
-<div class="mermaid">
-graph LR
-{% for m in modules -%}
-  {{ m.id }}["{{ m.name }}"]
-{% endfor -%}
-{% for m in modules -%}
-{% for dep in m.depends_on -%}
-  {{ dep }} --> {{ m.id }}
-{% endfor -%}
-{% endfor -%}
+    <input id="search" placeholder="Search by op-id, module, summary, or transport name..." />
+
+    <section>
+      <h2 class="section">§1 How to read this page</h2>
+      <p>Each <strong>module</strong> groups related <strong>operations</strong>. Each operation is exposed via one or more <strong>transports</strong> (CLI, typed RPC, generic Call, <code>@rpc_expose</code>, HTTP, MCP, SDK). Subissues fill the <em>usage</em>, <em>test</em>, <em>perf</em>, and <em>owner</em> fields shown as <span class="todo">TODO</span>. Full contract: <a href="api-rpc-surface-contract.md">api-rpc-surface-contract.md</a>.</p>
+    </section>
+
+    <section>
+      <h2 class="section">§2 Architecture</h2>
+      <div class="mermaid-wrap">
+        <div class="mermaid">
+{{ mermaid_graph }}
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="section">§3 Modules by category</h2>
+      {% for category, mods in categories.items() %}
+      <h3 class="category">{{ category }}</h3>
+      {% for m in mods %}
+      <details id="m-{{ m.id }}" class="module" {% if loop.first and loop.index0 == 0 %}open{% endif %}>
+        <summary>
+          <span class="mod-name">{{ m.id }}</span>
+          <span class="mod-desc">— {{ m.description }}</span>
+          <span class="mod-count">{{ ops_by_module.get(m.id, []) | length }} ops</span>
+        </summary>
+        <div class="module-body">
+          {% set ops = ops_by_module.get(m.id, []) %}
+          {% if ops %}
+          {% for op in ops %}
+          <div class="op" data-op-id="{{ op.id }}" data-op-text="{{ op.id }} {{ op.summary }} {% for tkey, _, _ in transport_display %}{% if tkey in op.transports %}{{ op.transports[tkey].name }} {% endif %}{% endfor %}">
+            <div class="op-header">
+              <span class="op-id">{{ op.id }}</span>
+              <span class="op-summary">— {{ op.summary or '(no summary yet)' }}</span>
+            </div>
+            <div class="transports">
+              {% for tkey, tlabel, tslug in transport_display %}
+              {% if tkey in op.transports %}
+              <span class="transport-pill" data-t="{{ tslug }}"><span class="label">{{ tlabel }}</span> <span>{{ op.transports[tkey].name }}</span></span>
+              {% endif %}
+              {% endfor %}
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                {% for pkey in ('lite', 'sandbox', 'full') %}
+                {% set status = op.profiles[pkey].value %}
+                {% if status == 'supported' %}<span class="profile-badge profile-supported">{{ pkey }}</span>
+                {% elif status == 'unavailable' %}<span class="profile-badge profile-unavailable">{{ pkey }}</span>
+                {% else %}<span class="profile-badge profile-other">{{ pkey }}: {{ status }}</span>{% endif %}
+                {% endfor %}
+              </span>
+              <span>usage: {% if op.usage_example %}<code>{{ op.usage_example }}</code>{% else %}<span class="todo">TODO</span>{% endif %}</span>
+              <span>test: {% if op.correctness_test %}<a href="../../{{ op.correctness_test }}">{{ op.correctness_test }}</a>{% else %}<span class="todo">TODO</span>{% endif %}</span>
+              <span>perf: {% if op.perf_class %}{{ op.perf_class.value }}{% else %}<span class="todo">TODO</span>{% endif %}</span>
+              <span>owner: {% if op.owning_issue %}<a href="https://github.com/nexi-lab/nexus/issues/{{ op.owning_issue }}">#{{ op.owning_issue }}</a>{% else %}—{% endif %}</span>
+              <span>gap: {% if op.gap_issue %}<a href="https://github.com/nexi-lab/nexus/issues/{{ op.gap_issue }}">#{{ op.gap_issue }}</a>{% else %}—{% endif %}</span>
+            </div>
+          </div>
+          {% endfor %}
+          {% else %}
+          <div class="empty-list">No operations classified to this module yet.</div>
+          {% endif %}
+        </div>
+      </details>
+      {% endfor %}
+      {% endfor %}
+    </section>
+
+    <section>
+      <h2 class="section">§4 Subissues filling this map</h2>
+      <p><a href="https://github.com/nexi-lab/nexus/issues/4119">#4119 lite</a> · <a href="https://github.com/nexi-lab/nexus/issues/4120">#4120 sandbox</a> · <a href="https://github.com/nexi-lab/nexus/issues/4121">#4121 full</a> · <a href="https://github.com/nexi-lab/nexus/issues/4139">#4139 coverage matrix</a></p>
+    </section>
+  </main>
 </div>
 
-<h2 id="modules">§3 Modules</h2>
-{% for m in modules %}
-<details class="module" {% if loop.first %}open{% endif %}>
-  <summary>{{ m.id }} — {{ m.name }} ({{ ops_by_module.get(m.id, []) | length }} ops)</summary>
-  <p class="meta">{{ m.description }}</p>
-  {% for op in ops_by_module.get(m.id, []) %}
-  <div class="op" data-op-id="{{ op.id }}">
-    <div><span class="op-id">{{ op.id }}</span><span class="op-summary"> — {{ op.summary or '(no summary)' }}</span></div>
-    {% for tkey, tname in transport_display %}
-    {% if tkey in op.transports %}
-    <div class="transport"><span class="transport-key">{{ tname }}:</span> {{ op.transports[tkey].name }}</div>
-    {% endif %}
-    {% endfor %}
-    <div class="transport">
-      profiles:
-      {% for pkey in ('lite', 'sandbox', 'full') %}
-      {% set status = op.profiles[pkey].value %}
-      {% if status == 'supported' %}<span class="profile-supported">{{ pkey }} ✓</span>
-      {% elif status == 'unavailable' %}<span class="profile-unavailable">{{ pkey }} ✗</span>
-      {% else %}<span class="profile-other">{{ pkey }} ({{ status }})</span>{% endif %}
-      {% endfor %}
-    </div>
-    <div class="transport">
-      usage: {% if op.usage_example %}<code>{{ op.usage_example }}</code>{% else %}<span class="todo">TODO</span>{% endif %}
-      &nbsp; test: {% if op.correctness_test %}<a href="../../{{ op.correctness_test }}">{{ op.correctness_test }}</a>{% else %}<span class="todo">TODO</span>{% endif %}
-      &nbsp; perf: {% if op.perf_class %}{{ op.perf_class.value }}{% else %}<span class="todo">TODO</span>{% endif %}
-    </div>
-    <div class="transport meta">
-      owner: {% if op.owning_issue %}<a href="https://github.com/nexi-lab/nexus/issues/{{ op.owning_issue }}">#{{ op.owning_issue }}</a>{% else %}—{% endif %}
-      &nbsp; gap: {% if op.gap_issue %}<a href="https://github.com/nexi-lab/nexus/issues/{{ op.gap_issue }}">#{{ op.gap_issue }}</a>{% else %}—{% endif %}
-    </div>
-  </div>
-  {% endfor %}
-</details>
-{% endfor %}
-
-<h2 id="subissues">§4 Subissues filling this map</h2>
-<ul>
-  <li><a href="https://github.com/nexi-lab/nexus/issues/4119">#4119 lite</a></li>
-  <li><a href="https://github.com/nexi-lab/nexus/issues/4120">#4120 sandbox</a></li>
-  <li><a href="https://github.com/nexi-lab/nexus/issues/4121">#4121 full</a></li>
-  <li><a href="https://github.com/nexi-lab/nexus/issues/4139">#4139 coverage matrix</a></li>
-</ul>
-
-<script>
 {{ mermaid_js | safe }}
-mermaid.initialize({ startOnLoad: true, theme: 'default' });
+<script>
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
 
 const search = document.getElementById('search');
 search.addEventListener('input', () => {
   const q = search.value.trim().toLowerCase();
   document.querySelectorAll('.op').forEach(el => {
-    const text = el.textContent.toLowerCase();
+    const text = (el.dataset.opText || el.textContent).toLowerCase();
     el.classList.toggle('hidden', q.length > 0 && !text.includes(q));
   });
-  if (q.length > 0) {
-    document.querySelectorAll('details.module').forEach(d => {
-      const anyVisible = Array.from(d.querySelectorAll('.op')).some(op => !op.classList.contains('hidden'));
+  // Expand modules with visible ops; collapse those with none
+  document.querySelectorAll('details.module').forEach(d => {
+    const anyVisible = Array.from(d.querySelectorAll('.op')).some(op => !op.classList.contains('hidden'));
+    if (q.length > 0) {
       d.open = anyVisible;
-    });
-  }
+      d.classList.toggle('hidden', !anyVisible);
+    } else {
+      d.classList.remove('hidden');
+    }
+  });
 });
 </script>
 </body>

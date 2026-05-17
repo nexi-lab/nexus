@@ -101,14 +101,10 @@ jobs:
             rust/kernel
             rust/raft
             rust/profiles/cluster
-            rust/nexus-cdylib
 
       - name: Check Rust formatting
         run: |
-          # Phase 0: nexus-cdylib joins the fmt loop alongside the other
-          # workspace crates.  Phase 4 (full): cluster moved to
-          # `profiles/cluster` (deployment-profile binary folder).
-          for crate in lib kernel raft profiles/cluster nexus-cdylib; do
+          for crate in lib kernel raft profiles/cluster; do
             echo "::group::fmt $crate"
             cd rust/$crate && cargo fmt --check && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
@@ -126,12 +122,6 @@ jobs:
           echo "::endgroup::"
           echo "::group::clippy cluster"
           cd rust/profiles/cluster && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
-          echo "::endgroup::"
-          # Phase 0: nexus-cdylib pulls everything together — clippy
-          # runs against the full transitive build to catch any
-          # extension-module unification surprises.
-          echo "::group::clippy nexus-cdylib"
-          cd rust/nexus-cdylib && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
 
       - name: Run Rust tests

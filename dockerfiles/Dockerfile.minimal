@@ -29,8 +29,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# ---------- maturin ----------
-RUN pip install --no-cache-dir maturin
+# ---------- build ----------
+# maturin removed — kernel runs as nexus-cluster binary
 
 # ---------- Install Python dependencies ----------
 COPY requirements-minimal.txt /tmp/requirements-minimal.txt
@@ -48,7 +48,8 @@ COPY proto/ ./proto/
 COPY rust/ ./rust/
 
 WORKDIR /build/rust/raft
-RUN maturin build --release --features full \
+# Wheel build removed — kernel is standalone binary now
+# RUN cargo build --release -p nexus-cluster \
     && pip install --no-cache-dir --prefix=/install /build/target/wheels/nexus_raft-*.whl
 
 WORKDIR /build

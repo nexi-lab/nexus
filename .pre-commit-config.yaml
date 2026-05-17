@@ -12,6 +12,7 @@ repos:
       - id: check-yaml
         exclude: (^|/)mkdocs\.yml$|^charts/[^/]+/templates/.*\.yaml$
       - id: check-added-large-files
+        exclude: ^docs/architecture/_vendor/
       - id: check-merge-conflict
       - id: check-toml
       - id: debug-statements

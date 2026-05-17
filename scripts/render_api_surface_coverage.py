@@ -3,12 +3,17 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
-from scripts.surface_coverage.render import render_html
-from scripts.surface_coverage.schema import load_yaml
+# Allow `from scripts...` imports when running this file directly via
+# `uv run python scripts/render_api_surface_coverage.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import argparse  # noqa: E402
+
+from scripts.surface_coverage.render import render_html  # noqa: E402
+from scripts.surface_coverage.schema import load_yaml  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

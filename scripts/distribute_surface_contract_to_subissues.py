@@ -9,15 +9,20 @@ Run AFTER #4161 PR merges to develop, not as part of the PR itself.
 
 from __future__ import annotations
 
-import argparse
-import json
-import subprocess
 import sys
-from collections import defaultdict
 from pathlib import Path
 
-from scripts.surface_coverage.distribute import apply_appendix, build_appendix
-from scripts.surface_coverage.schema import load_yaml
+# Allow `from scripts...` imports when running this file directly via
+# `uv run python scripts/distribute_surface_contract_to_subissues.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import argparse  # noqa: E402
+import json  # noqa: E402
+import subprocess  # noqa: E402
+from collections import defaultdict  # noqa: E402
+
+from scripts.surface_coverage.distribute import apply_appendix, build_appendix  # noqa: E402
+from scripts.surface_coverage.schema import load_yaml  # noqa: E402
 
 # All subissues to amend (epics + children)
 _TARGET_ISSUES: tuple[int, ...] = (

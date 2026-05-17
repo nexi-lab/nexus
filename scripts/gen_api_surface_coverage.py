@@ -6,11 +6,16 @@ Reads the existing YAML (if present) and merges, preserving human-filled fields.
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
-from scripts.surface_coverage import (
+# Allow `from scripts...` imports when running this file directly via
+# `uv run python scripts/gen_api_surface_coverage.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import argparse  # noqa: E402
+
+from scripts.surface_coverage import (  # noqa: E402
     extract_cli,
     extract_grpc_call,
     extract_grpc_typed,
@@ -21,8 +26,8 @@ from scripts.surface_coverage import (
     extract_sdk,
     normalize,
 )
-from scripts.surface_coverage.merge import merge_coverage
-from scripts.surface_coverage.schema import (
+from scripts.surface_coverage.merge import merge_coverage  # noqa: E402
+from scripts.surface_coverage.schema import (  # noqa: E402
     Module,
     Operation,
     ParityWarning,

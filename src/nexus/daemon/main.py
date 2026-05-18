@@ -622,3 +622,7 @@ def join_cmd(
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

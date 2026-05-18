@@ -185,6 +185,8 @@ COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 COPY --from=builder /build/nexusd-cluster /usr/local/bin/nexusd-cluster
+# Python factory boot spawns "nexus-cluster" (without d) via subprocess.
+RUN ln -s /usr/local/bin/nexusd-cluster /usr/local/bin/nexus-cluster
 
 
 # ---------- Build-time smoke tests (Issue #3125, #3134) ----------

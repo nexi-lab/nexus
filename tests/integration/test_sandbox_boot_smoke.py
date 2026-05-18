@@ -229,7 +229,7 @@ def test_sandbox_grpc_ping_over_real_socket(sandbox_daemon) -> None:
     channel = grpc.insecure_channel(target)
     try:
         grpc.channel_ready_future(channel).result(timeout=15)
-        stub = vfs_pb2_grpc.VfsServiceStub(channel)
+        stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
         resp = stub.Ping(vfs_pb2.PingRequest(auth_token=""), timeout=10)
         assert resp is not None
     finally:

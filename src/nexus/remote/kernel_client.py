@@ -119,7 +119,7 @@ class KernelClient:
             self._server_address,
         )
 
-    def _wait_ready(self, timeout: float = 10.0) -> None:
+    def _wait_ready(self, timeout: float = 30.0) -> None:
         """Poll kernel health until ready."""
         assert self._transport is not None
         deadline = time.monotonic() + timeout

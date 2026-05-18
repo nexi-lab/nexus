@@ -557,13 +557,32 @@ class _SysReadResult:
 class _SysWriteResult:
     """Mimics PySysWriteResult from the old PyO3 binding."""
 
-    __slots__ = ("content_id", "size", "gen", "hit")
+    __slots__ = (
+        "hit",
+        "content_id",
+        "post_hook_needed",
+        "version",
+        "gen",
+        "size",
+        "is_new",
+        "old_content_id",
+        "old_size",
+        "old_version",
+        "old_modified_at_ms",
+    )
 
     def __init__(self, content_id: str | None = None, size: int = 0, gen: int = 0) -> None:
-        self.content_id = content_id
-        self.size = size
-        self.gen = gen
         self.hit = True
+        self.content_id = content_id
+        self.post_hook_needed = True
+        self.version = 1
+        self.gen = gen
+        self.size = size
+        self.is_new = False
+        self.old_content_id: str | None = None
+        self.old_size: int | None = None
+        self.old_version: int | None = None
+        self.old_modified_at_ms: int | None = None
 
 
 class _AgentRegistryProxy:

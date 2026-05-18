@@ -429,15 +429,17 @@ class KernelClient:
         pass
 
     # ── Trie (resolver registration) ──────────────────────────────────
+    # Trie is Python-side only (DispatchMixin). In subprocess mode the
+    # Rust kernel has no trie — return no-ops / None.
 
     def trie_register(self, pattern: str, idx: int) -> None:
-        self._call("trie_register", {"pattern": pattern, "idx": idx})
+        pass
 
     def trie_lookup(self, path: str) -> Any:
-        return self._call("trie_lookup", {"path": path})
+        return None
 
     def trie_unregister(self, idx: int) -> Any:
-        return self._call("trie_unregister", {"idx": idx})
+        return None
 
     # ── IPC: Pipes ─────────────────────────────────────────────────────
 
@@ -488,6 +490,11 @@ class KernelClient:
 
     def destroy_stream(self, path: str) -> None:
         self._call("destroy_stream", {"path": path})
+
+    def close_all_streams(self) -> None:
+        """Close all streams (shutdown)."""
+        # No batch close RPC — streams are cleaned up when the subprocess exits.
+        pass
 
     # ── Metastore path ─────────────────────────────────────────────────
 

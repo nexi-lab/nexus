@@ -1725,7 +1725,9 @@ impl PyKernel {
         self.inner.close_all_streams()
     }
 
-    // ── Trie proxy methods ─────────────────────────────────────────────
+    // ── Trie proxy methods (kernel-internal, used by nexus_fs_dispatch.py) ─
+    // NOT service-visible — callers are kernel-tier Python code that will
+    // eventually move to Rust. Kept on PyO3 surface as _internal methods.
 
     fn trie_register(&self, pattern: &str, resolver_idx: usize) -> PyResult<()> {
         self.inner

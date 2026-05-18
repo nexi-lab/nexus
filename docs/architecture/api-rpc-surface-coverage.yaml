@@ -443,7 +443,7 @@ operations:
   transports:
     grpc_expose:
       name: add_mount
-      source: src/nexus/bricks/mount/mount_service.py:861
+      source: src/nexus/bricks/mount/mount_service.py:873
   profiles:
     lite: supported
     sandbox: supported
@@ -2049,7 +2049,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:1890
+      source: src/nexus/core/nexus_fs_metadata.py:1896
     sdk:
       name: MCPClient.backfill_directory_index
       source: src/nexus/remote/domain/mcp.py:91
@@ -2885,7 +2885,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1414
+      source: src/nexus/core/nexus_fs_metadata.py:1420
   profiles:
     lite: supported
     sandbox: supported
@@ -2902,7 +2902,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_connector
-      source: src/nexus/bricks/mount/mount_service.py:933
+      source: src/nexus/bricks/mount/mount_service.py:945
   profiles:
     lite: supported
     sandbox: supported
@@ -2936,7 +2936,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_saved_mount
-      source: src/nexus/bricks/mount/mount_service.py:1379
+      source: src/nexus/bricks/mount/mount_service.py:1403
   profiles:
     lite: supported
     sandbox: supported
@@ -3500,7 +3500,7 @@ operations:
   transports:
     grpc_expose:
       name: exists_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1309
+      source: src/nexus/core/nexus_fs_metadata.py:1315
   profiles:
     lite: supported
     sandbox: supported
@@ -4294,7 +4294,7 @@ operations:
   transports:
     grpc_expose:
       name: stat
-      source: src/nexus/core/nexus_fs_metadata.py:1089
+      source: src/nexus/core/nexus_fs_metadata.py:1095
   profiles:
     lite: supported
     sandbox: supported
@@ -4433,7 +4433,7 @@ operations:
   transports:
     grpc_expose:
       name: flush_write_observer
-      source: src/nexus/core/nexus_fs_metadata.py:1920
+      source: src/nexus/core/nexus_fs_metadata.py:1926
   profiles:
     lite: supported
     sandbox: supported
@@ -4869,7 +4869,7 @@ operations:
   transports:
     grpc_expose:
       name: get_mount
-      source: src/nexus/bricks/mount/mount_service.py:1179
+      source: src/nexus/bricks/mount/mount_service.py:1203
   profiles:
     lite: supported
     sandbox: supported
@@ -5226,7 +5226,7 @@ operations:
   transports:
     grpc_expose:
       name: has_mount
-      source: src/nexus/bricks/mount/mount_service.py:1196
+      source: src/nexus/bricks/mount/mount_service.py:1220
   profiles:
     lite: supported
     sandbox: supported
@@ -5611,7 +5611,7 @@ operations:
   transports:
     grpc_expose:
       name: list_connectors
-      source: src/nexus/bricks/mount/mount_service.py:991
+      source: src/nexus/bricks/mount/mount_service.py:1003
   profiles:
     lite: supported
     sandbox: supported
@@ -5696,7 +5696,7 @@ operations:
   transports:
     grpc_expose:
       name: list_mounts
-      source: src/nexus/bricks/mount/mount_service.py:1163
+      source: src/nexus/bricks/mount/mount_service.py:1187
     sdk:
       name: MCPClient.list_mounts
       source: src/nexus/remote/domain/mcp.py:43
@@ -5750,7 +5750,7 @@ operations:
   transports:
     grpc_expose:
       name: list_saved_mounts
-      source: src/nexus/bricks/mount/mount_service.py:1283
+      source: src/nexus/bricks/mount/mount_service.py:1307
   profiles:
     lite: supported
     sandbox: supported
@@ -5852,7 +5852,7 @@ operations:
   transports:
     grpc_expose:
       name: load_mount
-      source: src/nexus/bricks/mount/mount_service.py:1331
+      source: src/nexus/bricks/mount/mount_service.py:1355
   profiles:
     lite: supported
     sandbox: supported
@@ -6209,7 +6209,7 @@ operations:
   transports:
     grpc_expose:
       name: metadata_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1319
+      source: src/nexus/core/nexus_fs_metadata.py:1325
   profiles:
     lite: supported
     sandbox: supported
@@ -7917,7 +7917,7 @@ operations:
   transports:
     grpc_expose:
       name: reauth_mount
-      source: src/nexus/bricks/mount/mount_service.py:1081
+      source: src/nexus/bricks/mount/mount_service.py:1099
   profiles:
     lite: supported
     sandbox: supported
@@ -8223,7 +8223,7 @@ operations:
   transports:
     grpc_expose:
       name: remove_mount
-      source: src/nexus/bricks/mount/mount_service.py:905
+      source: src/nexus/bricks/mount/mount_service.py:917
   profiles:
     lite: supported
     sandbox: supported
@@ -8240,7 +8240,7 @@ operations:
   transports:
     grpc_expose:
       name: rename_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1553
+      source: src/nexus/core/nexus_fs_metadata.py:1559
   profiles:
     lite: supported
     sandbox: supported
@@ -8478,7 +8478,7 @@ operations:
   transports:
     grpc_expose:
       name: save_mount
-      source: src/nexus/bricks/mount/mount_service.py:1212
+      source: src/nexus/bricks/mount/mount_service.py:1236
   profiles:
     lite: supported
     sandbox: supported
@@ -9579,7 +9579,7 @@ operations:
   transports:
     grpc_expose:
       name: stat_bulk
-      source: src/nexus/core/nexus_fs_metadata.py:1177
+      source: src/nexus/core/nexus_fs_metadata.py:1183
   profiles:
     lite: supported
     sandbox: supported
@@ -10242,7 +10242,7 @@ operations:
   transports:
     grpc_expose:
       name: update_mount
-      source: src/nexus/bricks/mount/mount_service.py:1008
+      source: src/nexus/bricks/mount/mount_service.py:1020
   profiles:
     lite: supported
     sandbox: supported

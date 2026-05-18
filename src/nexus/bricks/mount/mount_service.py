@@ -720,7 +720,14 @@ class MountService:
             return None
 
         _rust_kernel = getattr(self.nexus_fs, "_kernel", None) if self.nexus_fs else None
-        _has_mount = _rust_kernel.has_mount(mount_point, "root") if _rust_kernel else False
+        try:
+            _has_mount = (
+                _rust_kernel.sys_stat(mount_point, "root").get("entry_type") == 2
+                if _rust_kernel
+                else False
+            )
+        except Exception:
+            _has_mount = False
         if _has_mount:
             return {
                 "mount_point": mount_point,
@@ -737,7 +744,12 @@ class MountService:
             True if mount exists
         """
         _rust_kernel = getattr(self.nexus_fs, "_kernel", None) if self.nexus_fs else None
-        return _rust_kernel.has_mount(mount_point, "root") if _rust_kernel else False
+        if not _rust_kernel:
+            return False
+        try:
+            return _rust_kernel.sys_stat(mount_point, "root").get("entry_type") == 2
+        except Exception:
+            return False
 
     def list_connectors_sync(self, category: str | None = None) -> list[dict[str, Any]]:
         """List available connector types (synchronous).
@@ -1038,7 +1050,13 @@ class MountService:
         if not self._dlc:
             raise ValueError(f"Mount not found: {mount_point}")
         _kernel = getattr(self._dlc, "_kernel", None)
-        if _kernel is None or not _kernel.has_mount(mount_point, "root"):
+        try:
+            _is_mount = (
+                _kernel is not None and _kernel.sys_stat(mount_point, "root").get("entry_type") == 2
+            )
+        except Exception:
+            _is_mount = False
+        if not _is_mount:
             raise ValueError(f"Mount not found: {mount_point}")
 
         # DLC no longer stores skill backends — runtime config updates are
@@ -1112,7 +1130,13 @@ class MountService:
         if not self._dlc:
             raise ValueError(f"Mount not found: {mount_point}")
         _kernel = getattr(self._dlc, "_kernel", None)
-        if _kernel is None or not _kernel.has_mount(mount_point, "root"):
+        try:
+            _is_mount = (
+                _kernel is not None and _kernel.sys_stat(mount_point, "root").get("entry_type") == 2
+            )
+        except Exception:
+            _is_mount = False
+        if not _is_mount:
             raise ValueError(f"Mount not found: {mount_point}")
 
         # DLC no longer stores skill backends — reauth is not available.

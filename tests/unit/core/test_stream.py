@@ -291,19 +291,6 @@ class TestKernelStreamLifecycle:
         with pytest.raises(FileNotFoundError):
             k.destroy_stream("/streams/nonexistent")
 
-    def test_list_streams(self):
-        k = _make_kernel()
-        k.create_stream("/streams/a", 1024)
-        k.create_stream("/streams/b", 1024)
-
-        streams = k.list_streams()
-        assert "/streams/a" in streams
-        assert "/streams/b" in streams
-
-    def test_list_streams_empty(self):
-        k = _make_kernel()
-        assert k.list_streams() == []
-
     def test_close_all_streams(self):
         k = _make_kernel()
         k.create_stream("/streams/a", 1024)

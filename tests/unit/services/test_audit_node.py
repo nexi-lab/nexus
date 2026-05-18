@@ -10,9 +10,29 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+import types
 from typing import Any
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Stub nexus_runtime before importing AuditNode (its __init__ does
+# ``from nexus_runtime import PyOperationContext``).
+# ---------------------------------------------------------------------------
+
+if "nexus_runtime" not in sys.modules:
+    _stub = types.ModuleType("nexus_runtime")
+
+    class _PyOperationContext:
+        """Minimal PyOperationContext stub for tests."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    _stub.PyOperationContext = _PyOperationContext
+    sys.modules["nexus_runtime"] = _stub
 
 from nexus.services.audit_node import AuditNode
 
@@ -58,12 +78,9 @@ class _MockKernel:
     def stream_read_batch(self, path: str, offset: int, count: int) -> tuple[list[bytes], int]:
         return self._stream(path).read_batch(offset, count)
 
-    def stream_write_nowait(self, path: str, data: bytes) -> int:
-        return self._stream(path).append(data)
-
     # ── file surface (for offset persistence) ──────────────────────
 
-    def sys_read(self, path: str) -> bytes | None:
+    def sys_read(self, path: str, *_args: Any, **_kwargs: Any) -> bytes | None:
         return self._files.get(path)
 
     def sys_setattr(self, path: str, **kwargs: Any) -> dict[str, Any]:
@@ -72,9 +89,19 @@ class _MockKernel:
             self._files[path] = b""
         return {"path": path}
 
-    def sys_write(self, path: str, data: bytes) -> int:
-        self._files[path] = data
-        return len(data)
+    def sys_write(
+        self, path: str, ctx_or_data: Any = None, data: bytes | None = None, **kwargs: Any
+    ) -> int:
+        """Handle both the 3-arg stream form (path, ctx, data) and
+        the 2-arg file form (path, data)."""
+        if data is not None:
+            # 3-arg form: sys_write(path, ctx, data) — stream append
+            self._stream(path).append(data)
+            return len(data)
+        # 2-arg form: sys_write(path, data) — file write
+        raw = ctx_or_data if isinstance(ctx_or_data, bytes) else b""
+        self._files[path] = raw
+        return len(raw)
 
 
 @pytest.fixture

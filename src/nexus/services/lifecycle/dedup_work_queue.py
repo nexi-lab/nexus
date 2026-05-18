@@ -98,8 +98,11 @@ class DedupWorkQueue(Generic[T]):
         pipe_path: str | None = None,
         capacity: int = 65_536,
     ) -> None:
+        from nexus_runtime import PyOperationContext
+
         self._kernel = kernel
         self._pipe_path = pipe_path or f"/__sys__/dedup/{id(self)}"
+        self._sys_ctx = PyOperationContext(is_system=True)
         self._kernel.create_pipe(self._pipe_path, capacity * self._TOKEN_SIZE)
 
         self._seq = 0  # monotonic sequence counter
@@ -152,8 +155,10 @@ class DedupWorkQueue(Generic[T]):
             seq = self._seq
             self._seq += 1
             self._items[seq] = key
-            self._kernel.pipe_write_nowait(
-                self._pipe_path, seq.to_bytes(self._TOKEN_SIZE, "little")
+            self._kernel.sys_write(
+                self._pipe_path,
+                self._sys_ctx,
+                seq.to_bytes(self._TOKEN_SIZE, "little"),
             )
 
     async def get(self) -> T:
@@ -162,7 +167,7 @@ class DedupWorkQueue(Generic[T]):
         The caller MUST call ``done(key)`` when processing is complete,
         even if processing fails.  Use a try/finally block.
 
-        Polls the kernel pipe with ``pipe_read_nowait``.  If the pipe is
+        Polls the kernel pipe with ``sys_read``.  If the pipe is
         empty, yields to the event loop briefly (10 ms) and retries.
 
         Returns:
@@ -176,13 +181,14 @@ class DedupWorkQueue(Generic[T]):
                 raise ShutdownError("DedupWorkQueue has been shut down")
 
             try:
-                data = self._kernel.pipe_read_nowait(self._pipe_path)
+                result = self._kernel.sys_read(self._pipe_path, self._sys_ctx, timeout_ms=0)
+                data = result.data
             except RuntimeError as exc:
                 if "PipeClosed" in str(exc):
                     raise ShutdownError("DedupWorkQueue has been shut down") from None
                 raise
 
-            if data is None:
+            if data is None or data == b"":
                 # Pipe empty — yield and retry
                 if self._shutting_down:
                     raise ShutdownError("DedupWorkQueue has been shut down") from None
@@ -223,8 +229,10 @@ class DedupWorkQueue(Generic[T]):
                 seq = self._seq
                 self._seq += 1
                 self._items[seq] = key
-                self._kernel.pipe_write_nowait(
-                    self._pipe_path, seq.to_bytes(self._TOKEN_SIZE, "little")
+                self._kernel.sys_write(
+                    self._pipe_path,
+                    self._sys_ctx,
+                    seq.to_bytes(self._TOKEN_SIZE, "little"),
                 )
             except RuntimeError:
                 # PipeFull or PipeClosed — item stays in dirty
@@ -293,7 +301,7 @@ class DedupWorkQueue(Generic[T]):
             return
         self._closed = True
         with contextlib.suppress(RuntimeError):
-            self._kernel.destroy_pipe(self._pipe_path)
+            self._kernel.sys_unlink(self._pipe_path, self._sys_ctx)
 
     def __del__(self) -> None:
         self.close()

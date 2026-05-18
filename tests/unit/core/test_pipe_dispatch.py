@@ -3,7 +3,7 @@
 Verifies that Rust kernel IPC pipe operations (create_pipe,
 pipe_write_nowait, pipe_read_nowait, close_pipe) work correctly.
 
-PathRouter was deleted in §12 Phase F3. Pipe detection (DT_PIPE inode
+PathRouter was deleted in S12 Phase F3. Pipe detection (DT_PIPE inode
 lookup) is now handled by the kernel + DLC directly in NexusFS callers.
 
 See: Rust kernel IPC registry
@@ -13,6 +13,16 @@ from __future__ import annotations
 
 import pytest
 
+try:
+    from nexus_runtime import PyKernel
+
+    RUST_AVAILABLE = True
+except ImportError:
+    RUST_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not built")
+
+
 # ======================================================================
 # PyKernel IPC pipe read/write (replaces PipeManager tests)
 # ======================================================================
@@ -21,8 +31,6 @@ import pytest
 class TestKernelPipeReadWrite:
     def _make_kernel(self):
         """Create a Rust PyKernel instance for IPC testing."""
-        from nexus_runtime import PyKernel
-
         return PyKernel()
 
     def test_pipe_write_then_read(self) -> None:
@@ -54,10 +62,10 @@ class TestKernelPipeReadWrite:
 
         # close_pipe: sets closed flag but does NOT remove from registry
         kernel.close_pipe("/pipes/delme")
-        assert "/pipes/delme" in kernel.list_pipes()
+        assert kernel.has_pipe("/pipes/delme")
 
         # destroy_pipe: removes from registry
         kernel.destroy_pipe("/pipes/delme")
-        assert "/pipes/delme" not in kernel.list_pipes()
+        assert not kernel.has_pipe("/pipes/delme")
 
         kernel.close_all_pipes()

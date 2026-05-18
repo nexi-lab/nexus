@@ -894,10 +894,11 @@ class NexusFS(  # type: ignore[misc]
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
 
     def _pipe_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_PIPE — close Rust buffer."""
+        """Destroy DT_PIPE — sys_unlink on the pipe path."""
 
         with contextlib.suppress(Exception):
-            self._kernel.destroy_pipe(path)
+            rust_ctx = self._build_rust_ctx(None, True)
+            self._kernel.sys_unlink(path, rust_ctx)
         return {}
 
     # ------------------------------------------------------------------
@@ -911,21 +912,26 @@ class NexusFS(  # type: ignore[misc]
     # add event-loop ping-pong without buying anything.
 
     def pipe_create(self, path: str, capacity: int = 65_536) -> None:
-        """Create a DT_PIPE in the kernel registry.
+        """Create a DT_PIPE via sys_setattr."""
+        from nexus.contracts.metadata import DT_PIPE
 
-        Sync passthrough to ``Kernel.create_pipe``.
-        """
-        self._kernel.create_pipe(path, capacity)
+        self.sys_setattr(path, entry_type=DT_PIPE, capacity=capacity)
 
     def pipe_close(self, path: str) -> None:
         """Mark a DT_PIPE as closed (signals EOF to readers, keeps registry entry)."""
         self._kernel.close_pipe(path)
 
     def has_pipe(self, path: str) -> bool:
-        """Check if a DT_PIPE exists in the kernel registry."""
+        """Check if a DT_PIPE exists via sys_stat."""
+        from nexus.contracts.metadata import DT_PIPE
+
         if self._kernel is None:
             return False
-        return self._kernel.has_pipe(path)
+        try:
+            stat = self._kernel.sys_stat(path, self._zone_id)
+            return stat.get("entry_type") == DT_PIPE
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # Tier 2 public sync stream methods (kernel passthroughs)
@@ -937,14 +943,22 @@ class NexusFS(  # type: ignore[misc]
     # offset-based replay — async wrapping would just add ping-pong.
 
     def stream_create(self, path: str, capacity: int = 65_536) -> None:
-        """Create a DT_STREAM in the kernel registry."""
-        self._kernel.create_stream(path, capacity)
+        """Create a DT_STREAM via sys_setattr."""
+        from nexus.contracts.metadata import DT_STREAM
+
+        self.sys_setattr(path, entry_type=DT_STREAM, capacity=capacity)
 
     def has_stream(self, path: str) -> bool:
-        """Check if a DT_STREAM exists in the kernel registry."""
+        """Check if a DT_STREAM exists via sys_stat."""
+        from nexus.contracts.metadata import DT_STREAM
+
         if self._kernel is None:
             return False
-        return self._kernel.has_stream(path)
+        try:
+            stat = self._kernel.sys_stat(path, self._zone_id)
+            return stat.get("entry_type") == DT_STREAM
+        except Exception:
+            return False
 
     def stream_read_at_blocking(self, path: str, offset: int, timeout_ms: int) -> tuple[bytes, int]:
         """Blocking offset-based stream read. Returns (chunk, next_offset).
@@ -956,15 +970,18 @@ class NexusFS(  # type: ignore[misc]
         return (bytes(_data), _next)
 
     def stream_write_nowait(self, path: str, data: bytes) -> int:
-        """Non-blocking stream append. Returns byte offset."""
-        return self._kernel.stream_write_nowait(path, data)
+        """Non-blocking stream append via sys_write. Returns byte offset."""
+        rust_ctx = self._build_rust_ctx(None, True)
+        result = self._kernel.sys_write(path, rust_ctx, data)
+        return result.size
 
     def stream_read_at(self, path: str, offset: int) -> tuple[bytes, int] | None:
-        """Non-blocking offset-based stream read. Returns (chunk, next_offset) or None."""
-        _result = self._kernel.stream_read_at(path, offset)
-        if _result is None:
+        """Non-blocking offset-based stream read via sys_read. Returns (chunk, next_offset) or None."""
+        rust_ctx = self._build_rust_ctx(None, True)
+        result = self._kernel.sys_read(path, rust_ctx, timeout_ms=0, offset=offset)
+        if result.data is None or result.data == b"":
             return None
-        return (bytes(_result[0]), _result[1])
+        return (bytes(result.data), result.stream_next_offset or (offset + len(result.data)))
 
     def stream_collect_all(self, path: str) -> bytes:
         """Collect all message payloads from a DT_STREAM, concatenated.
@@ -986,25 +1003,28 @@ class NexusFS(  # type: ignore[misc]
         self._stream_destroy(path)
 
     def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_STREAM — nowait hot path + Rust blocking slow path (GIL-free)."""
+        """Read from DT_STREAM via sys_read with timeout for blocking slow path."""
         # Hot path: try nowait first (zero GIL)
-        _result = self._kernel.stream_read_at(path, offset)
-        if _result is not None:
-            return bytes(_result[0])
+        result = self.stream_read_at(path, offset)
+        if result is not None:
+            return result[0]
 
-        # Slow path: block in Rust, release GIL
+        # Slow path: block in Rust, release GIL (30s timeout)
         _data, _next = self._kernel.stream_read_at_blocking(path, offset, 30000)
         return bytes(_data)
 
     def _stream_write(self, path: str, data: bytes) -> int:
-        """Write to DT_STREAM — non-blocking via Rust kernel (condvar wakes readers), returns byte offset."""
-        return self._kernel.stream_write_nowait(path, data)
+        """Write to DT_STREAM via sys_write."""
+        rust_ctx = self._build_rust_ctx(None, True)
+        result = self._kernel.sys_write(path, rust_ctx, data)
+        return result.size
 
     def _stream_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_STREAM — close Rust buffer."""
+        """Destroy DT_STREAM via sys_unlink."""
 
         with contextlib.suppress(Exception):
-            self._kernel.destroy_stream(path)
+            rust_ctx = self._build_rust_ctx(None, True)
+            self._kernel.sys_unlink(path, rust_ctx)
         return {}
 
     def close(self) -> None:

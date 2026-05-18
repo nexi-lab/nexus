@@ -35,7 +35,7 @@ def _make_kernel() -> "PyKernel":
 
 
 # ======================================================================
-# PyKernel IPC Pipe — basic operations
+# PyKernel IPC Pipe -- basic operations
 # ======================================================================
 
 
@@ -90,7 +90,7 @@ class TestKernelPipeBasic:
 
 
 # ======================================================================
-# PyKernel IPC Pipe — capacity limits
+# PyKernel IPC Pipe -- capacity limits
 # ======================================================================
 
 
@@ -123,7 +123,7 @@ class TestKernelPipeCapacity:
 
 
 # ======================================================================
-# PyKernel IPC Pipe — close semantics
+# PyKernel IPC Pipe -- close semantics
 # ======================================================================
 
 
@@ -157,7 +157,7 @@ class TestKernelPipeClose:
 
 
 # ======================================================================
-# PyKernel IPC Pipe — lifecycle (create, destroy, list, close_all)
+# PyKernel IPC Pipe -- lifecycle (create, destroy, list, close_all)
 # ======================================================================
 
 
@@ -179,20 +179,6 @@ class TestKernelPipeLifecycle:
         k = _make_kernel()
         with pytest.raises(FileNotFoundError):
             k.destroy_pipe("/pipes/nope")
-
-    def test_list_pipes(self) -> None:
-        k = _make_kernel()
-        k.create_pipe("/pipes/a", 100)
-        k.create_pipe("/pipes/b", 200)
-        pipes = k.list_pipes()
-        assert "/pipes/a" in pipes
-        assert "/pipes/b" in pipes
-        assert len(pipes) >= 2
-
-    def test_list_pipes_empty(self) -> None:
-        k = _make_kernel()
-        pipes = k.list_pipes()
-        assert pipes == []
 
     def test_close_all_pipes(self) -> None:
         k = _make_kernel()
@@ -232,7 +218,7 @@ class TestKernelPipeLifecycle:
 
 
 # ======================================================================
-# PyKernel IPC Pipe — write/read on nonexistent pipe
+# PyKernel IPC Pipe -- write/read on nonexistent pipe
 # ======================================================================
 
 
@@ -249,7 +235,7 @@ class TestKernelPipeNotFound:
 
 
 # ======================================================================
-# PyKernel IPC Pipe — isolation between kernels
+# PyKernel IPC Pipe -- isolation between kernels
 # ======================================================================
 
 

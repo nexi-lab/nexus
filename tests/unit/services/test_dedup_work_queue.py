@@ -16,9 +16,31 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import sys
 import time
+import types
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Stub nexus_runtime before importing production code (it does
+# ``from nexus_runtime import PyOperationContext`` at construction time).
+# ---------------------------------------------------------------------------
+
+if "nexus_runtime" not in sys.modules:
+    _stub = types.ModuleType("nexus_runtime")
+
+    class _PyOperationContext:
+        """Minimal PyOperationContext stub for tests."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    _stub.PyOperationContext = _PyOperationContext
+    sys.modules["nexus_runtime"] = _stub
 
 from nexus.services.lifecycle.dedup_work_queue import (
     DedupWorkQueue,
@@ -31,8 +53,15 @@ from nexus.services.lifecycle.dedup_work_queue import (
 # ---------------------------------------------------------------------------
 
 
+class _PySysReadResult:
+    """Mimic PySysReadResult returned by kernel.sys_read."""
+
+    def __init__(self, data: bytes | None) -> None:
+        self.data = data
+
+
 class _FakeKernel:
-    """Minimal kernel mock implementing the pipe IPC API used by DedupWorkQueue."""
+    """Minimal kernel mock implementing the syscall API used by DedupWorkQueue."""
 
     def __init__(self) -> None:
         self._pipes: dict[str, tuple[collections.deque[bytes], int, bool]] = {}
@@ -41,7 +70,8 @@ class _FakeKernel:
     def create_pipe(self, path: str, capacity: int) -> None:
         self._pipes[path] = (collections.deque(), capacity, False)
 
-    def pipe_write_nowait(self, path: str, data: bytes) -> int:
+    def sys_write(self, path: str, ctx: Any, data: bytes, offset: int = 0) -> Any:
+        """Syscall write — delegates to pipe write for DT_PIPE paths."""
         buf, cap, closed = self._pipes[path]
         if closed:
             raise RuntimeError(f"PipeClosed: {path}")
@@ -49,24 +79,29 @@ class _FakeKernel:
         if current + len(data) > cap:
             raise RuntimeError(f"PipeFull: {path}")
         buf.append(data)
-        return len(data)
+        return MagicMock(hit=True, content_id=None, size=len(data))
 
-    def pipe_read_nowait(self, path: str) -> bytes | None:
+    def sys_read(
+        self, path: str, ctx: Any = None, timeout_ms: int = 5000, offset: int = 0
+    ) -> _PySysReadResult:
+        """Syscall read — returns PySysReadResult-like object."""
         buf, _cap, closed = self._pipes[path]
         if buf:
-            return buf.popleft()
+            return _PySysReadResult(buf.popleft())
         if closed:
             raise RuntimeError(f"PipeClosed: {path}")
-        return None
+        return _PySysReadResult(None)
+
+    def sys_unlink(self, path: str, ctx: Any = None, recursive: bool = False) -> Any:
+        """Syscall unlink — destroys the pipe."""
+        self._pipes.pop(path, None)
+        return MagicMock()
 
     def close_pipe(self, path: str) -> None:
         if path not in self._pipes:
             return
         buf, cap, _closed = self._pipes[path]
         self._pipes[path] = (buf, cap, True)
-
-    def destroy_pipe(self, path: str) -> None:
-        self._pipes.pop(path, None)
 
     def has_pipe(self, path: str) -> bool:
         return path in self._pipes

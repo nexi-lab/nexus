@@ -330,7 +330,7 @@ class TestStaleBinaryKernelMethods:
         """Warning must point to the fix, not just say something is wrong."""
         import logging
 
-        mod = _make_fake_module(kernel_missing_methods=["list_pipes"])
+        mod = _make_fake_module(kernel_missing_methods=["destroy_pipe"])
         with caplog.at_level(logging.WARNING, logger="nexus._rust_compat"):
             _reload_rust_compat(mod)
 
@@ -341,7 +341,7 @@ class TestStaleBinaryKernelMethods:
         """All missing methods should appear in the warning, not just the first."""
         import logging
 
-        missing = ["close_all_pipes", "list_pipes", "create_pipe"]
+        missing = ["close_all_pipes", "destroy_pipe", "create_pipe"]
         mod = _make_fake_module(kernel_missing_methods=missing)
         with caplog.at_level(logging.WARNING, logger="nexus._rust_compat"):
             _reload_rust_compat(mod)

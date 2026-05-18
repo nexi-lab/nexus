@@ -71,7 +71,10 @@ class AuditNode:
         batch_size: int = 256,
         poll_interval_secs: float = 1.0,
     ) -> None:
+        from nexus_runtime import PyOperationContext
+
         self._kernel = kernel
+        self._sys_ctx = PyOperationContext(is_system=True)
         self._audit_zone_id = audit_zone_id
         self._stream_path = stream_path
         self._batch_size = batch_size
@@ -210,11 +213,11 @@ class AuditNode:
 
         target_path = self._collect_traces_path(zone)
         for raw in entries:
-            # ``stream_write_nowait`` is the append-only writer for
-            # DT_STREAM paths; returns the appended offset.  We don't
-            # care about the local offset on the audit-node — only
-            # the source-zone offset that we persist as a checkpoint.
-            self._kernel.stream_write_nowait(target_path, raw)
+            # ``sys_write`` routes to DT_STREAM append-only writer;
+            # returns SysWriteResult.  We don't care about the local
+            # offset on the audit-node — only the source-zone offset
+            # that we persist as a checkpoint.
+            self._kernel.sys_write(target_path, self._sys_ctx, raw)
 
         checkpoint.offset = new_offset
         self._write_offset(zone, new_offset)

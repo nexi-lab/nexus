@@ -12,12 +12,24 @@ Choose this path when Nexus needs to run as a service instead of as an in-proces
 
 ## Server
 
-In a clean install, a minimal daemon setup looks like this:
+Run the daemon directly:
 
 ```bash
 export NEXUS_GRPC_PORT=2126
-nexusd --profile minimal --host 127.0.0.1 --port 2026 --data-dir ./nexus-data --api-key dev-key
+nexusd --profile full --host 127.0.0.1 --port 2026 \
+  --data-dir ./nexus-data --auth-type static --api-key dev-key
 ```
+
+Or run the managed stack (FULL profile, PostgreSQL/Dragonfly/Zoekt):
+
+```bash
+nexus init --preset shared && nexus up && eval $(nexus env)
+```
+
+> `minimal` is not a deployment profile. Valid profiles: `embedded`,
+> `lite`, `sandbox`, `full`, `cloud`, `cluster`, `remote` (and `remote`
+> cannot run as a daemon). See
+> [FULL deployment profile](../deployment/full-profile.md).
 
 ## Client
 

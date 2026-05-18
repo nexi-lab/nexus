@@ -20,7 +20,7 @@ import os
 import signal
 import subprocess
 import time
-from typing import Any
+from typing import IO, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.remote.rpc_transport import RPCTransport
@@ -52,6 +52,8 @@ class KernelClient:
     ) -> None:
         self._metadata_path = metadata_path
         self._process: subprocess.Popen[bytes] | None = None
+        self._stderr_file: IO[bytes] | None = None
+        self._stderr_path: str | None = None
         self._transport: RPCTransport | None = None
         self._timeout = timeout
         self._auth_token = auth_token or ""
@@ -93,6 +95,16 @@ class KernelClient:
             except subprocess.TimeoutExpired:
                 self._process.kill()
             self._process = None
+        if self._stderr_file is not None:
+            import contextlib
+
+            with contextlib.suppress(OSError):
+                self._stderr_file.close()
+            stderr_path = getattr(self, "_stderr_path", None)
+            if stderr_path:
+                with contextlib.suppress(OSError):
+                    os.unlink(stderr_path)
+            self._stderr_file = None
 
     def _is_remote(self) -> bool:
         return self._process is None and self._transport is not None
@@ -101,23 +113,32 @@ class KernelClient:
         """Spawn nexus-cluster as a subprocess."""
         cmd = ["nexus-cluster"]
         env = os.environ.copy()
-        # Pass metastore path if provided.
+        # Pass data directory if provided (Rust binary reads NEXUS_DATA_DIR).
         if self._metadata_path:
-            env["NEXUS_METASTORE_PATH"] = self._metadata_path
+            env["NEXUS_DATA_DIR"] = self._metadata_path
         env["NEXUS_BIND_ADDR"] = self._server_address
         env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.
         env.setdefault("NEXUS_BOOTSTRAP_MODE", "dynamic")
 
+        # Redirect stdout/stderr to temp files to avoid pipe buffer deadlock.
+        # The OS pipe buffer (~65KB) fills up when the Rust binary emits
+        # tracing output and nobody reads the pipe, blocking the process.
+        import tempfile
+
+        fd, stderr_path = tempfile.mkstemp(prefix="nexus-kernel-", suffix=".log")
+        self._stderr_file = os.fdopen(fd, "wb")
+        self._stderr_path = stderr_path
         self._process = subprocess.Popen(
             cmd,
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=self._stderr_file,
         )
         logger.info(
-            "Spawned nexus-cluster (pid=%d) at %s",
+            "Spawned nexus-cluster (pid=%d) at %s, log=%s",
             self._process.pid,
             self._server_address,
+            self._stderr_path,
         )
 
     def _wait_ready(self, timeout: float = 30.0) -> None:
@@ -126,15 +147,38 @@ class KernelClient:
         deadline = time.monotonic() + timeout
         last_err: Exception | None = None
         while time.monotonic() < deadline:
+            # Check if subprocess crashed before wasting time on gRPC.
+            if self._process is not None:
+                rc = self._process.poll()
+                if rc is not None:
+                    stderr_tail = self._read_stderr_tail()
+                    raise RuntimeError(
+                        f"Kernel subprocess exited with code {rc} "
+                        f"before becoming ready.\n{stderr_tail}"
+                    )
             try:
                 self._transport.ping()
                 return
             except Exception as e:
                 last_err = e
                 time.sleep(0.1)
+        stderr_tail = self._read_stderr_tail()
         raise TimeoutError(
-            f"Kernel not ready after {timeout}s at {self._server_address}"
+            f"Kernel not ready after {timeout}s at {self._server_address}\n{stderr_tail}"
         ) from last_err
+
+    def _read_stderr_tail(self, lines: int = 30) -> str:
+        """Read the last N lines from the kernel stderr log file."""
+        stderr_path = getattr(self, "_stderr_path", None)
+        if stderr_path is None:
+            return ""
+        try:
+            with open(stderr_path) as f:
+                all_lines = f.readlines()
+                tail = all_lines[-lines:]
+                return "".join(tail)
+        except OSError:
+            return ""
 
     # ── Syscall interface ──────────────────────────────────────────────
 

@@ -333,3 +333,32 @@ def test_sandbox_boot_time_and_rss_within_loose_bounds(tmp_path: Path, record_pr
         assert rss_mb < RSS_CEILING_MB, (
             f"RSS {rss_mb:.1f}MB exceeds loose {RSS_CEILING_MB}MB ceiling"
         )
+
+
+def test_sandbox_flag_without_profile_is_rejected_by_daemon() -> None:
+    """`--workspace` without `--profile sandbox` is a usage error.
+
+    Parity with tests/unit/cli/test_stack_sandbox.py, asserted against
+    the real daemon process (end-to-end gating, not just Click).
+    """
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nexus.daemon.main",
+            "--workspace",
+            "/tmp/should-not-be-allowed",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode != 0, (
+        f"daemon must reject --workspace without --profile sandbox; "
+        f"stdout={proc.stdout} stderr={proc.stderr}"
+    )
+    combined = (proc.stdout + proc.stderr).lower()
+    assert "sandbox" in combined, (
+        f"error should mention sandbox profile requirement; "
+        f"stdout={proc.stdout} stderr={proc.stderr}"
+    )

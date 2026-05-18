@@ -21,21 +21,22 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-async def app_and_key(tmp_path):
+@pytest.fixture(scope="module")
+async def app_and_key(tmp_path_factory):
     """Build a real FastAPI app with NexusFS + Prometheus middleware."""
     from nexus.server.fastapi_server import create_app
     from nexus.server.metrics import setup_prometheus, shutdown_prometheus
 
     os.environ.setdefault("NEXUS_JWT_SECRET", "test-secret-12345")
 
-    storage_dir = tmp_path / "storage"
+    base = tmp_path_factory.mktemp("nexus_observability")
+    storage_dir = base / "storage"
     storage_dir.mkdir(exist_ok=True)
     backend = CASLocalBackend(root_path=str(storage_dir))
 
-    metadata_store = str(tmp_path / "raft-metadata")
+    metadata_store = str(base / "raft-metadata")
 
-    db_url = f"sqlite:///{tmp_path / 'records.db'}"
+    db_url = f"sqlite:///{base / 'records.db'}"
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
     nx = create_nexus_fs(
@@ -58,14 +59,14 @@ async def app_and_key(tmp_path):
     shutdown_prometheus()
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def client(app_and_key):
     """TestClient backed by the real app."""
     app, _ = app_and_key
     return TestClient(app)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def auth_headers(app_and_key):
     """Headers with a valid API key."""
     _, key = app_and_key

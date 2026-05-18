@@ -15,11 +15,13 @@ from nexus.core.pagination import PaginatedResult
 from nexus.factory import create_nexus_fs
 
 
-@pytest.fixture
-async def nexus_fs(tmp_path, isolated_db):
+@pytest.fixture(scope="module")
+async def nexus_fs(tmp_path_factory):
     """Create a NexusFS instance for testing via factory."""
-    backend = CASLocalBackend(str(tmp_path / "data"))
-    metadata_store = str(isolated_db).replace(".db", "")
+    base = tmp_path_factory.mktemp("nexus_pagination")
+    (base / "data").mkdir()
+    backend = CASLocalBackend(str(base / "data"))
+    metadata_store = str(base / "meta")
     nx = create_nexus_fs(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
     )
@@ -27,7 +29,7 @@ async def nexus_fs(tmp_path, isolated_db):
     nx.close()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 async def nexus_fs_with_files(nexus_fs):
     """Create NexusFS with 100 test files."""
     for i in range(100):
@@ -35,11 +37,13 @@ async def nexus_fs_with_files(nexus_fs):
     return nexus_fs
 
 
-@pytest.fixture
-async def nexus_fs_large(tmp_path, isolated_db):
+@pytest.fixture(scope="module")
+async def nexus_fs_large(tmp_path_factory):
     """Create NexusFS with 1000 test files for scale testing."""
-    backend = CASLocalBackend(str(tmp_path / "data"))
-    metadata_store = str(isolated_db).replace(".db", "")
+    base = tmp_path_factory.mktemp("nexus_pagination_large")
+    (base / "data").mkdir()
+    backend = CASLocalBackend(str(base / "data"))
+    metadata_store = str(base / "meta")
     nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,

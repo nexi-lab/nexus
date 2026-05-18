@@ -25,11 +25,13 @@ from nexus.factory import create_nexus_fs
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-async def nexus_fs(tmp_path, isolated_db):
+@pytest.fixture(scope="module")
+async def nexus_fs(tmp_path_factory):
     """Create a NexusFS with permissions disabled (pure listing tests)."""
-    backend = CASLocalBackend(str(tmp_path / "data"))
-    metadata_store = str(isolated_db).replace(".db", "")
+    base = tmp_path_factory.mktemp("nexus_readdir")
+    (base / "data").mkdir()
+    backend = CASLocalBackend(str(base / "data"))
+    metadata_store = str(base / "meta")
     nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
@@ -40,7 +42,7 @@ async def nexus_fs(tmp_path, isolated_db):
     nx.close()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 async def nexus_fs_herb(nexus_fs):
     """Seed HERB corpus structure: 30 product dirs × 10 files each = 300 files."""
     products = [
@@ -85,7 +87,7 @@ async def nexus_fs_herb(nexus_fs):
     return nexus_fs
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 async def nexus_fs_scale(nexus_fs):
     """Seed a large flat directory: 5000 files under /bigdir/."""
     for i in range(5000):
@@ -93,7 +95,7 @@ async def nexus_fs_scale(nexus_fs):
     return nexus_fs
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 async def nexus_fs_implicit_dirs(nexus_fs):
     """Seed files under implicit directories (no explicit mkdir).
 

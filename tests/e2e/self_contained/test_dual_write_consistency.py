@@ -8,7 +8,6 @@ Phase 1.4 of #1246/#1330 consolidation plan.
 
 from __future__ import annotations
 
-import tempfile
 from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -34,25 +33,24 @@ def _try_create_raft_store(path: str) -> str:
     return path
 
 
-@pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+@pytest.fixture(scope="module")
+def _dual_write_base(tmp_path_factory) -> Path:
+    return tmp_path_factory.mktemp("nexus_dual_write")
 
 
-@pytest.fixture
-def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
-    rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
+@pytest.fixture(scope="module")
+def record_store(_dual_write_base: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+    rs = SQLAlchemyRecordStore(db_path=_dual_write_base / "metadata.db")
     yield rs
     rs.close()
 
 
-@pytest.fixture
-async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore):
-    metadata_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
+@pytest.fixture(scope="module")
+async def nx(_dual_write_base: Path, record_store: SQLAlchemyRecordStore):
+    metadata_store = _try_create_raft_store(str(_dual_write_base / "raft-metadata"))
 
     nx = create_nexus_fs(
-        backend=CASLocalBackend(str(temp_dir / "data")),
+        backend=CASLocalBackend(str(_dual_write_base / "data")),
         metadata_store=metadata_store,
         record_store=record_store,
         parsing=ParseConfig(auto_parse=False),

@@ -99,25 +99,27 @@ def 認証(トークン):
 """
 
 
-@pytest.fixture
-async def nexus_fs(isolated_db, tmp_path):
-    backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
+@pytest.fixture(scope="module")
+async def nexus_fs(tmp_path_factory):
+    base = tmp_path_factory.mktemp("nexus_md_structure")
+    (base / "storage").mkdir()
+    backend = CASLocalBackend(root_path=str(base / "storage"))
     nx = create_nexus_fs(
         backend=backend,
-        metadata_store=str(isolated_db).replace(".db", "-raft"),
-        record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
+        metadata_store=str(base / "meta"),
+        record_store=SQLAlchemyRecordStore(db_path=str(base / "records.db")),
         permissions=PermissionConfig(enforce=False),
     )
     yield nx
     nx.close()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 async def mcp_server(nexus_fs):
     return await create_mcp_server(nx=nexus_fs)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 async def md_file(nexus_fs):
     """Write the sample markdown file and return its path."""
     path = "/docs/arch.md"
@@ -125,7 +127,7 @@ async def md_file(nexus_fs):
     return path
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 async def cjk_file(nexus_fs):
     """Write the CJK markdown file."""
     path = "/docs/cjk.md"

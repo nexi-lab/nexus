@@ -118,20 +118,9 @@ class DriverLifecycleCoordinator:
         """Return user-facing mount points (no zone prefix).
 
         If ``zone_id`` is provided, only mounts in that zone are returned.
-        Delegates to Rust kernel ``get_mount_points()`` which returns
-        zone-canonical keys (``zone_id:path``).  We strip the prefix and
-        optionally filter by zone.
+        Delegates to Rust kernel ``get_top_level_mounts(zone_id)``.
         """
         if self._kernel is None:
             return []
-        zone_filter = zone_id or "root"
-        result: list[str] = []
-        for key in self._kernel.get_mount_points():
-            # Keys are "zone_id:/path"
-            if ":" in key:
-                z, path = key.split(":", 1)
-                if z == zone_filter:
-                    result.append(path)
-            else:
-                result.append(key)
-        return sorted(result)
+        mounts = self._kernel.get_top_level_mounts(zone_id or "root")
+        return sorted(mounts)

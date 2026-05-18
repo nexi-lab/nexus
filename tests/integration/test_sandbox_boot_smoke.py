@@ -244,3 +244,79 @@ def test_sandbox_grpc_ping_over_real_socket(sandbox_daemon) -> None:
         assert resp is not None
     finally:
         channel.close()
+
+
+RSS_CEILING_MB = 800  # loose gross-regression guard, not a tuned baseline
+# Boot-to-readiness varies widely across cold Rust-kernel init and CI
+# load (empirically ~7-105s in this suite). This ceiling only guards
+# against gross regressions of a setup path; it is intentionally loose.
+WARM_BOOT_CEILING_S = 150.0
+
+
+def _spawn_and_time(tmp_path: Path) -> tuple[float, float | None, object]:
+    """Spawn a sandbox daemon, time boot-to-readiness, sample RSS.
+
+    Returns (boot_seconds, rss_mb_or_None, proc). Caller must terminate
+    the returned process.
+    """
+    psutil = pytest.importorskip("psutil")
+    port = _free_port()
+    t0 = time.monotonic()
+    proc, ready_file, log_path = _spawn_sandbox_daemon(tmp_path, port)
+    _wait_ready(proc, ready_file, log_path)
+    boot_s = time.monotonic() - t0
+    try:
+        rss_mb = psutil.Process(proc.pid).memory_info().rss / (1024 * 1024)
+    except Exception:
+        rss_mb = None
+    return boot_s, rss_mb, proc
+
+
+def _terminate(proc) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=10)
+
+
+def test_sandbox_boot_time_and_rss_within_loose_bounds(tmp_path: Path, record_property) -> None:
+    """Measure cold + warm boot time and RSS; assert loose ceilings only.
+
+    Boot is a setup path and RSS a resource budget — neither is a hot
+    path. These bounds guard against gross regressions; the observed
+    numbers are surfaced via record_property + stdout for the user guide.
+    """
+    pytest.importorskip("psutil")
+
+    cold_boot_s, rss_mb, proc1 = _spawn_and_time(tmp_path / "cold")
+    try:
+        pass
+    finally:
+        _terminate(proc1)
+
+    warm_boot_s, _, proc2 = _spawn_and_time(tmp_path / "warm")
+    try:
+        pass
+    finally:
+        _terminate(proc2)
+
+    record_property("sandbox_cold_boot_s", round(cold_boot_s, 2))
+    record_property("sandbox_warm_boot_s", round(warm_boot_s, 2))
+    if rss_mb is not None:
+        record_property("sandbox_rss_mb", round(rss_mb, 1))
+    print(
+        f"\n[#4126] cold_boot={cold_boot_s:.2f}s "
+        f"warm_boot={warm_boot_s:.2f}s "
+        f"rss={'n/a' if rss_mb is None else f'{rss_mb:.1f}MB'}"
+    )
+
+    assert warm_boot_s < WARM_BOOT_CEILING_S, (
+        f"warm boot {warm_boot_s:.2f}s exceeds loose {WARM_BOOT_CEILING_S}s "
+        f"gross-regression ceiling"
+    )
+    if rss_mb is not None:
+        assert rss_mb < RSS_CEILING_MB, (
+            f"RSS {rss_mb:.1f}MB exceeds loose {RSS_CEILING_MB}MB ceiling"
+        )

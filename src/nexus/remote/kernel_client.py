@@ -190,7 +190,7 @@ class KernelClient:
     def sys_read(
         self,
         path: str,
-        context: dict[str, Any] | None = None,
+        context: Any = None,
         timeout_ms: int = 0,
         offset: int = 0,
     ) -> Any:
@@ -203,7 +203,7 @@ class KernelClient:
     def sys_write(
         self,
         path: str,
-        context: dict[str, Any] | None = None,
+        context: Any = None,
         data: bytes = b"",
         offset: int = 0,
     ) -> Any:
@@ -217,61 +217,94 @@ class KernelClient:
         )
 
     def sys_stat(self, path: str, zone_id: str = ROOT_ZONE_ID) -> Any:
-        """Stat a path — returns metadata dict."""
-        return self._call("sys_stat", {"path": path, "zone_id": zone_id})
+        """Stat a path — returns metadata dict or None on not-found."""
+        try:
+            return self._call("sys_stat", {"path": path, "zone_id": zone_id})
+        except Exception:
+            # FileNotFound is raised as an RPC error — translate to None.
+            return None
 
     def sys_setattr(self, path: str, **kwargs: Any) -> Any:
         """Set attributes on a path."""
-        return self._call("sys_setattr", {"path": path, **kwargs})
+        result = self._call("sys_setattr", {"path": path, **kwargs})
+        if isinstance(result, dict):
+            return _SysSetAttrResult(result)
+        return result
 
-    def sys_unlink(self, path: str, context: dict[str, Any] | None = None) -> Any:
-        """Delete a file/directory."""
-        assert self._transport is not None
-        return self._transport.delete_file(path, recursive=False)
+    def sys_unlink(self, path: str, context: Any = None, recursive: bool = False) -> Any:
+        """Delete a file/directory via Call RPC."""
+        result = self._call("sys_unlink", {"path": path, "recursive": recursive})
+        if isinstance(result, dict):
+            return _SysUnlinkResult(result)
+        return _SysUnlinkResult({})
 
-    def sys_mkdir(self, path: str, context: dict[str, Any] | None = None) -> Any:
+    def sys_mkdir(
+        self, path: str, context: Any = None, parents: bool = False, exist_ok: bool = True
+    ) -> Any:
         """Create a directory."""
-        return self._call("sys_mkdir", {"path": path, **(context or {})})
+        result = self._call("sys_mkdir", {"path": path, "parents": parents, "exist_ok": exist_ok})
+        if isinstance(result, dict):
+            return _SysMkdirResult(result)
+        return _SysMkdirResult({})
 
     def sys_rename(
         self,
         path: str,
         new_path: str,
-        context: dict[str, Any] | None = None,
+        context: Any = None,
     ) -> Any:
         """Rename/move a file or directory."""
-        return self._call("sys_rename", {"path": path, "new_path": new_path, **(context or {})})
+        result = self._call("sys_rename", {"path": path, "new_path": new_path})
+        if isinstance(result, dict):
+            return _SysRenameResult(result)
+        return _SysRenameResult({})
 
     def sys_copy(
         self,
         src: str,
         dst: str,
-        context: dict[str, Any] | None = None,
+        context: Any = None,
     ) -> Any:
         """Copy a file."""
-        return self._call("sys_copy", {"src": src, "dst": dst, **(context or {})})
+        result = self._call("sys_copy", {"src": src, "dst": dst})
+        if isinstance(result, dict):
+            return _SysCopyResult(result)
+        return _SysCopyResult({})
 
     def sys_readdir(
         self,
         path: str,
-        context: dict[str, Any] | None = None,
-        page_size: int = 0,
-        page_token: str = "",
-    ) -> Any:
-        """List directory contents."""
-        return self._call(
+        zone_id: str = ROOT_ZONE_ID,
+        is_admin: bool = False,
+    ) -> list[tuple[str, int]]:
+        """List directory contents — returns list of (path, entry_type) tuples."""
+        result = self._call(
             "sys_readdir",
-            {"path": path, "page_size": page_size, "page_token": page_token},
+            {"path": path, "zone_id": zone_id},
         )
+        if result is None:
+            return []
+        if isinstance(result, list):
+            entries: list[tuple[str, int]] = []
+            for e in result:
+                if isinstance(e, dict):
+                    entries.append((e.get("name", ""), e.get("entry_type", 0)))
+                elif isinstance(e, (list, tuple)) and len(e) >= 2:
+                    entries.append((e[0], e[1]))
+            return entries
+        return []
 
     def sys_lock(
         self,
         path: str,
-        context: dict[str, Any] | None = None,
+        context: Any = None,
         timeout_ms: int = 5000,
     ) -> Any:
         """Acquire advisory lock."""
-        return self._call("sys_lock", {"path": path, "timeout_ms": timeout_ms, **(context or {})})
+        result = self._call("sys_lock", {"path": path, "timeout_ms": timeout_ms})
+        if isinstance(result, dict):
+            return result.get("lock_id", "")
+        return result
 
     def sys_unlock(self, path: str, lock_id: str = "", force: bool = False) -> Any:
         """Release advisory lock."""
@@ -280,7 +313,7 @@ class KernelClient:
     def sys_read_batch(
         self,
         items: list[tuple[str, int, int | None]],
-        context: dict[str, Any] | None = None,
+        context: Any = None,
     ) -> Any:
         """Batch read via generic Call RPC (no typed BatchRead endpoint)."""
         return self._call(
@@ -288,9 +321,12 @@ class KernelClient:
             {"items": [(path, offset, count) for path, offset, count in items]},
         )
 
-    def stat_batch(self, paths: list[str], zone_id: str = ROOT_ZONE_ID) -> Any:
-        """Batch stat multiple paths."""
-        return self._call("stat_batch", {"paths": paths, "zone_id": zone_id})
+    def stat_batch(self, paths: list[str], zone_id: str = ROOT_ZONE_ID) -> list[Any]:
+        """Batch stat multiple paths — returns list of stat dicts or None."""
+        result = self._call("stat_batch", {"paths": paths, "zone_id": zone_id})
+        if isinstance(result, list):
+            return result
+        return [None] * len(paths)
 
     def sys_watch(self, path: str, timeout_ms: int = 30000) -> Any:
         """Watch for file changes (blocking)."""
@@ -342,11 +378,11 @@ class KernelClient:
         """Return 0 — native hooks run in-kernel, Python hooks use DispatchMixin."""
         return 0
 
-    def dispatch_post_hooks(self, op: str, ctx: dict[str, Any]) -> None:
+    def dispatch_post_hooks(self, op: str, ctx: Any) -> None:
         """No-op — native hooks fire inside the kernel process."""
         pass
 
-    def dispatch_pre_hooks(self, op: str, ctx: dict[str, Any]) -> None:
+    def dispatch_pre_hooks(self, op: str, ctx: Any) -> None:
         """No-op — native hooks fire inside the kernel process."""
         pass
 
@@ -399,12 +435,11 @@ class KernelClient:
 
     def get_top_level_mounts(self, zone_id: str = "") -> list[str]:
         """Return top-level mounts via sys_readdir on /."""
-        result = self.sys_readdir("/")
-        if result is None:
+        result = self.sys_readdir("/", zone_id=zone_id or ROOT_ZONE_ID)
+        if not result:
             return []
-        if isinstance(result, list):
-            return [e.get("name", e) if isinstance(e, dict) else str(e) for e in result]
-        return []
+        # sys_readdir now returns list of (name, entry_type) tuples
+        return [name for name, _etype in result]
 
     def metastore_list_paginated(
         self,
@@ -414,14 +449,10 @@ class KernelClient:
         cursor: Any = None,
     ) -> dict[str, Any]:
         """Paginated list via sys_readdir — returns {"items": [...]}."""
-        result = self.sys_readdir(prefix)
+        entries = self.sys_readdir(prefix)
         items: list[dict[str, Any]] = []
-        if isinstance(result, list):
-            for e in result:
-                if isinstance(e, dict):
-                    items.append(e)
-                else:
-                    items.append({"name": str(e)})
+        for name, etype in entries:
+            items.append({"name": name, "entry_type": etype})
         return {"items": items[:limit], "next_cursor": None}
 
     def service_unregister(self, name: str) -> None:
@@ -518,14 +549,19 @@ class KernelClient:
         """No-op — permission provider lives inside the kernel process."""
         pass
 
-    def write_batch(
-        self, files: list[tuple[str, bytes]], context: dict[str, Any] | None = None
-    ) -> Any:
+    def write_batch(self, files: list[tuple[str, bytes]], context: Any = None) -> list[Any]:
         """Batch write multiple files."""
-        return self._call(
-            "write_batch",
-            {"files": [(p, None) for p, _ in files], **(context or {})},
-        )
+        import base64
+
+        encoded_files = []
+        for path, data in files:
+            encoded_files.append(
+                [path, {"__type__": "bytes", "data": base64.b64encode(data).decode()}]
+            )
+        result = self._call("write_batch", {"files": encoded_files})
+        if isinstance(result, list):
+            return [_BatchWriteItemResult(r) if isinstance(r, dict) else r for r in result]
+        return []
 
     def agent_registry(self) -> Any:
         """Return agent registry proxy."""
@@ -583,6 +619,99 @@ class _SysWriteResult:
         self.old_size: int | None = None
         self.old_version: int | None = None
         self.old_modified_at_ms: int | None = None
+
+
+class _SysMkdirResult:
+    """Result wrapper for sys_mkdir Call RPC response."""
+
+    __slots__ = ("hit", "post_hook_needed")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.hit = d.get("hit", True)
+        self.post_hook_needed = d.get("post_hook_needed", False)
+
+
+class _SysUnlinkResult:
+    """Result wrapper for sys_unlink Call RPC response."""
+
+    __slots__ = ("hit", "post_hook_needed", "entry_type", "path", "content_id", "size")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.hit = d.get("hit", True)
+        self.post_hook_needed = d.get("post_hook_needed", False)
+        self.entry_type = d.get("entry_type", 0)
+        self.path = d.get("path", "")
+        self.content_id = d.get("content_id")
+        self.size = d.get("size", 0)
+
+
+class _SysRenameResult:
+    """Result wrapper for sys_rename Call RPC response."""
+
+    __slots__ = (
+        "hit",
+        "success",
+        "post_hook_needed",
+        "is_directory",
+        "old_content_id",
+        "old_size",
+        "old_version",
+        "old_modified_at_ms",
+    )
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.hit = d.get("hit", True)
+        self.success = d.get("success", True)
+        self.post_hook_needed = d.get("post_hook_needed", False)
+        self.is_directory = d.get("is_directory", False)
+        self.old_content_id = d.get("old_content_id")
+        self.old_size = d.get("old_size")
+        self.old_version = d.get("old_version")
+        self.old_modified_at_ms = d.get("old_modified_at_ms")
+
+
+class _SysCopyResult:
+    """Result wrapper for sys_copy Call RPC response."""
+
+    __slots__ = ("hit", "post_hook_needed", "dst_path", "content_id", "size", "version", "gen")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.hit = d.get("hit", True)
+        self.post_hook_needed = d.get("post_hook_needed", False)
+        self.dst_path = d.get("dst_path", "")
+        self.content_id = d.get("content_id")
+        self.size = d.get("size", 0)
+        self.version = d.get("version", 1)
+        self.gen = d.get("gen", 0)
+
+
+class _SysSetAttrResult:
+    """Result wrapper for sys_setattr Call RPC response."""
+
+    __slots__ = ("path", "created", "entry_type")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.path = d.get("path", "")
+        self.created = d.get("created", False)
+        self.entry_type = d.get("entry_type", 0)
+
+
+class _BatchWriteItemResult:
+    """Result wrapper for individual write_batch item."""
+
+    __slots__ = ("content_id", "size", "gen", "version")
+
+    def __init__(self, d: dict[str, Any] | None = None) -> None:
+        d = d or {}
+        self.content_id = d.get("content_id")
+        self.size = d.get("size", 0)
+        self.gen = d.get("gen", 0)
+        self.version = d.get("version", 1)
 
 
 class _AgentRegistryProxy:

@@ -459,12 +459,68 @@ class KernelClient:
         limit: int = 100000,
         cursor: Any = None,
     ) -> dict[str, Any]:
-        """Paginated list via sys_readdir — returns {"items": [...]}."""
+        """Paginated list via sys_readdir — returns {items, next_cursor, has_more, total_count}.
+
+        Items are FileMetadata objects (callers access .path, .zone_id etc.).
+        Uses stat_batch to populate metadata when available.
+        """
+        from nexus.contracts.metadata import FileMetadata
+
         entries = self.sys_readdir(prefix)
-        items: list[dict[str, Any]] = []
-        for name, etype in entries:
-            items.append({"name": name, "entry_type": etype})
-        return {"items": items[:limit], "next_cursor": None}
+
+        # Apply cursor-based pagination: skip entries until we pass the cursor path
+        if cursor:
+            skip = True
+            filtered = []
+            for name, etype in entries:
+                if skip:
+                    if name == cursor:
+                        skip = False
+                    continue
+                filtered.append((name, etype))
+            entries = filtered
+
+        total = len(entries)
+        page = entries[:limit]
+        has_more = total > limit
+
+        # Convert to FileMetadata objects — callers access .path, .zone_id, etc.
+        # Enrich with stat data when available for size/content_id/version.
+        paths = [name for name, _ in page]
+        stats: list[Any] = []
+        if paths:
+            try:
+                stats = self.stat_batch(paths)
+            except Exception:
+                stats = [None] * len(paths)
+        if len(stats) != len(paths):
+            stats = [None] * len(paths)
+
+        items: list[FileMetadata] = []
+        for i, (name, etype) in enumerate(page):
+            st = stats[i] if i < len(stats) else None
+            if isinstance(st, dict):
+                items.append(
+                    FileMetadata(
+                        path=st.get("path", name),
+                        size=st.get("size", 0),
+                        content_id=st.get("content_id"),
+                        entry_type=st.get("entry_type", etype),
+                        version=st.get("version", 1),
+                        gen=st.get("gen", 0),
+                        zone_id=st.get("zone_id"),
+                    )
+                )
+            else:
+                items.append(FileMetadata(path=name, size=0, entry_type=etype))
+
+        next_cursor = page[-1][0] if has_more and page else None
+        return {
+            "items": items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "total_count": total,
+        }
 
     def service_unregister(self, name: str) -> None:
         """No-op — services are kernel-internal in subprocess mode."""

@@ -539,6 +539,20 @@ class KernelClient:
     def trie_unregister(self, idx: int) -> Any:
         return None
 
+    # ── Xattr (file metadata side-car) ──────────────────────────────────
+
+    def get_xattr(self, path: str, key: str) -> str | None:
+        """Get extended attribute — no-op in subprocess mode."""
+        return None
+
+    def set_xattr(self, path: str, key: str, value: str) -> None:
+        """Set extended attribute — no-op in subprocess mode."""
+        pass
+
+    def get_xattr_bulk(self, paths: list[str], key: str) -> dict[str, str | None]:
+        """Bulk get extended attribute — no-op in subprocess mode."""
+        return dict.fromkeys(paths)
+
     # ── IPC: Pipes ─────────────────────────────────────────────────────
 
     def create_pipe(self, path: str, capacity: int = 64) -> None:

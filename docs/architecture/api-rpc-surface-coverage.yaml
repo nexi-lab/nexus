@@ -1544,12 +1544,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/core/test_full_profile.py
+  perf_class: setup
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: auth.exchange
   module: auth
   summary: ''
@@ -1578,12 +1578,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/core/test_full_profile.py
+  perf_class: setup
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: auth.keys
   module: auth
   summary: ''
@@ -2635,12 +2635,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/daemon/test_full_profile_daemon.py
+  perf_class: setup
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: daemon.enroll
   module: daemon
   summary: ''
@@ -3641,12 +3641,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/core/test_full_profile.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: federation.cli
   module: federation
   summary: ''
@@ -4316,12 +4316,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/cli/test_full_profile_parity.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: filesystem.stream
   module: filesystem
   summary: ''
@@ -5248,12 +5248,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/core/test_full_profile.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: health.health_detailed
   module: uncategorized
   summary: ''
@@ -5265,12 +5265,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/core/test_full_profile.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: health.metrics_pool
   module: uncategorized
   summary: ''
@@ -6707,12 +6707,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/core/test_full_profile.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: nexus_v_f_s_service.read
   module: nexus_fs
   summary: ''
@@ -7741,12 +7741,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/core/test_full_profile.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: probes.healthz_ready
   module: uncategorized
   summary: ''
@@ -7758,12 +7758,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/core/test_full_profile.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: probes.healthz_startup
   module: uncategorized
   summary: ''
@@ -7775,12 +7775,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/core/test_full_profile.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: provision.user
   module: identity
   summary: ''
@@ -9992,12 +9992,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: docs/deployment/full-profile.md
+  correctness_test: tests/unit/cli/test_full_profile_parity.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4132
 - id: uncategorized.extensions
   module: uncategorized
   summary: ''

@@ -305,18 +305,18 @@ class TestGetMount:
     def test_get_mount_found(self, mount_service, mock_nexus_fs):
         """Getting an existing mount returns its details."""
         mock_nexus_fs._kernel = MagicMock()
-        mock_nexus_fs._kernel.has_mount.return_value = True
+        mock_nexus_fs._kernel.sys_stat.return_value = {"entry_type": 2}
 
         result = asyncio.run(mount_service.get_mount("/mnt/test"))
 
         assert result is not None
         assert result["mount_point"] == "/mnt/test"
-        mock_nexus_fs._kernel.has_mount.assert_called_once_with("/mnt/test", "root")
+        mock_nexus_fs._kernel.sys_stat.assert_called_once_with("/mnt/test", "root")
 
     def test_get_mount_not_found(self, mount_service, mock_nexus_fs):
         """Getting a non-existent mount returns None."""
         mock_nexus_fs._kernel = MagicMock()
-        mock_nexus_fs._kernel.has_mount.return_value = False
+        mock_nexus_fs._kernel.sys_stat.return_value = {"entry_type": 0}
 
         result = asyncio.run(mount_service.get_mount("/mnt/nonexistent"))
         assert result is None
@@ -333,14 +333,14 @@ class TestHasMount:
     def test_has_mount_true(self, mount_service, mock_nexus_fs):
         """has_mount returns True for existing mount."""
         mock_nexus_fs._kernel = MagicMock()
-        mock_nexus_fs._kernel.has_mount.return_value = True
+        mock_nexus_fs._kernel.sys_stat.return_value = {"entry_type": 2}
         assert asyncio.run(mount_service.has_mount("/mnt/test")) is True
-        mock_nexus_fs._kernel.has_mount.assert_called_once_with("/mnt/test", "root")
+        mock_nexus_fs._kernel.sys_stat.assert_called_once_with("/mnt/test", "root")
 
     def test_has_mount_false(self, mount_service, mock_nexus_fs):
         """has_mount returns False for non-existent mount."""
         mock_nexus_fs._kernel = MagicMock()
-        mock_nexus_fs._kernel.has_mount.return_value = False
+        mock_nexus_fs._kernel.sys_stat.return_value = {"entry_type": 0}
         assert asyncio.run(mount_service.has_mount("/mnt/nonexistent")) is False
 
 

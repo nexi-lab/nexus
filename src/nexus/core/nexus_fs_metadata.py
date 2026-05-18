@@ -839,7 +839,9 @@ class MetadataMixin:
                 if candidate is None:
                     continue
                 try:
-                    present = self._kernel.sys_stat(path, candidate).get("entry_type") == DT_MOUNT
+                    present = (self._kernel.sys_stat(path, candidate) or {}).get(
+                        "entry_type"
+                    ) == DT_MOUNT
                 except Exception as probe_exc:
                     raise BackendError(
                         f"sys_unlink: cannot verify mount route in zone "
@@ -852,9 +854,9 @@ class MetadataMixin:
             if stranded_zone is not None:
                 self._driver_coordinator.unmount(path, stranded_zone)
                 try:
-                    still_present = (
-                        self._kernel.sys_stat(path, stranded_zone).get("entry_type") == DT_MOUNT
-                    )
+                    still_present = (self._kernel.sys_stat(path, stranded_zone) or {}).get(
+                        "entry_type"
+                    ) == DT_MOUNT
                 except Exception as verify_exc:
                     raise BackendError(
                         f"sys_unlink: cannot verify stranded mount route "
@@ -901,9 +903,9 @@ class MetadataMixin:
             # committed (Codex review, round 9): we can't risk
             # reporting success while a route may still be live.
             try:
-                mount_remains = (
-                    self._kernel.sys_stat(path, route_zone).get("entry_type") == DT_MOUNT
-                )
+                mount_remains = (self._kernel.sys_stat(path, route_zone) or {}).get(
+                    "entry_type"
+                ) == DT_MOUNT
             except Exception as verify_exc:
                 raise BackendError(
                     f"sys_unlink: cannot verify mount route teardown for {path!r}: {verify_exc}",

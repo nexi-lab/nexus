@@ -20,6 +20,7 @@ import sys
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 pytestmark = [
@@ -146,4 +147,58 @@ def test_sandbox_daemon_boots_and_writes_readiness(sandbox_daemon) -> None:
             assert not offending, (
                 f"sandbox appears to have attempted '{forbidden}' "
                 f"(failure markers {offending} present); log:\n{log}"
+            )
+
+
+def _http_get_with_retry(client, path, *, attempts=40, delay=0.5):
+    """GET `path`, retrying transient connection errors.
+
+    The daemon writes its readiness file before the HTTP socket is
+    actually listening (src/nexus/daemon/main.py:514 precedes :520), so
+    the first requests after readiness may be refused. Retry for a
+    bounded window before giving up.
+    """
+    import time as _t
+
+    last_exc = None
+    for _ in range(attempts):
+        try:
+            return client.get(path)
+        except httpx.TransportError as exc:  # connect refused / reset
+            last_exc = exc
+            _t.sleep(delay)
+    raise AssertionError(f"GET {path} never succeeded after {attempts} attempts: {last_exc!r}")
+
+
+def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
+    """`/health` 200 and `/api/v2/features` reports profile=sandbox.
+
+    Real TCP socket (not ASGI in-process) — this is the value-add over
+    tests/integration/test_sandbox_boot.py.
+    """
+    base = f"http://{sandbox_daemon['host']}:{sandbox_daemon['http_port']}"
+    with httpx.Client(base_url=base, timeout=10.0) as client:
+        r = _http_get_with_retry(client, "/health")
+        assert r.status_code == 200, r.text
+
+        r = _http_get_with_retry(client, "/api/v2/features")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["profile"] == "sandbox", body
+
+        enabled = set(body["enabled_bricks"])
+        expected_subset = {
+            "search",
+            "mcp",
+            "parsers",
+            "eventlog",
+            "namespace",
+            "permissions",
+        }
+        assert expected_subset.issubset(enabled), (
+            f"sandbox missing bricks {expected_subset - enabled}; enabled={sorted(enabled)}"
+        )
+        for forbidden in ("llm", "pay", "observability", "federation"):
+            assert forbidden not in enabled, (
+                f"sandbox must not enable '{forbidden}'; enabled={sorted(enabled)}"
             )

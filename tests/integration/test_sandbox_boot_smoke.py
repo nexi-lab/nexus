@@ -130,9 +130,20 @@ def test_sandbox_daemon_boots_and_writes_readiness(sandbox_daemon) -> None:
     assert sandbox_daemon["http_port"] > 0
 
     log = Path(sandbox_daemon["log_path"]).read_text(errors="replace").lower()
-    # No external-service connection failures: sandbox must not even try
-    # PostgreSQL / Dragonfly-Redis / Zoekt.
+    # The harness starts NO Postgres/Dragonfly/Redis/Zoekt. The sandbox
+    # profile must not even attempt them: a forbidden service name must
+    # not co-occur with any connection-failure marker in the boot log.
+    failure_markers = (
+        "connection refused",
+        "could not connect",
+        "connectionrefusederror",
+        "connection error",
+        "timed out",
+    )
     for forbidden in ("postgres", "dragonfly", "zoekt", "redis"):
-        assert f"{forbidden} connection refused" not in log, (
-            f"sandbox attempted {forbidden}; log:\n{log}"
-        )
+        if forbidden in log:
+            offending = [m for m in failure_markers if m in log]
+            assert not offending, (
+                f"sandbox appears to have attempted '{forbidden}' "
+                f"(failure markers {offending} present); log:\n{log}"
+            )

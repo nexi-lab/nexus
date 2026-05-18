@@ -297,11 +297,22 @@ class KernelClient:
     def sys_lock(
         self,
         path: str,
-        context: Any = None,
+        lock_id: str = "",
+        mode: int = 1,
+        max_holders: int = 1,
+        ttl_secs: int = 60,
         timeout_ms: int = 5000,
+        **_kwargs: Any,
     ) -> Any:
         """Acquire advisory lock."""
-        result = self._call("sys_lock", {"path": path, "timeout_ms": timeout_ms})
+        result = self._call(
+            "sys_lock",
+            {
+                "path": path,
+                "lock_id": lock_id,
+                "timeout_ms": timeout_ms,
+            },
+        )
         if isinstance(result, dict):
             return result.get("lock_id", "")
         return result

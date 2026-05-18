@@ -305,7 +305,8 @@ class KernelClient:
         self._call("service_mark_bootstrapped", {})
 
     def service_lookup(self, name: str) -> Any:
-        return self._call("service_lookup", {"name": name})
+        """Return None — services are kernel-internal in subprocess mode."""
+        return None
 
     def service_swap(
         self, name: str, instance: Any, exports: list[str], timeout_ms: int = 5000
@@ -347,6 +348,10 @@ class KernelClient:
 
     def dispatch_pre_hooks(self, op: str, ctx: dict[str, Any]) -> None:
         """No-op — native hooks fire inside the kernel process."""
+        pass
+
+    def register_hook(self, *args: Any, **kwargs: Any) -> None:
+        """No-op — hooks are kernel-internal in subprocess mode."""
         pass
 
     # ── Trie (resolver registration) ──────────────────────────────────

@@ -56,14 +56,13 @@ services:
     container_name: nexus-dyn-node-1
     hostname: nexus-1
     restart: unless-stopped
+    # Pure Rust binary — skip Python docker-entrypoint.sh.
+    entrypoint: ["nexusd-cluster"]
     depends_on:
       dragonfly:
         condition: service_healthy
     environment:
-      NEXUS_HOST: 0.0.0.0
-      NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
-      NEXUS_PROFILE: cluster
 
       # Raft
       NEXUS_BIND_ADDR: 0.0.0.0:2126
@@ -81,35 +80,20 @@ services:
       # formation.  See `BootstrapMode` in `nexus_raft`.
       NEXUS_BOOTSTRAP_MODE: "static"
 
-      # gRPC VFS (bind 0.0.0.0 for cross-container access)
-      NEXUS_GRPC_BIND_ALL: "true"
-
-      # CacheStore
-      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
-
-      # Auth (static in-memory — no PostgreSQL)
-      NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-dynamic-federation-key}
-
-      # Backend
-      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
-
-      # Runtime
-      NEXUS_USE_UVLOOP: "true"
       RUST_LOG: info,nexus_raft=debug
     # Local workaround: host ports commented out because Windows Docker
     # Desktop's Hyper-V reserves 2085-2184 after boot (random on each
     # restart). E2E tests use internal dyn-nexus-network hostnames
-    # (nexus-1:2026, nexus-1:2028) from the in-compose `test` service,
-    # so host publishing is not required.
+    # (nexus-1:2126) from the in-compose `test` service, so host
+    # publishing is not required.
     # ports:
-    #   - "${NEXUS_PORT:-2026}:2026"
     #   - "2126:2126"
     volumes:
       - dyn_nexus1_data:/app/data
     networks:
       - dyn-nexus-network
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:2026/healthz/ready"]
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -124,14 +108,13 @@ services:
     container_name: nexus-dyn-node-2
     hostname: nexus-2
     restart: unless-stopped
+    # Pure Rust binary — skip Python docker-entrypoint.sh.
+    entrypoint: ["nexusd-cluster"]
     depends_on:
       dragonfly:
         condition: service_healthy
     environment:
-      NEXUS_HOST: 0.0.0.0
-      NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
-      NEXUS_PROFILE: cluster
 
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_ADVERTISE_ADDR: nexus-2:2126
@@ -139,26 +122,20 @@ services:
       # nexus-1 (the founder) under the JoinZone retry-loop branch.
       NEXUS_PEERS: "nexus-1:2126,witness:2126"
       NEXUS_RAFT_TLS: "false"
-      NEXUS_GRPC_BIND_ALL: "true"
       # Explicit bootstrap intent — `static` for env-driven cluster
       # formation.  See `BootstrapMode` in `nexus_raft`.
       NEXUS_BOOTSTRAP_MODE: "static"
 
-      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
-      NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-dynamic-federation-key}
-      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
-      NEXUS_USE_UVLOOP: "true"
       RUST_LOG: info,nexus_raft=debug
     # Local workaround (see nexus-1 note): host publish commented out.
     # ports:
-    #   - "2027:2026"
     #   - "2127:2126"
     volumes:
       - dyn_nexus2_data:/app/data
     networks:
       - dyn-nexus-network
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:2026/healthz/ready"]
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 24

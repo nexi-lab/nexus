@@ -315,6 +315,16 @@ class KernelClient:
             {"name": name, "exports": exports, "timeout_ms": timeout_ms},
         )
 
+    def service_enlist(
+        self,
+        name: str,
+        instance: Any,
+        exports: list[str],
+        allow_overwrite: bool = False,
+    ) -> None:
+        """No-op — service registration is kernel-internal in subprocess mode."""
+        pass
+
     def service_stop_all(self, timeout_ms: int = 10000) -> None:
         self._call("service_stop_all", {"timeout_ms": timeout_ms})
 

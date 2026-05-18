@@ -298,8 +298,10 @@ impl NexusVfsService for VfsServiceImpl {
         Ok(Response::new(BatchReadResponse { results: mapped }))
     }
 
-    async fn call(&self, _req: Request<CallRequest>) -> Result<Response<CallResponse>, Status> {
-        Err(Status::unimplemented("Call RPC is not supported"))
+    async fn call(&self, req: Request<CallRequest>) -> Result<Response<CallResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = self.resolve_context(&req.auth_token)?;
+        crate::call_dispatch::dispatch(&self.kernel, &ctx, &req.method, &req.payload)
     }
 }
 
@@ -523,6 +525,10 @@ mod tests {
             kernel::ROOT_ZONE_ID,
             false,
             0,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,

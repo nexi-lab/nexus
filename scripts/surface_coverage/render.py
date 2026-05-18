@@ -103,7 +103,13 @@ def render_html(coverage: SurfaceCoverage) -> str:
 
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(_TEMPLATE_DIR),
-        autoescape=jinja2.select_autoescape(["html"]),
+        # NOTE: `.j2` is the actual file extension on our templates. The
+        # default `select_autoescape(["html"])` matches by extension and would
+        # NOT autoescape `coverage.html.j2` / `_op_row.html.j2`, leaving
+        # extractor-supplied strings (op summaries, transport names) rendered
+        # raw. Enable autoescape for `j2` too so HTML metacharacters in any
+        # data field are safe by default; trusted output uses `| safe`.
+        autoescape=jinja2.select_autoescape(enabled_extensions=("html", "j2")),
         trim_blocks=True,
         lstrip_blocks=True,
         keep_trailing_newline=True,

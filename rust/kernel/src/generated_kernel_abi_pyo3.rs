@@ -1704,8 +1704,35 @@ impl PyKernel {
         self.inner.create_stream(path, capacity).map_err(Into::into)
     }
 
+    fn destroy_stream(&self, path: &str) -> PyResult<()> {
+        self.inner.destroy_stream(path).map_err(Into::into)
+    }
+
     fn close_stream(&self, path: &str) -> PyResult<()> {
         self.inner.close_stream(path).map_err(Into::into)
+    }
+
+    fn has_stream(&self, path: &str) -> bool {
+        self.inner.has_stream(path)
+    }
+
+    fn stream_write_nowait(&self, path: &str, data: &[u8]) -> PyResult<usize> {
+        self.inner
+            .stream_write_nowait(path, data)
+            .map_err(Into::into)
+    }
+
+    fn stream_read_at<'py>(
+        &self,
+        py: Python<'py>,
+        path: &str,
+        offset: usize,
+    ) -> PyResult<Option<(Bound<'py, PyBytes>, usize)>> {
+        match self.inner.stream_read_at(path, offset) {
+            Ok(Some((data, next))) => Ok(Some((PyBytes::new(py, &data), next))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn stream_read_at_blocking<'py>(

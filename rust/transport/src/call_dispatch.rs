@@ -28,6 +28,7 @@ pub fn dispatch(
         "sys_stat" => do_sys_stat(kernel, &params, ctx),
         "sys_setattr" => do_sys_setattr(kernel, &params, ctx),
         "sys_mkdir" => do_sys_mkdir(kernel, &params, ctx),
+        "sys_unlink" => do_sys_unlink(kernel, &params, ctx),
         "sys_rename" => do_sys_rename(kernel, &params, ctx),
         "sys_copy" => do_sys_copy(kernel, &params, ctx),
         "sys_readdir" => do_sys_readdir(kernel, &params, ctx),
@@ -243,6 +244,27 @@ fn do_sys_mkdir(
     match KernelAbi::sys_mkdir(kernel, &path, ctx, parents, exist_ok) {
         Ok(r) => ok_json(serde_json::json!({
             "hit": r.hit,
+            "post_hook_needed": r.post_hook_needed,
+        })),
+        Err(e) => Err(kernel_err_to_payload(e)),
+    }
+}
+
+fn do_sys_unlink(
+    kernel: &Kernel,
+    params: &serde_json::Value,
+    ctx: &OperationContext,
+) -> Result<Vec<u8>, Vec<u8>> {
+    let path = s(params, "path");
+    let recursive = bool_or(params, "recursive", false);
+    match KernelAbi::sys_unlink(kernel, &path, ctx, recursive) {
+        Ok(r) => ok_json(serde_json::json!({
+            "hit": r.hit,
+            "entry_type": r.entry_type,
+            "post_hook_needed": r.post_hook_needed,
+            "path": r.path,
+            "content_id": r.content_id,
+            "size": r.size,
         })),
         Err(e) => Err(kernel_err_to_payload(e)),
     }
@@ -259,6 +281,12 @@ fn do_sys_rename(
         Ok(r) => ok_json(serde_json::json!({
             "hit": r.hit,
             "success": r.success,
+            "post_hook_needed": r.post_hook_needed,
+            "is_directory": r.is_directory,
+            "old_content_id": r.old_content_id,
+            "old_size": r.old_size,
+            "old_version": r.old_version,
+            "old_modified_at_ms": r.old_modified_at_ms,
         })),
         Err(e) => Err(kernel_err_to_payload(e)),
     }
@@ -273,6 +301,8 @@ fn do_sys_copy(
     let dst = s(params, "dst");
     match KernelAbi::sys_copy(kernel, &src, &dst, ctx) {
         Ok(r) => ok_json(serde_json::json!({
+            "hit": r.hit,
+            "post_hook_needed": r.post_hook_needed,
             "dst_path": r.dst_path,
             "content_id": r.content_id,
             "size": r.size,
@@ -537,6 +567,7 @@ fn do_write_batch(
                 "content_id": r.content_id,
                 "size": r.size,
                 "gen": r.gen,
+                "version": r.version,
             })),
             Err(e) => {
                 return Err(kernel_err_to_payload(e));

@@ -354,6 +354,80 @@ class KernelClient:
         """No-op — hooks are kernel-internal in subprocess mode."""
         pass
 
+    def unregister_hook(self, op: str, hook: Any) -> bool:
+        """No-op — hooks are kernel-internal in subprocess mode."""
+        return False
+
+    def set_hook_count(self, op: str, count: int) -> None:
+        """No-op — hook bitmap is kernel-internal in subprocess mode."""
+        pass
+
+    def dispatch_pre_hooks_batch_stat(
+        self, paths: list[str], rust_ctx: Any, permission: Any
+    ) -> list[bool]:
+        """Allow all — permission hooks run inside the kernel process."""
+        return [True] * len(paths)
+
+    # ── Convenience wrappers (derived from syscalls) ──────────────────
+
+    def is_directory(self, path: str, zone_id: str = "") -> bool:
+        """Check if path is a directory via sys_stat."""
+        result = self.sys_stat(path, zone_id=zone_id or ROOT_ZONE_ID)
+        if result is None:
+            return False
+        if isinstance(result, dict):
+            return bool(result.get("is_directory", False))
+        return bool(getattr(result, "is_directory", False))
+
+    def get_content_id(self, path: str, zone_id: str = "") -> str | None:
+        """Get content hash via sys_stat."""
+        result = self.sys_stat(path, zone_id=zone_id or ROOT_ZONE_ID)
+        if result is None:
+            return None
+        if isinstance(result, dict):
+            return result.get("content_id")
+        return getattr(result, "content_id", None)
+
+    def exists_batch(self, paths: list[str], zone_id: str = "") -> list[bool]:
+        """Batch existence check via sys_stat."""
+        zid = zone_id or ROOT_ZONE_ID
+        return [self.sys_stat(p, zone_id=zid) is not None for p in paths]
+
+    def get_mount_points(self) -> list[str]:
+        """Return empty — mount points are kernel-internal."""
+        return []
+
+    def get_top_level_mounts(self, zone_id: str = "") -> list[str]:
+        """Return top-level mounts via sys_readdir on /."""
+        result = self.sys_readdir("/")
+        if result is None:
+            return []
+        if isinstance(result, list):
+            return [e.get("name", e) if isinstance(e, dict) else str(e) for e in result]
+        return []
+
+    def metastore_list_paginated(
+        self,
+        prefix: str,
+        recursive: bool = True,
+        limit: int = 100000,
+        cursor: Any = None,
+    ) -> dict[str, Any]:
+        """Paginated list via sys_readdir — returns {"items": [...]}."""
+        result = self.sys_readdir(prefix)
+        items: list[dict[str, Any]] = []
+        if isinstance(result, list):
+            for e in result:
+                if isinstance(e, dict):
+                    items.append(e)
+                else:
+                    items.append({"name": str(e)})
+        return {"items": items[:limit], "next_cursor": None}
+
+    def service_unregister(self, name: str) -> None:
+        """No-op — services are kernel-internal in subprocess mode."""
+        pass
+
     # ── Trie (resolver registration) ──────────────────────────────────
 
     def trie_register(self, pattern: str, idx: int) -> None:

@@ -75,3 +75,18 @@ missing_operations:
     module: fuse
     summary: "Show active FUSE mounts + health."
     wanted_why: "No way to introspect running mounts without ps/mount commands."
+
+  - id: profile.contract_cli
+    module: cli
+    summary: "`nexus profile contract` (or `nexus status --profile-contract`): print resolved deployment profile, bricks[], drivers[], http_surface[], grpc_required, auth_mode as JSON."
+    wanted_why: "Operators cannot verify the running hub's FULL contract without reading source; the user-guide correctness assertion needs a user-runnable command. Issue #4132 Gap 1 (required)."
+
+  - id: status.auth_profile_detail
+    module: cli
+    summary: "Add `deployment_profile` and `auth_mode` keys to `nexus status --json`."
+    wanted_why: "`nexus status` cannot confirm auth mode or deployment profile. Issue #4132 Gap 2 (recommended)."
+
+  - id: remote.connect_preflight
+    module: remote
+    summary: "`nexus doctor remote` / SDK preflight: probe HTTP + gRPC reachability, return an actionable error instead of a deep stack trace."
+    wanted_why: "Remote clients with gRPC blocked get an opaque failure. Issue #4132 Gap 3 (required)."

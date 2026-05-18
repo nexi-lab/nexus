@@ -44,7 +44,11 @@ def merge_coverage(
     fresh_by_id = {op.id: op for op in fresh.operations}
 
     merged_ops: list[Operation] = []
-    stale_rows: list[StaleRow] = list(existing.stale_rows)
+    # Drop pre-existing stale entries whose op has been rediscovered by the
+    # fresh extractor — they're no longer stale.
+    stale_rows: list[StaleRow] = [
+        s for s in existing.stale_rows if s.operation_id not in fresh_by_id
+    ]
 
     for op_id, fresh_op in fresh_by_id.items():
         if op_id in existing_by_id:

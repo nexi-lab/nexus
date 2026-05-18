@@ -71,7 +71,10 @@ def generate_coverage(
                 # _upsert's "module.verb" prefixing stays stable.
                 tokens = raw.name.split()
                 if len(tokens) == 2 and tokens[0] == "nexus":
-                    verb = tokens[1]
+                    # Normalize hyphens to underscores so "nexus write-batch"
+                    # becomes "write_batch" (canonical), matching normalize_cli's
+                    # multi-token behavior.
+                    verb = tokens[1].replace("-", "_")
                     candidate = classify_op_id(f"{verb}.cli")
                     # verb IS a known module id → use "verb.cli" so classifier routes it;
                     # otherwise keep bare verb so _upsert's "module.verb" prefixing works.
@@ -117,15 +120,19 @@ def generate_coverage(
                 continue
             _upsert(operations, op_id, "mcp", raw.name, raw.source)
 
-    # --- gRPC typed ---
-    proto = repo_root / "proto/nexus/grpc/vfs/vfs.proto"
-    if proto.exists():
-        for raw in extract_grpc_typed.extract_grpc_typed_methods(proto):
-            try:
-                op_id = normalize.normalize_grpc_typed(raw.method)
-            except ValueError:
-                continue
-            _upsert(operations, op_id, "grpc_typed", raw.method, raw.source)
+    # --- gRPC typed (recursive scan of proto/) ---
+    proto_root = repo_root / "proto"
+    if proto_root.exists():
+        for proto_file in sorted(proto_root.rglob("*.proto")):
+            for raw in extract_grpc_typed.extract_grpc_typed_methods(proto_file):
+                try:
+                    op_id = normalize.normalize_grpc_typed(raw.method)
+                except ValueError:
+                    # Service.Method shape but unknown service → keep "<svc>.<method>"
+                    # lowercased so classify_op_id can route via substring rules.
+                    service, _, method_name = raw.method.partition(".")
+                    op_id = f"{service.lower()}.{method_name.lower()}"
+                _upsert(operations, op_id, "grpc_typed", raw.method, raw.source)
 
     # --- gRPC Call (frozenset of syscall names) ---
     dispatch = repo_root / "src/nexus/server/_kernel_syscall_dispatch.py"

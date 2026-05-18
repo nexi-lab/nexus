@@ -139,6 +139,13 @@ def render_html(coverage: SurfaceCoverage) -> str:
         if mods:
             other_visible[LAYER_LABELS[layer]] = mods
 
+    # Modules present in ops_by_module but absent from the taxonomy display
+    # lists (chiefly "uncategorized"). Without this, those ops are invisible
+    # in the HTML even though they're counted in total_ops.
+    taxonomy_ids = {m.id for m in TAXONOMY_MODULES}
+    orphan_module_ids = sorted(set(ops_by_module) - taxonomy_ids)
+    orphan_modules = [get_module(mid) for mid in orphan_module_ids]
+
     stats = _coverage_stats(ops_by_module, TAXONOMY_MODULES)
     total_ops = sum(len(v) for v in ops_by_module.values())
 
@@ -157,4 +164,5 @@ def render_html(coverage: SurfaceCoverage) -> str:
         get_module=get_module,
         missing_by_module=missing_by_module,
         total_missing=sum(len(v) for v in missing_by_module.values()),
+        orphan_modules=orphan_modules,
     )

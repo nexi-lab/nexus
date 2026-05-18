@@ -1,7 +1,9 @@
-"""Extract typed gRPC methods from .proto files via regex.
+"""Extract typed gRPC methods from .proto files.
 
-Recognizes the proto3 `service Foo { rpc Bar (...) returns (...); ... }` block.
-Multi-service files supported.
+Recognizes proto3 `service Foo { rpc Bar (...) returns (...); ... }` blocks.
+Multi-service files supported. Uses a brace-aware scanner that ignores braces
+inside line/block comments and string literals so paths like `/{title}` in
+documentation don't terminate the service body prematurely.
 """
 
 from __future__ import annotations
@@ -10,10 +12,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-_SERVICE_BLOCK_RE = re.compile(
-    r"\bservice\s+(?P<service>[A-Za-z_]\w*)\s*\{(?P<body>.*?)\}",
-    re.DOTALL,
-)
+_SERVICE_HEADER_RE = re.compile(r"\bservice\s+(?P<service>[A-Za-z_]\w*)\s*\{")
 _RPC_RE = re.compile(r"\brpc\s+(?P<method>[A-Za-z_]\w*)\s*\(")
 
 
@@ -26,12 +25,15 @@ class RawGrpcTypedMethod:
 def extract_grpc_typed_methods(proto_path: Path) -> list[RawGrpcTypedMethod]:
     text = proto_path.read_text()
     out: list[RawGrpcTypedMethod] = []
-    for block in _SERVICE_BLOCK_RE.finditer(text):
-        service = block.group("service")
-        body = block.group("body")
-        body_start_offset = block.start("body")
+    for header in _SERVICE_HEADER_RE.finditer(text):
+        service = header.group("service")
+        body_start = header.end()  # position right after the opening brace
+        body_end = _find_matching_brace(text, body_start)
+        if body_end is None:
+            continue
+        body = text[body_start:body_end]
         for rpc in _RPC_RE.finditer(body):
-            absolute_offset = body_start_offset + rpc.start()
+            absolute_offset = body_start + rpc.start()
             line = text.count("\n", 0, absolute_offset) + 1
             out.append(
                 RawGrpcTypedMethod(
@@ -40,3 +42,50 @@ def extract_grpc_typed_methods(proto_path: Path) -> list[RawGrpcTypedMethod]:
                 )
             )
     return sorted(out, key=lambda r: r.method)
+
+
+def _find_matching_brace(text: str, start: int) -> int | None:
+    """Return the offset of the `}` that matches the `{` opened just before `start`.
+
+    Skips over braces that appear inside `// line comments`, `/* block comments */`,
+    or string literals. Nested braces are tracked.
+    """
+    depth = 1
+    i = start
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        # Line comment
+        if ch == "/" and nxt == "/":
+            newline = text.find("\n", i + 2)
+            i = n if newline == -1 else newline + 1
+            continue
+        # Block comment
+        if ch == "/" and nxt == "*":
+            end = text.find("*/", i + 2)
+            if end == -1:
+                return None
+            i = end + 2
+            continue
+        # String literal — proto3 supports both "..." and '...'
+        if ch in ('"', "'"):
+            quote = ch
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == quote:
+                    break
+                j += 1
+            i = j + 1
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None

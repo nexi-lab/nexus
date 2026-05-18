@@ -284,6 +284,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: access_manifests.api_v2
+  module: access_manifest
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/access-manifests
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/access_manifests.py:107
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: access_manifests.get
   module: access_manifest
   summary: ''
@@ -359,6 +376,57 @@ operations:
     http:
       name: 'POST '
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/access_manifests.py:107
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: access_manifests.{manifest_id}
+  module: access_manifest
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/access-manifests/{manifest_id}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/access_manifests.py:170
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: access_manifests.{manifest_id}_evaluate
+  module: access_manifest
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/access-manifests/{manifest_id}/evaluate
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/access_manifests.py:248
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: access_manifests.{manifest_id}_revoke
+  module: access_manifest
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/access-manifests/{manifest_id}/revoke
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/access_manifests.py:294
   profiles:
     lite: supported
     sandbox: supported
@@ -471,6 +539,57 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: agent_log.agent
+  module: agent_log
+  summary: ''
+  transports:
+    cli:
+      name: nexus agent
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/agent.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agent_log.audit
+  module: agent_log
+  summary: ''
+  transports:
+    cli:
+      name: nexus audit
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/audit.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agent_log.events
+  module: agent_log
+  summary: ''
+  transports:
+    cli:
+      name: nexus events
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/events_cli.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: agent_log.logs
   module: agent_log
   summary: ''
@@ -522,6 +641,108 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: agents.delegate
+  module: delegation
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/agents/delegate
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/delegation.py:238
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agents.delegate_{delegation_id}
+  module: delegation
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/agents/delegate/{delegation_id}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/delegation.py:724
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agents.delegate_{delegation_id}_chain
+  module: delegation
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/agents/delegate/{delegation_id}/chain
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/delegation.py:456
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agents.delegate_{delegation_id}_complete
+  module: delegation
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/agents/delegate/{delegation_id}/complete
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/delegation.py:666
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agents.delegate_{delegation_id}_namespace
+  module: rebac
+  summary: ''
+  transports:
+    http:
+      name: PATCH /api/v2/agents/delegate/{delegation_id}/namespace
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/delegation.py:589
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agents.register
+  module: agent_log
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/agents/register
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/agent_registration.py:126
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: agents.{agent_id}_credentials
   module: agent_log
   summary: ''
@@ -546,6 +767,23 @@ operations:
     http:
       name: POST /api/v2/agents/{agent_id}/evict
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/eviction.py:42
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: agents.{agent_id}_identity
+  module: identity
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/agents/{agent_id}/identity
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/identity.py:60
   profiles:
     lite: supported
     sandbox: supported
@@ -641,6 +879,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: agents.{agent_id}_verify
+  module: agent_log
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/agents/{agent_id}/verify
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/identity.py:86
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: agents.{agent_id}_warmup
   module: agent_log
   summary: ''
@@ -681,6 +936,108 @@ operations:
     sandbox: missing_needed
     full: missing_needed
   usage_example: 'WANTED: No way to enumerate the approval queue externally.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: approvals_v1.cancel
+  module: approvals
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ApprovalsV1.Cancel
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/approvals/approvals.proto:82
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: approvals_v1.decide
+  module: approvals
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ApprovalsV1.Decide
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/approvals/approvals.proto:81
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: approvals_v1.get
+  module: approvals
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ApprovalsV1.Get
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/approvals/approvals.proto:80
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: approvals_v1.list_pending
+  module: approvals
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ApprovalsV1.ListPending
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/approvals/approvals.proto:79
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: approvals_v1.submit
+  module: approvals
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ApprovalsV1.Submit
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/approvals/approvals.proto:84
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: approvals_v1.watch
+  module: approvals
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ApprovalsV1.Watch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/grpc/approvals/approvals.proto:83
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -740,6 +1097,57 @@ operations:
   transports:
     http:
       name: GET /{urn}/{name}/history
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/aspects.py:89
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: aspects.{urn}
+  module: catalog
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/aspects/{urn}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/aspects.py:41
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: aspects.{urn}_{name}
+  module: catalog
+  summary: ''
+  transports:
+    http:
+      name: PUT /api/v2/aspects/{urn}/{name}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/aspects.py:118
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: aspects.{urn}_{name}_history
+  module: catalog
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/aspects/{urn}/{name}/history
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/aspects.py:89
   profiles:
     lite: supported
@@ -1074,6 +1482,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: audit.transactions
+  module: agent_log
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/audit/transactions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:666
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: auth.brick
   module: auth
   summary: ''
@@ -1081,6 +1506,23 @@ operations:
     grpc_expose:
       name: brick:auth
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/auth/brick_factory.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth.cli
+  module: auth
+  summary: ''
+  transports:
+    cli:
+      name: nexus auth
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/auth_cli.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -1108,6 +1550,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: auth.exchange
+  module: auth
+  summary: ''
+  transports:
+    cli:
+      name: nexus exchange
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/exchange.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: auth.init
   module: auth
   summary: ''
@@ -1115,6 +1574,57 @@ operations:
     cli:
       name: nexus init
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth.keys
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/auth/keys
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/auth_keys.py:225
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth.keys_{key_id}
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/auth/keys/{key_id}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/auth_keys.py:351
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth.oauth
+  module: auth
+  summary: ''
+  transports:
+    cli:
+      name: nexus oauth
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/oauth.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -1200,6 +1710,142 @@ operations:
     http:
       name: 'POST '
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v1/routers/auth_profiles.py:144
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth_routes.auth_change_password
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: POST /auth/change-password
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/auth/auth_routes.py:765
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth_routes.auth_login
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: POST /auth/login
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/auth/auth_routes.py:395
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth_routes.auth_me
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: PATCH /auth/me
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/auth/auth_routes.py:713
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth_routes.auth_oauth
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: GET /auth/oauth/google/authorize
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/auth/auth_routes.py:906
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth_routes.auth_register
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: POST /auth/register
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/auth/auth_routes.py:351
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth_routes.auth_request_verification
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: POST /auth/request-verification
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/auth/auth_routes.py:828
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth_routes.auth_setup_zone
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: POST /auth/setup-zone
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/auth/auth_routes.py:484
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth_routes.auth_verify_email
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: POST /auth/verify-email
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/auth/auth_routes.py:873
   profiles:
     lite: supported
     sandbox: supported
@@ -1439,7 +2085,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /hot-files
+      name: GET /api/v2/cache/hot-files
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/cache.py:136
   profiles:
     lite: supported
@@ -1456,7 +2102,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /stats
+      name: GET /api/v2/cache/stats
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/cache.py:107
   profiles:
     lite: supported
@@ -1473,7 +2119,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /warmup
+      name: POST /api/v2/cache/warmup
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/cache.py:59
   profiles:
     lite: supported
@@ -1553,13 +2199,47 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: catalog.schema_{path:path}
+  module: catalog
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/catalog/schema/{path:path}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/catalog.py:31
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: catalog.search
   module: catalog
   summary: ''
   transports:
     http:
-      name: GET /search
+      name: GET /api/v2/catalog/search
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/catalog.py:107
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: connectors.api_v2
+  module: mount
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/connectors
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:204
   profiles:
     lite: supported
     sandbox: supported
@@ -1575,7 +2255,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /auth/init
+      name: POST /api/v2/connectors/auth/init
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:304
   profiles:
     lite: supported
@@ -1592,7 +2272,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /auth/status
+      name: GET /api/v2/connectors/auth/status
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:500
   profiles:
     lite: supported
@@ -1609,7 +2289,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /available
+      name: GET /api/v2/connectors/available
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:227
   profiles:
     lite: supported
@@ -1643,7 +2323,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /mount
+      name: POST /api/v2/connectors/mount
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:591
   profiles:
     lite: supported
@@ -1660,7 +2340,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /mounts
+      name: GET /api/v2/connectors/mounts
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:776
   profiles:
     lite: supported
@@ -1706,6 +2386,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: connectors.schema_{mount_path:path}_{operation}
+  module: mount
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/connectors/schema/{mount_path:path}/{operation}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:902
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: connectors.skill_mount_path:path
   module: mount
   summary: ''
@@ -1723,12 +2420,29 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: connectors.skill_{mount_path:path}
+  module: mount
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/connectors/skill/{mount_path:path}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:846
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: connectors.unmount
   module: mount
   summary: ''
   transports:
     http:
-      name: POST /unmount
+      name: POST /api/v2/connectors/unmount
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:806
   profiles:
     lite: supported
@@ -1747,6 +2461,40 @@ operations:
     http:
       name: POST /write/{mount_path:path}
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:970
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: connectors.write_{mount_path:path}
+  module: mount
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/connectors/write/{mount_path:path}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:970
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: connectors.{name}_capabilities
+  module: mount
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/connectors/{name}/capabilities
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/connectors.py:275
   profiles:
     lite: supported
     sandbox: supported
@@ -1876,6 +2624,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: daemon.cli
+  module: daemon
+  summary: ''
+  transports:
+    cli:
+      name: nexus daemon
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/daemon_cli.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: daemon.enroll
   module: daemon
   summary: ''
@@ -1968,6 +2733,23 @@ operations:
     grpc_expose:
       name: brick:delegation
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/delegation/brick_factory.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: delegation.cli
+  module: delegation
+  summary: ''
+  transports:
+    cli:
+      name: nexus delegation
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/delegation.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -2291,6 +3073,43 @@ operations:
     grpc_expose:
       name: events_replay
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/events_rpc.py:20
+    http:
+      name: GET /api/v2/events/replay
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/events_replay.py:115
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: events.stream
+  module: agent_log
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/events/stream
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/events_replay.py:180
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: events_replay.api_v2
+  module: agent_log
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/watch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/events_replay.py:396
   profiles:
     lite: supported
     sandbox: supported
@@ -2369,6 +3188,295 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: exchange_service.batch_transfer
+  module: filesystem
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.BatchTransfer
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:30
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.can_afford
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.CanAfford
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:35
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.commit_reservation
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.CommitReservation
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:32
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.export_transactions
+  module: portability
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.ExportTransactions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:42
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.get_aggregations
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.GetAggregations
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:40
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.get_balance
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.GetBalance
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:28
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.get_transaction
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.GetTransaction
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:39
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.list_keys
+  module: filesystem
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.ListKeys
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:23
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.list_transactions
+  module: filesystem
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.ListTransactions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:38
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.meter
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.Meter
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:34
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.release_reservation
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.ReleaseReservation
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:33
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.reserve
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.Reserve
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:31
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.revoke_key
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.RevokeKey
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:25
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.rotate_key
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.RotateKey
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:24
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.transfer
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.Transfer
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:29
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.verify_identity
+  module: identity
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.VerifyIdentity
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:22
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: exchange_service.verify_integrity
+  module: auth
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ExchangeService.VerifyIntegrity
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/exchange/v1/exchange.proto:41
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: execute.workflow
   module: workflows
   summary: ''
@@ -2420,6 +3528,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: extensions.api_v2
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/extensions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/core/extensions.py:59
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: extensions.get
   module: uncategorized
   summary: ''
@@ -2459,8 +3584,42 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /kinds
+      name: GET /api/v2/extensions/kinds
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/core/extensions.py:72
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: extensions.{kind}_{name}
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/extensions/{kind}/{name}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/core/extensions.py:78
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: extensions.{kind}_{name}_check
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/extensions/{kind}/{name}/check
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/core/extensions.py:90
   profiles:
     lite: supported
     sandbox: supported
@@ -2478,6 +3637,23 @@ operations:
     http:
       name: GET /api/v2/features
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/core/features.py:53
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: federation.cli
+  module: federation
+  summary: ''
+  transports:
+    cli:
+      name: nexus federation
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/federation.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -2885,6 +4061,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: filesystem.lock
+  module: filesystem
+  summary: ''
+  transports:
+    cli:
+      name: nexus lock
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/locks.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: filesystem.lock_acquire
   module: filesystem
   summary: ''
@@ -2957,6 +4150,23 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: filesystem.path-context
+  module: filesystem
+  summary: ''
+  transports:
+    cli:
+      name: nexus path-context
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/path_context.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: filesystem.path_context
   module: filesystem
   summary: ''
   transports:
@@ -3184,6 +4394,23 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: filesystem.write-batch
+  module: filesystem
+  summary: ''
+  transports:
+    cli:
+      name: nexus write-batch
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/file_ops.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: filesystem.write_batch
   module: filesystem
   summary: ''
   transports:
@@ -3840,6 +5067,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: governance.cli
+  module: governance
+  summary: ''
+  transports:
+    cli:
+      name: nexus governance
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/governance_cli.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: governance.rings
   module: governance
   summary: ''
@@ -3908,12 +5152,46 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: graph.entity_{entity_id}
+  module: catalog
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/graph/entity/{entity_id}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/graph.py:110
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: graph.entity_{entity_id}_neighbors
+  module: catalog
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/graph/entity/{entity_id}/neighbors
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/graph.py:129
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: graph.search
   module: catalog
   summary: ''
   transports:
     http:
-      name: GET /search
+      name: GET /api/v2/graph/search
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/graph.py:175
   profiles:
     lite: supported
@@ -3930,7 +5208,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /subgraph
+      name: POST /api/v2/graph/subgraph
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/graph.py:155
   profiles:
     lite: supported
@@ -4027,6 +5305,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: hub.cli
+  module: hub
+  summary: ''
+  transports:
+    cli:
+      name: nexus hub
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/hub.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: hub.deploy
   module: hub
   summary: Bootstrap a hub deployment from CLI (currently helm/manual).
@@ -4106,6 +5401,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: identity.cli
+  module: identity
+  summary: ''
+  transports:
+    cli:
+      name: nexus identity
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/identity.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: import.metadata
   module: portability
   summary: ''
@@ -4162,7 +5474,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /downstream/query
+      name: GET /api/v2/lineage/downstream/query
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/lineage.py:106
   profiles:
     lite: supported
@@ -4179,7 +5491,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /scope/active
+      name: GET /api/v2/lineage/scope/active
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/lineage.py:259
   profiles:
     lite: supported
@@ -4196,7 +5508,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /scope/begin
+      name: POST /api/v2/lineage/scope/begin
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/lineage.py:211
   profiles:
     lite: supported
@@ -4213,7 +5525,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /scope/end
+      name: POST /api/v2/lineage/scope/end
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/lineage.py:235
   profiles:
     lite: supported
@@ -4230,7 +5542,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /stale/query
+      name: GET /api/v2/lineage/stale/query
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/lineage.py:127
   profiles:
     lite: supported
@@ -4248,6 +5560,23 @@ operations:
   transports:
     http:
       name: PUT /{urn}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/lineage.py:158
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: lineage.{urn}
+  module: catalog
+  summary: ''
+  transports:
+    http:
+      name: PUT /api/v2/lineage/{urn}
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/lineage.py:158
   profiles:
     lite: supported
@@ -4551,6 +5880,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: locks.api_v2
+  module: filesystem
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/locks
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/locks.py:123
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: locks.get
   module: filesystem
   summary: ''
@@ -4591,6 +5937,40 @@ operations:
   transports:
     http:
       name: POST /{resource:path}/acquire
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/locks.py:172
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: locks.{resource:path}
+  module: filesystem
+  summary: ''
+  transports:
+    http:
+      name: PATCH /api/v2/locks/{resource:path}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/locks.py:236
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: locks.{resource:path}_acquire
+  module: filesystem
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/locks/{resource:path}/acquire
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/locks.py:172
   profiles:
     lite: supported
@@ -4743,7 +6123,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /mounts
+      name: POST /api/v2/mcp/mounts
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/mcp.py:105
   profiles:
     lite: supported
@@ -4761,6 +6141,23 @@ operations:
   transports:
     http:
       name: DELETE /mounts/{name}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/mcp.py:152
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: mcp.mounts_{name}
+  module: mcp
+  summary: ''
+  transports:
+    http:
+      name: DELETE /api/v2/mcp/mounts/{name}
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/mcp.py:152
   profiles:
     lite: supported
@@ -4813,6 +6210,40 @@ operations:
     grpc_expose:
       name: metadata_batch
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_metadata.py:1319
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: mobile.detect
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/mobile/detect
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/mobile_search.py:66
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: mobile.download
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/mobile/download
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/mobile_search.py:132
   profiles:
     lite: supported
     sandbox: supported
@@ -5435,6 +6866,40 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: operations.agents_{agent_id}_activity
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/operations/agents/{agent_id}/activity
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/operations.py:135
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: operations.api_v2
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/operations
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/operations.py:58
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: operations.get
   module: uncategorized
   summary: ''
@@ -5492,6 +6957,23 @@ operations:
     sandbox: missing_needed
     full: missing_needed
   usage_example: 'WANTED: Useful for parser debugging; currently requires Python REPL.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault.api_v2
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/password_vault
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/password_vault.py:154
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -5582,6 +7064,210 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: password_vault.{title:path}
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: PUT /api/v2/password_vault/{title:path}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/password_vault.py:318
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault.{title:path}_restore
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/password_vault/{title:path}/restore
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/password_vault.py:221
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault.{title:path}_totp
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/password_vault/{title:path}/totp
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/password_vault.py:256
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault.{title:path}_versions
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/password_vault/{title:path}/versions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/password_vault.py:192
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault_service.delete_entry
+  module: secrets
+  summary: ''
+  transports:
+    grpc_typed:
+      name: PasswordVaultService.DeleteEntry
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/password_vault/v1/password_vault.proto:62
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault_service.generate_totp
+  module: secrets
+  summary: ''
+  transports:
+    grpc_typed:
+      name: PasswordVaultService.GenerateTotp
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/password_vault/v1/password_vault.proto:75
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault_service.get_entry
+  module: secrets
+  summary: ''
+  transports:
+    grpc_typed:
+      name: PasswordVaultService.GetEntry
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/password_vault/v1/password_vault.proto:54
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault_service.list_entries
+  module: secrets
+  summary: ''
+  transports:
+    grpc_typed:
+      name: PasswordVaultService.ListEntries
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/password_vault/v1/password_vault.proto:58
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault_service.list_versions
+  module: secrets
+  summary: ''
+  transports:
+    grpc_typed:
+      name: PasswordVaultService.ListVersions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/password_vault/v1/password_vault.proto:69
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault_service.put_entry
+  module: secrets
+  summary: ''
+  transports:
+    grpc_typed:
+      name: PasswordVaultService.PutEntry
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/password_vault/v1/password_vault.proto:50
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: password_vault_service.restore_entry
+  module: secrets
+  summary: ''
+  transports:
+    grpc_typed:
+      name: PasswordVaultService.RestoreEntry
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/password_vault/v1/password_vault.proto:65
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: path_contexts.api_v2
+  module: filesystem
+  summary: ''
+  transports:
+    http:
+      name: PUT /api/v2/path-contexts/
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/path_contexts.py:220
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: path_contexts.delete
   module: filesystem
   summary: ''
@@ -5638,7 +7324,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /approvals
+      name: GET /api/v2/pay/approvals
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:1049
   profiles:
     lite: supported
@@ -5672,8 +7358,42 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /approvals/request
+      name: POST /api/v2/pay/approvals/request
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:1055
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: pay.approvals_{approval_id}_approve
+  module: pay
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/pay/approvals/{approval_id}/approve
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:1072
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: pay.approvals_{approval_id}_reject
+  module: pay
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/pay/approvals/{approval_id}/reject
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:1084
   profiles:
     lite: supported
     sandbox: supported
@@ -5692,7 +7412,7 @@ operations:
       name: pay_balance
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/pay_rpc.py:21
     http:
-      name: GET /balance
+      name: GET /api/v2/pay/balance
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:268
   profiles:
     lite: supported
@@ -5709,7 +7429,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /budget
+      name: GET /api/v2/pay/budget
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:375
   profiles:
     lite: supported
@@ -5726,8 +7446,25 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /can-afford
+      name: GET /api/v2/pay/can-afford
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:351
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: pay.cli
+  module: pay
+  summary: ''
+  transports:
+    cli:
+      name: nexus pay
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/pay.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -5760,7 +7497,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /meter
+      name: POST /api/v2/pay/meter
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:881
   profiles:
     lite: supported
@@ -5777,7 +7514,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /policies
+      name: POST /api/v2/pay/policies
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:959
   profiles:
     lite: supported
@@ -5806,12 +7543,29 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: pay.policies_{policy_id}
+  module: pay
+  summary: ''
+  transports:
+    http:
+      name: DELETE /api/v2/pay/policies/{policy_id}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:985
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: pay.reservations
   module: pay
   summary: ''
   transports:
     http:
-      name: GET /reservations
+      name: GET /api/v2/pay/reservations
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:694
   profiles:
     lite: supported
@@ -5828,7 +7582,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /reserve
+      name: POST /api/v2/pay/reserve
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:731
   profiles:
     lite: supported
@@ -5857,13 +7611,47 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: pay.reserve_{reservation_id}_commit
+  module: pay
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/pay/reserve/{reservation_id}/commit
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:790
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: pay.reserve_{reservation_id}_release
+  module: pay
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/pay/reserve/{reservation_id}/release
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:837
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: pay.transactions
   module: pay
   summary: ''
   transports:
     http:
-      name: GET /transactions
-      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:666
+      name: GET /api/v2/pay/transactions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:656
   profiles:
     lite: supported
     sandbox: supported
@@ -5879,7 +7667,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /transactions/integrity
+      name: GET /api/v2/pay/transactions/integrity
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:676
   profiles:
     lite: supported
@@ -5899,7 +7687,7 @@ operations:
       name: pay_transfer
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/rpc/services/pay_rpc.py:31
     http:
-      name: POST /transfer
+      name: POST /api/v2/pay/transfer
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:439
   profiles:
     lite: supported
@@ -5916,7 +7704,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /transfer/batch
+      name: POST /api/v2/pay/transfer/batch
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/pay.py:504
   profiles:
     lite: supported
@@ -6332,7 +8120,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /tuples
+      name: POST /api/v2/rebac/tuples
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/rebac.py:102
   profiles:
     lite: supported
@@ -6385,6 +8173,40 @@ operations:
     grpc_expose:
       name: register_workspace
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/services/workspace/workspace_rpc_service.py:290
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: registry.workspaces
+  module: workspace
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/registry/workspaces
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/workspace.py:219
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: registry.workspaces_{path:path}
+  module: workspace
+  summary: ''
+  transports:
+    http:
+      name: PATCH /api/v2/registry/workspaces/{path:path}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/workspace.py:290
   profiles:
     lite: supported
     sandbox: supported
@@ -6565,6 +8387,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: sandbox.cli
+  module: sandbox
+  summary: ''
+  transports:
+    cli:
+      name: nexus sandbox
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/sandbox.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: sandbox.create
   module: sandbox
   summary: ''
@@ -6655,7 +8494,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /classify
+      name: POST /api/v2/scheduler/classify
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/scheduler.py:272
   profiles:
     lite: supported
@@ -6672,7 +8511,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /metrics
+      name: GET /api/v2/scheduler/metrics
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/scheduler.py:255
   profiles:
     lite: supported
@@ -6689,7 +8528,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /submit
+      name: POST /api/v2/scheduler/submit
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/scheduler.py:175
   profiles:
     lite: supported
@@ -6707,6 +8546,40 @@ operations:
   transports:
     http:
       name: POST /task/{task_id}/cancel
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/scheduler.py:239
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: scheduler.task_{task_id}
+  module: task_manager
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/scheduler/task/{task_id}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/scheduler.py:225
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: scheduler.task_{task_id}_cancel
+  module: task_manager
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/scheduler/task/{task_id}/cancel
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/scheduler.py:239
   profiles:
     lite: supported
@@ -6740,7 +8613,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /expand
+      name: POST /api/v2/search/expand
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1313
   profiles:
     lite: supported
@@ -6763,7 +8636,7 @@ operations:
       name: glob
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:1659
     http:
-      name: POST /glob
+      name: POST /api/v2/search/glob
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1194
   profiles:
     lite: supported
@@ -6786,7 +8659,7 @@ operations:
       name: grep
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/bricks/search/search_service.py:1901
     http:
-      name: POST /grep
+      name: POST /api/v2/search/grep
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1073
   profiles:
     lite: supported
@@ -6818,7 +8691,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /health
+      name: GET /api/v2/search/health
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:154
   profiles:
     lite: supported
@@ -6835,7 +8708,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /index
+      name: POST /api/v2/search/index
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1256
   profiles:
     lite: supported
@@ -6852,7 +8725,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /index-directory
+      name: POST /api/v2/search/index-directory
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1455
   profiles:
     lite: supported
@@ -6869,7 +8742,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /indexed-dirs
+      name: GET /api/v2/search/indexed-dirs
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1673
   profiles:
     lite: supported
@@ -6886,7 +8759,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /indexing-mode
+      name: POST /api/v2/search/indexing-mode
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1710
   profiles:
     lite: supported
@@ -6903,7 +8776,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /locate
+      name: POST /api/v2/search/locate
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1891
   profiles:
     lite: supported
@@ -6920,7 +8793,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /purge-unscoped
+      name: POST /api/v2/search/purge-unscoped
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1837
   profiles:
     lite: supported
@@ -6937,7 +8810,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /query
+      name: GET /api/v2/search/query
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:178
   profiles:
     lite: supported
@@ -6954,7 +8827,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /query/batch
+      name: POST /api/v2/search/query/batch
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:558
   profiles:
     lite: supported
@@ -6971,7 +8844,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /refresh
+      name: POST /api/v2/search/refresh
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:1292
   profiles:
     lite: supported
@@ -7005,8 +8878,25 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /stats
+      name: GET /api/v2/search/stats
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/search.py:169
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: secrets.api_v2
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/secrets
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:220
   profiles:
     lite: supported
     sandbox: supported
@@ -7022,7 +8912,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /batch
+      name: POST /api/v2/secrets/batch
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:497
   profiles:
     lite: supported
@@ -7039,7 +8929,7 @@ operations:
   summary: ''
   transports:
     http:
-      name: POST /batch/get
+      name: POST /api/v2/secrets/batch/get
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:530
   profiles:
     lite: supported
@@ -7085,12 +8975,148 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: secrets.secrets_audit
+  module: secrets
+  summary: ''
+  transports:
+    cli:
+      name: nexus secrets-audit
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/secrets_audit.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: secrets.{namespace}_{key}
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: PUT /api/v2/secrets/{namespace}/{key}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:78
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: secrets.{namespace}_{key}_description
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: PUT /api/v2/secrets/{namespace}/{key}/description
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:123
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: secrets.{namespace}_{key}_disable
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: PUT /api/v2/secrets/{namespace}/{key}/disable
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:452
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: secrets.{namespace}_{key}_enable
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: PUT /api/v2/secrets/{namespace}/{key}/enable
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:413
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: secrets.{namespace}_{key}_restore
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/secrets/{namespace}/{key}/restore
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:326
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: secrets.{namespace}_{key}_versions
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/secrets/{namespace}/{key}/versions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:251
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: secrets.{namespace}_{key}_versions_{version}
+  module: secrets
+  summary: ''
+  transports:
+    http:
+      name: DELETE /api/v2/secrets/{namespace}/{key}/versions/{version}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets.py:365
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: secrets_audit.events_export
   module: secrets
   summary: ''
   transports:
     http:
-      name: GET /events/export
+      name: GET /api/v2/secrets-audit/events/export
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/secrets_audit.py:83
   profiles:
     lite: supported
@@ -7224,6 +9250,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: snapshot.cli
+  module: snapshot
+  summary: ''
+  transports:
+    cli:
+      name: nexus snapshot
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/snapshots.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: snapshot.commit
   module: snapshot
   summary: ''
@@ -7343,6 +9386,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: snapshots.api_v2
+  module: snapshot
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/snapshots
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/snapshots.py:176
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: snapshots.get
   module: snapshot
   summary: ''
@@ -7445,6 +9505,74 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: snapshots.{txn_id}
+  module: snapshot
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/snapshots/{txn_id}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/snapshots.py:241
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshots.{txn_id}_commit
+  module: snapshot
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/snapshots/{txn_id}/commit
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/snapshots.py:263
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshots.{txn_id}_entries
+  module: snapshot
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/snapshots/{txn_id}/entries
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/snapshots.py:340
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: snapshots.{txn_id}_rollback
+  module: snapshot
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/snapshots/{txn_id}/rollback
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/snapshots.py:310
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: stat.bulk
   module: filesystem
   summary: ''
@@ -7486,6 +9614,23 @@ operations:
     http:
       name: GET /api/stream/{path:path}
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/core/streaming.py:20
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: subscriptions.api_v2
+  module: workflows
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/subscriptions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/subscriptions.py:57
   profiles:
     lite: supported
     sandbox: supported
@@ -7564,6 +9709,40 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: subscriptions.{subscription_id}
+  module: workflows
+  summary: ''
+  transports:
+    http:
+      name: PATCH /api/v2/subscriptions/{subscription_id}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/subscriptions.py:130
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: subscriptions.{subscription_id}_test
+  module: workflows
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/subscriptions/{subscription_id}/test
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/subscriptions.py:176
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: sys.watch
   module: nexus_fs
   summary: ''
@@ -7571,6 +9750,23 @@ operations:
     grpc_expose:
       name: sys_watch
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/core/nexus_fs_watch.py:26
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: task_manager.scheduler
+  module: task_manager
+  summary: ''
+  transports:
+    cli:
+      name: nexus scheduler
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/scheduler_cli.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -7632,6 +9828,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: tus_uploads.options
+  module: upload
+  summary: ''
+  transports:
+    http:
+      name: 'OPTIONS '
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/tus_uploads.py:120
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: tus_uploads.post
   module: upload
   summary: ''
@@ -7666,6 +9879,40 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: uncategorized.acp
+  module: uncategorized
+  summary: ''
+  transports:
+    cli:
+      name: nexus acp
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/acp_cli.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: uncategorized.admin
+  module: uncategorized
+  summary: ''
+  transports:
+    cli:
+      name: nexus admin
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/admin.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: uncategorized.config
   module: uncategorized
   summary: ''
@@ -7673,6 +9920,40 @@ operations:
     cli:
       name: nexus config
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/config_cmd.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: uncategorized.conflicts
+  module: uncategorized
+  summary: ''
+  transports:
+    cli:
+      name: nexus conflicts
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/conflicts.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: uncategorized.demo
+  module: uncategorized
+  summary: ''
+  transports:
+    cli:
+      name: nexus demo
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/demo.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -7717,6 +9998,40 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: uncategorized.extensions
+  module: uncategorized
+  summary: ''
+  transports:
+    cli:
+      name: nexus extensions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/extensions.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: uncategorized.graph
+  module: uncategorized
+  summary: ''
+  transports:
+    cli:
+      name: nexus graph
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/graph_cli.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: uncategorized.info
   module: uncategorized
   summary: ''
@@ -7724,6 +10039,40 @@ operations:
     cli:
       name: nexus info
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/inspect.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: uncategorized.manifest
+  module: uncategorized
+  summary: ''
+  transports:
+    cli:
+      name: nexus manifest
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/manifest_cli.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: uncategorized.memory
+  module: uncategorized
+  summary: ''
+  transports:
+    cli:
+      name: nexus memory
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/memory.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -7792,6 +10141,23 @@ operations:
     cli:
       name: nexus plugins
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/plugins.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: uncategorized.rlm
+  module: uncategorized
+  summary: ''
+  transports:
+    cli:
+      name: nexus rlm
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/rlm.py:1
   profiles:
     lite: supported
     sandbox: supported
@@ -7918,6 +10284,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: upload.cli
+  module: upload
+  summary: ''
+  transports:
+    cli:
+      name: nexus upload
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/upload.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: versioning.rollback
   module: versioning
   summary: ''
@@ -7976,6 +10359,23 @@ operations:
     cli:
       name: nexus versions
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/versions.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workflows.api_v2
+  module: workflows
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/workflows
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/workflows.py:170
   profiles:
     lite: supported
     sandbox: supported
@@ -8112,6 +10512,91 @@ operations:
     http:
       name: 'POST '
       source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/workflows.py:170
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workflows.{name}
+  module: workflows
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/workflows/{name}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/workflows.py:211
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workflows.{name}_disable
+  module: workflows
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/workflows/{name}/disable
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/workflows.py:262
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workflows.{name}_enable
+  module: workflows
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/workflows/{name}/enable
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/workflows.py:250
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workflows.{name}_execute
+  module: workflows
+  summary: ''
+  transports:
+    http:
+      name: POST /api/v2/workflows/{name}/execute
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/workflows.py:274
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: workflows.{name}_executions
+  module: workflows
+  summary: ''
+  transports:
+    http:
+      name: GET /api/v2/workflows/{name}/executions
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/workflows.py:304
   profiles:
     lite: supported
     sandbox: supported
@@ -8360,6 +10845,227 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: x402.x402_config
+  module: pay
+  summary: ''
+  transports:
+    http:
+      name: GET /x402/config
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/x402.py:209
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: x402.x402_topup
+  module: pay
+  summary: ''
+  transports:
+    http:
+      name: POST /x402/topup
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/x402.py:170
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: x402.x402_webhook
+  module: pay
+  summary: ''
+  transports:
+    http:
+      name: POST /x402/webhook
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/api/v2/routers/x402.py:118
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone.cli
+  module: zone
+  summary: ''
+  transports:
+    cli:
+      name: nexus zone
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/cli/commands/zone.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_api_service.delete_zone
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneApiService.DeleteZone
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:68
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_api_service.get_cluster_info
+  module: federation
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneApiService.GetClusterInfo
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:54
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_api_service.get_search_capabilities
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneApiService.GetSearchCapabilities
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:79
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_api_service.join_cluster
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneApiService.JoinCluster
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:75
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_api_service.join_zone
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneApiService.JoinZone
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:60
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_api_service.propose
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneApiService.Propose
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:47
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_api_service.query
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneApiService.Query
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:51
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_api_service.read_blob
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneApiService.ReadBlob
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:86
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_routes.api_zones
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: GET /api/zones/{zone_id}
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/src/nexus/server/auth/zone_routes.py:195
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: zone_routes.get
   module: zone
   summary: ''
@@ -8411,8 +11117,42 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: zone_transport_service.replicate_entries
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneTransportService.ReplicateEntries
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:29
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_transport_service.step_message
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneTransportService.StepMessage
+      source: /Users/tafeng/nexus/.claude/worktrees/scalable-popping-pretzel/proto/nexus/raft/transport.proto:23
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 parity_warnings:
-- operation_id: access_manifests.get
+- operation_id: access_manifests.api_v2
   has:
   - http
   missing:
@@ -8420,7 +11160,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: access_manifests.manifest_id
+- operation_id: access_manifests.{manifest_id}
   has:
   - http
   missing:
@@ -8428,7 +11168,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: access_manifests.manifest_id_evaluate
+- operation_id: access_manifests.{manifest_id}_evaluate
   has:
   - http
   missing:
@@ -8436,15 +11176,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: access_manifests.manifest_id_revoke
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: access_manifests.post
+- operation_id: access_manifests.{manifest_id}_revoke
   has:
   - http
   missing:
@@ -8468,6 +11200,30 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: agent_log.agent
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: agent_log.audit
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: agent_log.events
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: agent_log.logs
   has:
   - cli
@@ -8476,7 +11232,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: agent_registration.register
+- operation_id: agent_status.api_v2
   has:
   - http
   missing:
@@ -8484,7 +11240,47 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: agent_status.api_v2
+- operation_id: agents.delegate
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: agents.delegate_{delegation_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: agents.delegate_{delegation_id}_chain
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: agents.delegate_{delegation_id}_complete
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: agents.delegate_{delegation_id}_namespace
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: agents.register
   has:
   - http
   missing:
@@ -8501,6 +11297,14 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: agents.{agent_id}_evict
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: agents.{agent_id}_identity
   has:
   - http
   missing:
@@ -8548,12 +11352,68 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: agents.{agent_id}_verify
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: agents.{agent_id}_warmup
   has:
   - http
   missing:
   - cli
   - grpc_typed
+  - mcp
+  - sdk
+- operation_id: approvals_v1.cancel
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: approvals_v1.decide
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: approvals_v1.get
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: approvals_v1.list_pending
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: approvals_v1.submit
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: approvals_v1.watch
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
   - mcp
   - sdk
 - operation_id: archive.cli
@@ -8564,7 +11424,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: aspects.urn
+- operation_id: aspects.{urn}
   has:
   - http
   missing:
@@ -8572,7 +11432,15 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: aspects.urn_name
+- operation_id: aspects.{urn}_{name}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: aspects.{urn}_{name}_history
   has:
   - http
   missing:
@@ -8716,7 +11584,31 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: audit.transactions
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: auth.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: auth.connect
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: auth.exchange
   has:
   - cli
   missing:
@@ -8732,36 +11624,36 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: auth.keys
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: auth.keys_{key_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: auth.oauth
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: auth.tls
   has:
   - cli
   missing:
   - grpc_typed
   - http
-  - mcp
-  - sdk
-- operation_id: auth_keys.get
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: auth_keys.key_id
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: auth_keys.post
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
   - mcp
   - sdk
 - operation_id: auth_profiles.post
@@ -8772,7 +11664,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: auth_routes.change_password
+- operation_id: auth_routes.auth_change_password
   has:
   - http
   missing:
@@ -8780,7 +11672,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: auth_routes.login
+- operation_id: auth_routes.auth_login
   has:
   - http
   missing:
@@ -8788,7 +11680,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: auth_routes.me
+- operation_id: auth_routes.auth_me
   has:
   - http
   missing:
@@ -8796,7 +11688,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: auth_routes.oauth_callback
+- operation_id: auth_routes.auth_oauth
   has:
   - http
   missing:
@@ -8804,7 +11696,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: auth_routes.oauth_check
+- operation_id: auth_routes.auth_register
   has:
   - http
   missing:
@@ -8812,7 +11704,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: auth_routes.oauth_confirm
+- operation_id: auth_routes.auth_request_verification
   has:
   - http
   missing:
@@ -8820,7 +11712,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: auth_routes.oauth_google
+- operation_id: auth_routes.auth_setup_zone
   has:
   - http
   missing:
@@ -8828,31 +11720,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: auth_routes.register
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: auth_routes.request_verification
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: auth_routes.setup_zone
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: auth_routes.verify_email
+- operation_id: auth_routes.auth_verify_email
   has:
   - http
   missing:
@@ -8924,7 +11792,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: catalog.schema_path:path
+- operation_id: catalog.schema_{path:path}
   has:
   - http
   missing:
@@ -8933,6 +11801,14 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: catalog.search
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: connectors.api_v2
   has:
   - http
   missing:
@@ -8964,14 +11840,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: connectors.get
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
 - operation_id: connectors.mount
   has:
   - http
@@ -8988,7 +11856,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: connectors.name_capabilities
+- operation_id: connectors.schema_{mount_path:path}_{operation}
   has:
   - http
   missing:
@@ -8996,15 +11864,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: connectors.schema_mount_path:path
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: connectors.skill_mount_path:path
+- operation_id: connectors.skill_{mount_path:path}
   has:
   - http
   missing:
@@ -9020,7 +11880,15 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: connectors.write_mount_path:path
+- operation_id: connectors.write_{mount_path:path}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: connectors.{name}_capabilities
   has:
   - http
   missing:
@@ -9076,6 +11944,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: daemon.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: daemon.enroll
   has:
   - http
@@ -9116,52 +11992,12 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: delegation.delegation_id
+- operation_id: delegation.cli
   has:
-  - http
-  missing:
   - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: delegation.delegation_id_chain
-  has:
-  - http
   missing:
-  - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: delegation.delegation_id_complete
-  has:
   - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: delegation.delegation_id_namespace
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: delegation.get
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: delegation.post
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
   - mcp
   - sdk
 - operation_id: delete.file
@@ -9212,7 +12048,7 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: events_replay.get
+- operation_id: events.replay
   has:
   - http
   missing:
@@ -9220,7 +12056,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: events_replay.replay
+- operation_id: events.stream
   has:
   - http
   missing:
@@ -9228,7 +12064,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: events_replay.stream
+- operation_id: events_replay.api_v2
   has:
   - http
   missing:
@@ -9244,6 +12080,142 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: exchange_service.batch_transfer
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.can_afford
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.commit_reservation
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.export_transactions
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.get_aggregations
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.get_balance
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.get_transaction
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.list_keys
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.list_transactions
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.meter
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.release_reservation
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.reserve
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.revoke_key
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.rotate_key
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.transfer
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.verify_identity
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: exchange_service.verify_integrity
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
 - operation_id: execute.workflow
   has:
   - mcp
@@ -9252,15 +12224,7 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: extensions.get
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: extensions.kind_name
+- operation_id: extensions.api_v2
   has:
   - http
   missing:
@@ -9276,12 +12240,36 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: extensions.{kind}_{name}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: extensions.{kind}_{name}_check
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: features.api_v2
   has:
   - http
   missing:
   - cli
   - grpc_typed
+  - mcp
+  - sdk
+- operation_id: federation.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
   - mcp
   - sdk
 - operation_id: file.info
@@ -9332,6 +12320,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: filesystem.lock
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: filesystem.ls
   has:
   - cli
@@ -9356,7 +12352,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: filesystem.path-context
+- operation_id: filesystem.path_context
   has:
   - cli
   missing:
@@ -9428,7 +12424,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: filesystem.write-batch
+- operation_id: filesystem.write_batch
   has:
   - cli
   missing:
@@ -9612,7 +12608,23 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: graph.entity_entity_id
+- operation_id: governance.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: graph.entity_{entity_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: graph.entity_{entity_id}_neighbors
   has:
   - http
   missing:
@@ -9668,20 +12680,20 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: identity.agent_id_identity
+- operation_id: hub.cli
   has:
-  - http
-  missing:
   - cli
+  missing:
   - grpc_typed
+  - http
   - mcp
   - sdk
-- operation_id: identity.agent_id_verify
+- operation_id: identity.cli
   has:
-  - http
-  missing:
   - cli
+  missing:
   - grpc_typed
+  - http
   - mcp
   - sdk
 - operation_id: jwks.v1_.well_known
@@ -9732,7 +12744,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: lineage.urn
+- operation_id: lineage.{urn}
   has:
   - http
   missing:
@@ -9796,7 +12808,7 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: locks.get
+- operation_id: locks.api_v2
   has:
   - http
   missing:
@@ -9804,7 +12816,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: locks.resource:path
+- operation_id: locks.{resource:path}
   has:
   - http
   missing:
@@ -9812,7 +12824,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: locks.resource:path_acquire
+- operation_id: locks.{resource:path}_acquire
   has:
   - http
   missing:
@@ -9844,7 +12856,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: mcp.mounts_name
+- operation_id: mcp.mounts_{name}
   has:
   - http
   missing:
@@ -9852,7 +12864,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: mobile_search.detect
+- operation_id: mobile.detect
   has:
   - http
   missing:
@@ -9860,7 +12872,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: mobile_search.download
+- operation_id: mobile.download
   has:
   - http
   missing:
@@ -9972,7 +12984,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: operations.agents_agent_id
+- operation_id: operations.agents_{agent_id}_activity
   has:
   - http
   missing:
@@ -9980,7 +12992,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: operations.get
+- operation_id: operations.api_v2
   has:
   - http
   missing:
@@ -9996,7 +13008,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: password_vault.get
+- operation_id: password_vault.api_v2
   has:
   - http
   missing:
@@ -10004,7 +13016,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: password_vault.title:path
+- operation_id: password_vault.{title:path}
   has:
   - http
   missing:
@@ -10012,7 +13024,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: password_vault.title:path_restore
+- operation_id: password_vault.{title:path}_restore
   has:
   - http
   missing:
@@ -10020,7 +13032,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: password_vault.title:path_totp
+- operation_id: password_vault.{title:path}_totp
   has:
   - http
   missing:
@@ -10028,7 +13040,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: password_vault.title:path_versions
+- operation_id: password_vault.{title:path}_versions
   has:
   - http
   missing:
@@ -10036,23 +13048,63 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: path_contexts.delete
+- operation_id: password_vault_service.delete_entry
   has:
-  - http
+  - grpc_typed
   missing:
   - cli
-  - grpc_typed
+  - http
   - mcp
   - sdk
-- operation_id: path_contexts.get
+- operation_id: password_vault_service.generate_totp
   has:
-  - http
+  - grpc_typed
   missing:
   - cli
-  - grpc_typed
+  - http
   - mcp
   - sdk
-- operation_id: path_contexts.put
+- operation_id: password_vault_service.get_entry
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: password_vault_service.list_entries
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: password_vault_service.list_versions
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: password_vault_service.put_entry
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: password_vault_service.restore_entry
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: path_contexts.api_v2
   has:
   - http
   missing:
@@ -10068,7 +13120,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: pay.approvals_approval_id
+- operation_id: pay.approvals_request
   has:
   - http
   missing:
@@ -10076,7 +13128,15 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: pay.approvals_request
+- operation_id: pay.approvals_{approval_id}_approve
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: pay.approvals_{approval_id}_reject
   has:
   - http
   missing:
@@ -10108,6 +13168,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: pay.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: pay.meter
   has:
   - http
@@ -10124,7 +13192,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: pay.policies_policy_id
+- operation_id: pay.policies_{policy_id}
   has:
   - http
   missing:
@@ -10148,7 +13216,15 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: pay.reserve_reservation_id
+- operation_id: pay.reserve_{reservation_id}_commit
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: pay.reserve_{reservation_id}_release
   has:
   - http
   missing:
@@ -10236,6 +13312,22 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: registry.workspaces
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: registry.workspaces_{path:path}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: rename.file
   has:
   - mcp
@@ -10266,6 +13358,14 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
+  - mcp
+  - sdk
+- operation_id: sandbox.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
   - mcp
   - sdk
 - operation_id: sandbox.create
@@ -10324,7 +13424,15 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: scheduler.task_task_id
+- operation_id: scheduler.task_{task_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: scheduler.task_{task_id}_cancel
   has:
   - http
   missing:
@@ -10460,6 +13568,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: secrets.api_v2
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: secrets.batch
   has:
   - http
@@ -10476,7 +13592,15 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: secrets.get
+- operation_id: secrets.secrets_audit
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: secrets.{namespace}_{key}
   has:
   - http
   missing:
@@ -10484,7 +13608,47 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: secrets.namespace_key
+- operation_id: secrets.{namespace}_{key}_description
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: secrets.{namespace}_{key}_disable
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: secrets.{namespace}_{key}_enable
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: secrets.{namespace}_{key}_restore
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: secrets.{namespace}_{key}_versions
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: secrets.{namespace}_{key}_versions_{version}
   has:
   - http
   missing:
@@ -10508,7 +13672,15 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: snapshots.get
+- operation_id: snapshot.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: snapshots.api_v2
   has:
   - http
   missing:
@@ -10516,7 +13688,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: snapshots.post
+- operation_id: snapshots.{txn_id}
   has:
   - http
   missing:
@@ -10524,7 +13696,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: snapshots.txn_id
+- operation_id: snapshots.{txn_id}_commit
   has:
   - http
   missing:
@@ -10532,7 +13704,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: snapshots.txn_id_commit
+- operation_id: snapshots.{txn_id}_entries
   has:
   - http
   missing:
@@ -10540,15 +13712,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: snapshots.txn_id_entries
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: snapshots.txn_id_rollback
+- operation_id: snapshots.{txn_id}_rollback
   has:
   - http
   missing:
@@ -10564,7 +13728,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: subscriptions.get
+- operation_id: subscriptions.api_v2
   has:
   - http
   missing:
@@ -10572,7 +13736,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: subscriptions.post
+- operation_id: subscriptions.{subscription_id}
   has:
   - http
   missing:
@@ -10580,7 +13744,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: subscriptions.subscription_id
+- operation_id: subscriptions.{subscription_id}_test
   has:
   - http
   missing:
@@ -10588,12 +13752,12 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: subscriptions.subscription_id_test
+- operation_id: task_manager.scheduler
   has:
-  - http
-  missing:
   - cli
+  missing:
   - grpc_typed
+  - http
   - mcp
   - sdk
 - operation_id: tasks.events
@@ -10620,6 +13784,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: tus_uploads.options
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: tus_uploads.post
   has:
   - http
@@ -10636,7 +13808,39 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: uncategorized.acp
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: uncategorized.admin
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: uncategorized.config
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: uncategorized.conflicts
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: uncategorized.demo
   has:
   - cli
   missing:
@@ -10660,7 +13864,39 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: uncategorized.extensions
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: uncategorized.graph
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: uncategorized.info
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: uncategorized.manifest
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: uncategorized.memory
   has:
   - cli
   missing:
@@ -10700,6 +13936,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: uncategorized.rlm
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: uncategorized.upgrade
   has:
   - cli
@@ -10716,6 +13960,14 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: upload.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
 - operation_id: versioning.undo
   has:
   - cli
@@ -10740,6 +13992,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: workflows.api_v2
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: workflows.cli
   has:
   - cli
@@ -10748,7 +14008,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: workflows.get
+- operation_id: workflows.{name}
   has:
   - http
   missing:
@@ -10756,7 +14016,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: workflows.name
+- operation_id: workflows.{name}_disable
   has:
   - http
   missing:
@@ -10764,7 +14024,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: workflows.name_disable
+- operation_id: workflows.{name}_enable
   has:
   - http
   missing:
@@ -10772,7 +14032,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: workflows.name_enable
+- operation_id: workflows.{name}_execute
   has:
   - http
   missing:
@@ -10780,23 +14040,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: workflows.name_execute
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: workflows.name_executions
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: workflows.post
+- operation_id: workflows.{name}_executions
   has:
   - http
   missing:
@@ -10812,30 +14056,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: workspace.get
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: workspace.path:path
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: workspace.post
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
 - operation_id: write.file
   has:
   - mcp
@@ -10844,7 +14064,7 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: x402.config
+- operation_id: x402.x402_config
   has:
   - http
   missing:
@@ -10852,7 +14072,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: x402.topup
+- operation_id: x402.x402_topup
   has:
   - http
   missing:
@@ -10860,7 +14080,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: x402.webhook
+- operation_id: x402.x402_webhook
   has:
   - http
   missing:
@@ -10868,7 +14088,79 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: zone_routes.get
+- operation_id: zone.cli
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_api_service.delete_zone
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_api_service.get_cluster_info
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_api_service.get_search_capabilities
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_api_service.join_cluster
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_api_service.join_zone
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_api_service.propose
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_api_service.query
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_api_service.read_blob
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_routes.api_zones
   has:
   - http
   missing:
@@ -10876,21 +14168,207 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: zone_routes.post
+- operation_id: zone_transport_service.replicate_entries
   has:
-  - http
+  - grpc_typed
   missing:
   - cli
-  - grpc_typed
+  - http
   - mcp
   - sdk
-- operation_id: zone_routes.zone_id
+- operation_id: zone_transport_service.step_message
   has:
-  - http
+  - grpc_typed
   missing:
   - cli
-  - grpc_typed
+  - http
   - mcp
   - sdk
 unmapped_surfaces: []
-stale_rows: []
+stale_rows:
+- operation_id: access_manifests.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: access_manifests.manifest_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: access_manifests.manifest_id_evaluate
+  reason: present in committed YAML but not detected by extractor
+- operation_id: access_manifests.manifest_id_revoke
+  reason: present in committed YAML but not detected by extractor
+- operation_id: access_manifests.post
+  reason: present in committed YAML but not detected by extractor
+- operation_id: agent_registration.register
+  reason: present in committed YAML but not detected by extractor
+- operation_id: aspects.urn
+  reason: present in committed YAML but not detected by extractor
+- operation_id: aspects.urn_name
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_keys.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_keys.key_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_keys.post
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.change_password
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.login
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.me
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.oauth_callback
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.oauth_check
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.oauth_confirm
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.oauth_google
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.register
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.request_verification
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.setup_zone
+  reason: present in committed YAML but not detected by extractor
+- operation_id: auth_routes.verify_email
+  reason: present in committed YAML but not detected by extractor
+- operation_id: catalog.schema_path:path
+  reason: present in committed YAML but not detected by extractor
+- operation_id: connectors.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: connectors.name_capabilities
+  reason: present in committed YAML but not detected by extractor
+- operation_id: connectors.schema_mount_path:path
+  reason: present in committed YAML but not detected by extractor
+- operation_id: connectors.skill_mount_path:path
+  reason: present in committed YAML but not detected by extractor
+- operation_id: connectors.write_mount_path:path
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.delegation_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.delegation_id_chain
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.delegation_id_complete
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.delegation_id_namespace
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.post
+  reason: present in committed YAML but not detected by extractor
+- operation_id: events_replay.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: events_replay.replay
+  reason: present in committed YAML but not detected by extractor
+- operation_id: events_replay.stream
+  reason: present in committed YAML but not detected by extractor
+- operation_id: extensions.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: extensions.kind_name
+  reason: present in committed YAML but not detected by extractor
+- operation_id: filesystem.path-context
+  reason: present in committed YAML but not detected by extractor
+- operation_id: filesystem.write-batch
+  reason: present in committed YAML but not detected by extractor
+- operation_id: graph.entity_entity_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: identity.agent_id_identity
+  reason: present in committed YAML but not detected by extractor
+- operation_id: identity.agent_id_verify
+  reason: present in committed YAML but not detected by extractor
+- operation_id: lineage.urn
+  reason: present in committed YAML but not detected by extractor
+- operation_id: locks.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: locks.resource:path
+  reason: present in committed YAML but not detected by extractor
+- operation_id: locks.resource:path_acquire
+  reason: present in committed YAML but not detected by extractor
+- operation_id: mcp.mounts_name
+  reason: present in committed YAML but not detected by extractor
+- operation_id: mobile_search.detect
+  reason: present in committed YAML but not detected by extractor
+- operation_id: mobile_search.download
+  reason: present in committed YAML but not detected by extractor
+- operation_id: operations.agents_agent_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: operations.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: password_vault.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: password_vault.title:path
+  reason: present in committed YAML but not detected by extractor
+- operation_id: password_vault.title:path_restore
+  reason: present in committed YAML but not detected by extractor
+- operation_id: password_vault.title:path_totp
+  reason: present in committed YAML but not detected by extractor
+- operation_id: password_vault.title:path_versions
+  reason: present in committed YAML but not detected by extractor
+- operation_id: path_contexts.delete
+  reason: present in committed YAML but not detected by extractor
+- operation_id: path_contexts.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: path_contexts.put
+  reason: present in committed YAML but not detected by extractor
+- operation_id: pay.approvals_approval_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: pay.policies_policy_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: pay.reserve_reservation_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: scheduler.task_task_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: secrets.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: secrets.namespace_key
+  reason: present in committed YAML but not detected by extractor
+- operation_id: snapshots.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: snapshots.post
+  reason: present in committed YAML but not detected by extractor
+- operation_id: snapshots.txn_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: snapshots.txn_id_commit
+  reason: present in committed YAML but not detected by extractor
+- operation_id: snapshots.txn_id_entries
+  reason: present in committed YAML but not detected by extractor
+- operation_id: snapshots.txn_id_rollback
+  reason: present in committed YAML but not detected by extractor
+- operation_id: subscriptions.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: subscriptions.post
+  reason: present in committed YAML but not detected by extractor
+- operation_id: subscriptions.subscription_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: subscriptions.subscription_id_test
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workflows.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workflows.name
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workflows.name_disable
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workflows.name_enable
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workflows.name_execute
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workflows.name_executions
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workflows.post
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workspace.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workspace.path:path
+  reason: present in committed YAML but not detected by extractor
+- operation_id: workspace.post
+  reason: present in committed YAML but not detected by extractor
+- operation_id: x402.config
+  reason: present in committed YAML but not detected by extractor
+- operation_id: x402.topup
+  reason: present in committed YAML but not detected by extractor
+- operation_id: x402.webhook
+  reason: present in committed YAML but not detected by extractor
+- operation_id: zone_routes.get
+  reason: present in committed YAML but not detected by extractor
+- operation_id: zone_routes.post
+  reason: present in committed YAML but not detected by extractor
+- operation_id: zone_routes.zone_id
+  reason: present in committed YAML but not detected by extractor

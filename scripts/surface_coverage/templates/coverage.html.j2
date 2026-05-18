@@ -262,6 +262,29 @@
     </section>
     {% endif %}
 
+    {% if orphan_modules %}
+    <section>
+      <h2 class="section">&sect;4b Unclassified surfaces</h2>
+      <p>Operations the classifier couldn't place. Add a rule in <code>scripts/surface_coverage/taxonomy.py</code> to route them.</p>
+      {% for m in orphan_modules %}
+      <details id="m-{{ m.id }}" class="module">
+        <summary>
+          <span class="mod-name">{{ m.id }}</span>
+          <span class="mod-desc">&mdash; {{ m.description }}</span>
+          <span class="mod-meta">
+            <span>{{ ops_by_module.get(m.id, []) | length }} ops</span>
+          </span>
+        </summary>
+        <div class="module-body">
+          {% for op in ops_by_module.get(m.id, []) %}
+          {% include "_op_row.html.j2" %}
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+    </section>
+    {% endif %}
+
     {% if missing_by_module %}
     <section>
       <h2 class="section">&sect;5 Wanted but missing ({{ total_missing }})</h2>

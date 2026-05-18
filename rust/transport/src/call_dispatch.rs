@@ -188,6 +188,22 @@ fn do_sys_setattr(
     } else {
         &zone_id_str
     };
+
+    // DT_MOUNT (2) via Call RPC: the subprocess binary already owns its
+    // mount table (auto-created at startup from NEXUS_DATA_DIR).  Python
+    // factory sends sys_setattr(DT_MOUNT) during boot but cannot pass a
+    // Rust ObjectStore through JSON.  Rather than overwriting the live
+    // mount with backend=None (which breaks all I/O), return a synthetic
+    // success — the mount already exists.
+    if entry_type == 2 {
+        // DT_MOUNT — acknowledge without touching the existing mount.
+        return ok_json(serde_json::json!({
+            "path": path,
+            "created": false,
+            "entry_type": entry_type,
+        }));
+    }
+
     let mime_type_str = params
         .get("mime_type")
         .and_then(|v| v.as_str())
@@ -200,18 +216,24 @@ fn do_sys_setattr(
     let created_at_ms = params.get("created_at_ms").and_then(|v| v.as_i64());
     let size = params.get("size").and_then(|v| v.as_u64());
     let version = params.get("version").and_then(|v| v.as_u64()).map(|v| v as u32);
+    let backend_name_str = s(params, "backend_name");
+    let backend_name = if backend_name_str.is_empty() { "" } else { &backend_name_str };
+    let io_profile_str = s(params, "io_profile");
+    let io_profile = if io_profile_str.is_empty() { "" } else { &io_profile_str };
+    let is_external = bool_or(params, "is_external", false);
+    let capacity = u64_or(params, "capacity", 0) as usize;
 
     match kernel.sys_setattr(
         &path,
         entry_type,
-        "",    // backend_name
-        None,  // backend
+        backend_name,
+        None,  // backend (non-mount entry types don't need one)
         None,  // metastore
         None,  // raft_backend
-        "",    // io_profile
+        io_profile,
         zone_id,
-        false, // is_external
-        0,     // capacity
+        is_external,
+        capacity,
         None,  // read_fd
         None,  // write_fd
         mime_type_str.as_deref(),

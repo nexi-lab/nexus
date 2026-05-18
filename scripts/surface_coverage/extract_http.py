@@ -35,7 +35,7 @@ def extract_http_routes(py_path_or_dir: Path) -> list[RawHttpRoute]:
 
 def _extract_from_file(py_path: Path) -> list[RawHttpRoute]:
     try:
-        tree = ast.parse(py_path.read_text())
+        tree = ast.parse(py_path.read_text(encoding="utf-8"))
     except (SyntaxError, UnicodeDecodeError):
         return []
     prefixes = _collect_router_prefixes(tree)

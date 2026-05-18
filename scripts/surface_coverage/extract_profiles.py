@@ -16,7 +16,7 @@ def extract_profile_names(py_path: Path, *, enum_class: str) -> list[str]:
     Returns:
         Sorted list of enum string values.
     """
-    tree = ast.parse(py_path.read_text())
+    tree = ast.parse(py_path.read_text(encoding="utf-8"))
     out: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef) or node.name != enum_class:

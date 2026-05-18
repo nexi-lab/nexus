@@ -202,7 +202,7 @@ def generate_coverage(
     if gaps_path.exists():
         import yaml as _yaml
 
-        gaps_doc = _yaml.safe_load(gaps_path.read_text()) or {}
+        gaps_doc = _yaml.safe_load(gaps_path.read_text(encoding="utf-8")) or {}
         for gap in gaps_doc.get("missing_operations", []):
             op_id = gap["id"]
             if op_id in operations:
@@ -231,6 +231,18 @@ def generate_coverage(
     for op in operations.values():
         if not op.profiles:
             op.profiles = dict(default_profiles)
+
+    # Rewrite transport sources to repo-relative paths so committed YAML
+    # doesn't leak the local workspace path.
+    repo_root_str = str(repo_root.resolve()) + "/"
+    for op in operations.values():
+        rewritten: dict[str, TransportCell] = {}
+        for tkey, cell in op.transports.items():
+            src = cell.source
+            if src.startswith(repo_root_str):
+                src = src[len(repo_root_str) :]
+            rewritten[tkey] = TransportCell(name=cell.name, source=src)
+        op.transports = rewritten
 
     # Parity warnings: ops exposed via some "user-facing" transports but not all.
     user_facing = {"cli", "grpc_typed", "http", "mcp", "sdk"}
@@ -268,6 +280,18 @@ def generate_coverage(
         merged = merge_coverage(existing=existing, fresh=fresh)
     else:
         merged = fresh
+
+    # Rewrite any stale absolute paths preserved from prior YAML so committed
+    # output is repo-relative regardless of where it was generated.
+    repo_root_str = str(repo_root.resolve()) + "/"
+    for op in merged.operations:
+        rewritten: dict[str, TransportCell] = {}
+        for tkey, cell in op.transports.items():
+            src = cell.source
+            if src.startswith(repo_root_str):
+                src = src[len(repo_root_str) :]
+            rewritten[tkey] = TransportCell(name=cell.name, source=src)
+        op.transports = rewritten
 
     dump_yaml(merged, output)
     return merged

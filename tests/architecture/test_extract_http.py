@@ -34,7 +34,8 @@ def test_extract_http_real_file_smoke(repo_root: Path):
     if not real.exists():
         return
     results = extract_http_routes(real)
-    assert isinstance(results, list)
+    # fastapi_server.py has a handful of direct decorators (dashboard, debug)
+    assert len(results) > 0, "fastapi_server.py should expose at least one direct route"
 
 
 def test_extract_http_recursive_real_tree_smoke(repo_root: Path):

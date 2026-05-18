@@ -23,7 +23,11 @@ class RawGrpcTypedMethod:
 
 
 def extract_grpc_typed_methods(proto_path: Path) -> list[RawGrpcTypedMethod]:
-    text = proto_path.read_text()
+    raw_text = proto_path.read_text(encoding="utf-8")
+    # Replace comments + string-literal contents with spaces so service/rpc
+    # regexes can't match inside them. Offsets are preserved for line-number
+    # reporting.
+    text = _scrub_comments_and_strings(raw_text)
     out: list[RawGrpcTypedMethod] = []
     for header in _SERVICE_HEADER_RE.finditer(text):
         service = header.group("service")
@@ -34,7 +38,7 @@ def extract_grpc_typed_methods(proto_path: Path) -> list[RawGrpcTypedMethod]:
         body = text[body_start:body_end]
         for rpc in _RPC_RE.finditer(body):
             absolute_offset = body_start + rpc.start()
-            line = text.count("\n", 0, absolute_offset) + 1
+            line = raw_text.count("\n", 0, absolute_offset) + 1
             out.append(
                 RawGrpcTypedMethod(
                     method=f"{service}.{rpc.group('method')}",
@@ -42,6 +46,50 @@ def extract_grpc_typed_methods(proto_path: Path) -> list[RawGrpcTypedMethod]:
                 )
             )
     return sorted(out, key=lambda r: r.method)
+
+
+def _scrub_comments_and_strings(text: str) -> str:
+    """Return `text` with comment contents and string-literal contents replaced
+    by spaces (newlines preserved). Length and line numbers unchanged."""
+    out = list(text)
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if ch == "/" and nxt == "/":
+            j = text.find("\n", i + 2)
+            end = n if j == -1 else j
+            for k in range(i, end):
+                out[k] = " "
+            i = end
+            continue
+        if ch == "/" and nxt == "*":
+            j = text.find("*/", i + 2)
+            end = n if j == -1 else j + 2
+            for k in range(i, end):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = end
+            continue
+        if ch in ('"', "'"):
+            quote = ch
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == quote:
+                    j += 1
+                    break
+                j += 1
+            for k in range(i, min(j, n)):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+            continue
+        i += 1
+    return "".join(out)
 
 
 def _find_matching_brace(text: str, start: int) -> int | None:

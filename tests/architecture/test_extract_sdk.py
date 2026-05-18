@@ -24,7 +24,8 @@ def test_extract_sdk_real_file_smoke(repo_root: Path):
     if not real.exists():
         return
     results = extract_sdk_methods(real, class_names=("BaseRemoteNexusFS",))
-    assert isinstance(results, list)
+    # BaseRemoteNexusFS exposes properties (zone_id, agent_id, etc.) extracted as methods
+    assert len(results) > 0, "BaseRemoteNexusFS should expose at least one public member"
 
 
 def test_extract_sdk_recursive_real_tree_smoke(repo_root: Path):

@@ -24,7 +24,7 @@ class RawCliCommand:
 
 
 def extract_cli_commands(init_py_path: Path) -> list[RawCliCommand]:
-    tree = ast.parse(init_py_path.read_text())
+    tree = ast.parse(init_py_path.read_text(encoding="utf-8"))
     register_dict = _find_dict_assignment(tree, "_REGISTER_COMMANDS", _literal_dict_of_str_tuples)
     add_dict = _find_dict_assignment(tree, "_ADD_COMMAND", _literal_dict_of_str_pair, optional=True)
 

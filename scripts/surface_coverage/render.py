@@ -82,7 +82,7 @@ def _build_mermaid(modules) -> str:
 def _load_mermaid_js() -> str:
     vendored = Path(__file__).parent.parent.parent / "docs/architecture/_vendor/mermaid.min.js"
     if vendored.exists():
-        return f"<script>\n{vendored.read_text()}\n</script>\n"
+        return f"<script>\n{vendored.read_text(encoding='utf-8')}\n</script>\n"
     return '<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>\n'
 
 

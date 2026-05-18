@@ -16,7 +16,7 @@ class RawMcpTool:
 
 
 def extract_mcp_tools(path: Path) -> list[RawMcpTool]:
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     seen: dict[str, RawMcpTool] = {}
     for profile_name, profile_data in (data.get("profiles") or {}).items():
         for tool_name in (profile_data or {}).get("tools", []):

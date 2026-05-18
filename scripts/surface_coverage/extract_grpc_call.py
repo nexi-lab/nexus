@@ -27,7 +27,7 @@ def extract_grpc_call_names(
     *,
     dispatch_var: str = "DISPATCH",
 ) -> list[RawGrpcCallName]:
-    tree = ast.parse(py_path.read_text())
+    tree = ast.parse(py_path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         value = _value_for_target(node, dispatch_var)
         if value is None:

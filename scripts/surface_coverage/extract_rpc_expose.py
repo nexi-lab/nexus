@@ -24,13 +24,13 @@ class RawRpcExpose:
 
 def extract_rpc_exposes(root: Path) -> list[RawRpcExpose]:
     out: list[RawRpcExpose] = []
-    for py in root.rglob("*.py"):
+    for py in sorted(root.rglob("*.py")):
         try:
-            tree = ast.parse(py.read_text())
+            tree = ast.parse(py.read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
             continue
         out.extend(_scan_module(tree, py))
-    return sorted(out, key=lambda r: r.name)
+    return sorted(out, key=lambda r: (r.name, r.source))
 
 
 def _scan_module(tree: ast.AST, py: Path) -> list[RawRpcExpose]:

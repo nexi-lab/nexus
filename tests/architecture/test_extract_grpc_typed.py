@@ -31,4 +31,7 @@ def test_extract_grpc_typed_real_proto_smoke(repo_root: Path):
     if not real.exists():
         return
     results = extract_grpc_typed_methods(real)
+    assert len(results) > 0, "vfs.proto should yield at least one method"
     assert all("." in r.method for r in results)
+    # vfs.proto declares NexusVFSService with Read at minimum
+    assert any("Read" in r.method for r in results)

@@ -8,14 +8,14 @@ gap_issue, owning_issue) are None in v1 and populated by subissues.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 
-class ProfileStatus(str, Enum):
+class ProfileStatus(StrEnum):
     SUPPORTED = "supported"
     UNAVAILABLE = "unavailable"
     ADMIN_ONLY = "admin_only"
@@ -23,7 +23,7 @@ class ProfileStatus(str, Enum):
     MISSING_NEEDED = "missing_needed"
 
 
-class PerfClass(str, Enum):
+class PerfClass(StrEnum):
     HOT = "hot"
     SETUP = "setup"
     CONTROL = "control"
@@ -144,7 +144,7 @@ def _operation_from_dict(d: dict[str, Any]) -> Operation:
 
 
 def load_yaml(path: Path) -> SurfaceCoverage:
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if data.get("schema_version") != 1:
         raise ValueError(f"unsupported schema_version: {data.get('schema_version')}")
     return SurfaceCoverage(
@@ -158,6 +158,8 @@ def load_yaml(path: Path) -> SurfaceCoverage:
 
 
 def dump_yaml(coverage: SurfaceCoverage, path: Path) -> None:
+    import os
+
     payload = {
         "schema_version": coverage.schema_version,
         "modules": [asdict(m) for m in coverage.modules],
@@ -166,4 +168,10 @@ def dump_yaml(coverage: SurfaceCoverage, path: Path) -> None:
         "unmapped_surfaces": [asdict(u) for u in coverage.unmapped_surfaces],
         "stale_rows": [asdict(s) for s in coverage.stale_rows],
     }
-    path.write_text(yaml.safe_dump(payload, sort_keys=False, width=120))
+    content = yaml.safe_dump(payload, sort_keys=False, width=120)
+    # Atomic write: temp file in same dir, fsync, os.replace.
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(content, encoding="utf-8")
+    with open(tmp, "rb") as fh:
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)

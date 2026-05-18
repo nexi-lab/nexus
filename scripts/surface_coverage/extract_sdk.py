@@ -50,7 +50,7 @@ def extract_sdk_methods(
 
 def _extract_from_file(py_path: Path, *, class_names: tuple[str, ...]) -> list[RawSdkMethod]:
     try:
-        tree = ast.parse(py_path.read_text())
+        tree = ast.parse(py_path.read_text(encoding="utf-8"))
     except (SyntaxError, UnicodeDecodeError):
         return []
     out: list[RawSdkMethod] = []

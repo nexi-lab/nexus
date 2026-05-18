@@ -53,7 +53,7 @@ def _parse_brick_factory(py_path: Path) -> dict[str, str | None]:
     """Return module-level constants we care about from a brick_factory.py."""
     out: dict[str, str | None] = {}
     try:
-        tree = ast.parse(py_path.read_text())
+        tree = ast.parse(py_path.read_text(encoding="utf-8"))
     except (SyntaxError, UnicodeDecodeError):
         return out
     for node in ast.walk(tree):

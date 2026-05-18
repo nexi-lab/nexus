@@ -1,0 +1,77 @@
+# Manually-curated list of surfaces that SHOULD exist but currently don't.
+# Surfaced as 'missing_needed' rows in the published map.
+# Each entry should have an opened gap_issue once tracking issues exist.
+#
+# Schema mirrors api-rpc-surface-coverage.yaml's `operations:` entries but
+# with all profiles set to missing_needed and a brief `wanted_why` line.
+schema_version: 1
+missing_operations:
+  - id: search.grep_section
+    module: search
+    summary: "Section-aware grep: `nexus grep PATTERN /file.md --in-section '## API'`. Lets users target markdown / code section without piping cat -> head -> grep."
+    wanted_why: "Users commonly want to grep within a heading scope; current grep is whole-file only."
+
+  - id: raft.cluster_status
+    module: raft
+    summary: "Inspect raft cluster: leader, members, term, replication lag."
+    wanted_why: "Cluster profile is new; operators need visibility for HA debugging."
+
+  - id: raft.node_join
+    module: raft
+    summary: "Add a node to the raft cluster."
+    wanted_why: "HA cluster expansion has no external surface yet."
+
+  - id: hub.status
+    module: hub
+    summary: "`nexus hub status`: show connected nodes, zones served, federation peers."
+    wanted_why: "Hub-mode operators currently have no top-level health view."
+
+  - id: hub.deploy
+    module: hub
+    summary: "Bootstrap a hub deployment from CLI (currently helm/manual)."
+    wanted_why: "Lowers adoption barrier for hub-mode users."
+
+  - id: approvals.grant
+    module: approvals
+    summary: "Grant a pending approval (CLI + RPC). approvals brick currently exposes 0 external surfaces."
+    wanted_why: "Brick exists but is invisible to users / tests."
+
+  - id: approvals.list_pending
+    module: approvals
+    summary: "List approvals awaiting decision."
+    wanted_why: "No way to enumerate the approval queue externally."
+
+  - id: archive.restore
+    module: archive
+    summary: "Restore a signed archive into a zone."
+    wanted_why: "We can create archives (1 op) but no documented restore path."
+
+  - id: parsers.list
+    module: parsers
+    summary: "Enumerate registered parsers + their detected formats."
+    wanted_why: "Parsers brick has rich plugin system but no introspection surface."
+
+  - id: parsers.run_parse
+    module: parsers
+    summary: "Force-parse a path with a given parser (debug/inspection)."
+    wanted_why: "Useful for parser debugging; currently requires Python REPL."
+
+  - id: upload.cancel
+    module: upload
+    summary: "Cancel an in-flight TUS upload."
+    wanted_why: "Pause/resume covered, cancellation isn't."
+
+  - id: portability.profile_export
+    module: portability
+    summary: "Export a profile bundle (config + bricks + sample data) for sharing."
+    wanted_why: "Aids reproducible demos, support cases."
+
+  - id: fuse.mount
+    module: fuse
+    summary: "`nexus fuse mount /local/path /nexus/zone` from the main CLI (currently a separate binary)."
+    wanted_why: "Unifies UX; FUSE is its own crate today with no nexus-cli integration."
+
+  - id: fuse.status
+    module: fuse
+    summary: "Show active FUSE mounts + health."
+    wanted_why: "No way to introspect running mounts without ps/mount commands."

@@ -43,6 +43,8 @@ dependencies = [
     # Configuration
     "pydantic[email]>=2.13.4",
     "pyyaml>=6.0.3",
+    # HTML rendering for surface coverage map (#4161)
+    "jinja2>=3.1.0",
     # Schema validation — required by archive verify (Issue #4083)
     # to validate v3 portability bundles against manifest-v3.json
     # before trusting mounts.jsonl checksums. Direct dep so slim

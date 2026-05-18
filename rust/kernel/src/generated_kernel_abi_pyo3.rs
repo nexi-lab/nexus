@@ -1272,6 +1272,10 @@ impl PyKernel {
         self.inner.is_directory(path, zone_id)
     }
 
+    fn get_mount_points(&self) -> Vec<String> {
+        self.inner.get_mount_points()
+    }
+
     #[pyo3(signature = (zone_id="root"))]
     fn get_top_level_mounts(&self, zone_id: &str) -> Vec<String> {
         use crate::kernel::convenience::KernelConvenience;
@@ -1662,8 +1666,32 @@ impl PyKernel {
         self.inner.create_pipe(path, capacity).map_err(Into::into)
     }
 
+    fn destroy_pipe(&self, path: &str) -> PyResult<()> {
+        self.inner.destroy_pipe(path).map_err(Into::into)
+    }
+
     fn close_pipe(&self, path: &str) -> PyResult<()> {
         self.inner.close_pipe(path).map_err(Into::into)
+    }
+
+    fn has_pipe(&self, path: &str) -> bool {
+        self.inner.has_pipe(path)
+    }
+
+    fn pipe_write_nowait(&self, path: &str, data: &[u8]) -> PyResult<usize> {
+        self.inner.pipe_write_nowait(path, data).map_err(Into::into)
+    }
+
+    fn pipe_read_nowait<'py>(
+        &self,
+        py: Python<'py>,
+        path: &str,
+    ) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        match self.inner.pipe_read_nowait(path) {
+            Ok(Some(data)) => Ok(Some(PyBytes::new(py, &data))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn close_all_pipes(&self) {

@@ -4,15 +4,6 @@ Tests Rust PyKernel IPC pipe operations (create, read, write, close, destroy)
 and DT_PIPE metadata integration.
 See: rust/kernel/src/pipe.rs, rust/kernel/src/kernel.rs,
      KERNEL-ARCHITECTURE.md §6.
-
-After the PyKernel boundary cleanup, ``has_pipe``, ``pipe_write_nowait``,
-``pipe_read_nowait``, and ``destroy_pipe`` were removed from the PyO3
-surface.  Tests now use the syscall equivalents:
-
-    has_pipe(path)           -> sys_stat(path, "root")["entry_type"] == DT_PIPE
-    pipe_write_nowait(path)  -> sys_write(path, ctx, data)
-    pipe_read_nowait(path)   -> sys_read(path, ctx, timeout_ms=0).data
-    destroy_pipe(path)       -> sys_unlink(path, ctx)
 """
 
 from dataclasses import replace
@@ -30,7 +21,7 @@ from nexus.core.pipe import (
 )
 
 try:
-    from nexus_runtime import PyKernel, PyOperationContext
+    from nexus_runtime import PyKernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -39,41 +30,8 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not built")
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _make_kernel() -> "PyKernel":
     return PyKernel()
-
-
-def _sys_ctx() -> "PyOperationContext":
-    """System OperationContext for test syscalls."""
-    return PyOperationContext(is_system=True)
-
-
-def _pipe_exists(k: "PyKernel", path: str) -> bool:
-    """Check if a DT_PIPE exists via sys_stat (replaces has_pipe)."""
-    stat = k.sys_stat(path, "root")
-    return stat is not None and stat["entry_type"] == DT_PIPE
-
-
-def _pipe_write(k: "PyKernel", path: str, data: bytes) -> int:
-    """Write to a DT_PIPE via sys_write (replaces pipe_write_nowait)."""
-    result = k.sys_write(path, _sys_ctx(), data)
-    return result.size
-
-
-def _pipe_read(k: "PyKernel", path: str) -> bytes | None:
-    """Non-blocking read from a DT_PIPE via sys_read (replaces pipe_read_nowait)."""
-    result = k.sys_read(path, _sys_ctx(), timeout_ms=0)
-    return bytes(result.data) if result.data is not None else None
-
-
-def _pipe_destroy(k: "PyKernel", path: str) -> None:
-    """Destroy a DT_PIPE via sys_unlink (replaces destroy_pipe)."""
-    k.sys_unlink(path, _sys_ctx())
 
 
 # ======================================================================
@@ -82,51 +40,53 @@ def _pipe_destroy(k: "PyKernel", path: str) -> None:
 
 
 class TestKernelPipeBasic:
-    def test_create_and_stat(self) -> None:
+    def test_create_and_has(self) -> None:
         k = _make_kernel()
         k.create_pipe("/pipes/test", 1024)
-        assert _pipe_exists(k, "/pipes/test") is True
+        assert k.has_pipe("/pipes/test") is True
 
-    def test_stat_nonexistent(self) -> None:
+    def test_has_pipe_nonexistent(self) -> None:
         k = _make_kernel()
-        assert _pipe_exists(k, "/pipes/nope") is False
+        assert k.has_pipe("/pipes/nope") is False
 
     def test_write_read_roundtrip(self) -> None:
         k = _make_kernel()
         k.create_pipe("/pipes/rt", 1024)
-        _pipe_write(k, "/pipes/rt", b"hello")
-        data = _pipe_read(k, "/pipes/rt")
+        written = k.pipe_write_nowait("/pipes/rt", b"hello")
+        assert written == 5
+        data = k.pipe_read_nowait("/pipes/rt")
         assert data == b"hello"
 
     def test_fifo_ordering(self) -> None:
         k = _make_kernel()
         k.create_pipe("/pipes/fifo", 4096)
-        _pipe_write(k, "/pipes/fifo", b"first")
-        _pipe_write(k, "/pipes/fifo", b"second")
-        _pipe_write(k, "/pipes/fifo", b"third")
-        assert _pipe_read(k, "/pipes/fifo") == b"first"
-        assert _pipe_read(k, "/pipes/fifo") == b"second"
-        assert _pipe_read(k, "/pipes/fifo") == b"third"
+        k.pipe_write_nowait("/pipes/fifo", b"first")
+        k.pipe_write_nowait("/pipes/fifo", b"second")
+        k.pipe_write_nowait("/pipes/fifo", b"third")
+        assert k.pipe_read_nowait("/pipes/fifo") == b"first"
+        assert k.pipe_read_nowait("/pipes/fifo") == b"second"
+        assert k.pipe_read_nowait("/pipes/fifo") == b"third"
 
     def test_read_empty_returns_none(self) -> None:
         k = _make_kernel()
         k.create_pipe("/pipes/empty", 1024)
-        assert _pipe_read(k, "/pipes/empty") is None
+        assert k.pipe_read_nowait("/pipes/empty") is None
 
     def test_multiple_messages_roundtrip(self) -> None:
         k = _make_kernel()
         k.create_pipe("/pipes/multi", 65536)
         for i in range(10):
-            _pipe_write(k, "/pipes/multi", f"msg-{i}".encode())
+            k.pipe_write_nowait("/pipes/multi", f"msg-{i}".encode())
         for i in range(10):
-            assert _pipe_read(k, "/pipes/multi") == f"msg-{i}".encode()
-        assert _pipe_read(k, "/pipes/multi") is None
+            assert k.pipe_read_nowait("/pipes/multi") == f"msg-{i}".encode()
+        assert k.pipe_read_nowait("/pipes/multi") is None
 
     def test_empty_write_is_noop(self) -> None:
         k = _make_kernel()
         k.create_pipe("/pipes/empty-write", 1024)
-        _pipe_write(k, "/pipes/empty-write", b"")
-        assert _pipe_read(k, "/pipes/empty-write") is None
+        result = k.pipe_write_nowait("/pipes/empty-write", b"")
+        assert result == 0
+        assert k.pipe_read_nowait("/pipes/empty-write") is None
 
 
 # ======================================================================
@@ -140,26 +100,26 @@ class TestKernelPipeCapacity:
         k = _make_kernel()
         k.create_pipe("/pipes/cap", 10)
         with pytest.raises(RuntimeError, match="PipeFull"):
-            _pipe_write(k, "/pipes/cap", b"x" * 11)
+            k.pipe_write_nowait("/pipes/cap", b"x" * 11)
 
     def test_buffer_full_raises(self) -> None:
         """Writing to a full buffer should raise PipeFull."""
         k = _make_kernel()
         k.create_pipe("/pipes/full", 32)
         # Fill enough to cause PipeFull on next write
-        _pipe_write(k, "/pipes/full", b"x" * 20)
+        k.pipe_write_nowait("/pipes/full", b"x" * 20)
         with pytest.raises(RuntimeError, match="PipeFull"):
-            _pipe_write(k, "/pipes/full", b"y" * 20)
+            k.pipe_write_nowait("/pipes/full", b"y" * 20)
 
     def test_space_freed_after_read(self) -> None:
         """After reading, the freed space should allow new writes."""
         k = _make_kernel()
         k.create_pipe("/pipes/free", 64)
-        _pipe_write(k, "/pipes/free", b"x" * 30)
-        _pipe_read(k, "/pipes/free")
+        k.pipe_write_nowait("/pipes/free", b"x" * 30)
+        k.pipe_read_nowait("/pipes/free")
         # Now have space again
-        _pipe_write(k, "/pipes/free", b"y" * 30)
-        assert _pipe_read(k, "/pipes/free") == b"y" * 30
+        k.pipe_write_nowait("/pipes/free", b"y" * 30)
+        assert k.pipe_read_nowait("/pipes/free") == b"y" * 30
 
 
 # ======================================================================
@@ -173,22 +133,22 @@ class TestKernelPipeClose:
         k.create_pipe("/pipes/closed-w", 1024)
         k.close_pipe("/pipes/closed-w")
         with pytest.raises(RuntimeError, match="PipeClosed"):
-            _pipe_write(k, "/pipes/closed-w", b"data")
+            k.pipe_write_nowait("/pipes/closed-w", b"data")
 
     def test_read_drains_remaining_then_closed(self) -> None:
         """After close, remaining data can still be read; then returns closed error."""
         k = _make_kernel()
         k.create_pipe("/pipes/drain", 1024)
-        _pipe_write(k, "/pipes/drain", b"last-msg")
+        k.pipe_write_nowait("/pipes/drain", b"last-msg")
         k.close_pipe("/pipes/drain")
 
         # Can still read buffered messages
-        result = _pipe_read(k, "/pipes/drain")
+        result = k.pipe_read_nowait("/pipes/drain")
         assert result == b"last-msg"
 
         # Then raises PipeClosed (closed + empty)
         with pytest.raises(RuntimeError, match="PipeClosed"):
-            _pipe_read(k, "/pipes/drain")
+            k.pipe_read_nowait("/pipes/drain")
 
     def test_close_nonexistent_raises(self) -> None:
         k = _make_kernel()
@@ -211,50 +171,50 @@ class TestKernelPipeLifecycle:
     def test_destroy_pipe(self) -> None:
         k = _make_kernel()
         k.create_pipe("/pipes/destroyme", 1024)
-        assert _pipe_exists(k, "/pipes/destroyme") is True
-        _pipe_destroy(k, "/pipes/destroyme")
-        assert _pipe_exists(k, "/pipes/destroyme") is False
+        assert k.has_pipe("/pipes/destroyme") is True
+        k.destroy_pipe("/pipes/destroyme")
+        assert k.has_pipe("/pipes/destroyme") is False
 
     def test_destroy_nonexistent_raises(self) -> None:
         k = _make_kernel()
         with pytest.raises(FileNotFoundError):
-            _pipe_destroy(k, "/pipes/nope")
+            k.destroy_pipe("/pipes/nope")
 
     def test_close_all_pipes(self) -> None:
         k = _make_kernel()
         k.create_pipe("/pipes/ca-1", 1024)
         k.create_pipe("/pipes/ca-2", 1024)
-        _pipe_write(k, "/pipes/ca-1", b"data")
+        k.pipe_write_nowait("/pipes/ca-1", b"data")
         k.close_all_pipes()
         # After close_all, writes should fail with PipeClosed
         with pytest.raises(RuntimeError, match="PipeClosed"):
-            _pipe_write(k, "/pipes/ca-1", b"more")
+            k.pipe_write_nowait("/pipes/ca-1", b"more")
         with pytest.raises(RuntimeError, match="PipeClosed"):
-            _pipe_write(k, "/pipes/ca-2", b"more")
+            k.pipe_write_nowait("/pipes/ca-2", b"more")
 
     def test_close_pipe_keeps_in_registry(self) -> None:
         """close_pipe signals close but keeps the entry for drain."""
         k = _make_kernel()
         k.create_pipe("/pipes/keep", 1024)
         k.close_pipe("/pipes/keep")
-        # Pipe still exists in metastore (sys_stat returns DT_PIPE)
-        assert _pipe_exists(k, "/pipes/keep") is True
+        # Pipe still exists in registry (has_pipe = True)
+        assert k.has_pipe("/pipes/keep") is True
 
     def test_destroy_after_close(self) -> None:
         """destroy_pipe after close_pipe should fully remove the pipe."""
         k = _make_kernel()
         k.create_pipe("/pipes/dc", 1024)
         k.close_pipe("/pipes/dc")
-        _pipe_destroy(k, "/pipes/dc")
-        assert _pipe_exists(k, "/pipes/dc") is False
+        k.destroy_pipe("/pipes/dc")
+        assert k.has_pipe("/pipes/dc") is False
 
     def test_create_after_destroy_succeeds(self) -> None:
         """After destroy, the path is free for reuse."""
         k = _make_kernel()
         k.create_pipe("/pipes/reuse", 1024)
-        _pipe_destroy(k, "/pipes/reuse")
+        k.destroy_pipe("/pipes/reuse")
         k.create_pipe("/pipes/reuse", 2048)
-        assert _pipe_exists(k, "/pipes/reuse") is True
+        assert k.has_pipe("/pipes/reuse") is True
 
 
 # ======================================================================
@@ -266,12 +226,12 @@ class TestKernelPipeNotFound:
     def test_write_nonexistent_raises(self) -> None:
         k = _make_kernel()
         with pytest.raises(FileNotFoundError):
-            _pipe_write(k, "/pipes/ghost", b"data")
+            k.pipe_write_nowait("/pipes/ghost", b"data")
 
     def test_read_nonexistent_raises(self) -> None:
         k = _make_kernel()
         with pytest.raises(FileNotFoundError):
-            _pipe_read(k, "/pipes/ghost")
+            k.pipe_read_nowait("/pipes/ghost")
 
 
 # ======================================================================
@@ -285,8 +245,8 @@ class TestKernelPipeIsolation:
         k1 = _make_kernel()
         k2 = _make_kernel()
         k1.create_pipe("/pipes/iso", 1024)
-        assert _pipe_exists(k1, "/pipes/iso") is True
-        assert _pipe_exists(k2, "/pipes/iso") is False
+        assert k1.has_pipe("/pipes/iso") is True
+        assert k2.has_pipe("/pipes/iso") is False
 
 
 # ======================================================================

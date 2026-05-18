@@ -166,6 +166,23 @@ jobs:
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
+      # The nexus-cluster binary is required by NexusFS (KernelClient spawns
+      # it as a subprocess). Tests that create NexusFS directly (not via
+      # Docker) need the binary on PATH.
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache nexus-cluster build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: e2e-self-contained
+
+      - name: Build nexus-cluster binary
+        run: |
+          cargo build --release -p nexus-cluster --bin nexusd-cluster
+          sudo cp target/release/nexusd-cluster /usr/local/bin/
+          sudo ln -sf /usr/local/bin/nexusd-cluster /usr/local/bin/nexus-cluster
+
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
       # The ``running_nexus`` fixture in tests/e2e/self_contained/conftest.py
       # otherwise calls ``nexus up --build`` for every approvals test class

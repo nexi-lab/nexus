@@ -381,13 +381,32 @@ def grep_bulk(
 # ---------------------------------------------------------------------------
 
 
+def _expand_braces(pattern: str) -> list[str]:
+    """Expand ``{a,b,c}`` alternation into multiple patterns."""
+    import re
+
+    m = re.search(r"\{([^{}]+)\}", pattern)
+    if not m:
+        return [pattern]
+    prefix, suffix = pattern[: m.start()], pattern[m.end() :]
+    expanded: list[str] = []
+    for alt in m.group(1).split(","):
+        expanded.extend(_expand_braces(prefix + alt + suffix))
+    return expanded
+
+
 def glob_match_bulk(patterns: list[str], paths: list[str]) -> list[str]:
     """Return paths that match any of the glob patterns."""
     import fnmatch
 
+    # Expand {a,b} brace alternation (not supported by fnmatch).
+    expanded: list[str] = []
+    for p in patterns:
+        expanded.extend(_expand_braces(p))
+
     matched: list[str] = []
     for path in paths:
-        for pattern in patterns:
+        for pattern in expanded:
             if fnmatch.fnmatch(path, pattern):
                 matched.append(path)
                 break

@@ -401,6 +401,13 @@ MODULES: list[CuratedModule] = [
     CuratedModule(
         "sdk", "SDK", "Python remote clients (RPCProxyBase + domain clients).", layer="transport"
     ),
+    CuratedModule(
+        "fuse",
+        "FUSE",
+        "Mounts Nexus as a POSIX filesystem via the nexus-fuse Rust binary. Userspace processes read/write paths as if they were on a local disk.",
+        layer="transport",
+        depends_on=("nexus_fs",),
+    ),
 ]
 
 

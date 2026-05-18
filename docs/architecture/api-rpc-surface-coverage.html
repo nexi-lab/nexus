@@ -182,7 +182,7 @@
     <div class="stats">
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
       <div class="stat"><div class="stat-value">28</div><div class="stat-label">bricks</div></div>
-      <div class="stat"><div class="stat-value">5</div><div class="stat-label">transports</div></div>
+      <div class="stat"><div class="stat-value">6</div><div class="stat-label">transports</div></div>
       <div class="stat"><div class="stat-value">466</div><div class="stat-label">operations</div></div>
     </div>
 
@@ -223,6 +223,7 @@ graph TB
     grpc["gRPC"]
     mcp_transport["MCP transport"]
     sdk["SDK"]
+    fuse["FUSE"]
   end
   subgraph layer_cross ["Cross-cutting"]
     auth_middleware["Auth middleware"]
@@ -295,6 +296,7 @@ graph TB
   nexus_fs --> catalog
   nexus_fs --> context_manifest
   nexus_fs --> filesystem
+  nexus_fs --> fuse
   nexus_fs --> mcp
   nexus_fs --> mount
   nexus_fs --> portability

@@ -106,6 +106,7 @@ class KernelClient:
             env["NEXUS_METASTORE_PATH"] = self._metadata_path
         env["NEXUS_BIND_ADDR"] = self._server_address
         env["NEXUS_NO_TLS"] = "true"  # Loopback, no TLS needed.
+        env.setdefault("NEXUS_BOOTSTRAP_MODE", "dynamic")
 
         self._process = subprocess.Popen(
             cmd,

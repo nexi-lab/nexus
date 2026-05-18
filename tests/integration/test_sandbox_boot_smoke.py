@@ -13,6 +13,7 @@ and the per-test HOME-scoped readiness file).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import subprocess
@@ -281,26 +282,38 @@ def _terminate(proc) -> None:
         proc.wait(timeout=10)
 
 
+@contextlib.contextmanager
+def _timed_daemon(path: Path):
+    """Spawn+time a sandbox daemon, guaranteeing teardown.
+
+    Yields (boot_seconds, rss_mb_or_None). The daemon process is always
+    terminated on exit, including if the body or spawn raises.
+    """
+    boot_s, rss_mb, proc = _spawn_and_time(path)
+    try:
+        yield boot_s, rss_mb
+    finally:
+        _terminate(proc)
+
+
 def test_sandbox_boot_time_and_rss_within_loose_bounds(tmp_path: Path, record_property) -> None:
     """Measure cold + warm boot time and RSS; assert loose ceilings only.
 
     Boot is a setup path and RSS a resource budget — neither is a hot
     path. These bounds guard against gross regressions; the observed
     numbers are surfaced via record_property + stdout for the user guide.
+
+    Here "boot" means time-to-readiness-file, which is written before the
+    HTTP socket binds, so it deliberately undercounts full request-ready
+    time — acceptable for a loose setup-path gross-regression guard.
     """
     pytest.importorskip("psutil")
 
-    cold_boot_s, rss_mb, proc1 = _spawn_and_time(tmp_path / "cold")
-    try:
+    with _timed_daemon(tmp_path / "cold") as (cold_boot_s, rss_mb):
         pass
-    finally:
-        _terminate(proc1)
 
-    warm_boot_s, _, proc2 = _spawn_and_time(tmp_path / "warm")
-    try:
+    with _timed_daemon(tmp_path / "warm") as (warm_boot_s, _):
         pass
-    finally:
-        _terminate(proc2)
 
     record_property("sandbox_cold_boot_s", round(cold_boot_s, 2))
     record_property("sandbox_warm_boot_s", round(warm_boot_s, 2))

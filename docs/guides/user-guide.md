@@ -277,6 +277,16 @@ Packages behind this:
 
 ## 4. Start A Shared Server
 
+> This walkthrough runs the **FULL deployment profile**. For the full
+> brick/driver contract, auth modes, and the three different things
+> called "profile", see [FULL deployment profile](../deployment/full-profile.md).
+
+| `nexus init --preset` | Docker stack | Deployment profile |
+|---|---|---|
+| `local` | none (embedded) | embedded/lite |
+| `shared` | postgres+dragonfly+zoekt | **full** |
+| `demo` | shared + seed data | **full** |
+
 Use `nexusd` when you want multiple terminals, users, or SDK clients to hit
 the same Nexus node.
 

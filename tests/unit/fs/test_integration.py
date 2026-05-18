@@ -439,7 +439,7 @@ class TestCreateKernel:
         # Create DT_REG via sys_setattr (entry_type=0 with upsert)
         meta.sys_setattr(
             "/test/file.txt",
-            0,
+            entry_type=0,
             zone_id=ROOT_ZONE_ID,
             mime_type="text/plain",
             size=42,

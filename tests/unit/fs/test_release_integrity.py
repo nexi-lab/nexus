@@ -175,7 +175,7 @@ class TestConcurrentMetastore:
                 for i in range(n_ops):
                     path = f"/thread{thread_id}/file{i}.txt"
                     try:
-                        ms.sys_setattr(path, 0)  # DT_REG (entry_type=0)
+                        ms.sys_setattr(path, entry_type=0)  # DT_REG
                         result = ms.sys_stat(path, "root")
                         if result is None:
                             errors.append(

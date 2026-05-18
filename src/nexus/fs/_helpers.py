@@ -43,7 +43,9 @@ def list_mounts(kernel: NexusFS) -> list[str]:
     py_kernel = getattr(kernel, "_kernel", None)
     if py_kernel is None:
         return []
-    return sorted(py_kernel.get_top_level_mounts())
+    from nexus.core.path_utils import extract_zone_id
+
+    return sorted(extract_zone_id(c)[1] for c in py_kernel.get_mount_points())
 
 
 def unmount(kernel: NexusFS, mount_point: str) -> None:

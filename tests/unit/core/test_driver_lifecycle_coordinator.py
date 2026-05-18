@@ -10,13 +10,27 @@ Issue #1811, #1320, #3584.
 
 from __future__ import annotations
 
+import sys
+import types
 from unittest.mock import MagicMock
 
 from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 
+# The DLC.unmount() method does ``from nexus_runtime import PyOperationContext``
+# at call-time.  In unit tests the Rust extension may not be installed, so we
+# inject a lightweight stub into ``sys.modules`` so the import succeeds.
+if "nexus_runtime" not in sys.modules:
+    _stub = types.ModuleType("nexus_runtime")
+    _stub.__dict__["PyOperationContext"] = type(
+        "PyOperationContext", (), {"__init__": lambda self, **kw: None}
+    )
+    sys.modules["nexus_runtime"] = _stub
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+DT_MOUNT = 2  # nexus.contracts.metadata.DT_MOUNT
 
 
 class _MockDispatch:
@@ -35,7 +49,11 @@ def _make_coordinator(
 ) -> tuple[MagicMock, _MockDispatch, DriverLifecycleCoordinator]:
     """Create a coordinator with a mock kernel and _MockDispatch."""
     kernel = MagicMock()
-    kernel.has_mount.return_value = has_mount
+    # sys_stat returns dict with entry_type=DT_MOUNT when mount exists
+    if has_mount:
+        kernel.sys_stat.return_value = {"entry_type": DT_MOUNT}
+    else:
+        kernel.sys_stat.side_effect = FileNotFoundError("not found")
     dispatch = _MockDispatch()
     coord = DriverLifecycleCoordinator(dispatch, kernel=kernel)
     return kernel, dispatch, coord
@@ -48,14 +66,14 @@ def _make_coordinator(
 
 class TestUnmount:
     def test_unmount_dispatches_event_and_calls_kernel(self) -> None:
-        """unmount fires UNMOUNT event and calls kernel_unmount."""
+        """unmount fires UNMOUNT event and calls sys_unlink."""
         kernel, dispatch, coord = _make_coordinator()
 
         result = coord.unmount("/data")
 
         assert result is True
         assert ("unmount", "/data") in dispatch.calls
-        kernel.kernel_unmount.assert_called_once()
+        kernel.sys_unlink.assert_called_once()
 
     def test_unmount_returns_false_when_no_mount(self) -> None:
         """unmount returns False when kernel reports no mount at that path."""
@@ -65,7 +83,7 @@ class TestUnmount:
 
         assert result is False
         assert len(dispatch.calls) == 0
-        kernel.kernel_unmount.assert_not_called()
+        kernel.sys_unlink.assert_not_called()
 
     def test_unmount_catches_dispatch_exception(self) -> None:
         """dispatch_event errors don't propagate (best-effort notification)."""
@@ -77,7 +95,7 @@ class TestUnmount:
         # Should not raise
         result = coord.unmount("/data")
         assert result is True
-        kernel.kernel_unmount.assert_called_once()
+        kernel.sys_unlink.assert_called_once()
 
     def test_unmount_invalid_path_returns_false(self) -> None:
         """unmount returns False for paths that fail normalization."""
@@ -88,13 +106,13 @@ class TestUnmount:
         assert result is False
 
     def test_unmount_with_zone_id(self) -> None:
-        """unmount passes zone_id through to kernel."""
+        """unmount passes zone_id through to kernel sys_stat + sys_unlink."""
         kernel, dispatch, coord = _make_coordinator()
 
         coord.unmount("/data", zone_id="zone-a")
 
-        kernel.has_mount.assert_called_once_with("/data", "zone-a")
-        kernel.kernel_unmount.assert_called_once_with("/data", "zone-a")
+        kernel.sys_stat.assert_called_once_with("/data", "zone-a")
+        kernel.sys_unlink.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -104,14 +122,14 @@ class TestUnmount:
 
 class TestMountPoints:
     def test_mount_points_delegates_to_kernel(self) -> None:
-        """mount_points delegates to kernel.get_mount_points()."""
+        """mount_points delegates to kernel.get_top_level_mounts()."""
         kernel, _, coord = _make_coordinator()
-        kernel.get_mount_points.return_value = ["/root/workspace", "/root/shared"]
+        kernel.get_top_level_mounts.return_value = ["/workspace", "/shared"]
 
         result = coord.mount_points()
 
         assert isinstance(result, list)
-        kernel.get_mount_points.assert_called_once()
+        kernel.get_top_level_mounts.assert_called_once()
 
     def test_mount_points_returns_empty_when_no_kernel(self) -> None:
         """mount_points returns [] when kernel is None."""
@@ -123,7 +141,7 @@ class TestMountPoints:
     def test_mount_points_sorted(self) -> None:
         """mount_points returns sorted user-facing paths."""
         kernel, _, coord = _make_coordinator()
-        kernel.get_mount_points.return_value = ["/root/workspace", "/root/archives"]
+        kernel.get_top_level_mounts.return_value = ["/workspace", "/archives"]
 
         result = coord.mount_points()
 

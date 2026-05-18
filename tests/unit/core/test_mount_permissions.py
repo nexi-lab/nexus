@@ -3,6 +3,9 @@
 Tests cover:
 - list_mounts: Permission-based filtering of active mounts
 - list_saved_mounts: User-based filtering of saved mount configurations
+
+Requires Rust kernel (nexus_runtime) because create_nexus_fs boots a real
+kernel instance.
 """
 
 import tempfile
@@ -17,6 +20,15 @@ from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+try:
+    import nexus_runtime  # noqa: F401
+
+    RUST_AVAILABLE = True
+except ImportError:
+    RUST_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not built")
 
 
 @pytest.fixture

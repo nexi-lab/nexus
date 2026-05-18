@@ -122,15 +122,15 @@ class TestUnmount:
 
 class TestMountPoints:
     def test_mount_points_delegates_to_kernel(self) -> None:
-        """mount_points delegates to kernel.get_top_level_mounts()."""
+        """mount_points delegates to kernel.get_mount_points()."""
         kernel, _, coord = _make_coordinator()
-        kernel.get_top_level_mounts.return_value = ["/", "/workspace", "/shared"]
+        kernel.get_mount_points.return_value = ["root/", "root/workspace", "root/shared"]
 
         result = coord.mount_points()
 
         assert isinstance(result, list)
         assert result == ["/", "/shared", "/workspace"]
-        kernel.get_top_level_mounts.assert_called_once()
+        kernel.get_mount_points.assert_called_once()
 
     def test_mount_points_returns_empty_when_no_kernel(self) -> None:
         """mount_points returns [] when kernel is None."""
@@ -142,7 +142,7 @@ class TestMountPoints:
     def test_mount_points_sorted(self) -> None:
         """mount_points returns sorted user-facing paths."""
         kernel, _, coord = _make_coordinator()
-        kernel.get_top_level_mounts.return_value = ["/workspace", "/archives"]
+        kernel.get_mount_points.return_value = ["root/workspace", "root/archives"]
 
         result = coord.mount_points()
 

@@ -118,9 +118,17 @@ class DriverLifecycleCoordinator:
         """Return user-facing mount points (no zone prefix).
 
         If ``zone_id`` is provided, only mounts in that zone are returned.
-        Delegates to Rust kernel ``get_top_level_mounts(zone_id)``.
+        Delegates to Rust kernel ``get_mount_points()`` which returns
+        zone-canonical keys.  We parse them via ``extract_zone_id``.
         """
         if self._kernel is None:
             return []
-        mounts = self._kernel.get_top_level_mounts(zone_id or "root")
-        return sorted(mounts)
+        from nexus.core.path_utils import extract_zone_id
+
+        result: list[str] = []
+        for canonical in self._kernel.get_mount_points():
+            z, user_mp = extract_zone_id(canonical)
+            if zone_id is not None and z != zone_id:
+                continue
+            result.append(user_mp)
+        return sorted(result)

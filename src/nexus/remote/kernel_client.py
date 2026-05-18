@@ -99,7 +99,7 @@ class KernelClient:
 
     def _spawn_kernel(self) -> None:
         """Spawn nexus-cluster as a subprocess."""
-        cmd = ["nexus-cluster", "run"]
+        cmd = ["nexus-cluster"]
         env = os.environ.copy()
         # Pass metastore path if provided.
         if self._metadata_path:

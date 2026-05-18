@@ -207,11 +207,21 @@ def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
             )
 
 
-# Resolved empirically in Task 3 (see plan): set to the observed reality.
-#   True  -> gRPC Ping is bound under the sandbox profile; assert it.
-#   False -> gRPC Ping is intentionally absent in sandbox (HTTP-only
-#            surface). Recorded as intentionally-absent in the #4126
-#            coverage table, NOT a missing-needed build issue.
+# Resolved empirically (Task 3, issue #4126). Observed reality: the
+# `nexus.daemon.main --profile sandbox` daemon is HTTP-only. NO daemon
+# profile binds `NexusVFSService` anywhere in the codebase, and the only
+# in-process gRPC server that ever binds (the env-gated `approvals`
+# brick's `ApprovalsV1` servicer) exposes no `Ping` RPC. So gRPC Ping is
+# intentionally absent under sandbox — recorded as intentionally-absent
+# in the #4126 coverage table, NOT a missing-needed build issue.
+#
+#   True  -> a sandbox-bound gRPC server with Ping exists; assert it.
+#   False -> intentionally absent (current reality).
+#
+# REVIVAL NOTE: do not just flip this to True. If sandbox ever exposes
+# gRPC, re-derive the stub/service in the test body from whatever
+# servicer is actually bound (NexusVFSService is bound by no server
+# today; ApprovalsV1 has no Ping), or the test will fail opaquely.
 SANDBOX_GRPC_PING_SUPPORTED = False
 
 

@@ -20,8 +20,11 @@ import sys
 import time
 from pathlib import Path
 
+import grpc
 import httpx
 import pytest
+
+from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 
 pytestmark = [
     pytest.mark.slow,
@@ -202,3 +205,32 @@ def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
             assert forbidden not in enabled, (
                 f"sandbox must not enable '{forbidden}'; enabled={sorted(enabled)}"
             )
+
+
+# Resolved empirically in Task 3 (see plan): set to the observed reality.
+#   True  -> gRPC Ping is bound under the sandbox profile; assert it.
+#   False -> gRPC Ping is intentionally absent in sandbox (HTTP-only
+#            surface). Recorded as intentionally-absent in the #4126
+#            coverage table, NOT a missing-needed build issue.
+SANDBOX_GRPC_PING_SUPPORTED = False
+
+
+@pytest.mark.skipif(
+    not SANDBOX_GRPC_PING_SUPPORTED,
+    reason=(
+        "gRPC Ping intentionally absent in sandbox profile (HTTP-only "
+        "surface); recorded as intentionally-absent in the #4126 coverage "
+        "table, not a missing-needed build issue."
+    ),
+)
+def test_sandbox_grpc_ping_over_real_socket(sandbox_daemon) -> None:
+    """gRPC `Ping` responds when the sandbox gRPC server is bound."""
+    target = f"{sandbox_daemon['host']}:{sandbox_daemon['grpc_port']}"
+    channel = grpc.insecure_channel(target)
+    try:
+        grpc.channel_ready_future(channel).result(timeout=15)
+        stub = vfs_pb2_grpc.VfsServiceStub(channel)
+        resp = stub.Ping(vfs_pb2.PingRequest(auth_token=""), timeout=10)
+        assert resp is not None
+    finally:
+        channel.close()

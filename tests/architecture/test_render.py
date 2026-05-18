@@ -52,7 +52,7 @@ def test_render_produces_valid_html():
     coverage = _sample_coverage()
     html = render_html(coverage)
     assert "<html" in html
-    assert "Nexus API/RPC Architecture Map" in html
+    assert "Nexus API/RPC Architecture Map" in html or "Nexus API/RPC Surface Map" in html
     assert "filesystem.read" in html
     assert "nexus filesystem read" in html
     assert "POST /api/v1/filesystem/read" in html

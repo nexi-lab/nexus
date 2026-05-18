@@ -99,6 +99,8 @@ def _coverage_stats(ops_by_module, all_modules) -> dict:
 
 
 def render_html(coverage: SurfaceCoverage) -> str:
+    from scripts.surface_coverage.schema import ProfileStatus as _ProfileStatus
+
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(_TEMPLATE_DIR),
         autoescape=jinja2.select_autoescape(["html"]),
@@ -107,9 +109,17 @@ def render_html(coverage: SurfaceCoverage) -> str:
         keep_trailing_newline=True,
     )
     tmpl = env.get_template("coverage.html.j2")
+
+    # Separate wishlist ops (all profiles = missing_needed) from real ops
+    missing_by_module: dict[str, list] = defaultdict(list)
     ops_by_module: dict[str, list] = defaultdict(list)
     for op in sorted(coverage.operations, key=lambda o: o.id):
-        ops_by_module[op.module].append(op)
+        # Skip wishlist ops; they have their own section
+        if op.profiles and all(s == _ProfileStatus.MISSING_NEEDED for s in op.profiles.values()):
+            missing_by_module[op.module].append(op)
+        else:
+            ops_by_module[op.module].append(op)
+    missing_by_module = dict(sorted(missing_by_module.items()))
 
     by_layer = modules_by_layer()
     brick_cats = bricks_by_category()
@@ -130,7 +140,7 @@ def render_html(coverage: SurfaceCoverage) -> str:
             other_visible[LAYER_LABELS[layer]] = mods
 
     stats = _coverage_stats(ops_by_module, TAXONOMY_MODULES)
-    total_ops = len(coverage.operations)
+    total_ops = sum(len(v) for v in ops_by_module.values())
 
     return tmpl.render(
         ops_by_module=ops_by_module,
@@ -145,4 +155,6 @@ def render_html(coverage: SurfaceCoverage) -> str:
         total_transports=sum(1 for m in TAXONOMY_MODULES if m.layer == "transport"),
         coverage_stats=stats,
         get_module=get_module,
+        missing_by_module=missing_by_module,
+        total_missing=sum(len(v) for v in missing_by_module.values()),
     )

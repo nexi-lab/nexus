@@ -47,7 +47,7 @@
   main { padding: 2rem 2.5rem 4rem; max-width: 1180px; }
   h1 { font-size: 1.75rem; margin: 0 0 0.4rem; }
   .subtitle { color: var(--text-muted); margin: 0 0 1.5rem; max-width: 60ch; }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin: 0 0 2rem; }
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin: 0 0 2rem; }
   .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; }
   .stat-value { font-size: 1.3rem; font-weight: 600; }
   .stat-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
@@ -156,6 +156,7 @@
       <div class="stat"><div class="stat-value">{{ total_bricks }}</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">{{ total_transports }}</div><div class="stat-label">transports</div></div>
       <div class="stat"><div class="stat-value">{{ total_ops }}</div><div class="stat-label">operations</div></div>
+      <div class="stat"><div class="stat-value">{{ total_missing }}</div><div class="stat-label">missing</div></div>
     </div>
 
     <input id="search" placeholder="Search by op-id, brick, transport name, or summary..." />
@@ -261,19 +262,54 @@
     </section>
     {% endif %}
 
+    {% if missing_by_module %}
     <section>
-      <h2 class="section">&sect;5 Coverage status</h2>
-      <p>This map is auto-extracted from source. Some transports are still partial; coverage gaps below are tracked for follow-up.</p>
+      <h2 class="section">&sect;5 Wanted but missing ({{ total_missing }})</h2>
+      <p>Capabilities the architecture suggests should exist but currently don't. Subissues should open gap issues for each and link via the row's <code>gap_issue</code> field.</p>
+      {% for module_id, ops in missing_by_module.items() %}
+      <details class="module">
+        <summary>
+          <span class="mod-name">{{ module_id }}</span>
+          <span class="mod-desc">&mdash; {{ ops | length }} missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          {% for op in ops %}
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">{{ op.id }}</span>
+              <span class="op-summary">&mdash; {{ op.summary }}</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+              {% if op.usage_example %}<span><em>{{ op.usage_example }}</em></span>{% endif %}
+              <span>gap: {% if op.gap_issue %}<a href="https://github.com/nexi-lab/nexus/issues/{{ op.gap_issue }}">#{{ op.gap_issue }}</a>{% else %}<span class="todo">open one</span>{% endif %}</span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <section>
+      <h2 class="section">&sect;6 Coverage status</h2>
+      <p>This map is auto-extracted from source. Some transports are still partial:</p>
       <ul>
         <li><strong>HTTP routes</strong>: scanned recursively under <code>src/nexus/server/api/</code>. Most product routes captured.</li>
         <li><strong>gRPC typed</strong>: only <code>vfs.proto</code> (NexusVFSService) &mdash; additional proto files not yet scanned.</li>
         <li><strong>SDK</strong>: walked <code>src/nexus/remote/</code> for any <code>*Client</code>/<code>*Backend</code>/<code>*Metastore</code>/<code>*Proxy</code> class. May miss helper modules.</li>
         <li><strong>MCP</strong>: from <code>tool_profiles.yaml</code>. Brick-level MCP registrations may add more at runtime.</li>
+        <li><strong>FUSE</strong>: counted as a transport but has no @rpc_expose surface &mdash; the binary IS the surface.</li>
       </ul>
     </section>
 
     <section>
-      <h2 class="section">&sect;6 Filling this map</h2>
+      <h2 class="section">&sect;7 Filling this map</h2>
       <p>Each op row has TODO slots that subissues fill: <em>usage example, correctness test, performance class, owner</em>. See <a href="api-rpc-surface-contract.md">api-rpc-surface-contract.md</a> for the contract.</p>
       <p>Profile epics fill rows in their slice: <a href="https://github.com/nexi-lab/nexus/issues/4119">#4119 lite</a> &middot; <a href="https://github.com/nexi-lab/nexus/issues/4120">#4120 sandbox</a> &middot; <a href="https://github.com/nexi-lab/nexus/issues/4121">#4121 full</a> &middot; <a href="https://github.com/nexi-lab/nexus/issues/4139">#4139 coverage matrix</a></p>
     </section>

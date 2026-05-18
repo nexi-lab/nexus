@@ -47,7 +47,7 @@
   main { padding: 2rem 2.5rem 4rem; max-width: 1180px; }
   h1 { font-size: 1.75rem; margin: 0 0 0.4rem; }
   .subtitle { color: var(--text-muted); margin: 0 0 1.5rem; max-width: 60ch; }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin: 0 0 2rem; }
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin: 0 0 2rem; }
   .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; }
   .stat-value { font-size: 1.3rem; font-weight: 600; }
   .stat-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
@@ -184,6 +184,7 @@
       <div class="stat"><div class="stat-value">28</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">transports</div></div>
       <div class="stat"><div class="stat-value">466</div><div class="stat-label">operations</div></div>
+      <div class="stat"><div class="stat-value">14</div><div class="stat-label">missing</div></div>
     </div>
 
     <input id="search" placeholder="Search by op-id, brick, transport name, or summary..." />
@@ -9923,18 +9924,292 @@ graph TB
     </section>
 
     <section>
-      <h2 class="section">&sect;5 Coverage status</h2>
-      <p>This map is auto-extracted from source. Some transports are still partial; coverage gaps below are tracked for follow-up.</p>
+      <h2 class="section">&sect;5 Wanted but missing (14)</h2>
+      <p>Capabilities the architecture suggests should exist but currently don't. Subissues should open gap issues for each and link via the row's <code>gap_issue</code> field.</p>
+      <details class="module">
+        <summary>
+          <span class="mod-name">approvals</span>
+          <span class="mod-desc">&mdash; 2 missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">approvals.grant</span>
+              <span class="op-summary">&mdash; Grant a pending approval (CLI + RPC). approvals brick currently exposes 0 external surfaces.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Brick exists but is invisible to users / tests.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">approvals.list_pending</span>
+              <span class="op-summary">&mdash; List approvals awaiting decision.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: No way to enumerate the approval queue externally.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="module">
+        <summary>
+          <span class="mod-name">archive</span>
+          <span class="mod-desc">&mdash; 1 missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">archive.restore</span>
+              <span class="op-summary">&mdash; Restore a signed archive into a zone.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: We can create archives (1 op) but no documented restore path.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="module">
+        <summary>
+          <span class="mod-name">fuse</span>
+          <span class="mod-desc">&mdash; 2 missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">fuse.mount</span>
+              <span class="op-summary">&mdash; `nexus fuse mount /local/path /nexus/zone` from the main CLI (currently a separate binary).</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Unifies UX; FUSE is its own crate today with no nexus-cli integration.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">fuse.status</span>
+              <span class="op-summary">&mdash; Show active FUSE mounts + health.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: No way to introspect running mounts without ps/mount commands.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="module">
+        <summary>
+          <span class="mod-name">hub</span>
+          <span class="mod-desc">&mdash; 2 missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">hub.deploy</span>
+              <span class="op-summary">&mdash; Bootstrap a hub deployment from CLI (currently helm/manual).</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Lowers adoption barrier for hub-mode users.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">hub.status</span>
+              <span class="op-summary">&mdash; `nexus hub status`: show connected nodes, zones served, federation peers.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Hub-mode operators currently have no top-level health view.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="module">
+        <summary>
+          <span class="mod-name">parsers</span>
+          <span class="mod-desc">&mdash; 2 missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">parsers.list</span>
+              <span class="op-summary">&mdash; Enumerate registered parsers + their detected formats.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Parsers brick has rich plugin system but no introspection surface.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">parsers.run_parse</span>
+              <span class="op-summary">&mdash; Force-parse a path with a given parser (debug/inspection).</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Useful for parser debugging; currently requires Python REPL.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="module">
+        <summary>
+          <span class="mod-name">portability</span>
+          <span class="mod-desc">&mdash; 1 missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">portability.profile_export</span>
+              <span class="op-summary">&mdash; Export a profile bundle (config + bricks + sample data) for sharing.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Aids reproducible demos, support cases.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="module">
+        <summary>
+          <span class="mod-name">raft</span>
+          <span class="mod-desc">&mdash; 2 missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">raft.cluster_status</span>
+              <span class="op-summary">&mdash; Inspect raft cluster: leader, members, term, replication lag.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Cluster profile is new; operators need visibility for HA debugging.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">raft.node_join</span>
+              <span class="op-summary">&mdash; Add a node to the raft cluster.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: HA cluster expansion has no external surface yet.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="module">
+        <summary>
+          <span class="mod-name">search</span>
+          <span class="mod-desc">&mdash; 1 missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">search.grep_section</span>
+              <span class="op-summary">&mdash; Section-aware grep: `nexus grep PATTERN /file.md --in-section '## API'`. Lets users target markdown / code section without piping cat -> head -> grep.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Users commonly want to grep within a heading scope; current grep is whole-file only.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="module">
+        <summary>
+          <span class="mod-name">upload</span>
+          <span class="mod-desc">&mdash; 1 missing surface(s)</span>
+        </summary>
+        <div class="module-body">
+          <div class="op">
+            <div class="op-header">
+              <span class="op-id">upload.cancel</span>
+              <span class="op-summary">&mdash; Cancel an in-flight TUS upload.</span>
+            </div>
+            <div class="meta-row">
+              <span class="profiles">
+                <span class="profile-badge profile-other">lite: missing_needed</span>
+                <span class="profile-badge profile-other">sandbox: missing_needed</span>
+                <span class="profile-badge profile-other">full: missing_needed</span>
+              </span>
+<span><em>WANTED: Pause/resume covered, cancellation isn't.</em></span>              <span>gap: <span class="todo">open one</span></span>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section>
+      <h2 class="section">&sect;6 Coverage status</h2>
+      <p>This map is auto-extracted from source. Some transports are still partial:</p>
       <ul>
         <li><strong>HTTP routes</strong>: scanned recursively under <code>src/nexus/server/api/</code>. Most product routes captured.</li>
         <li><strong>gRPC typed</strong>: only <code>vfs.proto</code> (NexusVFSService) &mdash; additional proto files not yet scanned.</li>
         <li><strong>SDK</strong>: walked <code>src/nexus/remote/</code> for any <code>*Client</code>/<code>*Backend</code>/<code>*Metastore</code>/<code>*Proxy</code> class. May miss helper modules.</li>
         <li><strong>MCP</strong>: from <code>tool_profiles.yaml</code>. Brick-level MCP registrations may add more at runtime.</li>
+        <li><strong>FUSE</strong>: counted as a transport but has no @rpc_expose surface &mdash; the binary IS the surface.</li>
       </ul>
     </section>
 
     <section>
-      <h2 class="section">&sect;6 Filling this map</h2>
+      <h2 class="section">&sect;7 Filling this map</h2>
       <p>Each op row has TODO slots that subissues fill: <em>usage example, correctness test, performance class, owner</em>. See <a href="api-rpc-surface-contract.md">api-rpc-surface-contract.md</a> for the contract.</p>
       <p>Profile epics fill rows in their slice: <a href="https://github.com/nexi-lab/nexus/issues/4119">#4119 lite</a> &middot; <a href="https://github.com/nexi-lab/nexus/issues/4120">#4120 sandbox</a> &middot; <a href="https://github.com/nexi-lab/nexus/issues/4121">#4121 full</a> &middot; <a href="https://github.com/nexi-lab/nexus/issues/4139">#4139 coverage matrix</a></p>
     </section>

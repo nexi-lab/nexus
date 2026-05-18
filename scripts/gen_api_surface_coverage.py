@@ -190,11 +190,40 @@ def generate_coverage(
     if dp.exists():
         _ = extract_profiles.extract_profile_names(dp, enum_class="DeploymentProfile")
 
+    # --- Manual missing_needed gaps from api-rpc-surface-gaps.yaml ---
+    gaps_path = repo_root / "docs/architecture/api-rpc-surface-gaps.yaml"
+    if gaps_path.exists():
+        import yaml as _yaml
+
+        gaps_doc = _yaml.safe_load(gaps_path.read_text()) or {}
+        for gap in gaps_doc.get("missing_operations", []):
+            op_id = gap["id"]
+            if op_id in operations:
+                # Real surface exists with same id; don't overwrite — log via summary
+                continue
+            operations[op_id] = Operation(
+                id=op_id,
+                module=gap.get("module") or classify_op_id(op_id),
+                summary=gap.get("summary", ""),
+                transports={},  # no transport - intentionally missing
+                profiles={},  # set below to all missing_needed
+            )
+            # Mark all three profiles as missing_needed
+            operations[op_id].profiles = dict.fromkeys(
+                ("lite", "sandbox", "full"), ProfileStatus.MISSING_NEEDED
+            )
+            # Stash wanted_why in usage_example so it surfaces somewhere visible
+            wanted = gap.get("wanted_why", "")
+            if wanted:
+                operations[op_id].usage_example = f"WANTED: {wanted}"
+
     # Default profile assignment: extractor marks everything supported on all three.
     # Subissues override to unavailable/admin_only/etc.
+    # Skip ops that already have profiles set (e.g. missing_needed gaps above).
     default_profiles = dict.fromkeys(("lite", "sandbox", "full"), ProfileStatus.SUPPORTED)
     for op in operations.values():
-        op.profiles = dict(default_profiles)
+        if not op.profiles:
+            op.profiles = dict(default_profiles)
 
     # Parity warnings: ops exposed via some "user-facing" transports but not all.
     user_facing = {"cli", "grpc_typed", "http", "mcp", "sdk"}

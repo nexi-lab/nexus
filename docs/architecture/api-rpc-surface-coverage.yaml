@@ -658,6 +658,34 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: approvals.grant
+  module: approvals
+  summary: Grant a pending approval (CLI + RPC). approvals brick currently exposes 0 external surfaces.
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Brick exists but is invisible to users / tests.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: approvals.list_pending
+  module: approvals
+  summary: List approvals awaiting decision.
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: No way to enumerate the approval queue externally.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: archive.cli
   module: archive
   summary: ''
@@ -670,6 +698,20 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: archive.restore
+  module: archive
+  summary: Restore a signed archive into a zone.
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: We can create archives (1 op) but no documented restore path.'
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -3464,6 +3506,34 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: fuse.mount
+  module: fuse
+  summary: '`nexus fuse mount /local/path /nexus/zone` from the main CLI (currently a separate binary).'
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Unifies UX; FUSE is its own crate today with no nexus-cli integration.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fuse.status
+  module: fuse
+  summary: Show active FUSE mounts + health.
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: No way to introspect running mounts without ps/mount commands.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: get.access_logs
   module: agent_log
   summary: ''
@@ -3952,6 +4022,34 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: hub.deploy
+  module: hub
+  summary: Bootstrap a hub deployment from CLI (currently helm/manual).
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Lowers adoption barrier for hub-mode users.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: hub.status
+  module: hub
+  summary: '`nexus hub status`: show connected nodes, zones served, federation peers.'
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Hub-mode operators currently have no top-level health view.'
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -5371,6 +5469,34 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: parsers.list
+  module: parsers
+  summary: Enumerate registered parsers + their detected formats.
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Parsers brick has rich plugin system but no introspection surface.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: parsers.run_parse
+  module: parsers
+  summary: Force-parse a path with a given parser (debug/inspection).
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Useful for parser debugging; currently requires Python REPL.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: password_vault.get
   module: secrets
   summary: ''
@@ -5802,6 +5928,20 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: portability.profile_export
+  module: portability
+  summary: Export a profile bundle (config + bricks + sample data) for sharing.
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Aids reproducible demos, support cases.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: probes.healthz_live
   module: uncategorized
   summary: ''
@@ -5865,6 +6005,34 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: raft.cluster_status
+  module: raft
+  summary: 'Inspect raft cluster: leader, members, term, replication lag.'
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Cluster profile is new; operators need visibility for HA debugging.'
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: raft.node_join
+  module: raft
+  summary: Add a node to the raft cluster.
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: HA cluster expansion has no external surface yet.'
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -6625,6 +6793,21 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: search.grep_section
+  module: search
+  summary: 'Section-aware grep: `nexus grep PATTERN /file.md --in-section ''## API''`. Lets users target markdown / code section
+    without piping cat -> head -> grep.'
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Users commonly want to grep within a heading scope; current grep is whole-file only.'
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -7716,6 +7899,20 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: upload.cancel
+  module: upload
+  summary: Cancel an in-flight TUS upload.
+  transports: {}
+  profiles:
+    lite: missing_needed
+    sandbox: missing_needed
+    full: missing_needed
+  usage_example: 'WANTED: Pause/resume covered, cancellation isn''t.'
   correctness_test: null
   perf_class: null
   perf_link: null

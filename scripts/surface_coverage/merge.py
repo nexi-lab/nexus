@@ -56,6 +56,14 @@ def merge_coverage(
     for op_id, existing_op in existing_by_id.items():
         if op_id not in fresh_by_id:
             merged_ops.append(existing_op)
+            # Skip stale-flag for ops that are explicitly missing_needed wishlists
+            from scripts.surface_coverage.schema import ProfileStatus
+
+            all_missing = all(
+                p == ProfileStatus.MISSING_NEEDED for p in existing_op.profiles.values()
+            )
+            if all_missing and not existing_op.transports:
+                continue
             if not any(s.operation_id == op_id for s in stale_rows):
                 stale_rows.append(
                     StaleRow(

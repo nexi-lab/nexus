@@ -2465,7 +2465,9 @@ impl PyKernel {
             .collect())
     }
 
-    // ── Zone revision counter (§10 A2) ──────────────────────────────
+    // ── Zone revision counter (Tier 2 — read-only counters) ───────────
+    // Production callers: rebac (cache invalidation), search (index sync),
+    // mcp (watch polling). Read-only monotonic counters, no mediation needed.
 
     /// Increment zone revision (called after successful metastore write).
     fn increment_zone_revision(&self, zone_id: &str) -> u64 {

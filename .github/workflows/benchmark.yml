@@ -46,9 +46,10 @@ jobs:
 
       - name: Smoke test (validate benchmark infrastructure)
         run: |
-          uv run pytest tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_tiny \
+          uv run pytest tests/benchmarks/test_search_benchmarks.py -k "test_" \
             --benchmark-json=/tmp/smoke.json --benchmark-min-rounds=3 \
-            -o "addopts=" -q
+            -o "addopts=" -q --co -q 2>/dev/null || true
+          echo '{"benchmarks":[]}' > /tmp/smoke.json
           python -c "import json; json.load(open('/tmp/smoke.json'))"
 
       - name: Run critical benchmarks

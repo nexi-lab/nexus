@@ -217,12 +217,29 @@ class KernelClient:
         )
 
     def sys_stat(self, path: str, zone_id: str = ROOT_ZONE_ID) -> Any:
-        """Stat a path — returns metadata dict or None on not-found."""
+        """Stat a path — returns metadata dict or None on not-found.
+
+        Enriches the Rust JSON response with Python-friendly fields:
+        - modified_at / created_at: datetime objects from epoch-ms fields
+        """
         try:
-            return self._call("sys_stat", {"path": path, "zone_id": zone_id})
+            result = self._call("sys_stat", {"path": path, "zone_id": zone_id})
         except Exception:
             # FileNotFound is raised as an RPC error — translate to None.
             return None
+        if result is None:
+            return None
+        # Enrich with datetime objects that Python callers expect.
+        if isinstance(result, dict):
+            from datetime import UTC, datetime
+
+            ms = result.get("modified_at_ms")
+            if ms is not None and "modified_at" not in result:
+                result["modified_at"] = datetime.fromtimestamp(ms / 1000.0, UTC)
+            ms = result.get("created_at_ms")
+            if ms is not None and "created_at" not in result:
+                result["created_at"] = datetime.fromtimestamp(ms / 1000.0, UTC)
+        return result
 
     def sys_setattr(self, path: str, **kwargs: Any) -> Any:
         """Set attributes on a path."""
@@ -655,7 +672,7 @@ class KernelClient:
 class _SysReadResult:
     """Mimics PySysReadResult from the old PyO3 binding."""
 
-    __slots__ = ("content", "content_id", "size", "gen", "hit")
+    __slots__ = ("content", "content_id", "size", "gen", "hit", "entry_type", "stream_next_offset")
 
     def __init__(
         self,
@@ -663,12 +680,16 @@ class _SysReadResult:
         content_id: str | None = None,
         size: int = 0,
         gen: int = 0,
+        entry_type: int = 1,
+        stream_next_offset: int | None = None,
     ) -> None:
         self.content = content
         self.content_id = content_id
         self.size = size
         self.gen = gen
         self.hit = content is not None
+        self.entry_type = entry_type
+        self.stream_next_offset = stream_next_offset
 
 
 class _SysWriteResult:

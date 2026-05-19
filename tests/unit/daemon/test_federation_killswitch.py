@@ -134,7 +134,7 @@ def _run_daemon(
         runner = CliRunner()
         result = runner.invoke(main, args)
 
-    return result
+    return result, mock_bootstrapper_cls
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ def test_sandbox_profile_sets_federation_killswitch(tmp_path: Path, monkeypatch)
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    result = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
+    result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
 
     assert result.exit_code == 0, f"Unexpected exit: {result.output}"
     assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1", (
@@ -176,7 +176,7 @@ def test_non_sandbox_profiles_never_set_killswitch(
     """
     _clean_federation_env(monkeypatch)
 
-    result = _run_daemon(profile, tmp_path, monkeypatch)
+    result, _ = _run_daemon(profile, tmp_path, monkeypatch)
 
     assert result.exit_code == 0, f"Unexpected exit for {profile!r}: {result.output}"
     assert "NEXUS_FEDERATION_DISABLED" not in os.environ, (
@@ -213,7 +213,7 @@ def test_sandbox_with_explicit_federation_env_is_respected(
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    result = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
+    result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
 
     assert result.exit_code == 0, f"Unexpected exit: {result.output}"
     assert "NEXUS_FEDERATION_DISABLED" not in os.environ, (
@@ -240,7 +240,7 @@ def test_explicit_killswitch_value_not_overridden(tmp_path: Path, monkeypatch) -
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    result = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
+    result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
 
     assert result.exit_code == 0, f"Unexpected exit: {result.output}"
     assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "0", (
@@ -269,7 +269,7 @@ def test_config_file_sandbox_profile_sets_killswitch(tmp_path: Path, monkeypatch
     cfg = tmp_path / "sandbox.yaml"
     cfg.write_text("profile: sandbox\n")
 
-    result = _run_daemon(None, tmp_path, monkeypatch, config_path=cfg)
+    result, _ = _run_daemon(None, tmp_path, monkeypatch, config_path=cfg)
 
     assert result.exit_code == 0, f"Unexpected exit: {result.output}"
     assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1", (
@@ -292,9 +292,121 @@ def test_config_file_non_sandbox_profile_does_not_set_killswitch(
     cfg = tmp_path / "prod.yaml"
     cfg.write_text("profile: full\n")
 
-    result = _run_daemon(None, tmp_path, monkeypatch, config_path=cfg)
+    result, _ = _run_daemon(None, tmp_path, monkeypatch, config_path=cfg)
 
     assert result.exit_code == 0, f"Unexpected exit: {result.output}"
     assert "NEXUS_FEDERATION_DISABLED" not in os.environ, (
         "A non-sandbox config profile must NOT touch NEXUS_FEDERATION_DISABLED."
     )
+
+
+# ---------------------------------------------------------------------------
+# Review r2 (Issue #4126 HIGH A): centralize the EFFECTIVE profile across
+# ALL daemon profile gates — sandbox flag-validation, SandboxBootstrapper
+# gating, remote rejection, kill-switch — not just the kill-switch.
+#
+# Before r2 the sandbox flag-validation and the SandboxBootstrapper gate
+# still used the raw CLI ``deployment_profile`` while the kill-switch used
+# the effective profile. That inconsistency is the trust-boundary bug:
+#   * ``--config sandbox.yaml --workspace W`` (no --profile) was REJECTED by
+#     flag-validation (raw profile is "auto") even though the kernel IS
+#     sandbox, and the bootstrapper never ran.
+#   * ``--profile sandbox --config full.yaml --workspace W`` passed
+#     flag-validation + ran SandboxBootstrapper against a NON-sandbox kernel.
+# Each test below FAILS against the pre-r2 raw-profile gates.
+# ---------------------------------------------------------------------------
+
+
+def test_config_sandbox_workspace_passes_validation_and_runs_bootstrapper(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``nexusd --config <sandbox.yaml> --workspace W`` (no --profile).
+
+    Locks Finding A case (a): sandbox flag-validation must PASS (the
+    effective profile is sandbox), the SandboxBootstrapper path must be
+    taken (asserted via the patched class), and the kill-switch set.
+
+    Pre-r2 this FAILS: flag-validation gated on the raw ``deployment_profile``
+    (``"auto"`` here, since --config means --profile is never passed), so the
+    daemon exited USAGE_ERROR and never instantiated the bootstrapper.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = tmp_path / "sandbox.yaml"
+    cfg.write_text("profile: sandbox\n")
+
+    result, bootstrapper_cls = _run_daemon(
+        None, tmp_path, monkeypatch, workspace=workspace, config_path=cfg
+    )
+
+    assert result.exit_code == 0, (
+        f"sandbox flag-validation must PASS for a --config sandbox boot "
+        f"(effective profile is sandbox); got exit {result.exit_code}: "
+        f"{result.output}"
+    )
+    bootstrapper_cls.assert_called_once()
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1", (
+        "A config-file sandbox boot with --workspace must still set the "
+        "Raft kill-switch (effective profile gate)."
+    )
+
+
+def test_cli_profile_conflicts_with_config_profile_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    """``nexusd --profile sandbox --config <full.yaml>`` → clean CONFLICT.
+
+    Locks Finding A case (b): an explicit CLI ``--profile`` that disagrees
+    with the config file's ``profile:`` is rejected with a usage error
+    BEFORE any sandbox-only side effect — NO SandboxBootstrapper, NO
+    kill-switch. This prevents "sandbox behavior on a non-sandbox kernel"
+    (and the inverse). The conflict check did not exist pre-r2 (config
+    silently won), so this FAILS pre-fix.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = tmp_path / "full.yaml"
+    cfg.write_text("profile: full\n")
+
+    result, bootstrapper_cls = _run_daemon(
+        "sandbox", tmp_path, monkeypatch, workspace=workspace, config_path=cfg
+    )
+
+    assert result.exit_code == 64, (  # ExitCode.USAGE_ERROR
+        f"--profile/--config profile conflict must be a clean usage error; "
+        f"got exit {result.exit_code}: {result.output}"
+    )
+    assert "conflict" in result.output.lower()
+    bootstrapper_cls.assert_not_called()
+    assert "NEXUS_FEDERATION_DISABLED" not in os.environ, (
+        "A rejected conflicting invocation must not have set the kill-switch."
+    )
+
+
+def test_profile_full_with_workspace_no_config_still_rejected(tmp_path: Path, monkeypatch) -> None:
+    """``nexusd --profile full --workspace W`` (no config) → still rejected.
+
+    Locks Finding A case (c) — the zero-regression guard: with NO --config
+    the effective profile equals the raw CLI profile, so a non-sandbox
+    profile + a sandbox-only flag must still be a usage error exactly as
+    before r2 (no behavior change for the common no-config path).
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    result, bootstrapper_cls = _run_daemon("full", tmp_path, monkeypatch, workspace=workspace)
+
+    assert result.exit_code == 64, (  # ExitCode.USAGE_ERROR
+        f"--workspace with --profile full (no config) must remain a usage "
+        f"error; got exit {result.exit_code}: {result.output}"
+    )
+    assert "only valid with --profile sandbox" in result.output
+    bootstrapper_cls.assert_not_called()
+    assert "NEXUS_FEDERATION_DISABLED" not in os.environ

@@ -595,16 +595,23 @@ def test_sandbox_up_state_is_consumed_by_status(sandbox_daemon, tmp_path: Path) 
     cwd_before = os.getcwd()
     os.chdir(project_dir)
     try:
-        state_path, yaml_path = stack.persist_sandbox_runtime_artifacts(
+        effective_dd, state_paths, yaml_path = stack.persist_sandbox_runtime_artifacts(
             workspace=workspace,
             http_port=http_port,
             port_explicit=True,  # explicit port → grpc = http + 2 (= grpc_port)
             host=host,
-            data_dir=str(data_dir),
+            explicit_data_dir=str(data_dir),
+            sandbox_default_data_dir=str(data_dir),
             hub_url=None,
         )
     finally:
         os.chdir(cwd_before)
+
+    # No pre-existing config in this isolated dir → single state write at the
+    # explicit data_dir and a minimal nexus.yaml created.
+    assert effective_dd == str(data_dir.resolve())
+    assert len(state_paths) == 1, state_paths
+    state_path = state_paths[0]
 
     # Production-shaped artifacts exist (state has version/started_at
     # injected by save_runtime_state; yaml created since none pre-existed).

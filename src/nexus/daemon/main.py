@@ -145,6 +145,30 @@ def _print_lifecycle_summary(nx: Any) -> None:
         pass  # best-effort — never block startup
 
 
+def _read_config_file_profile(config_path: str) -> str | None:
+    """Return the ``profile:`` key from a YAML config file, or ``None``.
+
+    Best-effort: any read/parse failure returns ``None`` (the real failure is
+    deferred to ``load_config`` for a clearer error). Shared by
+    ``_resolve_effective_profile`` and the ``--profile``/``--config`` conflict
+    check so both observe the exact same file value.
+    """
+    try:
+        import yaml
+
+        path = Path(config_path)
+        if path.exists() and path.suffix in (".yaml", ".yml"):
+            with open(path) as fh:
+                loaded = yaml.safe_load(fh)
+            if isinstance(loaded, dict):
+                raw = loaded.get("profile")
+                if isinstance(raw, str) and raw:
+                    return raw
+    except Exception:
+        return None
+    return None
+
+
 def _resolve_effective_profile(
     deployment_profile: str,
     config_path: str | None,
@@ -180,31 +204,16 @@ def _resolve_effective_profile(
         return deployment_profile
 
     # --config given: replicate load_config's profile precedence.
-    try:
-        import yaml
-
-        path = Path(config_path)
-        file_profile: str | None = None
-        if path.exists() and path.suffix in (".yaml", ".yml"):
-            with open(path) as fh:
-                loaded = yaml.safe_load(fh)
-            if isinstance(loaded, dict):
-                raw = loaded.get("profile")
-                if isinstance(raw, str) and raw:
-                    file_profile = raw
-
-        # 1. config file profile wins (config_dict.update over env overrides).
-        if file_profile is not None:
-            return file_profile
-        # 2. then NEXUS_PROFILE env.
-        env_profile = os.environ.get("NEXUS_PROFILE")
-        if env_profile:
-            return env_profile
-        # 3. then the NexusConfig default.
-        return "full"
-    except Exception:
-        # Defer the real failure to load_config() for a clearer error.
-        return deployment_profile
+    # 1. config file profile wins (config_dict.update over env overrides).
+    file_profile = _read_config_file_profile(config_path)
+    if file_profile is not None:
+        return file_profile
+    # 2. then NEXUS_PROFILE env.
+    env_profile = os.environ.get("NEXUS_PROFILE")
+    if env_profile:
+        return env_profile
+    # 3. then the NexusConfig default.
+    return "full"
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +374,37 @@ def main(
 
     deployment_profile = deployment_profile or "auto"
 
+    # --- Effective profile (Issue #4126 HIGH, review r2) --------------------
+    # Compute the profile the kernel will ACTUALLY run ONCE, here, before any
+    # profile-dependent gate. ``load_config`` ignores the raw CLI ``--profile``
+    # when ``--config`` is given (config-file ``profile:`` > ``NEXUS_PROFILE``
+    # env > CLI ``--profile``), so gating on the raw CLI value is both unsafe
+    # (sandbox flag-validation + SandboxBootstrapper could run against a
+    # non-sandbox kernel) and inconsistent (a ``--config sandbox.yaml`` boot
+    # would be wrongly rejected). EVERY gate below uses ``effective_profile``.
+    #
+    # Conflict precedence: an EXPLICIT CLI ``--profile X`` together with a
+    # ``--config`` whose ``profile:`` is ``Y`` (X != Y) is rejected with a
+    # usage error rather than silently letting the config win. Silent
+    # config-wins is the dangerous case the reviewer called out (a user who
+    # typed ``--profile sandbox`` could get full-kernel behavior, or vice
+    # versa). Rejecting is the safest, clearest contract. Only a COMMANDLINE
+    # ``--profile`` triggers this: ``NEXUS_PROFILE`` env losing to the config
+    # file is documented ``load_config`` precedence, not a user conflict.
+    _profile_src = ctx.get_parameter_source("deployment_profile")
+    if config_path and _profile_src == click.core.ParameterSource.COMMANDLINE:
+        _file_profile = _read_config_file_profile(config_path)
+        if _file_profile is not None and _file_profile != deployment_profile:
+            click.echo(
+                f"Error: conflicting profile — CLI --profile {deployment_profile!r} "
+                f"but --config {config_path} sets profile: {_file_profile!r}. "
+                "Remove one (the daemon will not silently pick a profile).",
+                err=True,
+            )
+            sys.exit(ExitCode.USAGE_ERROR)
+
+    effective_profile = _resolve_effective_profile(deployment_profile, config_path)
+
     # --- Sandbox flag validation --------------------------------------------
     # --workspace, --hub-url, --hub-token are ONLY valid with --profile sandbox
     _sandbox_flags = {
@@ -373,7 +413,7 @@ def main(
         "--hub-token": hub_token,
     }
     _has_sandbox_flag = any(v is not None for v in _sandbox_flags.values())
-    if _has_sandbox_flag and deployment_profile != "sandbox":
+    if _has_sandbox_flag and effective_profile != "sandbox":
         _used = [k for k, v in _sandbox_flags.items() if v is not None]
         click.echo(
             f"Error: {', '.join(_used)} {'is' if len(_used) == 1 else 'are'} only valid "
@@ -406,8 +446,9 @@ def main(
     pid_path = _manage_pid_file()
     ready_path = Path.home() / ".nexus" / "nexusd.ready"
 
-    # Guard: daemon cannot run in remote profile
-    if deployment_profile == "remote":
+    # Guard: daemon cannot run in remote profile (gate on the EFFECTIVE
+    # profile so a ``--config remote.yaml`` boot is rejected too).
+    if effective_profile == "remote":
         _remove_pid_file(pid_path)
         click.echo(
             "Error: nexusd cannot run with profile='remote'. "
@@ -422,7 +463,7 @@ def main(
         click.echo("nexusd — Nexus Node Daemon")
         click.echo(f"  Host:    {host}")
         click.echo(f"  Port:    {port}")
-        click.echo(f"  Profile: {deployment_profile}")
+        click.echo(f"  Profile: {effective_profile}")
         if data_dir:
             click.echo(f"  Data:    {data_dir}")
         if config_path:
@@ -481,11 +522,11 @@ def main(
             # Gate on the EFFECTIVE profile (Issue #4126 HIGH): when an
             # operator runs ``nexusd --config sandbox.yaml`` with no
             # ``--profile``, ``deployment_profile`` is still ``"auto"`` but the
-            # kernel will run ``profile: sandbox`` from the file. Resolving the
-            # profile the same way ``nexus.connect``/``load_config`` will
-            # ensures config-sourced sandbox boots are still gated.
-            _effective_profile = _resolve_effective_profile(deployment_profile, config_path)
-            if _effective_profile == "sandbox" and not any(
+            # kernel will run ``profile: sandbox`` from the file. This uses the
+            # SAME ``effective_profile`` computed once at the top so the
+            # kill-switch, sandbox flag-validation, remote rejection and the
+            # SandboxBootstrapper gate can never disagree (review r2).
+            if effective_profile == "sandbox" and not any(
                 os.environ.get(v) for v in ("NEXUS_PEERS", "NEXUS_HOSTNAME", "NEXUS_BOOTSTRAP_NEW")
             ):
                 os.environ.setdefault("NEXUS_FEDERATION_DISABLED", "1")
@@ -507,7 +548,12 @@ def main(
         _print_lifecycle_summary(nx)
 
         # --- Sandbox boot sequence (Issue #3786) ----------------------------
-        if deployment_profile == "sandbox" and workspace is not None:
+        # Gate on the EFFECTIVE profile (review r2): a ``--config
+        # sandbox.yaml --workspace W`` boot must run the bootstrapper, and a
+        # ``--profile sandbox --config full.yaml --workspace W`` boot must
+        # NOT (the conflict check above already rejects that case, but the
+        # effective-profile gate is the defense-in-depth invariant).
+        if effective_profile == "sandbox" and workspace is not None:
             _workspace_path = Path(workspace)
             _search_registry = getattr(nx, "_search_registry", None)
             if _search_registry is None:

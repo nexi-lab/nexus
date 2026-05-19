@@ -775,3 +775,149 @@ class TestProfileStateOnly:
     def test_state_profile_still_emitted(self) -> None:
         env = resolve_connection_env({}, {"profile": "sandbox"})
         assert env["NEXUS_PROFILE"] == "sandbox"
+
+
+# ---------------------------------------------------------------------------
+# Issue #4126 review r2 — Finding B: #4144 discovery must work when a
+# project nexus.yaml ALREADY exists (the common case for real projects).
+#
+# Before r2 the producer wrote .state.json ONLY to the resolved --data-dir
+# and never to the EXISTING config's data_dir. Consumers (`nexus env`/
+# `status`/`run`, no `--url`) read ``existing_cfg["data_dir"]`` →
+# ``load_runtime_state`` — so they looked in the WRONG directory and never
+# discovered the just-started sandbox. The producer now (a) uses the
+# existing config's data_dir as the effective data_dir when no explicit
+# --data-dir is given, and (b) ALSO seeds state at that anchor when an
+# explicit --data-dir diverges. The user's nexus.yaml is never rewritten.
+# ---------------------------------------------------------------------------
+
+
+class TestPreExistingConfigDiscovery:
+    """Finding B: an existing nexus.yaml must not break sandbox discovery."""
+
+    def _up(self, runner, tmp_path, args):
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        with (
+            patch("shutil.which", return_value=fake_nexusd),
+            patch("subprocess.run", return_value=mock_proc) as mock_run,
+            patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+        ):
+            result = runner.invoke(up, ["--profile", "sandbox", *args])
+        return result, mock_run
+
+    def test_explicit_data_dir_diverges_from_existing_config_still_discovered(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Pre-existing nexus.yaml with data_dir != --data-dir.
+
+        After the producer runs, `nexus env`/`status --json` (real CLI, NO
+        --url, from the project dir) MUST discover the sandbox endpoint —
+        i.e. .state.json exists where the existing config's data_dir points.
+        FAILS against the old no-clobber-only / single-write behavior (state
+        was written only to --data-dir; consumers read the config's
+        data_dir and found nothing).
+        """
+        ws = str(tmp_path / "ws")
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Pre-existing project config — its data_dir is the discovery
+            # anchor consumers read. It differs from the explicit --data-dir.
+            anchor = str(Path("./project-data").resolve())
+            Path("nexus.yaml").write_text(
+                yaml.safe_dump({"project_name": "preexisting", "data_dir": "./project-data"})
+            )
+            explicit_dd = str(tmp_path / "explicit-ddir")
+
+            result, mock_run = self._up(
+                runner,
+                tmp_path,
+                [
+                    "--workspace",
+                    ws,
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    "3030",
+                    "--data-dir",
+                    explicit_dd,
+                ],
+            )
+            assert result.exit_code == 0, result.output
+
+            # The user's nexus.yaml is byte-preserved (file no-clobber).
+            assert yaml.safe_load(Path("nexus.yaml").read_text()) == {
+                "project_name": "preexisting",
+                "data_dir": "./project-data",
+            }
+
+            # Explicit --data-dir still wins for the daemon argv.
+            argv = mock_run.call_args[0][0]
+            assert argv[argv.index("--data-dir") + 1] == str(Path(explicit_dd).resolve())
+
+            # CRITICAL: state is discoverable through the EXISTING config's
+            # data_dir (the anchor consumers read). Pre-fix this dir had no
+            # .state.json and discovery failed.
+            anchor_state = load_runtime_state(anchor)
+            assert anchor_state, (
+                "no .state.json at the existing config's data_dir — "
+                "`nexus env`/`status` would never discover the sandbox"
+            )
+            assert anchor_state["ports"]["http"] == 3030
+            assert anchor_state["profile"] == "sandbox"
+
+            # End-to-end: real consumers, NO --url, from the project dir.
+            env_result = runner.invoke(env_cmd, ["--json"])
+            assert env_result.exit_code == 0, env_result.output
+            emitted = json.loads(env_result.output)
+            assert emitted["NEXUS_PROFILE"] == "sandbox"
+            assert ":3030" in emitted["NEXUS_URL"]
+
+            from nexus.cli.commands.status import status as status_cmd
+
+            st_result = runner.invoke(status_cmd, ["--json"])
+            assert st_result.exit_code in (0, 1), st_result.output
+            st = json.loads(st_result.output)
+            # status resolves the endpoint from the discovered state (it may
+            # report unreachable since no real daemon runs, but it MUST have
+            # found the sandbox endpoint via the anchor, not "no config").
+            assert "3030" in json.dumps(st), st_result.output
+
+    def test_existing_config_data_dir_used_when_no_explicit_data_dir(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Pre-existing nexus.yaml + NO --data-dir → config's data_dir is the
+        effective data_dir for BOTH the daemon argv and .state.json.
+
+        This is the common case (existing project, plain
+        `nexus up --profile sandbox --workspace W`). Pre-fix the producer
+        ignored the config and used ~/.nexus/sandbox, so consumers (reading
+        the config's data_dir) never found the running sandbox.
+        """
+        ws = str(tmp_path / "ws")
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            anchor = str(Path("./proj-data").resolve())
+            Path("nexus.yaml").write_text(
+                yaml.safe_dump({"project_name": "p", "data_dir": "./proj-data"})
+            )
+
+            result, mock_run = self._up(runner, tmp_path, ["--workspace", ws, "--port", "4040"])
+            assert result.exit_code == 0, result.output
+
+            # Daemon argv carries the existing config's data_dir.
+            argv = mock_run.call_args[0][0]
+            assert argv[argv.index("--data-dir") + 1] == anchor
+
+            # State is at the anchor → consumers discover it.
+            state = load_runtime_state(anchor)
+            assert state and state["ports"]["http"] == 4040
+
+            env_result = runner.invoke(env_cmd, ["--json"])
+            assert env_result.exit_code == 0, env_result.output
+            assert ":4040" in json.loads(env_result.output)["NEXUS_URL"]
+
+            # nexus.yaml untouched.
+            assert yaml.safe_load(Path("nexus.yaml").read_text()) == {
+                "project_name": "p",
+                "data_dir": "./proj-data",
+            }

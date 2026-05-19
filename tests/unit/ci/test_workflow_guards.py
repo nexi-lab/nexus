@@ -23,7 +23,13 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _load_workflow(name: str) -> dict[str, Any]:
-    raw = (ROOT / ".github/workflows" / name).read_text()
+    # ``encoding="utf-8"`` is required: ``Path.read_text()`` defaults to
+    # ``locale.getencoding()`` which is GBK on a zh-CN Windows host. Several
+    # workflow files contain U+2014 ``—`` (em-dash) in comments / step
+    # ``name:`` fields, and a GBK decode raises ``UnicodeDecodeError`` long
+    # before ``yaml.safe_load`` ever sees the bytes. CI runners are Linux
+    # (UTF-8 default), so the locale mismatch only bites local Windows runs.
+    raw = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
     # GitHub Actions reserves the ``on:`` key. ``yaml.safe_load`` parses it
     # as the Python boolean ``True`` by default. We don't read it in these
     # tests, but document the gotcha so future readers don't trip on it.

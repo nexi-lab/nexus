@@ -8,6 +8,7 @@ auto-refresh every 2 seconds.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -34,12 +35,51 @@ def _load_project_config_optional() -> dict[str, Any]:
     return load_project_config_optional()
 
 
+def load_runtime_state(data_dir: str) -> dict[str, Any]:
+    """Thin wrapper so tests can patch ``nexus.cli.commands.status.load_runtime_state``."""
+    from nexus.cli.state import load_runtime_state as _load
+
+    return _load(data_dir)
+
+
+def resolve_connection_env(project_cfg: dict[str, Any], state: dict[str, Any]) -> dict[str, str]:
+    """Thin wrapper so tests can patch ``nexus.cli.commands.status.resolve_connection_env``."""
+    from nexus.cli.state import resolve_connection_env as _resolve
+
+    return _resolve(project_cfg, state)
+
+
+def _fetch_deployment_profile_from_features(server_url: str) -> str | None:
+    """Best-effort fetch of *profile* from ``GET /api/v2/features``.
+
+    Returns the profile string on success, or *None* on any failure.
+    Never raises; uses a short timeout so ``nexus status`` stays responsive
+    even when the server is offline.
+    """
+    try:
+        from nexus.cli.api_client import NexusApiClient
+
+        features = NexusApiClient(url=server_url, timeout=2.0).get("/api/v2/features")
+        if isinstance(features, dict):
+            profile = features.get("profile")
+            if profile and isinstance(profile, str):
+                return profile
+    except Exception:
+        pass
+    return None
+
+
 def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
     """Add the *effective* image_ref, connection env, and project info into *data*.
 
     Uses the same precedence logic as ``nexus up`` (env vars > config ref >
     deprecated config tag) so ``nexus status`` always shows the image that
     would actually run, not just the raw config value.
+
+    Also adds two new additive keys (Gap 2 of #4132):
+    - ``auth_mode``: from project config's ``auth`` key (default ``"none"``).
+    - ``deployment_profile``: resolved via env ``NEXUS_PROFILE`` →
+      best-effort ``GET /api/v2/features`` → ``"unknown"``.
     """
     from nexus.cli.commands.stack import _resolve_image_ref_from_config
 
@@ -50,13 +90,39 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
         data["image_accelerator"] = project_cfg.get("image_accelerator", "")
 
         # Add connection env vars and project metadata
-        from nexus.cli.state import load_runtime_state, resolve_connection_env
-
         data_dir = project_cfg.get("data_dir", "./nexus-data")
         state = load_runtime_state(data_dir)
-        data["connection_env"] = resolve_connection_env(project_cfg, state)
+        conn_env = resolve_connection_env(project_cfg, state)
+        data["connection_env"] = conn_env
         data["project_name"] = state.get("project_name", "")
         data["data_dir"] = data_dir
+
+        # auth_mode: from project config (preset maps: shared→static,
+        # demo→database, local→none)
+        data["auth_mode"] = project_cfg.get("auth", "none")
+
+        # deployment_profile: env → features endpoint → "unknown"
+        profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
+        if profile_env:
+            data["deployment_profile"] = profile_env
+        else:
+            server_url = conn_env.get("NEXUS_URL") or data.get("server_url", "")
+            fetched = _fetch_deployment_profile_from_features(server_url) if server_url else None
+            data["deployment_profile"] = fetched if fetched else "unknown"
+    else:
+        # No project config: auth defaults to "none"
+        data["auth_mode"] = "none"
+
+        # deployment_profile: env → features endpoint (using server_url from
+        # collected data) → "unknown"
+        profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
+        if profile_env:
+            data["deployment_profile"] = profile_env
+        else:
+            server_url = data.get("server_url", "")
+            fetched = _fetch_deployment_profile_from_features(server_url) if server_url else None
+            data["deployment_profile"] = fetched if fetched else "unknown"
+
     return data
 
 
@@ -327,8 +393,6 @@ def status(
     else:
         cfg = _load_project_config_optional()
         if cfg:
-            from nexus.cli.state import load_runtime_state, resolve_connection_env
-
             data_dir = cfg.get("data_dir", "./nexus-data")
             state = load_runtime_state(data_dir)
             conn = resolve_connection_env(cfg, state)

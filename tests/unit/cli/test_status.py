@@ -214,3 +214,92 @@ class TestStatusCommand:
         )
         assert result.exit_code == 0
         mock_collect.assert_called_once_with("http://remote:3000", None, None)
+
+    # -----------------------------------------------------------------------
+    # deployment_profile + auth_mode enrichment (Gap 2 of #4132)
+    # -----------------------------------------------------------------------
+
+    @patch("nexus.cli.commands.status._load_project_config_optional")
+    @patch("nexus.cli.commands.status._collect_status")
+    def test_deployment_profile_from_env(
+        self,
+        mock_collect: MagicMock,
+        mock_project_cfg: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """NEXUS_PROFILE env var is surfaced as deployment_profile."""
+        mock_collect.return_value = {
+            "server_url": "http://localhost:2026",
+            "server_reachable": False,
+            "server_health": None,
+            "docker_services": [],
+        }
+        mock_project_cfg.return_value = {}
+
+        result = cli_runner.invoke(status, ["--json"], env={"NEXUS_PROFILE": "full"})
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        data = parsed.get("data", parsed)
+        assert data["deployment_profile"] == "full"
+
+    @patch("nexus.cli.commands.status._load_project_config_optional")
+    @patch("nexus.cli.commands.status._collect_status")
+    def test_auth_mode_from_project_config(
+        self,
+        mock_collect: MagicMock,
+        mock_project_cfg: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """auth_mode reflects the project config's auth key."""
+        mock_collect.return_value = {
+            "server_url": "http://localhost:2026",
+            "server_reachable": False,
+            "server_health": None,
+            "docker_services": [],
+        }
+        mock_project_cfg.return_value = {
+            "auth": "database",
+            "data_dir": "./nexus-data",
+        }
+
+        with (
+            patch("nexus.cli.commands.status.load_runtime_state", return_value={}),
+            patch(
+                "nexus.cli.commands.status.resolve_connection_env",
+                return_value={"NEXUS_URL": "http://localhost:2026"},
+            ),
+            patch(
+                "nexus.cli.commands.stack._resolve_image_ref_from_config",
+                return_value="nexus:latest",
+            ),
+        ):
+            result = cli_runner.invoke(status, ["--json"], env={"NEXUS_PROFILE": ""})
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        data = parsed.get("data", parsed)
+        assert data["auth_mode"] == "database"
+
+    @patch("nexus.cli.commands.status._load_project_config_optional")
+    @patch("nexus.cli.commands.status._collect_status")
+    def test_new_keys_present_offline_no_project_config(
+        self,
+        mock_collect: MagicMock,
+        mock_project_cfg: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """Both keys are present even when offline with no project config."""
+        mock_collect.return_value = {
+            "server_url": "http://localhost:2026",
+            "server_reachable": False,
+            "server_health": None,
+            "docker_services": [],
+        }
+        mock_project_cfg.return_value = {}
+
+        result = cli_runner.invoke(status, ["--json"], env={"NEXUS_PROFILE": "", "NEXUS_URL": ""})
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        data = parsed.get("data", parsed)
+        assert "deployment_profile" in data
+        assert "auth_mode" in data
+        assert data["auth_mode"] == "none"

@@ -125,7 +125,7 @@ class TestRPCTransportCallRPC:
         mock_response.is_error = True
         mock_response.payload = encode_rpc_message(
             {
-                "code": -32000,
+                "code": -32007,
                 "message": "File not found: /missing.txt",
             }
         )
@@ -225,7 +225,7 @@ class TestRPCTransportTypedMethods:
         mock_response = MagicMock()
         mock_response.is_error = True
         mock_response.error_payload = encode_rpc_message(
-            {"code": -32000, "message": "File not found: /missing.txt"}
+            {"code": -32007, "message": "File not found: /missing.txt"}
         )
         transport._mock_stub.Read.return_value = mock_response
 

@@ -203,7 +203,14 @@ The guide states, and tests prove:
 ## Risks
 
 - E2E flakiness on real Docker boot → mitigated by gating + generous
-  bounds + teardown fixture.
+  bounds + teardown fixture. The fixture uses the documented prebuilt
+  path (plain `nexus up`, reusing the pinned `ghcr.io/nexi-lab/nexus`
+  image) — NOT `--build` (a from-scratch Rust+Python build blows the
+  timeout). Source build is opt-in via `NEXUS_E2E_BUILD=1`. Hosts whose
+  Docker credential helper is unusable non-interactively (e.g. macOS
+  `osxkeychain`) and lack the stack images cached cannot pull them; the
+  fixture skips with a precise environmental diagnosis (it is green on
+  CI / hosts with anonymous ghcr pulls or pre-cached images).
 - Gap issues block closure → surfaced explicitly; user approves filing
   before implementation work elsewhere.
 - Vocabulary gap (preset vs profile) could confuse readers → the guide

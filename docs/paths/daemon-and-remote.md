@@ -20,7 +20,8 @@ nexusd --profile full --host 127.0.0.1 --port 2026 \
   --data-dir ./nexus-data --auth-type static --api-key dev-key
 ```
 
-Or run the managed stack (FULL profile, PostgreSQL/Dragonfly/Zoekt):
+Or run the managed stack (FULL profile: PostgreSQL + Dragonfly + the
+Nexus server; Zoekt is optional and separately run):
 
 ```bash
 nexus init --preset shared && nexus up && eval $(nexus env)

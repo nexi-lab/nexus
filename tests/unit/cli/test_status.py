@@ -365,6 +365,13 @@ class TestStatusCommand:
         sent_key = mock_fetch.call_args.args[1]
         assert sent_key == "REMOTE-K"
         assert sent_key != "LOCAL-SECRET"
+        # AND the local stack key/connection_env must not appear anywhere
+        # in the rendered output for a remote target (auth boundary).
+        assert "LOCAL-SECRET" not in result.output
+        data = json.loads(result.output)
+        data = data.get("data", data)
+        assert "connection_env" not in data
+        assert "project_name" not in data
 
     @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features")
     @patch("nexus.cli.commands.status._load_project_config_optional")

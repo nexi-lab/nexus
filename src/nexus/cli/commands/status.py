@@ -121,26 +121,32 @@ def _enrich_with_image_info(
 
     project_cfg = _load_project_config_optional()
     if project_cfg:
-        data["image_ref"] = _resolve_image_ref_from_config(project_cfg)
-        data["image_channel"] = project_cfg.get("image_channel", "")
-        data["image_accelerator"] = project_cfg.get("image_accelerator", "")
-
-        # Add connection env vars and project metadata
+        # Resolve the local stack endpoint/creds first so we can decide
+        # whether the status target IS that stack BEFORE attaching any
+        # local-only (and secret-bearing) metadata to the output.
         data_dir = project_cfg.get("data_dir", "./nexus-data")
         state = load_runtime_state(data_dir)
         conn_env = resolve_connection_env(project_cfg, state)
-        data["connection_env"] = conn_env
-        data["project_name"] = state.get("project_name", "")
-        data["data_dir"] = data_dir
 
         # `nexus status` reports the hub at the *effective status target*
-        # (`data["server_url"]`, which honors an explicit --url). The local
-        # nexus.yaml only describes the locally-managed stack, so its
-        # `auth` and the local stack URL must NOT be reported for a
-        # different remote target.
+        # (`data["server_url"]`, which honors an explicit --url). Local
+        # nexus.yaml describes only the locally-managed stack.
         target_url = data.get("server_url", "")
         local_stack_url = conn_env.get("NEXUS_URL", "")
         is_local_stack = (not target_url) or _same_endpoint(target_url, local_stack_url)
+
+        if is_local_stack:
+            # Safe: the target IS the local stack — attach its image +
+            # connection metadata (conn_env may carry NEXUS_API_KEY).
+            data["image_ref"] = _resolve_image_ref_from_config(project_cfg)
+            data["image_channel"] = project_cfg.get("image_channel", "")
+            data["image_accelerator"] = project_cfg.get("image_accelerator", "")
+            data["connection_env"] = conn_env
+            data["project_name"] = state.get("project_name", "")
+            data["data_dir"] = data_dir
+        # else: a different remote --url — do NOT attach the local
+        # stack's connection_env/image/project metadata (it would cross
+        # the auth boundary and misdescribe the remote hub).
 
         # auth_mode: local nexus.yaml auth only when the target IS the
         # locally-managed stack; otherwise it does not describe that hub.

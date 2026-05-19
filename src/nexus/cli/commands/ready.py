@@ -74,18 +74,19 @@ def _poll_health(base_url: str, deadline: float) -> bool:
     """Poll ``GET {base_url}/health`` until 200 or the deadline elapses."""
     import httpx
 
-    while time.monotonic() < deadline:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return False
-        try:
-            with httpx.Client(timeout=min(2.0, remaining)) as client:
+    with httpx.Client() as client:
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                client.timeout = httpx.Timeout(min(2.0, remaining))
                 resp = client.get(f"{base_url}/health")
-            if resp.status_code == 200:
-                return True
-        except httpx.HTTPError:
-            pass
-        time.sleep(_HEALTH_POLL_INTERVAL)
+                if resp.status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                pass
+            time.sleep(_HEALTH_POLL_INTERVAL)
     return False
 
 

@@ -19,7 +19,17 @@ from nexus.daemon.main import main as nexusd_main
 
 
 def test_remote_profile_is_rejected() -> None:
-    runner = CliRunner(mix_stderr=True)
+    # Click 8.2 removed CliRunner(mix_stderr=...) and captures stderr
+    # separately. The rejection is printed with err=True, so gather both
+    # streams version-robustly (stdout in old mixed Click, stderr in
+    # Click >= 8.2).
+    runner = CliRunner()
     result = runner.invoke(nexusd_main, ["--profile", "remote"])
+    combined = result.output or ""
+    try:
+        if result.stderr:
+            combined += result.stderr
+    except (ValueError, AttributeError):
+        pass
     assert result.exit_code != 0
-    assert "cannot run with profile='remote'" in result.output
+    assert "cannot run with profile='remote'" in combined

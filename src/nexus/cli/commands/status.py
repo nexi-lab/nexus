@@ -35,20 +35,6 @@ def _load_project_config_optional() -> dict[str, Any]:
     return load_project_config_optional()
 
 
-def load_runtime_state(data_dir: str) -> dict[str, Any]:
-    """Thin wrapper so tests can patch ``nexus.cli.commands.status.load_runtime_state``."""
-    from nexus.cli.state import load_runtime_state as _load
-
-    return _load(data_dir)
-
-
-def resolve_connection_env(project_cfg: dict[str, Any], state: dict[str, Any]) -> dict[str, str]:
-    """Thin wrapper so tests can patch ``nexus.cli.commands.status.resolve_connection_env``."""
-    from nexus.cli.state import resolve_connection_env as _resolve
-
-    return _resolve(project_cfg, state)
-
-
 def _fetch_deployment_profile_from_features(server_url: str) -> str | None:
     """Best-effort fetch of *profile* from ``GET /api/v2/features``.
 
@@ -69,6 +55,21 @@ def _fetch_deployment_profile_from_features(server_url: str) -> str | None:
     return None
 
 
+def _resolve_deployment_profile(server_url: str) -> str:
+    """Resolve deployment profile via env ``NEXUS_PROFILE`` → features endpoint → ``"unknown"``.
+
+    Hierarchy (single source of truth):
+    1. ``NEXUS_PROFILE`` env var (non-empty wins immediately).
+    2. Best-effort ``GET /api/v2/features`` for the resolved *server_url*.
+    3. ``"unknown"`` fallback.
+    """
+    profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
+    if profile_env:
+        return profile_env
+    fetched = _fetch_deployment_profile_from_features(server_url) if server_url else None
+    return fetched if fetched else "unknown"
+
+
 def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
     """Add the *effective* image_ref, connection env, and project info into *data*.
 
@@ -82,6 +83,7 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
       best-effort ``GET /api/v2/features`` → ``"unknown"``.
     """
     from nexus.cli.commands.stack import _resolve_image_ref_from_config
+    from nexus.cli.state import load_runtime_state, resolve_connection_env
 
     project_cfg = _load_project_config_optional()
     if project_cfg:
@@ -101,27 +103,15 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
         # demo→database, local→none)
         data["auth_mode"] = project_cfg.get("auth", "none")
 
-        # deployment_profile: env → features endpoint → "unknown"
-        profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
-        if profile_env:
-            data["deployment_profile"] = profile_env
-        else:
-            server_url = conn_env.get("NEXUS_URL") or data.get("server_url", "")
-            fetched = _fetch_deployment_profile_from_features(server_url) if server_url else None
-            data["deployment_profile"] = fetched if fetched else "unknown"
+        # deployment_profile: single hierarchy via helper
+        server_url = conn_env.get("NEXUS_URL") or data.get("server_url", "")
+        data["deployment_profile"] = _resolve_deployment_profile(server_url)
     else:
         # No project config: auth defaults to "none"
         data["auth_mode"] = "none"
 
-        # deployment_profile: env → features endpoint (using server_url from
-        # collected data) → "unknown"
-        profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
-        if profile_env:
-            data["deployment_profile"] = profile_env
-        else:
-            server_url = data.get("server_url", "")
-            fetched = _fetch_deployment_profile_from_features(server_url) if server_url else None
-            data["deployment_profile"] = fetched if fetched else "unknown"
+        # deployment_profile: single hierarchy via helper
+        data["deployment_profile"] = _resolve_deployment_profile(data.get("server_url", ""))
 
     return data
 
@@ -391,6 +381,8 @@ def status(
     if url:
         server_url = url
     else:
+        from nexus.cli.state import load_runtime_state, resolve_connection_env
+
         cfg = _load_project_config_optional()
         if cfg:
             data_dir = cfg.get("data_dir", "./nexus-data")

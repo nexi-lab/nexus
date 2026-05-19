@@ -263,9 +263,9 @@ class TestStatusCommand:
         }
 
         with (
-            patch("nexus.cli.commands.status.load_runtime_state", return_value={}),
+            patch("nexus.cli.state.load_runtime_state", return_value={}),
             patch(
-                "nexus.cli.commands.status.resolve_connection_env",
+                "nexus.cli.state.resolve_connection_env",
                 return_value={"NEXUS_URL": "http://localhost:2026"},
             ),
             patch(
@@ -279,15 +279,17 @@ class TestStatusCommand:
         data = parsed.get("data", parsed)
         assert data["auth_mode"] == "database"
 
+    @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features", return_value=None)
     @patch("nexus.cli.commands.status._load_project_config_optional")
     @patch("nexus.cli.commands.status._collect_status")
     def test_new_keys_present_offline_no_project_config(
         self,
         mock_collect: MagicMock,
         mock_project_cfg: MagicMock,
+        mock_fetch_profile: MagicMock,
         cli_runner: CliRunner,
     ) -> None:
-        """Both keys are present even when offline with no project config."""
+        """Both keys are present even when offline with no project config (no real network call)."""
         mock_collect.return_value = {
             "server_url": "http://localhost:2026",
             "server_reachable": False,
@@ -300,6 +302,5 @@ class TestStatusCommand:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         data = parsed.get("data", parsed)
-        assert "deployment_profile" in data
-        assert "auth_mode" in data
+        assert data["deployment_profile"] == "unknown"
         assert data["auth_mode"] == "none"

@@ -193,6 +193,95 @@ For anything beyond a one-off shell demo, prefer a config file such as
 machine-specific overrides. This is less error-prone than re-exporting a long
 set of values in every terminal.
 
+### Sandbox profile (per-agent runtime)
+
+**Goal:** start a lightweight, self-contained Nexus for a single agent
+sandbox with one command, and know exactly what it runs locally.
+
+**Why this profile:** `sandbox` runs with **no PostgreSQL, no
+Dragonfly/Redis, no Zoekt** — SQLite + in-process cache + BM25S keyword
+search. It is the per-agent runtime target: low RSS, fast boot, optional
+hub federation. Full reference: [Sandbox deployment
+profile](../deployment/sandbox-profile.md).
+
+> **Not to be confused with the sandbox-provisioning brick.** The
+> `sandbox` *deployment profile* is *how Nexus runs* (a lightweight
+> runtime). `BRICK_SANDBOX` is a *feature* — provisioning code-execution
+> sandboxes (E2B/Docker). They are orthogonal: the `sandbox` profile has
+> `BRICK_SANDBOX` **disabled** by default. A `full`/`cloud` profile can
+> provision sandboxes; a `sandbox`-profile runtime cannot.
+
+**Start it (from a source checkout or a package install):**
+
+```bash
+# One command — `nexus up` shells out to nexusd directly (no Docker):
+nexus up --profile sandbox --workspace ~/app
+
+# Equivalent direct daemon invocation:
+nexusd --profile sandbox --workspace ~/app --host 127.0.0.1 --port 2026
+```
+
+**Verify what it started (RPC surface — HTTP only):**
+
+```bash
+# HTTP health:
+curl -s http://127.0.0.1:2026/health
+
+# Profile + enabled/disabled bricks (public, no auth):
+curl -s http://127.0.0.1:2026/api/v2/features
+```
+
+**Expected behavior:**
+
+- **Success:** `/health` returns `200`; `/api/v2/features` reports
+  `"profile": "sandbox"` with `enabled_bricks` ⊇ `{search, mcp, parsers,
+  eventlog, namespace, permissions}` and `llm`/`pay`/`observability`/
+  `federation` **absent**.
+- **Denied (usage error, exit 64):** `--workspace`, `--hub-url`, or
+  `--hub-token` without `--profile sandbox`; `--hub-url` without
+  `--hub-token`.
+- **Unavailable (by design):** the sandbox daemon is **HTTP-only** — it
+  binds no gRPC server, so there is no gRPC `Ping` under this profile.
+  Sandbox-provisioning RPCs/CLI are also absent (`BRICK_SANDBOX`
+  disabled). These are intentional, not missing features.
+
+**Correctness assertion you can run:** with the daemon up,
+`curl -s http://127.0.0.1:2026/api/v2/features | jq -r .profile` prints
+`sandbox`, and the boot succeeds with no Postgres/Redis/Zoekt process
+running. Proven in CI by `tests/integration/test_sandbox_boot_smoke.py`
+(real-subprocess boot, HTTP surface, no external services) and
+`tests/unit/cli/test_stack_sandbox.py` (flag-gating).
+
+**Performance:** boot is a **setup path** and the features endpoint is
+**control plane** — not performance-sensitive hot paths, so they are not
+regression-gated, only loosely bounded. Observed in the smoke test under
+cold CI conditions (cold Rust-kernel init + parallel test load — not a
+tuned product target): cold boot ≈ 43 s, warm boot ≈ 70 s, RSS ≈ 192 MB.
+The `docs/deployment/sandbox-profile.md` design target is the reference
+envelope; these are characterization numbers, not guarantees.
+
+**Story surface coverage** (this story; aggregated into the shared
+matrix, [#4139](https://github.com/nexi-lab/nexus/issues/4139)):
+
+| Surface | Type | Sandbox status | Test | Benchmark class |
+|---|---|---|---|---|
+| `nexus up --profile sandbox` | CLI | supported | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | setup path |
+| `--workspace` / `--hub-url` / `--hub-token` | CLI | supported (gated) | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | setup path |
+| `nexusd --profile sandbox` | CLI | supported | `tests/integration/test_sandbox_boot_smoke.py` | setup path |
+| HTTP `/health` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
+| HTTP `/api/v2/features` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
+| gRPC `Ping` | typed gRPC | intentionally-absent (HTTP-only) | `tests/integration/test_sandbox_boot_smoke.py` (documented skip) | n/a |
+| `nexus status` | CLI | supported (Docker/HTTP-oriented) | `tests/unit/cli/test_stack_sandbox.py` | control plane |
+| `nexus env` | CLI | supported | existing CLI tests | not performance-sensitive |
+
+**Missing-surface gate verdict:** all core boot-story surfaces exist, so
+this story is **not blocked**. gRPC absence under sandbox is *intentional*
+(HTTP-only design), not a missing-needed surface. One ergonomic gap is
+tracked as a non-blocking enhancement: a first-class sandbox
+readiness/status CLI (`nexus status` is Docker/HTTP-oriented; the sandbox
+profile currently exposes only the bare `~/.nexus/nexusd.ready` file). See
+<!-- BUILD-ISSUE-LINK -->_(non-blocking build issue — link added in Task 8)_.
+
 ## 2.1 Capability checklist for a serious demo
 
 If you are evaluating Nexus as more than a toy filesystem, the first real

@@ -35,16 +35,7 @@ FULL.
 
 ## Running
 
-### Via the stack (recommended)
-
-```bash
-nexus init --preset shared
-nexus up
-eval $(nexus env)
-nexus status
-```
-
-### Via the daemon directly
+### Via the daemon directly (supported)
 
 ```bash
 nexusd --profile full --host 0.0.0.0 --port 2026 \
@@ -53,6 +44,27 @@ nexusd --profile full --host 0.0.0.0 --port 2026 \
 
 `nexusd --profile remote` is rejected: a daemon cannot be a thin
 client of another daemon.
+
+### Via the managed stack (known issue — see below)
+
+```bash
+nexus init --preset shared
+nexus up                 # ⚠ currently exits rc=1 (see note)
+eval $(nexus env)
+nexus status
+```
+
+> **Known issue (Bug B, tracked):** `nexus up --preset shared`
+> currently returns a non-zero exit code because the `nexus up` health
+> gate waits on a `zoekt` service that the `shared` preset does not
+> start. **The hub itself boots and serves correctly** (`/health`,
+> `/api/v2/features`, gRPC all work) — only the `nexus up` wrapper's
+> aggregate exit status is wrong. This is a pre-existing `nexus up`
+> health-gate defect, out of this docs/test issue's scope, tracked in
+> the #4132 design spec ("Bug B"). Until it is fixed, prefer the
+> **direct daemon path above**; if you use the stack, the containers
+> are healthy despite the rc=1 (verify with `nexus status` / a direct
+> `curl $URL/health`).
 
 ## Auth
 

@@ -3642,7 +3642,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
+  correctness_test: null
   perf_class: control
   perf_link: null
   gap_issue: null
@@ -5249,7 +5249,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
+  correctness_test: null
   perf_class: control
   perf_link: null
   gap_issue: null
@@ -5266,7 +5266,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
+  correctness_test: null
   perf_class: control
   perf_link: null
   gap_issue: null
@@ -6708,7 +6708,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
+  correctness_test: null
   perf_class: control
   perf_link: null
   gap_issue: null
@@ -7742,7 +7742,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
+  correctness_test: null
   perf_class: control
   perf_link: null
   gap_issue: null
@@ -7759,7 +7759,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
+  correctness_test: null
   perf_class: control
   perf_link: null
   gap_issue: null
@@ -7776,7 +7776,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
+  correctness_test: null
   perf_class: control
   perf_link: null
   gap_issue: null

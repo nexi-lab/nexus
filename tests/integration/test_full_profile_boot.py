@@ -5,17 +5,19 @@ PostgreSQL + Dragonfly + the Nexus server). Captures boot/RSS as
 guidance, not CI gates; asserts control-plane calls with generous
 bounds.
 
-KNOWN-BLOCKED (xfail, strict=False): on the current product,
-`nexus up --preset shared` returns rc=1 because its health gate waits
-for `zoekt` even though the shared preset does not start it ("Bug B" —
-a pre-existing `nexus up` health-gate defect, out of #4132's docs/test
-scope; see docs/superpowers/specs/2026-05-18-issue-4132-full-profile-design.md
-"Bug B"). The fixture correctly FAILS on that real `nexus up` failure
-(blocking value preserved), and this module-level xfail prevents that
-known, out-of-scope failure from masquerading as green verification or
-hard-reding CI. If Bug B is fixed the tests XPASS — the signal to
-remove this marker. Empirical #4132 verification was done directly
-against a live hub (recorded in the spec), independent of this gate.
+KNOWN-BLOCKED by "Bug B": on the current product `nexus up --preset
+shared` returns rc=1 because its health gate waits for `zoekt` even
+though the shared preset does not start it (a pre-existing `nexus up`
+health-gate defect, out of #4132's docs/test scope; see
+docs/superpowers/specs/2026-05-18-issue-4132-full-profile-design.md
+"Bug B"). That ONE precise case is converted to ``pytest.xfail`` *in
+the fixture* (`tests/integration/conftest.py`) by signature match — so
+it neither masquerades as green nor hard-reds CI, and XPASSes once
+Bug B is fixed. Every OTHER `nexus up`/health/gRPC failure still
+hard-FAILS, so this gate keeps full blocking value for real
+regressions (no blanket module-level xfail). Empirical #4132
+verification was also done directly against a live hub (recorded in
+the spec), independent of this gate.
 """
 
 import os
@@ -23,15 +25,7 @@ import time
 
 import pytest
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.xfail(
-        reason="blocked by Bug B: `nexus up --preset shared` rc=1 on zoekt "
-        "health gate (pre-existing, out of #4132 scope) — tracked in the "
-        "#4132 design spec",
-        strict=False,
-    ),
-]
+pytestmark = pytest.mark.integration
 
 requires_e2e = pytest.mark.skipif(
     os.environ.get("NEXUS_E2E") != "1",

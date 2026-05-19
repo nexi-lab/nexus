@@ -163,9 +163,16 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
         pytest.skip(f"nexus init failed: {init_result.stderr[-400:]!r}")
 
     # ---- nexus up ----------------------------------------------------------
+    # Use the documented prebuilt path (matches docs/deployment/full-profile.md
+    # "Via the stack (recommended): nexus up"). The `shared` preset generates a
+    # pull-only nexus-stack.yml pinning ghcr.io/nexi-lab/nexus:<channel>, so
+    # plain `nexus up` reuses the prebuilt image and boots in tens of seconds.
+    # Forcing `--build` here was a defect: it triggers a from-scratch Rust +
+    # Python Dockerfile build (minutes) that blew the subprocess timeout.
+    # Opt in to a source build only when explicitly iterating on the image.
     up_env = os.environ.copy()
-    use_prebuilt = os.environ.get("NEXUS_E2E_SKIP_BUILD") == "1"
-    up_cmd = [nexus_bin, "up", "--no-build" if use_prebuilt else "--build"]
+    force_build = os.environ.get("NEXUS_E2E_BUILD") == "1"
+    up_cmd = [nexus_bin, "up"] + (["--build"] if force_build else [])
 
     try:
         up_result = subprocess.run(
@@ -178,8 +185,8 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
         )
     except subprocess.TimeoutExpired:
         pytest.skip(
-            "nexus up timed out after 300s (image build takes too long on this host; "
-            "set NEXUS_E2E_SKIP_BUILD=1 to use a pre-built image)"
+            "nexus up timed out after 300s"
+            + (" (NEXUS_E2E_BUILD=1 forces a slow source build)" if force_build else "")
         )
     if up_result.returncode != 0:
         debug_path = project_dir / "nexus-up-debug.log"
@@ -188,6 +195,18 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
             f"--- stdout ---\n{up_result.stdout}\n\n"
             f"--- stderr ---\n{up_result.stderr}\n"
         )
+        combined = f"{up_result.stdout}\n{up_result.stderr}"
+        # Environmental: docker registry pull needs a credential helper that is
+        # unavailable in non-interactive shells (e.g. macOS osxkeychain returns
+        # "User canceled the operation. (-128)"). The required images simply
+        # cannot be fetched here — that is a host limitation, not a product or
+        # test defect, so skip with a precise diagnosis rather than fail.
+        if "getting credentials" in combined or "Docker Compose failed to start" in combined:
+            pytest.skip(
+                "environment cannot pull required images: docker credential "
+                "helper unavailable non-interactively (pre-cache all stack "
+                f"images, or run on CI with anonymous pulls). log: {debug_path}"
+            )
         pytest.skip(
             f"nexus up failed (rc={up_result.returncode}, log: {debug_path}): "
             f"stderr_tail={up_result.stderr[-400:]!r}"

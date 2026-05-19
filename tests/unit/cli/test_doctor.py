@@ -1088,6 +1088,48 @@ class TestDoctorRemote:
 
     @patch("nexus.cli.commands.doctor.RPCTransport")
     @patch("httpx.Client")
+    def test_grpc_auth_failure_is_diagnosed_distinctly(
+        self,
+        mock_http_cls: MagicMock,
+        mock_rpc_cls: MagicMock,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An auth failure on the gRPC Ping path (UNAUTHENTICATED /
+        PERMISSION_DENIED) must be reported as an AUTH problem with a
+        key-specific fix hint — NOT misdiagnosed as an unreachable port
+        / firewall issue (which would send the operator the wrong way)."""
+        from nexus.contracts.exceptions import RemoteConnectionError
+
+        monkeypatch.setenv("NEXUS_GRPC_ALLOW_INSECURE", "true")
+        mock_http_cls.return_value = self._make_http_mock(200)
+        mock_transport = MagicMock()
+        mock_transport.health_check.side_effect = RemoteConnectionError(
+            "gRPC health check failed: <_InactiveRpcError "
+            "StatusCode.UNAUTHENTICATED: missing bearer token>",
+            details={},
+            method="Ping",
+        )
+        mock_rpc_cls.return_value = mock_transport
+
+        result = cli_runner.invoke(
+            doctor_remote,
+            ["--url", "http://hub.example.com:2026", "--api-key", "", "--json"],
+        )
+        assert result.exit_code != 0
+        assert "Traceback" not in result.output
+        grpc_check = next(
+            c for c in json.loads(result.output)["data"] if c["name"] == "remote-grpc"
+        )
+        assert grpc_check["status"] == "error"
+        # auth-specific, NOT a port/firewall misdiagnosis
+        assert "auth" in grpc_check["message"].lower()
+        assert "API key" in grpc_check["fix_hint"]
+        assert "NEXUS_GRPC_PORT" not in grpc_check["fix_hint"]
+        mock_transport.close.assert_called_once()
+
+    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("httpx.Client")
     def test_grpc_port_from_env(
         self,
         mock_http_cls: MagicMock,

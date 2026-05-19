@@ -246,10 +246,24 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
         # `nexus up` failure (broken compose, bad image, real health
         # regression, port conflict, CLI regression) still hard-FAILS so
         # the gate keeps its blocking value.
+        # Require POSITIVE proof the hub itself is healthy and that
+        # ONLY zoekt gated it — otherwise a real Nexus-unhealthy failure
+        # that merely mentions zoekt would be wrongly xfailed and the
+        # gate would stop catching the regressions it exists for. The
+        # health poll prints "  ✓ <svc> (..s)" / "  ✗ <svc> (timed out
+        # ..)" lines.
+        import re as _re
+
+        nexus_healthy = bool(_re.search(r"✓\s+nexus\b", combined))
+        nexus_failed = bool(_re.search(r"✗\s+nexus\b", combined))
+        zoekt_failed = bool(
+            _re.search(r"✗\s+zoekt\b", combined) or _re.search(r"zoekt\b[^\n]*timed out", combined)
+        )
         zoekt_gate_failure = (
-            "zoekt" in combined
-            and ("Some services did not become healthy" in combined or "timed out" in combined)
-            and "nexus" in combined  # nexus health line present
+            nexus_healthy
+            and zoekt_failed
+            and not nexus_failed
+            and "Some services did not become healthy" in combined
         )
         _teardown_stack(nexus_bin, project_dir)
         if zoekt_gate_failure:

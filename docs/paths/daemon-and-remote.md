@@ -12,7 +12,7 @@ Choose this path when Nexus needs to run as a service instead of as an in-proces
 
 ## Server
 
-Run the daemon directly:
+Run the daemon directly (supported copy-paste workflow):
 
 ```bash
 export NEXUS_GRPC_PORT=2126
@@ -20,12 +20,19 @@ nexusd --profile full --host 127.0.0.1 --port 2026 \
   --data-dir ./nexus-data --auth-type static --api-key dev-key
 ```
 
-Or run the managed stack (FULL profile: PostgreSQL + Dragonfly + the
-Nexus server; Zoekt is optional and separately run):
+The managed stack (FULL profile: PostgreSQL + Dragonfly + the Nexus
+server; Zoekt is optional and separately run) is `nexus init --preset
+shared` then `nexus up`, then `eval $(nexus env)`.
 
-```bash
-nexus init --preset shared && nexus up && eval $(nexus env)
-```
+> **Known issue (Bug B, tracked):** do **not** chain these with `&&` —
+> `nexus up --preset shared` currently exits non-zero because its
+> health gate waits on a `zoekt` service the preset does not start, so
+> a `&&`-chained `eval $(nexus env)` would never run. **The hub itself
+> boots and serves correctly**; only the `nexus up` wrapper's exit
+> status is wrong. Prefer the direct `nexusd` command above until the
+> out-of-scope `nexus up` fix lands. See
+> [FULL deployment profile](../deployment/full-profile.md) ("Known
+> issue").
 
 > `minimal` is not a deployment profile. Valid profiles: `embedded`,
 > `lite`, `sandbox`, `full`, `cloud`, `cluster`, `remote` (and `remote`

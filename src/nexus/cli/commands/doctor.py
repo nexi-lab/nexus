@@ -753,6 +753,46 @@ def _check_remote_grpc(url: str, api_key: str | None) -> CheckResult:
             ),
         )
     except Exception as exc:
+        # The Ping path is auth-gated: a missing/invalid key yields gRPC
+        # UNAUTHENTICATED/PERMISSION_DENIED, NOT an unreachable port.
+        # Misreporting that as "set NEXUS_GRPC_PORT/firewall" sends the
+        # operator down the wrong recovery path, so diagnose auth
+        # distinctly. Inspect the exception chain for a grpc.RpcError
+        # status code, with a string fallback (RemoteConnectionError
+        # embeds the gRPC detail text).
+        import grpc
+
+        code = None
+        _e: BaseException | None = exc
+        _seen: set[int] = set()
+        while _e is not None and id(_e) not in _seen:
+            _seen.add(id(_e))
+            if isinstance(_e, grpc.RpcError):
+                try:
+                    code = _e.code()
+                except Exception:
+                    code = None
+                break
+            _e = _e.__cause__ or _e.__context__
+        _msg = str(exc)
+        is_auth = code in (
+            grpc.StatusCode.UNAUTHENTICATED,
+            grpc.StatusCode.PERMISSION_DENIED,
+        ) or any(tok in _msg for tok in ("UNAUTHENTICATED", "PERMISSION_DENIED", "Unauthenticated"))
+        if is_auth:
+            return CheckResult(
+                name="remote-grpc",
+                status=CheckStatus.ERROR,
+                message=(
+                    f"gRPC authentication failed at {grpc_address} "
+                    f"(UNAUTHENTICATED/PERMISSION_DENIED): {exc}"
+                ),
+                fix_hint=(
+                    "The API key is missing or invalid for this hub. Provide a "
+                    "valid key via --api-key <key> or NEXUS_API_KEY (the gRPC "
+                    "Ping path is auth-gated; this is NOT a port/firewall issue)."
+                ),
+            )
         return CheckResult(
             name="remote-grpc",
             status=CheckStatus.ERROR,

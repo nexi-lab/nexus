@@ -64,23 +64,34 @@ def _poll_health(base_url: str, deadline: float) -> bool:
     import httpx
 
     while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
         try:
-            with httpx.Client(timeout=2.0) as client:
+            with httpx.Client(timeout=min(2.0, remaining)) as client:
                 resp = client.get(f"{base_url}/health")
             if resp.status_code == 200:
                 return True
-        except httpx.TransportError:
+        except httpx.HTTPError:
             pass
         time.sleep(_HEALTH_POLL_INTERVAL)
     return False
 
 
-def _fetch_features(base_url: str) -> dict[str, Any] | None:
-    """Best-effort fetch of ``/api/v2/features``; None on any failure."""
+def _fetch_features(base_url: str, deadline: float) -> dict[str, Any] | None:
+    """Best-effort fetch of ``/api/v2/features``; None on any failure.
+
+    Deadline-aware: if the total budget is already spent, skip the call
+    entirely rather than letting a stalled server overrun ``--timeout``.
+    """
     import httpx
 
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return None
+
     try:
-        with httpx.Client(timeout=2.0) as client:
+        with httpx.Client(timeout=min(2.0, remaining)) as client:
             resp = client.get(f"{base_url}/api/v2/features")
         if resp.status_code == 200:
             payload: dict[str, Any] = resp.json()
@@ -119,7 +130,7 @@ def _render_ready(data: dict[str, Any]) -> None:
 @click.command(name="ready")
 @click.option(
     "--timeout",
-    type=float,
+    type=click.FloatRange(min=0, min_open=True),
     default=60.0,
     help="Total seconds to wait for the readiness file and /health (default: 60).",
 )
@@ -203,7 +214,7 @@ def ready(
                 sys.exit(ExitCode.TEMPFAIL)
 
         # (4) Best-effort feature probe (profile + bricks).
-        features = _fetch_features(base_url) or {}
+        features = _fetch_features(base_url, deadline) or {}
 
         # (5) Success.
         render_output(

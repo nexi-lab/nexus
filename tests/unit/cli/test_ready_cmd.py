@@ -160,3 +160,56 @@ def test_ready_health_never_200_exits_tempfail(
     )
     assert result.exit_code == ExitCode.TEMPFAIL, result.output
     assert "not ready" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# 5. /health 200 but /api/v2/features fails → still ready (best-effort probe)
+# ---------------------------------------------------------------------------
+
+
+def test_ready_features_fail_still_ready(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Healthy /health but failing features endpoint → exit 0, ready:true
+    with profile None and empty enabled_bricks (best-effort probe)."""
+    f = tmp_path / "nexusd.ready"
+    f.write_text("127.0.0.1:2026\n")
+
+    def route(url: str) -> _FakeResponse:
+        if url.endswith("/health"):
+            return _FakeResponse(200, {"status": "healthy"})
+        if url.endswith("/api/v2/features"):
+            raise RuntimeError("features endpoint blew up")
+        raise AssertionError(f"unexpected url {url}")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: _FakeClient(route, *a, **k))
+
+    result = runner.invoke(
+        _ready_cmd(),
+        ["--readiness-file", str(f), "--json", "--timeout", "5"],
+    )
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+
+    envelope = json.loads(result.output)
+    data = envelope["data"]
+    assert data["ready"] is True
+    assert data["profile"] is None
+    assert data["enabled_bricks"] == []
+
+
+# ---------------------------------------------------------------------------
+# 6. --timeout 0 → Click usage error (exit 2)
+# ---------------------------------------------------------------------------
+
+
+def test_ready_timeout_zero_usage_error(runner: CliRunner, tmp_path: Path) -> None:
+    """Non-positive --timeout is a Click usage error (exit code 2)."""
+    f = tmp_path / "nexusd.ready"
+    f.write_text("127.0.0.1:2026\n")
+    result = runner.invoke(
+        _ready_cmd(),
+        ["--readiness-file", str(f), "--timeout", "0"],
+    )
+    assert result.exit_code == 2, result.output

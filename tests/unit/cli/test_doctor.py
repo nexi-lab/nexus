@@ -886,7 +886,7 @@ class TestDoctorRemote:
         mock_client.__exit__ = MagicMock(return_value=False)
         return mock_client
 
-    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("nexus.remote.rpc_transport.RPCTransport")
     @patch("httpx.Client")
     def test_happy_path_both_ok(
         self,
@@ -911,7 +911,7 @@ class TestDoctorRemote:
         # transport is closed
         mock_transport.close.assert_called_once()
 
-    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("nexus.remote.rpc_transport.RPCTransport")
     @patch("httpx.Client")
     def test_happy_path_json(
         self,
@@ -939,7 +939,7 @@ class TestDoctorRemote:
         assert statuses.get("remote-http") == "ok"
         assert statuses.get("remote-grpc") == "ok"
 
-    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("nexus.remote.rpc_transport.RPCTransport")
     @patch("httpx.Client")
     def test_http_ok_grpc_unreachable(
         self,
@@ -970,7 +970,7 @@ class TestDoctorRemote:
         # Transport is closed despite failure
         mock_transport.close.assert_called_once()
 
-    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("nexus.remote.rpc_transport.RPCTransport")
     @patch("httpx.Client")
     def test_grpc_unreachable_json(
         self,
@@ -1019,7 +1019,7 @@ class TestDoctorRemote:
         mock_http_cls.return_value = self._make_http_mock(200)
 
         with patch(
-            "nexus.cli.commands.doctor.RPCTransport",
+            "nexus.remote.rpc_transport.RPCTransport",
             side_effect=ValueError(
                 "Insecure gRPC channel refused for non-loopback address 'hub.example.com:2028'."
             ),
@@ -1032,7 +1032,7 @@ class TestDoctorRemote:
         assert "Traceback" not in result.output
         assert "NEXUS_GRPC_ALLOW_INSECURE" in result.output or "TLS" in result.output
 
-    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("nexus.remote.rpc_transport.RPCTransport")
     @patch("httpx.Client")
     def test_http_non200_is_error_nonzero(
         self,
@@ -1086,7 +1086,7 @@ class TestDoctorRemote:
         assert grpc_check["status"] == "error"
         assert "port" in grpc_check["message"].lower()
 
-    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("nexus.remote.rpc_transport.RPCTransport")
     @patch("httpx.Client")
     def test_grpc_auth_failure_is_diagnosed_distinctly(
         self,
@@ -1128,7 +1128,7 @@ class TestDoctorRemote:
         assert "NEXUS_GRPC_PORT" not in grpc_check["fix_hint"]
         mock_transport.close.assert_called_once()
 
-    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("nexus.remote.rpc_transport.RPCTransport")
     @patch("httpx.Client")
     def test_grpc_port_from_env(
         self,
@@ -1153,7 +1153,7 @@ class TestDoctorRemote:
         call_kwargs = mock_rpc_cls.call_args
         assert "hub.example.com:9999" in str(call_kwargs)
 
-    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("nexus.remote.rpc_transport.RPCTransport")
     @patch("httpx.Client")
     def test_url_from_env(
         self,

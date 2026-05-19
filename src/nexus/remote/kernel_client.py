@@ -338,7 +338,7 @@ class KernelClient:
         """Release advisory lock."""
         return self._call("sys_unlock", {"path": path, "lock_id": lock_id, "force": force})
 
-    def sys_read_batch(
+    def read_batch(
         self,
         items: list[tuple[str, int, int | None]],
         context: Any = None,

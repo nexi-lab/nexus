@@ -42,7 +42,7 @@ def make_test_nexus(
 
     if metadata_store is None:
         del use_raft
-        from nexus_runtime import PyKernel as _Kernel
+        from nexus.remote.kernel_client import KernelClient as _Kernel
 
         _kernel = _Kernel()
         _kernel.set_metastore_path(str(tmp_path / "metastore.redb"))

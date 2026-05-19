@@ -238,7 +238,7 @@ impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
     }
 }
 
-/// Install hook called from `nexus-cdylib`'s `#[pymodule]` boot —
+/// Install hook called during kernel process boot —
 /// constructs a `PeerBlobClient` on the kernel-owned tokio runtime
 /// and installs it via `Kernel::set_peer_client`, replacing the
 /// `NoopPeerBlobClient` default.

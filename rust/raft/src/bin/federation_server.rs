@@ -9,7 +9,7 @@
 //!
 //! Replaces ``scripts/federation_server.py`` — same env-var surface,
 //! same defaults, but runs as a native Rust binary with no Python /
-//! maturin dependency at runtime.
+//! no Python dependency at runtime.
 //!
 //! # Env vars
 //!

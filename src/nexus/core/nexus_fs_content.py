@@ -1577,7 +1577,7 @@ class ContentMixin:
         """
         Read multiple files in a single round-trip for improved performance.
 
-        Uses the Rust kernel's parallel sys_read_batch (rayon par_iter) for all
+        Uses the Rust kernel's parallel read_batch (rayon par_iter) for all
         paths, then a single metadata.get_batch() call — no N+1 queries.
 
         Args:
@@ -1680,7 +1680,7 @@ class ContentMixin:
         # Rust kernel surfaces per-item error_kind instead of collapsing all
         # failures to data=None (legacy behaviour).
         rust_results = (
-            self._kernel.sys_read_batch([(p, 0, None) for p in allowed_paths], _rust_ctx)
+            self._kernel.read_batch([(p, 0, None) for p in allowed_paths], _rust_ctx)
             if allowed_paths
             else []
         )
@@ -1693,7 +1693,7 @@ class ContentMixin:
         # Finding #1 — we must fire them per-item so batch semantics match single read().
         _has_read_hooks = self._kernel.hook_count("read") > 0
 
-        # Map allowed_paths → rust_results (same order, guaranteed by sys_read_batch).
+        # Map allowed_paths → rust_results (same order, guaranteed by read_batch).
         allowed_iter = iter(rust_results)
 
         # Cumulative byte counter — tracks actual bytes loaded across both the
@@ -1711,7 +1711,7 @@ class ContentMixin:
             meta = batch_meta.get(path)
 
             # Task 10 — explicit per-item error_kind from new kernel ABI.
-            # The new sys_read_batch (tuple-shape) surfaces "not_found",
+            # The new read_batch (tuple-shape) surfaces "not_found",
             # "permission_denied", "invalid_path", "io_error" directly instead
             # of collapsing them to data=None.  Handle before the legacy
             # data=None fallback so the correct exception / error key is used.
@@ -1751,7 +1751,7 @@ class ContentMixin:
                     continue
 
             if r.data is None:
-                # Finding #2 — sys_read_batch returns data=None not only for missing CAS
+                # Finding #2 — read_batch returns data=None not only for missing CAS
                 # files but also for: DT_PIPE / DT_STREAM entries, backend read errors,
                 # lock timeouts, route misses, and external connector paths.  A bare
                 # data=None must not be treated as "file not found" for all of these.

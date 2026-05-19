@@ -5,9 +5,7 @@
 //! and the kernel rlib through the peer-client slot).
 //!
 //! Lives under `lib` per §6 — `lib` is the tier-neutral implementation
-//! crate, mirror of `src/nexus/lib/`. The TOFU pyclass surface
-//! (`PyTofuTrustStore`, `PyTrustedZone`) sits behind the lib-wide
-//! `python` feature alongside the algorithm pyclasses.
+//! crate, mirror of `src/nexus/lib/`.
 
 mod channel;
 mod config;
@@ -24,6 +22,3 @@ pub use peer::{hostname_to_node_id, NodeAddress, PeerAddress};
 pub use peer_blob_client::{NoopPeerBlobClient, PeerBlobClient, PeerBlobResult};
 pub use pool::ConnectionPool;
 pub use tofu::{TofuError, TofuResult, TofuTrustStore, TrustedZone};
-
-#[cfg(feature = "python")]
-pub use tofu::{PyTofuTrustStore, PyTrustedZone};

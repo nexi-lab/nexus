@@ -147,7 +147,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "sys_lock",
         "sys_mkdir",
         "sys_read",
-        "sys_read_batch",
+        "read_batch",
         "sys_read_raw",
         "sys_readdir",
         "sys_rename",

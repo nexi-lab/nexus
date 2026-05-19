@@ -219,7 +219,7 @@ class MetadataMixin:
         for parent_dir in reversed(parents_to_create):
             self._kernel.sys_setattr(
                 parent_dir,
-                DT_DIR,
+                entry_type=DT_DIR,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
             )
 
@@ -445,8 +445,8 @@ class MetadataMixin:
                 _backend_name = attrs.get("backend_name", "remote")
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     backend_type="remote",
                     server_address=attrs.get("server_address"),
                     remote_auth_token=attrs.get("remote_auth_token"),
@@ -463,8 +463,8 @@ class MetadataMixin:
                 _backend_name = attrs.get("backend_name", backend_type)
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     backend_type=backend_type,
                     openai_base_url=attrs.get("openai_base_url"),
                     openai_api_key=attrs.get("openai_api_key"),
@@ -488,8 +488,8 @@ class MetadataMixin:
                 _backend_name = attrs.get("backend_name", "")
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     zone_id=zone_id,
                     is_external=bool(attrs.get("is_external", False)),
                     source=attrs.get("source"),
@@ -525,8 +525,8 @@ class MetadataMixin:
             if _rust_typed is not None:
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     zone_id=zone_id,
                     metastore_path=_ms_path_str,
                     is_external=_is_external,
@@ -553,8 +553,8 @@ class MetadataMixin:
                 )
                 result = self._kernel.sys_setattr(
                     path,
-                    entry_type,
-                    _backend_name,
+                    entry_type=entry_type,
+                    backend_name=_backend_name,
                     zone_id=zone_id,
                     metastore_path=_ms_path_str,
                     is_external=_is_external,
@@ -573,8 +573,8 @@ class MetadataMixin:
 
             result = self._kernel.sys_setattr(
                 path,
-                entry_type,
-                _backend_name,
+                entry_type=entry_type,
+                backend_name=_backend_name,
                 local_root=_local_root,
                 backend_type=_local_type,
                 fsync=True,
@@ -594,7 +594,7 @@ class MetadataMixin:
 
         result = self._kernel.sys_setattr(
             path,
-            entry_type,
+            entry_type=entry_type,
             zone_id=zone_id,
             io_profile=io_profile,
             capacity=capacity,

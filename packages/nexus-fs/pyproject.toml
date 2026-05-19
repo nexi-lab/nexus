@@ -28,9 +28,9 @@ classifiers = [
 # monorepo package; nexus-fs is the slim standalone subset. A future release
 # will formalize the dependency direction (nexus-ai-fs depends on nexus-fs).
 
-# ~12 base dependencies — slim contract: kernel + lib + auth bricks + search primitives.
-# nexus-runtime is the Rust kernel wheel; required for sys_*, metastore, and rust_compat
-# accelerators. Slim does NOT mean "no Rust" — it means "no server / raft / factory".
+# ~11 base dependencies — slim contract: kernel + lib + auth bricks + search primitives.
+# Kernel access goes through gRPC KernelClient (nexus-cluster binary).
+# Slim does NOT mean "no Rust" — it means "no server / raft / factory".
 dependencies = [
     "pydantic[email]>=2.13.4",
     "click>=8.3.3",
@@ -45,9 +45,7 @@ dependencies = [
     "httpx>=0.28.1",
     # nexus.core imports nexus.lib.io_metrics for read/write/cache counters.
     "prometheus-client>=0.25.0",
-    # Rust kernel (PyKernel + Rust-accelerated primitives). Required at runtime;
-    # NexusFS.sys_* and metastore both go through nexus_runtime.PyKernel.
-    "nexus-runtime>=0.10,<0.11",
+    # nexus-runtime removed: kernel access now goes through gRPC KernelClient.
     # cachetools is imported at module-level by slim-shipped bricks/auth/oauth/pending.py
     # and by the X connector transport; move to base so plain pip install nexus-fs works.
     "cachetools>=7.1.1",

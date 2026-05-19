@@ -122,23 +122,14 @@ def create_nexus_services(
     # path_local / cas-local / local_connector backends — must be in the
     # profile's set; the gate has no implicit local-default bypass (see
     # `rust/kernel/src/hal/object_store_provider.rs::is_driver_enabled`).
-    try:
-        import nexus_runtime as _nx_runtime
-
-        _enabled_drivers = sorted(_factory_profile.default_drivers())
-        _nx_runtime.nx_set_enabled_drivers(_enabled_drivers)
-        logger.info(
-            "Factory: enabled_drivers=%d %s (profile=%s)",
-            len(_enabled_drivers),
-            _enabled_drivers,
-            _factory_profile.value,
-        )
-    except Exception as _exc:  # pragma: no cover — startup-only path
-        logger.warning(
-            "Factory: driver gate install skipped (%s): %s",
-            type(_exc).__name__,
-            _exc,
-        )
+    # Driver gate is now managed inside the kernel process (Rust).
+    _enabled_drivers = sorted(_factory_profile.default_drivers())
+    logger.debug(
+        "Factory: driver gate managed by kernel process; enabled_drivers=%d %s (profile=%s)",
+        len(_enabled_drivers),
+        _enabled_drivers,
+        _factory_profile.value,
+    )
 
     perm = permissions or _PermissionConfig()
     audit_cfg = audit or _AuditConfig()
@@ -559,7 +550,7 @@ def _register_vfs_hooks(
         logger.warning(
             "[BOOT:HOOKS] PyKernel.agent_registry unavailable — Rust extension is "
             "stale or built without it. Rebuild with: "
-            "maturin develop -m rust/nexus-cdylib/Cargo.toml --features full"
+            "cargo build --release -p nexus-cluster"
         )
     if _proc_table is not None:
         try:

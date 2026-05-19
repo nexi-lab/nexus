@@ -7,12 +7,13 @@ on:
     branches: [main, develop]
   merge_group:
 
-env:
-  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # Required for third-party PyO3 sdist builds (e.g. pdf-inspector).
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
   lint:
@@ -36,17 +37,6 @@ jobs:
 
       - name: Create virtual environment
         run: uv venv --python 3.14
-
-      - name: Build Rust extensions
-        uses: ./.github/actions/build-rust-extensions
-        with:
-          profile: dev
-          rust-cache-shared-key: "rust-lint-py"
-          output-dir: dist
-          github-token: ${{ github.token }}
-
-      - name: Install Rust extensions
-        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: |
@@ -79,14 +69,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python (for PyO3 crates)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-
-      - name: Install Python dev headers
-        run: sudo apt-get update && sudo apt-get install -y python3-dev
-
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -101,14 +83,10 @@ jobs:
             rust/kernel
             rust/raft
             rust/profiles/cluster
-            rust/nexus-cdylib
 
       - name: Check Rust formatting
         run: |
-          # Phase 0: nexus-cdylib joins the fmt loop alongside the other
-          # workspace crates.  Phase 4 (full): cluster moved to
-          # `profiles/cluster` (deployment-profile binary folder).
-          for crate in lib kernel raft profiles/cluster nexus-cdylib; do
+          for crate in lib kernel raft profiles/cluster; do
             echo "::group::fmt $crate"
             cd rust/$crate && cargo fmt --check && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
@@ -127,16 +105,8 @@ jobs:
           echo "::group::clippy cluster"
           cd rust/profiles/cluster && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
-          # Phase 0: nexus-cdylib pulls everything together — clippy
-          # runs against the full transitive build to catch any
-          # extension-module unification surprises.
-          echo "::group::clippy nexus-cdylib"
-          cd rust/nexus-cdylib && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
-          echo "::endgroup::"
 
       - name: Run Rust tests
-        env:
-          PYO3_PYTHON: python3
         run: |
           for crate in lib kernel; do
             echo "::group::test $crate"
@@ -153,7 +123,4 @@ jobs:
       - name: Verify WASM compilation (lib)
         run: |
           rustup target add wasm32-unknown-unknown
-          # Phase A renamed `library` → `lib`. The default-features
-          # build of `lib` is the WASM-clean surface; PyO3 wrappers
-          # under `lib::python` sit behind the optional `python` feature.
           cargo check --target wasm32-unknown-unknown -p lib --no-default-features

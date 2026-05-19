@@ -21,20 +21,6 @@ COPY . /app
 
 RUN "$PROTOC" --version
 
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/app/target \
-    pip install --no-cache-dir maturin && \
-    if [ "$(uname -m)" = "aarch64" ]; then \
-        export SIMSIMD_TARGET_SVE=0 \
-               SIMSIMD_TARGET_SVE2=0 \
-               SIMSIMD_TARGET_SVE_BF16=0 \
-               SIMSIMD_TARGET_SVE_F16=0 \
-               SIMSIMD_TARGET_SVE_I8=0; \
-    fi && \
-    maturin build --release --out /tmp/nexus-dist -m rust/nexus-cdylib/Cargo.toml && \
-    pip install --no-cache-dir /tmp/nexus-dist/nexus_runtime-*.whl
-
 RUN pip install --no-cache-dir -e ".[dev]" fusepy 2>/dev/null || \
     pip install --no-cache-dir -e . fusepy
 

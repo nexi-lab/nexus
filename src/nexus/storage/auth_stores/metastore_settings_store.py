@@ -66,7 +66,7 @@ class MetastoreSettingsStore:
         json_payload = json.dumps(payload)
         self._kernel.sys_setattr(
             f"{_CFG_PREFIX}{key}",
-            0,  # DT_REG upsert
+            entry_type=0,  # DT_REG upsert
             content_id=json_payload,
             size=0,
             zone_id=ROOT_ZONE_ID,

@@ -5,9 +5,6 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
-env:
-  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
-
 permissions:
   contents: read
   pages: write

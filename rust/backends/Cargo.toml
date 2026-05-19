@@ -9,11 +9,9 @@ name = "backends"
 crate-type = ["rlib"]
 
 [features]
-# Default = every driver compiled in.  Python deployments (`nexus-cdylib`)
-# carry the runtime gate (`set_enabled_drivers`) to limit what an active
-# profile can mount, so they need every backend present in the binary.
-# Slim deployments (`nexus-cluster`) opt out by setting
-# `default-features = false` and naming only the drivers they want.
+# Default = every driver compiled in. Slim deployments (`nexus-cluster`)
+# opt out by setting `default-features = false` and naming only the
+# drivers they want.
 default = [
     "driver-path-local",
     "driver-cas-local",
@@ -63,10 +61,6 @@ driver-x = []
 driver-hn = []
 driver-cli = []
 
-# `python` enables `backends::python` PyO3 wrappers. Mirrors
-# kernel/lib's gating: pure-Rust by default, kernel cdylib pulls
-# `features = ["python"]` to expose `#[pyclass]` types.
-python = ["dep:pyo3"]
 
 [dependencies]
 contracts = { workspace = true }
@@ -100,9 +94,6 @@ futures = "0.3"
 tracing = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 base64 = "0.22"
-# pyo3 features unioned by cargo when kernel cdylib enables `extension-module`
-# on its own pyo3 dep — backends does not need to set extension-module here.
-pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
 # Connector / cloud HTTP stack — feature-gated so non-connector builds
 # stay slim.
 reqwest = { version = "0.13", features = ["json", "stream", "rustls"], default-features = false, optional = true }

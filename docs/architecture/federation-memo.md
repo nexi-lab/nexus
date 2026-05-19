@@ -46,7 +46,7 @@ Inter-node Raft replication via `ZoneTransportService` + `ZoneApiService`.
               Zone: eu-central-1 (same structure)
 ```
 
-**Node composition** (single process): NexusFS + FastAPI + gRPC + ZoneConsensus + redb + SQLAlchemy. Leader/Follower run same binary; role by Raft election. Witness: vote-only, no state machine, minimal footprint (`RaftConfig::witness(id, peers)`).
+**Node composition** (single process): NexusFS + gRPC + ZoneConsensus + redb. Leader/Follower run same binary (`nexusd-cluster`); role by Raft election. Witness: vote-only, no state machine, minimal footprint (`RaftConfig::witness(id, peers)`).
 
 ---
 
@@ -254,7 +254,7 @@ redb is ~0.014ms/op; 99.95% overhead is Python/NexusFS (CAS hash, cache invalida
 
 ### 7b. Multi-Node Deployment
 
-Full Node Docker image: single container runs NexusFS + FastAPI + gRPC + ZoneConsensus + redb + SQLAlchemy. Same image for dev (`docker-compose.cross-platform-test.yml`) and production.
+Full Node Docker image: single container runs `nexusd-cluster` (NexusFS + gRPC + ZoneConsensus + redb). Same image for dev (`docker-compose.dynamic-federation-test.yml`) and production.
 
 ### 7c. Dragonfly Role Post-Raft
 

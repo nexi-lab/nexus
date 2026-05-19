@@ -35,12 +35,10 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import quote, unquote
 
 # RUST_FALLBACK: BloomFilter
-if TYPE_CHECKING:
-    from nexus_runtime import BloomFilter
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +145,7 @@ class LocalDiskCache:
         self._clock_order: list[str] = []
 
         # Bloom filter for fast miss detection
-        self._bloom: BloomFilter | None = None
+        self._bloom: Any = None
         self._bloom_capacity = bloom_capacity
         self._bloom_fp_rate = bloom_fp_rate
 

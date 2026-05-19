@@ -98,11 +98,9 @@ class AuditNode:
         raft-replicated and doesn't need explicit registration on
         learners — but the kernel's ``stream_manager`` does).
         """
-        import nexus_runtime  # local import — keeps test envs working
-
         # 1. Create the audit-node's own central zone.
         try:
-            nexus_runtime.federation_create_zone(self._kernel, self._audit_zone_id)
+            self._kernel._call("federation_create_zone", {"zone_id": self._audit_zone_id})
             logger.info("[audit-node] created audit zone %r", self._audit_zone_id)
         except Exception as exc:  # pragma: no cover — race with operator
             # Idempotent: existing-zone errors are expected on restart.
@@ -116,7 +114,7 @@ class AuditNode:
         #    audit stream locally.
         for zone in production_zones:
             try:
-                nexus_runtime.federation_join_zone(self._kernel, zone, as_learner=True)
+                self._kernel._call("federation_join_zone", {"zone_id": zone, "as_learner": True})
                 logger.info("[audit-node] joined zone %r as learner", zone)
             except Exception as exc:
                 logger.warning(
@@ -126,7 +124,10 @@ class AuditNode:
                 )
                 continue
             try:
-                nexus_runtime.prepare_audit_stream_only(self._kernel, zone, self._stream_path)
+                self._kernel._call(
+                    "prepare_audit_stream_only",
+                    {"zone_id": zone, "stream_path": self._stream_path},
+                )
                 logger.info("[audit-node] registered audit stream for zone %r", zone)
             except Exception as exc:
                 logger.warning(

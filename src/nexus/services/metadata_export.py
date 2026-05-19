@@ -249,7 +249,7 @@ class MetadataExportService:
             )
             self._kernel.sys_setattr(
                 path,
-                0,  # UPDATE existing entry
+                entry_type=0,  # UPDATE existing entry
                 content_id=imported_content_id,
                 size=metadata_dict["size"],
                 mime_type=metadata_dict.get("mime_type"),
@@ -339,7 +339,7 @@ class MetadataExportService:
         _existing_ver = existing.get("version") or 0
         self._kernel.sys_setattr(
             path,
-            0,  # UPDATE existing entry
+            entry_type=0,  # UPDATE existing entry
             content_id=imported_content_id,
             size=metadata_dict["size"],
             mime_type=metadata_dict.get("mime_type"),
@@ -391,7 +391,7 @@ class MetadataExportService:
         file_meta_path = remapped_path
         self._kernel.sys_setattr(
             file_meta_path,
-            0,  # DT_REG upsert
+            entry_type=0,  # DT_REG upsert
             content_id=imported_content_id,
             size=metadata_dict["size"],
             mime_type=metadata_dict.get("mime_type"),
@@ -457,7 +457,7 @@ class MetadataExportService:
             _existing_ver = existing.get("version") or 0
             self._kernel.sys_setattr(
                 path,
-                0,  # UPDATE existing entry
+                entry_type=0,  # UPDATE existing entry
                 content_id=imported_content_id,
                 size=metadata_dict["size"],
                 mime_type=metadata_dict.get("mime_type"),
@@ -505,7 +505,7 @@ class MetadataExportService:
 
         self._kernel.sys_setattr(
             path,
-            0,  # DT_REG upsert
+            entry_type=0,  # DT_REG upsert
             content_id=imported_content_id,
             size=metadata_dict["size"],
             mime_type=metadata_dict.get("mime_type"),

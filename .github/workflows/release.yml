@@ -11,9 +11,6 @@ on:
     tags:
       - "v*"
 
-env:
-  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
-
 permissions:
   contents: write
   packages: write
@@ -32,17 +29,15 @@ jobs:
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
           PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          RUST_PKG_VERSION=$(grep '^version = ' rust/nexus-cdylib/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           RUST_CARGO_VERSION=$(grep '^version = ' rust/kernel/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           API_CLIENT_VERSION=$(node -p "require('./packages/nexus-api-client/package.json').version")
           TUI_VERSION=$(node -p "require('./packages/nexus-tui/package.json').version")
           echo "Tag version: $TAG_VERSION"
           echo "Package version: $PKG_VERSION"
-          echo "Rust package version: $RUST_PKG_VERSION"
           echo "Rust Cargo version: $RUST_CARGO_VERSION"
           echo "API client version: $API_CLIENT_VERSION"
           echo "TUI version: $TUI_VERSION"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_CARGO_VERSION" ] || [ "$TAG_VERSION" != "$API_CLIENT_VERSION" ] || [ "$TAG_VERSION" != "$TUI_VERSION" ]; then
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_CARGO_VERSION" ] || [ "$TAG_VERSION" != "$API_CLIENT_VERSION" ] || [ "$TAG_VERSION" != "$TUI_VERSION" ]; then
             echo "❌ Version mismatch! Tag is v$TAG_VERSION but package metadata is inconsistent"
             exit 1
           fi
@@ -102,146 +97,9 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
-  build-rust-wheel:
-    needs: [verify-version]
-    name: Build nexus-kernel wheel (${{ matrix.os }}, py${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-15-intel, macos-14, windows-latest]
-        python-version: ["3.14"]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install protoc (macOS)
-        # raft-proto's build script uses `protobuf-build v0.14.1`, which
-        # rejects protoc's new calendar-versioned releases (e.g. "libprotoc
-        # 34.1") with "No suitable `protoc` (>= 3.1.0) found in PATH". Pin
-        # to a late 3.x release — brew's `protobuf` formula ships 34.x
-        # and is unusable here. We pick 3.20.2 rather than 3.20.3 because
-        # the 3.20.3 GitHub release only published `osx-x86_64.zip`; the
-        # arm64 artifact was dropped, so `osx-aarch_64.zip` 404s on
-        # macos-14 (Apple Silicon) runners.
-        if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-          PROTOC_VERSION=3.20.2
-          case "$(uname -m)" in
-            arm64) ARCH=aarch_64 ;;
-            x86_64) ARCH=x86_64 ;;
-            *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
-          esac
-          mkdir -p "$HOME/protoc"
-          curl -fsSL -o /tmp/protoc.zip \
-            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-${ARCH}.zip"
-          unzip -o /tmp/protoc.zip -d "$HOME/protoc"
-          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
-          "$HOME/protoc/bin/protoc" --version
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-rust-${{ matrix.os }}
-          workspaces: |
-            rust/nexus-cdylib
-
-      - name: Build nexus-kernel wheel
-        run: |
-          python -m pip install maturin
-          maturin build --release --compatibility off --manifest-path rust/nexus-cdylib/Cargo.toml --interpreter python --out dist
-
-      - name: Upload nexus-kernel wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-wheel-${{ matrix.os }}-${{ matrix.python-version }}
-          path: dist/*.whl
-          if-no-files-found: error
-
-  build-rust-sdist:
-    needs: [verify-version]
-    name: Build nexus-kernel source distribution
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-rust-sdist
-          workspaces: |
-            rust/nexus-cdylib
-
-      - name: Build nexus-kernel sdist
-        run: |
-          python -m pip install maturin
-          maturin sdist --manifest-path rust/nexus-cdylib/Cargo.toml --out dist
-
-      - name: Upload nexus-kernel sdist
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-sdist
-          path: dist/*.tar.gz
-          if-no-files-found: error
-
-  publish-rust:
-    name: Publish nexus-kernel to PyPI
-    needs: [build-rust-wheel, build-rust-sdist]
-    runs-on: ubuntu-latest
-    env:
-      NEXUS_FAST_PYPI_API_TOKEN: ${{ secrets.NEXUS_FAST_PYPI_API_TOKEN }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download rust artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: rust-*
-          path: artifacts
-
-      - name: Collect nexus-kernel distributions
-        run: |
-          mkdir -p dist-rust
-          cp artifacts/rust-sdist/* dist-rust/ 2>/dev/null || true
-          find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-rust/ \;
-          ls -lh dist-rust/
-
-      - name: Skip nexus-kernel PyPI publish
-        if: ${{ env.NEXUS_FAST_PYPI_API_TOKEN == '' }}
-        run: echo "NEXUS_FAST_PYPI_API_TOKEN not configured; skipping nexus-kernel publish."
-
-      - name: Publish nexus-kernel to PyPI
-        if: ${{ env.NEXUS_FAST_PYPI_API_TOKEN != '' }}
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ env.NEXUS_FAST_PYPI_API_TOKEN }}
-          packages-dir: dist-rust
-
   publish-pypi:
     name: Publish nexus-ai-fs to PyPI
-    needs: [build-wheel, build-sdist, build-rust-wheel, build-rust-sdist]
+    needs: [build-wheel, build-sdist]
     runs-on: ubuntu-latest
 
     steps:
@@ -280,9 +138,7 @@ jobs:
   # Uses the same PYPI_API_TOKEN as nexus-ai-fs (org-scoped token).
   publish-nexus-fs:
     name: Publish nexus-fs to PyPI
-    # nexus-fs declares nexus-runtime as a hard dep; ensure nexus-runtime is
-    # published first so the smoke-test pip install can resolve it.
-    needs: [verify-version, publish-rust]
+    needs: [verify-version]
     runs-on: ubuntu-latest
 
     steps:
@@ -315,47 +171,9 @@ jobs:
           check-wheel-contents dist-nexus-fs/*.whl || echo "::warning::check-wheel-contents found issues (non-fatal)"
           pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist-nexus-fs/*.whl
 
-      - name: Download nexus-runtime artifacts (built by publish-rust)
-        uses: actions/download-artifact@v4
-        with:
-          pattern: rust-wheel-*
-          path: /tmp/nexus-runtime-artifacts
-          merge-multiple: true
-
-      - name: Verify nexus-runtime is on PyPI before publishing nexus-fs
-        run: |
-          # nexus-runtime is a hard dep of nexus-fs. Guard the publish step by
-          # verifying the exact version declared in pyproject.toml is resolvable
-          # from PyPI. If publish-rust skipped (token absent), this check catches
-          # the gap before nexus-fs is uploaded and users encounter a broken dep.
-          # Read the exact version from the nexus-runtime source (nexus-cdylib).
-          EXACT_RUNTIME=$(grep '^version = ' rust/nexus-cdylib/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "Exact nexus-runtime version for this release: $EXACT_RUNTIME"
-          python - "$EXACT_RUNTIME" <<'PY'
-          import sys, urllib.request, urllib.error, json
-          exact = sys.argv[1]
-          if not exact:
-              print("FATAL: could not read nexus-runtime version from rust/nexus-cdylib/pyproject.toml", file=sys.stderr)
-              sys.exit(1)
-          try:
-              with urllib.request.urlopen(f"https://pypi.org/pypi/nexus-runtime/{exact}/json") as r:
-                  json.load(r)  # 200 means the exact version exists
-          except urllib.error.HTTPError as e:
-              if e.code == 404:
-                  print(f"FATAL: nexus-runtime {exact} is not on PyPI; publish-rust must publish first", file=sys.stderr)
-                  sys.exit(1)
-              raise
-          print(f"OK: nexus-runtime {exact} is on PyPI")
-          PY
-
       - name: Smoke test — install in clean environment
         run: |
           python -m venv /tmp/nexus-fs-release-test
-          # Install nexus-runtime from local artifacts using pip's own wheel
-          # compatibility logic (--no-index --find-links avoids OS/arch mismatch).
-          /tmp/nexus-fs-release-test/bin/pip install \
-            --no-index --find-links /tmp/nexus-runtime-artifacts \
-            nexus-runtime
           /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
           PKG_VERSION=$(grep '^version = ' packages/nexus-fs/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           /tmp/nexus-fs-release-test/bin/python - "$PKG_VERSION" <<'PY'
@@ -573,12 +391,8 @@ jobs:
         if: matrix.variant == 'cpu' && matrix.platform == 'linux/amd64'
         run: |
           docker run --rm --entrypoint "" \
-            -e GLIBC_TUNABLES=glibc.rtld.optional_static_tls=16384 \
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
-          import nexus_runtime
-          from nexus_runtime import PyMetaStore
-          import txtai
           import pgvector
           import docker
           import fastembed
@@ -707,7 +521,6 @@ jobs:
     name: Create GitHub Release
     needs:
       - publish-pypi
-      - publish-rust
       - publish-nexus-fs
       - publish-ts-packages
       - merge-docker-manifests
@@ -730,12 +543,6 @@ jobs:
           name: sdist
           path: artifacts/sdist
 
-      - name: Download rust artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: rust-*
-          path: artifacts
-
       - name: Download nexus-fs artifacts
         uses: actions/download-artifact@v4
         with:
@@ -755,10 +562,8 @@ jobs:
           mkdir -p dist-release
           cp artifacts/sdist/* dist-release/ 2>/dev/null || true
           cp artifacts/wheel/* dist-release/ 2>/dev/null || true
-          cp artifacts/rust-sdist/* dist-release/ 2>/dev/null || true
           cp artifacts/nexus-fs/* dist-release/ 2>/dev/null || true
           cp artifacts/cluster/* dist-release/ 2>/dev/null || true
-          find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-release/ \;
           ls -lh dist-release/
 
       - name: Extract release notes

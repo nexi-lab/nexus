@@ -25,25 +25,20 @@
 //!     path_local.rs       — PathLocalBackend (was _backend_impls)
 //!     local_connector.rs  — LocalConnectorBackend (was _backend_impls)
 //!     remote.rs           — RemoteBackend (was kernel::remote_backend)
-//!     blob_pack/          — BlobPackEngine + BlobPackIndex
-//!                           (Volume rename from kernel::volume_*)
-//!   python/               — `#[cfg(feature = "python")]` PyO3 sub-module
-//!     factory.rs          — `DefaultObjectStoreProvider` impl (the
-//!                           17-way backend-type dispatch that
-//!                           `PyKernel.sys_setattr` used to do inline)
 //! ```
 //!
 //! Direction: `backends -> kernel`. Backends impls `kernel::abc::*`
 //! traits and consumes `Kernel`'s in-tree Rust API surface; kernel
 //! reaches concrete backends through the §3.B.2
 //! `kernel::hal::object_store_provider::ObjectStoreProvider` trait.
-//! Kernel holds an `Arc<dyn ObjectStoreProvider>` set at cdylib boot,
-//! and `sys_setattr`'s 17-way construction switch lives in
-//! `backends::python::factory`.
+//! Kernel holds an `Arc<dyn ObjectStoreProvider>` set at boot.
+
+// Backends are wired dynamically by the ObjectStoreProvider at boot.
+// After PyO3 removal the only consumer is the cluster binary's
+// provider impl — individual backends appear unused at the crate level
+// but are reachable via trait objects.
+#![allow(dead_code)]
 
 pub mod addressing;
 pub mod storage;
 pub mod transports;
-
-#[cfg(feature = "python")]
-pub mod python;

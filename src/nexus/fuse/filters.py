@@ -8,11 +8,6 @@ because only FUSE handlers use it.
 import fnmatch
 from typing import Any
 
-# RUST_FALLBACK: filter_paths
-import nexus_runtime
-
-RUST_AVAILABLE = True
-
 # OS-generated metadata file patterns
 # These files are automatically created by operating systems and should be
 # filtered out to keep Nexus clean and efficient
@@ -59,8 +54,6 @@ def is_os_metadata_file(path: str) -> bool:
 def filter_os_metadata(files: list[str]) -> list[str]:
     """Filter out OS metadata files from a list of file paths.
 
-    Uses Rust acceleration if available (5-10x faster), otherwise falls back to Python.
-
     Args:
         files: List of file paths or filenames
 
@@ -71,16 +64,6 @@ def filter_os_metadata(files: list[str]) -> list[str]:
         >>> filter_os_metadata(["file.txt", "._file.txt", ".DS_Store"])
         ['file.txt']
     """
-    # Use Rust for bulk filtering if available (5-10x faster)
-    if len(files) >= 10:
-        try:
-            result: list[str] = nexus_runtime.filter_paths(files, OS_METADATA_PATTERNS)
-            return result
-        except (OSError, ValueError, RuntimeError):
-            # Fall back to Python on error
-            pass
-
-    # Python fallback
     return [f for f in files if not is_os_metadata_file(f)]
 
 

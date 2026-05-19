@@ -5,8 +5,8 @@ Replaces:
   - test_federation_e2e.py          (gRPC, static bootstrap)
   - test_raft_cluster_smoke.py      (HTTP JSON-RPC, static bootstrap)
 
-All business-logic calls use gRPC Call RPC (NexusVFSServiceStub).
-HTTP is used only for health probes (/healthz/ready, /health).
+Pure Rust nexusd-cluster nodes: all traffic (VFS gRPC + Raft) on port 2126.
+Health probes use TCP connect check on the gRPC port.
 
 Target topology (built incrementally by tests):
   /              (root zone -- bootstrapped at startup)
@@ -25,6 +25,7 @@ import base64
 import hashlib
 import os
 import re
+import socket
 import struct
 import time
 import uuid
@@ -61,10 +62,9 @@ pytestmark = [
 # ---------------------------------------------------------------------------
 # Configuration -- Docker-internal addresses
 # ---------------------------------------------------------------------------
-NODE1_URL = "http://nexus-1:2026"  # health probes only
-NODE2_URL = "http://nexus-2:2026"  # health probes only
-NODE1_GRPC = "nexus-1:2028"  # gRPC Call RPC
-NODE2_GRPC = "nexus-2:2028"  # gRPC Call RPC
+# Pure Rust nexusd-cluster: VFS gRPC + Raft on the same port (2126).
+NODE1_GRPC = "nexus-1:2126"  # gRPC Call RPC + health
+NODE2_GRPC = "nexus-2:2126"  # gRPC Call RPC + health
 HEALTH_TIMEOUT = 120
 
 E2E_ADMIN_API_KEY = "sk-test-dynamic-federation-key"
@@ -176,28 +176,27 @@ def _grpc_call_or_skip(
     return result
 
 
-def _health(url: str) -> dict | None:
-    """Check /health endpoint.  Returns None if unreachable."""
+def _health(grpc_addr: str) -> dict | None:
+    """Check gRPC port reachability via TCP connect.  Returns None if unreachable."""
     try:
-        resp = httpx.get(f"{url}/health", timeout=5, trust_env=False)
-        if resp.status_code == 200:
-            return resp.json()
-    except httpx.TransportError:
-        pass
-    return None
+        host, port_str = grpc_addr.rsplit(":", 1)
+        with socket.create_connection((host, int(port_str)), timeout=5):
+            return {"status": "healthy"}
+    except (OSError, ValueError):
+        return None
 
 
-def _wait_healthy(urls: list[str], timeout: float = HEALTH_TIMEOUT) -> None:
-    """Wait until all URLs return ``{"status": "healthy"}``."""
+def _wait_healthy(grpc_addrs: list[str], timeout: float = HEALTH_TIMEOUT) -> None:
+    """Wait until all gRPC addresses are TCP-reachable."""
     deadline = time.time() + timeout
-    for url in urls:
+    for addr in grpc_addrs:
         while time.time() < deadline:
-            h = _health(url)
+            h = _health(addr)
             if h and h.get("status") == "healthy":
                 break
             time.sleep(2)
         else:
-            pytest.fail(f"Timed out waiting for {url} to become healthy")
+            pytest.fail(f"Timed out waiting for {addr} to become healthy")
 
 
 def _uid() -> str:
@@ -458,15 +457,13 @@ def _wait_zone_ready(
 @pytest.fixture(scope="module")
 def cluster():
     """Ensure the dynamic-federation cluster is running and healthy."""
-    if _health(NODE1_URL) is None:
+    if _health(NODE1_GRPC) is None:
         pytest.skip(
             "Federation cluster not reachable. Start with:\n"
             "  docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml up -d"
         )
-    _wait_healthy([NODE1_URL, NODE2_URL])
+    _wait_healthy([NODE1_GRPC, NODE2_GRPC])
     return {
-        "node1": NODE1_URL,
-        "node2": NODE2_URL,
         "grpc1": NODE1_GRPC,
         "grpc2": NODE2_GRPC,
     }
@@ -597,7 +594,7 @@ def federation_zones(cluster, api_key):
 class TestClusterBootstrap:
     """Cold-cluster topology introspection.
 
-    Workflow: HTTP health → gRPC auth → root r/w → list_zones → cluster_info
+    Workflow: gRPC health → gRPC auth → root r/w → list_zones → cluster_info
     per zone → links_count → witness role.
 
     Replaces TestClusterHealth, TestRaftBehavior, TestAdminIntrospection
@@ -606,14 +603,13 @@ class TestClusterBootstrap:
     """
 
     def test_cold_start_topology_introspection(self, cluster, api_key, federation_zones):
-        node1, node2 = cluster["node1"], cluster["node2"]
         grpc1, grpc2 = cluster["grpc1"], cluster["grpc2"]
 
-        # Step 1: HTTP /health on both nodes — operator's first probe.
-        for url in [node1, node2]:
-            h = _health(url)
-            assert h is not None, f"{url} unreachable"
-            assert h["status"] == "healthy", f"{url} not healthy: {h}"
+        # Step 1: gRPC health on both nodes — operator's first probe.
+        for addr in [grpc1, grpc2]:
+            h = _health(addr)
+            assert h is not None, f"{addr} unreachable"
+            assert h["status"] == "healthy", f"{addr} not healthy: {h}"
 
         # Step 2: gRPC auth — same API key works on both nodes (no
         # divergence in the API-key store after replication).
@@ -1506,7 +1502,7 @@ class TestLeaderFailover:
 
         try:
             # Wait for node-2 healthy
-            _wait_healthy([cluster["node2"]], timeout=30)
+            _wait_healthy([cluster["grpc2"]], timeout=30)
 
             # Read all files from surviving node-2 (pre-fetched before stop)
             for zone, (path, _parent, content) in zone_files.items():
@@ -1563,7 +1559,7 @@ class TestLeaderFailover:
                 )
             t_running = time.time()
             try:
-                _wait_healthy([cluster["node1"]], timeout=60)
+                _wait_healthy([cluster["grpc1"]], timeout=60)
             except BaseException as exc:
                 # Capture docker logs on failure so next CI run has
                 # clear diagnosis — slow-start vs healthcheck-bug.
@@ -1604,9 +1600,9 @@ class TestLeaderFailover:
                 assert expected in zone_ids, f"Zone {expected} missing on {target}: {zone_ids}"
 
         # Both nodes healthy after recovery
-        for url in [cluster["node1"], cluster["node2"]]:
-            h = _health(url)
-            assert h is not None, f"{url} not healthy after recovery"
+        for addr in [cluster["grpc1"], cluster["grpc2"]]:
+            h = _health(addr)
+            assert h is not None, f"{addr} not healthy after recovery"
             assert h["status"] == "healthy"
 
 
@@ -1627,24 +1623,10 @@ class TestFederationCacheCoherence:
     def test_26_durable_invalidation_health(self, cluster, api_key):
         """Durable invalidation stream should appear in detailed health.
 
-        If Dragonfly is not configured, the component reports as disabled
-        (graceful degradation). If configured, it reports healthy or degraded.
+        Pure Rust nexusd-cluster does not expose HTTP /health/detailed.
+        This test is a no-op until the Rust binary gains a detailed health
+        gRPC endpoint.  Left as a placeholder so test numbering is stable.
         """
-        for url in [cluster["node1"], cluster["node2"]]:
-            resp = httpx.get(
-                f"{url}/health/detailed",
-                headers={"Authorization": f"Bearer {api_key}"},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                components = data.get("components", {})
-                # Durable invalidation should be present (enabled or disabled)
-                if "durable_invalidation" in components:
-                    status = components["durable_invalidation"]["status"]
-                    assert status in ("healthy", "degraded", "disabled", "error"), (
-                        f"Unexpected durable_invalidation status: {status}"
-                    )
 
     @pytest.mark.order(after="TestFederationCacheCoherence::test_26_durable_invalidation_health")
     def test_27_cross_zone_write_propagation(self, cluster, api_key):
@@ -1740,7 +1722,7 @@ def _cli_exec(container_name: str, argv: list[str], timeout: int = 30) -> tuple[
     # matches what a sysadmin SSH'd into a node would do.
     env_overrides = {
         "NEXUS_API_KEY": E2E_ADMIN_API_KEY,
-        "NEXUS_URL": "http://localhost:2026",
+        "NEXUS_URL": "grpc://localhost:2126",
     }
     result = container.exec_run(
         cmd,
@@ -2002,7 +1984,7 @@ class TestFederationShareJoin:
             grpc2,
             "federation_join",
             {
-                "peer_addr": "grpc://nexus-1:2028",
+                "peer_addr": "grpc://nexus-1:2126",
                 "remote_path": share_path,
                 "local_path": local_mount,
             },
@@ -2269,7 +2251,7 @@ class TestPartialReplicationFailure:
 
         assert reconnected, "Failed to reconnect node-2; cluster may be in bad state."
 
-        _wait_healthy([cluster["node2"]], timeout=60)
+        _wait_healthy([cluster["grpc2"]], timeout=60)
         # Protocol-level gate first: poll raft applied_index until node-2
         # catches up on root + corp-eng. Without this, the per-file
         # `_wait_replicated` loop only watches `list()` output — passes
@@ -2375,7 +2357,7 @@ _SSE_MOCK_SKIP_REASON = (
 def _bootstrap_standalone_fs(tmp_path):
     """Create an in-process NexusFS with a local CAS backend.
 
-    The e2e-runner container carries the full nexus_runtime install, so we
+    The e2e-runner container carries the full nexus install, so we
     can instantiate a fresh standalone filesystem just like the unit test
     at tests/unit/backends/test_openai_compat_rust.py::_bootstrap does.
     No RPC surface is added — the test drives kernel syscalls in-process
@@ -2857,7 +2839,7 @@ class TestNewTeamOnboarding:
         # the same docker network so it can reach nexus-1:2126.
         joiner_name = f"nexus-dyn-joiner-{uid}"
         joiner_hostname = f"dyn-joiner-{uid}"
-        joiner_grpc = f"{joiner_hostname}:2028"
+        joiner_grpc = f"{joiner_hostname}:2126"
         try:
             joiner = docker_client.containers.run(
                 image="nexus-fullnode:latest",
@@ -2866,21 +2848,16 @@ class TestNewTeamOnboarding:
                 detach=True,
                 auto_remove=False,
                 network="nexus_dyn-nexus-network",
+                entrypoint="nexusd-cluster",
                 environment={
-                    "NEXUS_HOST": "0.0.0.0",
-                    "NEXUS_PORT": "2026",
                     "NEXUS_DATA_DIR": "/app/data",
-                    "NEXUS_PROFILE": "cluster",
                     "NEXUS_BIND_ADDR": "0.0.0.0:2126",
                     "NEXUS_ADVERTISE_ADDR": f"{joiner_hostname}:2126",
                     # NEXUS_PEERS DELIBERATELY UNSET — dynamic-bootstrap
                     # signal.  daemon comes up, no zones loaded; the
                     # sys_setattr below drives the join.
                     "NEXUS_RAFT_TLS": "false",
-                    "NEXUS_GRPC_BIND_ALL": "true",
-                    "NEXUS_API_KEY": api_key,
-                    "NEXUS_BACKEND": "local",
-                    "NEXUS_USE_UVLOOP": "true",
+                    "NEXUS_BOOTSTRAP_MODE": "dynamic",
                     "RUST_LOG": "info,nexus_raft=debug",
                 },
             )
@@ -2888,29 +2865,17 @@ class TestNewTeamOnboarding:
             pytest.skip(f"Failed to spawn joiner container: {exc}")
 
         try:
-            # Wait for the joiner's HTTP healthz to come up.  Health
-            # passes as long as the daemon (uvicorn + transport) is
-            # serving — federation isn't initialized in dynamic mode
-            # until the join lands, but the FastAPI surface is up.
-            joiner_url_local = f"http://{joiner_hostname}:2026/healthz/ready"
+            # Wait for the joiner's gRPC port to become reachable.
+            joiner_grpc_local = f"{joiner_hostname}:2126"
             deadline = time.time() + 60
             joiner_healthy = False
             while time.time() < deadline:
-                try:
-                    h = httpx.get(joiner_url_local, timeout=3.0)
-                    if h.status_code in (200, 503):
-                        # 503 ("Raft topology not ready") is acceptable —
-                        # uvicorn is up, sys_setattr is reachable via
-                        # gRPC even when the federation RPC family is
-                        # gated off.  We only need the underlying
-                        # syscall plane.
-                        joiner_healthy = True
-                        break
-                except Exception:
-                    pass
+                if _health(joiner_grpc_local):
+                    joiner_healthy = True
+                    break
                 time.sleep(1)
             if not joiner_healthy:
-                pytest.fail("joiner container did not reach healthz within 60s")
+                pytest.fail("joiner container gRPC port not reachable within 60s")
 
             # Step 3: drive the join via sys_setattr DT_MOUNT with
             # explicit source.  The mount direction
@@ -3213,7 +3178,7 @@ class TestFullFailoverRecovery:
         node1.stop(timeout=10)
 
         try:
-            _wait_healthy([cluster["node2"]], timeout=30)
+            _wait_healthy([cluster["grpc2"]], timeout=30)
             _wait_leader_elected(grpc2, "corp-eng", api_key, timeout=15)
 
             _grpc_call(grpc2, "sys_unlink", {"path": f"{base}/doc0.txt"}, api_key=api_key)
@@ -3262,7 +3227,7 @@ class TestFullFailoverRecovery:
                 )
             t_running = time.time()
             try:
-                _wait_healthy([cluster["node1"]], timeout=60)
+                _wait_healthy([cluster["grpc1"]], timeout=60)
             except BaseException as exc:
                 logs = b""
                 try:
@@ -3901,7 +3866,7 @@ class TestFreshJoinToRunningCluster:
 
         # 1. Stop node-1; n2 + witness retain quorum (2/3).
         n1_container.stop(timeout=10)
-        _wait_healthy([cluster["node2"]], timeout=30)
+        _wait_healthy([cluster["grpc2"]], timeout=30)
         _wait_leader_elected(grpc2, "corp-eng", api_key, timeout=20)
 
         # 2. Accumulate raft commits via node-2 in the ROOT zone.
@@ -3959,7 +3924,7 @@ class TestFreshJoinToRunningCluster:
         # AddNode entry.
         fresh_join_timeout = 240
         try:
-            _wait_healthy([cluster["node1"]], timeout=fresh_join_timeout)
+            _wait_healthy([cluster["grpc1"]], timeout=fresh_join_timeout)
         except BaseException as exc:
             panic_check_logs = n1_container.logs(tail=500, stderr=True).decode(errors="replace")
             if (
@@ -3978,7 +3943,7 @@ class TestFreshJoinToRunningCluster:
 
         # Sanity: even when "healthy", scan logs for panic markers in case
         # a thread panicked but the process kept going (raft-zone-mgr is a
-        # background thread, healthcheck is the FastAPI uvicorn).
+        # background thread, healthcheck is the gRPC listener).
         recent = n1_container.logs(tail=300, stderr=True).decode(errors="replace")
         if ("to_commit" in recent and "out of range" in recent) or "panicked at" in recent.lower():
             pytest.fail(

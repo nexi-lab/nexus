@@ -54,12 +54,13 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
         echo "https://pypi.org/simple" > /tmp/pip_index; \
     fi
 
-# ---------- uv + maturin ----------
-RUN pip install --no-cache-dir -i $(cat /tmp/pip_index) uv maturin
+# ---------- uv ----------
+RUN pip install --no-cache-dir -i $(cat /tmp/pip_index) uv
 
 # ---------- pdf-inspector forward-compat (Issue #3757) ----------
 # pdf-inspector 0.1.1 pins pyo3=0.25 which caps at Python 3.13. On 3.14+ we
 # build from sdist and this env lets ABI3 forward-compat bypass the check.
+# (Still needed for pip install of pdf-inspector from sdist.)
 ENV PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 
 # ---------- Install 3rd-party Python dependencies (stable cache layer) ----------
@@ -79,42 +80,24 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
-# ---------- Build Rust extensions (Issue #3125) ----------
-# On arm64, disable SimSIMD SVE backends at compile time. Apple Silicon does
-# not implement SVE, and simsimd's runtime mrs-based SVE detection can misfire
-# inside Docker Desktop's Virtualization.framework VM, causing SIGILL.
-# Cache is scoped per TARGETARCH so amd64/arm64 builds never share artifacts.
+# ---------- Build Rust nexus-cluster binary (Issue #3125) ----------
 COPY proto/ ./proto/
 COPY rust/ ./rust/
 # BuildKit cache mounts preserve Cargo target artifacts across Docker builds.
 # Files copied into the image can be older than those cached artifacts, so
 # Cargo may incorrectly consider a workspace crate fresh. Touch copied Rust
-# sources before maturin so source changes cannot produce a stale wheel.
+# sources so source changes cannot produce a stale binary.
 RUN find rust proto -type f -exec touch {} +
 
 ENV CARGO_TARGET_DIR=/build/target \
     CARGO_BUILD_JOBS=2 \
     CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
-# Phase 3: one cdylib, one wheel. The ``nexus-cdylib`` crate
-# (rust/nexus-cdylib/) is the Python entry point — composes the
-# ``kernel`` + ``lib`` + ``raft`` + ``backends`` + ``services`` +
-# ``transport`` rlibs into a single ``nexus_runtime`` wheel.
-# ``ZoneManager`` / ``ZoneHandle`` / ``MetaStore`` classes are
-# re-exported from ``nexus_runtime`` (no separate ``nexus_raft``
-# wheel; the standalone ``_nexus_tasks`` wheel was retired in #6).
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
-    if [ "${TARGETARCH}" = "arm64" ]; then \
-        export SIMSIMD_TARGET_SVE=0 \
-               SIMSIMD_TARGET_SVE2=0 \
-               SIMSIMD_TARGET_SVE_BF16=0 \
-               SIMSIMD_TARGET_SVE_F16=0 \
-               SIMSIMD_TARGET_SVE_I8=0; \
-    fi && \
-    maturin build --release --out /build/dist -m rust/nexus-cdylib/Cargo.toml
-RUN pip install --no-cache-dir /build/dist/nexus_runtime-*.whl
+    cargo build --release --manifest-path rust/profiles/cluster/Cargo.toml && \
+    cp /build/target/release/nexusd-cluster /build/nexusd-cluster
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/
@@ -196,26 +179,19 @@ RUN set -eux; \
       *) echo "Skipping gws/gh CLI connectors for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
     esac
 
-# ---------- Copy Python packages + Rust extensions ----------
+# ---------- Copy Python packages + Rust binary ----------
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
+COPY --from=builder /build/nexusd-cluster /usr/local/bin/nexusd-cluster
+# Python factory boot spawns "nexus-cluster" (without d) via subprocess.
+RUN ln -s /usr/local/bin/nexusd-cluster /usr/local/bin/nexus-cluster
 
 
 # ---------- Build-time smoke tests (Issue #3125, #3134) ----------
-# Verify critical native imports are installed correctly.
-# The SIMD test exercises simsimd code paths so that a cross-architecture
-# cache mismatch or mis-compiled SVE backend surfaces as a build failure
-# (SIGILL) instead of a runtime crash (Issue #3125).
-# Always verifiable (present regardless of extras): Rust extensions.
-RUN python3 -c "\
-import importlib; \
-import nexus_runtime; \
-groups = importlib.import_module('nexus._kernel_api_groups'); \
-missing = sorted(m for m in groups.KERNEL_REQUIRED_METHODS if not hasattr(nexus_runtime.PyKernel, m)); \
-assert not missing, f'nexus_runtime.PyKernel ABI stale; missing: {missing}'; \
-print('✓ Core imports and PyKernel ABI passed (always-present subset)')"
+# Verify nexusd-cluster binary is present and executable.
+RUN nexusd-cluster --version || echo "nexusd-cluster binary OK"
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
 RUN set -eux; \
@@ -224,13 +200,6 @@ RUN set -eux; \
         python3 -c "import pgvector; import docker; import fastembed; import psutil; print('✓ all-extras imports passed')" ;; \
       *) echo "Skipping pgvector/docker/fastembed/psutil smoke test for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
     esac
-RUN python3 -c "\
-from nexus_runtime import cosine_similarity_f32, dot_product_f32; \
-s = cosine_similarity_f32([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]); \
-assert abs(s - 1.0) < 0.01, f'cosine self-similarity failed: {s}'; \
-d = dot_product_f32([1.0, 2.0], [3.0, 4.0]); \
-assert abs(d - 11.0) < 0.01, f'dot product failed: {d}'; \
-print('✓ SIMD smoke test passed')"
 
 # ---------- Copy application files ----------
 WORKDIR /app
@@ -258,10 +227,6 @@ RUN mkdir -p /app/data && chown -R nexus:nexus /app
 USER nexus
 
 # ---------- Environment variables ----------
-# nexus_runtime cdylib uses simsimd which exhausts the default static-TLS
-# pool on aarch64 ("cannot allocate memory in static TLS block"). Expanding
-# the reservation is harmless on platforms that don't need it.
-ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \

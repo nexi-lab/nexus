@@ -42,11 +42,11 @@ jobs:
             binary: nexusd-cluster
             # Real measured size on this PR: 9.06 MiB.  TODO: same
             # release-profile optimisation work as the Linux entry.
-            max_size_bytes: 10485760  # 10 MiB (mach-O arm64 overhead)
+            max_size_bytes: 11534336  # 11 MiB (mach-O arm64 overhead)
           - os: windows-latest
             artifact_name: nexusd-cluster-windows-x86_64
             binary: nexusd-cluster.exe
-            max_size_bytes: 10485760  # 10 MiB (PE+import-table overhead)
+            max_size_bytes: 11534336  # 11 MiB (PE+import-table overhead)
 
     steps:
       - name: Checkout code

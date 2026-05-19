@@ -60,21 +60,19 @@ class InternalMixin:
             if cached is not None and cached[0] == is_admin:
                 return cached[1]
 
-        from nexus_runtime import PyOperationContext as _RustCtx
-
-        rust_ctx = _RustCtx(
-            user_id=context.user_id if context else "anonymous",
-            zone_id=self._zone_id,  # routing zone (always set)
-            is_admin=is_admin,
-            agent_id=getattr(context, "agent_id", None) if context else None,
-            is_system=getattr(context, "is_system", False) if context else False,
-            groups=context.groups if context else [],
-            admin_capabilities=list(context.admin_capabilities) if context else [],
-            subject_type=getattr(context, "subject_type", "user") if context else "user",
-            subject_id=getattr(context, "subject_id", None) if context else None,
-            request_id=getattr(context, "request_id", "") if context else "",
-            context_zone_id=context.zone_id if context else None,  # caller's zone
-        )
+        rust_ctx = {
+            "user_id": context.user_id if context else "anonymous",
+            "zone_id": self._zone_id,  # routing zone (always set)
+            "is_admin": is_admin,
+            "agent_id": getattr(context, "agent_id", None) if context else None,
+            "is_system": getattr(context, "is_system", False) if context else False,
+            "groups": context.groups if context else [],
+            "admin_capabilities": list(context.admin_capabilities) if context else [],
+            "subject_type": getattr(context, "subject_type", "user") if context else "user",
+            "subject_id": getattr(context, "subject_id", None) if context else None,
+            "request_id": getattr(context, "request_id", "") if context else "",
+            "context_zone_id": context.zone_id if context else None,  # caller's zone
+        }
 
         if context is not None:
             context.__dict__["_rust_ctx_cache"] = (is_admin, rust_ctx)

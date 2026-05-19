@@ -35,13 +35,11 @@ import shutil
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import blake3
 
 # RUST_FALLBACK: BloomFilter (read_file / read_files_bulk are required)
-if TYPE_CHECKING:
-    from nexus_runtime import BloomFilter
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +65,7 @@ class FileContentCache:
     - No false negatives (never skips existing files)
     """
 
-    _bloom: "BloomFilter | None"
+    _bloom: Any
 
     def __init__(
         self,
@@ -532,7 +530,7 @@ class FileContentCache:
         result: dict[str, bytes] = {}
         for cache_path, content in cache_contents.items():
             virtual_path = cache_to_virtual.get(cache_path)
-            if virtual_path:
+            if virtual_path and content is not None:
                 result[virtual_path] = content
         return result
 

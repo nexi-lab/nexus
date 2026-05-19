@@ -2,7 +2,7 @@
 name = "services"
 version = "0.1.0"
 edition = "2021"
-description = "Post-syscall services tier — audit / agents / permission / tasks. Fired on syscall paths through registered hooks; depends on `kernel` only. Reaches backends and raft through `kernel.sys_*` syscalls (the same path Python takes), never via direct cross-crate imports. The orthogonality invariant is `services ⊥ backends ⊥ transport ⊥ raft`."
+description = "Post-syscall services tier — audit / agents / acp / tasks. Fired on syscall paths through registered hooks; depends on `kernel` only. Reaches backends and raft through `kernel.sys_*` syscalls (the same path Python takes), never via direct cross-crate imports. The orthogonality invariant is `services ⊥ backends ⊥ transport ⊥ raft`."
 
 [lib]
 name = "services"
@@ -13,8 +13,6 @@ default = []
 
 # Per-service features.  Each gates one `pub mod` line in lib.rs so
 # slim Rust binaries (nexus-cluster) link only the services they want.
-# Python deployments turn `python` on, which transitively turns every
-# service on so the runtime gate (DeploymentProfile) decides at boot.
 service-audit = []
 service-agents = []
 service-managed-agent = []
@@ -25,24 +23,6 @@ service-tasks = []
 # FluffyChat / Cinny) can join conversations without a bespoke
 # nexus client. End-state spec: sudowork-2/docs/tech/nexus-integration-architecture.md §4.2.
 service-matrix-adapter = ["dep:axum", "dep:base32", "dep:tower"]
-
-# Optional PyO3 surface — `services::python::register(m)` aggregates
-# every PyO3 entry point (`install_audit_hook`, …) into one fn the
-# `nexus-cdylib` `#[pymodule]` invokes.  Pulls every service so the
-# Python runtime keeps the same surface area as before; non-cdylib
-# slim builds (cluster binary, raft-witness, WASM) drop pyo3 and pick
-# their own service set.
-python = [
-    "dep:pyo3",
-    "service-audit",
-    "service-agents",
-    "service-managed-agent",
-    "service-acp",
-    "service-tasks",
-    # service-matrix-adapter intentionally NOT in `python` — it has no
-    # PyO3 surface; nexus-cdylib opts in separately when shipping the
-    # adapter alongside the Python wheel.
-]
 
 [dependencies]
 contracts = { workspace = true }
@@ -86,9 +66,6 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-util", "time", "sync", "macros"] }
 # AsyncRead/Write extension traits + BoxFuture used by acp::connection.
 futures = "0.3"
-# pyo3 feature unioned by cargo when nexus-cdylib enables `extension-module`
-# on its own pyo3 dep — services does not need to set extension-module here.
-pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
 # Matrix C-S adapter HTTP surface. Lazily pulled in by the
 # `service-matrix-adapter` feature so non-adapter builds (cluster
 # binary, raft-witness, slim WASM) do not pay the axum compile time.

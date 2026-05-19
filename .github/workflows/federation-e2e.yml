@@ -125,9 +125,9 @@ jobs:
         run: |
           deadline=$((SECONDS + 180))
           while [ $SECONDS -lt $deadline ]; do
-            if docker exec nexus-dyn-node-1 curl -sf http://localhost:2026/healthz/ready >/dev/null 2>&1 \
-            && docker exec nexus-dyn-node-2 curl -sf http://localhost:2026/healthz/ready >/dev/null 2>&1; then
-              echo "Both nodes healthy after ${SECONDS}s"
+            if docker exec nexus-dyn-node-1 bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' \
+            && docker exec nexus-dyn-node-2 bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
+              echo "Both nodes healthy (gRPC port 2126 reachable) after ${SECONDS}s"
               exit 0
             fi
             sleep 2

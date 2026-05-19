@@ -7,12 +7,13 @@ on:
     branches: [main, develop]
   merge_group:
 
-env:
-  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # Required for third-party PyO3 sdist builds (e.g. pdf-inspector).
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
   # Detect whether only docs/non-code files changed.
@@ -39,7 +40,7 @@ jobs:
 
   rpc-parity:
     name: RPC Parity Check
-    needs: [detect-changes, build-rust]
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -60,15 +61,6 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
@@ -78,43 +70,9 @@ jobs:
           echo "RPC parity is verified by integration/e2e tests."
           echo "Skipping — no dedicated parity test file."
 
-  # Build Rust extensions once per OS, share wheels with downstream jobs
-  build-rust:
-    name: Build Rust Extensions (${{ matrix.os }})
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Build Rust extensions
-        uses: ./.github/actions/build-rust-extensions
-        with:
-          profile: dev
-          rust-cache-shared-key: "rust-test"
-          output-dir: dist
-          github-token: ${{ github.token }}
-
-      - name: Upload wheel artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-wheels-${{ matrix.os }}
-          path: dist/*.whl
-          retention-days: 1
-
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
-    needs: [detect-changes, build-rust]
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -141,28 +99,9 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python ${{ matrix.python-version }}
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-${{ matrix.os }}
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
         run: |
           uv pip install -e ".[dev,test]"
-
-      - name: Verify Rust extensions
-        run: |
-          uv run --no-sync python -c "import nexus_runtime; print('nexus_runtime OK')"
-          # R20.18.6 deleted the ZoneManager / ZoneHandle pyclass shells;
-          # Python drives zones via Kernel's zone_* methods now. Smoke
-          # test the surviving raft-bound pyclass (Metastore) + the
-          # kernel's own entry points.
-          uv run --no-sync python -c "from nexus_runtime import PyMetaStore, PyKernel; print('raft bindings OK')"
-        shell: bash
 
       - name: Run unit tests
         timeout-minutes: 30
@@ -203,7 +142,7 @@ jobs:
 
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
-    needs: [detect-changes, build-rust]
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -224,17 +163,25 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
+
+      # The nexus-cluster binary is required by NexusFS (KernelClient spawns
+      # it as a subprocess). Tests that create NexusFS directly (not via
+      # Docker) need the binary on PATH.
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache nexus-cluster build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: e2e-self-contained
+
+      - name: Build nexus-cluster binary
+        run: |
+          cargo build --release -p nexus-cluster --bin nexusd-cluster
+          sudo cp target/release/nexusd-cluster /usr/local/bin/
+          sudo ln -sf /usr/local/bin/nexusd-cluster /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
       # The ``running_nexus`` fixture in tests/e2e/self_contained/conftest.py
@@ -271,14 +218,16 @@ jobs:
           uv run --no-sync python -Xfaulthandler -m pytest tests/e2e/self_contained/ -v \
             --timeout=120 --timeout-method=signal \
             -o faulthandler_timeout=60 -o addopts=
-        # 30 min budget = pre-build (~3 min warm cache, ~10 min cold) +
-        # ~20 min for the test bodies. Per-test --timeout=120 still catches
-        # real hangs fast.
-        timeout-minutes: 30
+        # 45 min budget = Rust build (~3 min warm, ~5 min cold) +
+        # Docker pre-build (~3 min warm, ~10 min cold) +
+        # ~20 min for the test bodies. Per-test --timeout=120 still
+        # catches real hangs fast.
+        timeout-minutes: 45
 
   e2e-postgres:
     name: E2E Tests (PostgreSQL)
-    needs: build-rust
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -314,15 +263,6 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
         run: uv pip install -e ".[dev,test,postgres]"
 
@@ -345,7 +285,8 @@ jobs:
 
   e2e-redis:
     name: E2E Tests (Redis)
-    needs: build-rust
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     services:
       redis:
@@ -379,15 +320,6 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
@@ -398,7 +330,8 @@ jobs:
 
   e2e-docker:
     name: E2E Tests (Docker)
-    needs: build-rust
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -418,15 +351,6 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
@@ -437,7 +361,8 @@ jobs:
 
   e2e-nats:
     name: E2E Tests (NATS)
-    needs: build-rust
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     env:
       NEXUS_NATS_URL: nats://localhost:4222
@@ -464,15 +389,6 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
@@ -484,7 +400,7 @@ jobs:
   # ── nexus-fs standalone package validation ─────────────────────────────
   nexus-fs-smoke:
     name: nexus-fs Smoke Test
-    needs: [detect-changes, build-rust]
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -528,18 +444,11 @@ jobs:
           pip install pydistcheck
           pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist/*.whl
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: rust-dist
-
       - name: Install in clean environment (with timing)
         env:
           VIRTUAL_ENV: /tmp/nexus-fs-test
         run: |
           uv venv --python 3.14 $VIRTUAL_ENV
-          uv pip install --python $VIRTUAL_ENV/bin/python rust-dist/*.whl
           start_time=$(date +%s%N)
           uv pip install --python $VIRTUAL_ENV/bin/python dist/*.whl
           end_time=$(date +%s%N)
@@ -668,7 +577,7 @@ jobs:
 
   migration-test:
     name: Migration Tests (SQLite)
-    needs: [detect-changes, build-rust]
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -689,15 +598,6 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
@@ -707,7 +607,7 @@ jobs:
 
   migration-test-pg:
     name: Migration Tests (PostgreSQL)
-    needs: [detect-changes, build-rust]
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     services:
@@ -744,15 +644,6 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.14
 
-      - name: Download Rust wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-wheels-ubuntu-latest
-          path: dist
-
-      - name: Install Rust extensions from wheels
-        run: uv pip install dist/*.whl
-
       - name: Install dependencies
         run: uv pip install -e ".[dev,test,postgres]"
 
@@ -773,17 +664,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes — skipping RPC parity check"
-
-  build-rust-skip:
-    name: Build Rust Extensions (${{ matrix.os }})
-    needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed != 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - run: echo "No code changes — skipping Rust build"
 
   test-skip:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}

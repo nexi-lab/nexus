@@ -10,9 +10,6 @@ crate-type = ["rlib"]
 
 [features]
 default = []
-# `python` aggregates the PyO3 entry points (`PyFederationClient`,
-# `install_transport_wiring`) into `transport::python::register(m)`.
-python = ["dep:pyo3", "kernel/python"]
 
 [dependencies]
 contracts = { workspace = true }
@@ -46,9 +43,7 @@ serde_json = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 uuid = { version = "1", features = ["v4"] }
 futures = "0.3"
-# pyo3 feature unioned by cargo when nexus-cdylib enables `extension-module`
-# on its own pyo3 dep — transport does not need to set extension-module here.
-pyo3 = { version = "0.28.3", features = ["hashbrown"], optional = true }
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

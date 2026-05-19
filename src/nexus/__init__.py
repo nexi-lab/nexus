@@ -168,88 +168,28 @@ def __getattr__(name: str) -> Any:
 
 
 def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
-    """Return a ``PyKernel`` with the redb metastore opened (or in-memory).
+    """Return a KernelClient connected to a nexus-cluster process.
 
-    Replaces the historical ``_open_local_metastore`` factory which used
-    to wrap the kernel in a ``RustMetastoreProxy``. After the W3 SSOT
-    cleanup the kernel handle is the SSOT — every caller used to
-    immediately reach ``proxy._rust_kernel`` anyway, so we hand back the
-    kernel directly.
+    Spawns a local ``nexus-cluster`` subprocess and connects via gRPC.
+    The kernel manages its own metastore internally.
 
     Args:
         metadata_path: Filesystem path for the redb store. ``":memory:"``
-            is the SQLite-style sentinel for "no on-disk file"; the
-            kernel keeps its boot-time tempdir-backed ``LocalMetaStore``
-            so the in-memory mode still has a working metastore for the
-            session.
-        kernel: Optional pre-constructed ``PyKernel``. When ``None``, a
-            fresh kernel is built and federation/transport wiring is
-            installed.
+            means the kernel uses a tempdir-backed in-memory metastore.
+        kernel: Optional pre-constructed kernel client (for testing).
 
     Returns:
-        A ``PyKernel`` instance ready for ``kernel.metastore_*``
-        operations.
+        A ``KernelClient`` instance ready for syscall operations.
     """
-    from pathlib import Path
-
-    # ``":memory:"`` is the SQLite-style sentinel for "no on-disk file —
-    # in-memory only".  Skip ``Path`` construction in that case: on
-    # Windows the colon is parsed as a drive separator, so
-    # ``Path(":memory:").with_suffix(".redb")`` yields the syntactically
-    # invalid ``:memory:.redb`` and any later ``str(_redb_path)`` raises
-    # ``IOError`` from redb.  ``Kernel::new()`` wires a tempdir-backed
-    # LocalMetaStore as the boot-time default, so an in-memory mode
-    # works without any path at all.
-    _redb_path = None if metadata_path == ":memory:" else Path(metadata_path).with_suffix(".redb")
-
-    if kernel is None:
-        from nexus_runtime import PyKernel as _Kernel
-
-        kernel = _Kernel()
-        # Phase 4 (full): drain the federation init's blob-fetcher slot
-        # + install the real `PeerBlobClient` (replaces the kernel's
-        # boot-time Noop default).  Idempotent — no-op if the slot
-        # was never stashed (federation disabled).
-        # Skip during pytest — xdist workers compete for the same gRPC
-        # port causing hangs and preventing clean process exit.
-        import os as _os_wiring
-
-        if "pytest" not in __import__("sys").modules:
-            try:
-                import nexus_runtime as _nk
-
-                # Federation wiring runs FIRST so init_from_env can stash the
-                # raft-side `BlobFetcherSlot` into the kernel; the transport
-                # install hook below drains that slot and installs the real
-                # fetcher.  Reverse order would leave the slot empty when
-                # transport drains, falling back to "blob fetcher not installed".
-                _nk.install_federation_wiring(kernel)
-                _nk.install_transport_wiring(kernel)
-            except Exception as _wiring_exc:
-                import logging as _logging
-
-                _logging.getLogger(__name__).warning(
-                    "install_transport_wiring/install_federation_wiring failed "
-                    "(federation peer-blob fetch will fall back to Noop): %s",
-                    _wiring_exc,
-                )
-
-    if _redb_path is None:
+    if kernel is not None:
         return kernel
-    try:
-        if _redb_path.exists() or _redb_path.parent.exists():
-            kernel.set_metastore_path(str(_redb_path))
-        return kernel
-    except Exception as e:
-        # An existing on-disk store that we can't open is a hard error:
-        # silently falling back would hide previously written data.
-        if _redb_path.exists():
-            raise RuntimeError(
-                f"set_metastore_path failed for existing {_redb_path}: {e}. "
-                "Refusing to fall back to a different metadata format. "
-                "Rebuild: cd rust/kernel && maturin develop --release"
-            ) from e
-        raise
+
+    from nexus.remote.kernel_client import KernelClient
+
+    _meta = None if metadata_path == ":memory:" else metadata_path
+    client = KernelClient(metadata_path=_meta)
+    client.open()
+    return client
 
 
 # Backwards-compatible alias — pre-W3b callers imported the old name.
@@ -612,43 +552,10 @@ def connect(
         enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
 
         # Create Rust kernel early so RustMetastoreProxy can use it.
-        # Route through _rust_compat so stale binaries (missing Kernel methods)
-        # are caught here and never passed to RustMetastoreProxy (Issue #3712).
+        # Construct a KernelClient for the connect() path. Federation
+        # and transport wiring now happen inside the kernel process
+        # automatically (no install_*_wiring needed).
         _early_kernel = None
-        try:
-            from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
-            from nexus._rust_compat import PyKernel as _Kernel
-
-            if _RUST_AVAILABLE and _Kernel is not None:
-                _early_kernel = _Kernel()
-                # Skip federation wiring during pytest — xdist workers
-                # compete for the same gRPC port causing hangs and
-                # preventing clean process exit.
-                import os as _os_connect
-
-                if "pytest" not in __import__("sys").modules:
-                    try:
-                        import nexus_runtime as _nk
-
-                        # Federation wiring first so init_from_env stashes the
-                        # blob-fetcher slot before transport drains it.
-                        _nk.install_federation_wiring(_early_kernel)
-                        _nk.install_transport_wiring(_early_kernel)
-                    except Exception as _wiring_exc:
-                        import logging as _logging
-
-                        _logging.getLogger(__name__).warning(
-                            "install_transport_wiring/install_federation_wiring "
-                            "failed (federation peer-blob fetch will fall back to "
-                            "Noop): %s",
-                            _wiring_exc,
-                        )
-        except Exception as _early_kernel_exc:
-            import logging as _logging
-
-            _logging.getLogger(__name__).debug(
-                "early kernel construction failed: %s", _early_kernel_exc
-            )
 
         # Create metadata store — kernel owns federation bootstrap since
         # R20.18.5. When federation env vars are set (NEXUS_HOSTNAME /
@@ -849,9 +756,8 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
 
     Phase 3 (refactor/rust-workspace-parallel-layers): the audit hook
     moved out of the kernel crate into ``services::audit`` per the
-    parallel-layers split. The Python entry point is now a free function
-    on the ``nexus_runtime`` module — ``install_audit_hook(kernel, zone,
-    stream)`` — instead of a method on the Kernel pyclass. Service-tier
+    parallel-layers split. The hook is now installed automatically
+    inside the kernel process during nexus-cluster startup. Service-tier
     owns hook lifecycle; kernel composes the stream itself via the
     syscall surface (``sys_setattr DT_STREAM ... io_profile=wal``).
     """
@@ -862,16 +768,11 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     audit_zone = "root"
     audit_stream_path = "/__sys__/audit/traces/"
 
-    try:
-        import nexus_runtime
-
-        nexus_runtime.install_audit_hook(kernel, audit_zone, audit_stream_path)
-        logger.info("Audit hook started: zone=%s stream=%s", audit_zone, audit_stream_path)
-    except RuntimeError as e:
-        # Federation not active or zone not loaded — expected in standalone mode.
-        logger.debug("Audit hook not started (federation inactive): %s", e)
-    except Exception as e:
-        logger.warning("Failed to start audit hook: %s", e)
+    # Audit hook is now installed inside the kernel process automatically
+    # during nexus-cluster startup. No Python-side wiring needed.
+    logger.debug(
+        "Audit hook managed by kernel process: zone=%s stream=%s", audit_zone, audit_stream_path
+    )
 
 
 def _restore_mounts(nx_fs: "NexusFS") -> None:

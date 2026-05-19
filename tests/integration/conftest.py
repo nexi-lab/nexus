@@ -196,12 +196,19 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
             f"--- stderr ---\n{up_result.stderr}\n"
         )
         combined = f"{up_result.stdout}\n{up_result.stderr}"
-        # Environmental: docker registry pull needs a credential helper that is
-        # unavailable in non-interactive shells (e.g. macOS osxkeychain returns
-        # "User canceled the operation. (-128)"). The required images simply
-        # cannot be fetched here — that is a host limitation, not a product or
-        # test defect, so skip with a precise diagnosis rather than fail.
-        if "getting credentials" in combined or "Docker Compose failed to start" in combined:
+        # Environmental: a docker *registry credential helper* that is
+        # unavailable in non-interactive shells (e.g. macOS osxkeychain
+        # returns "User canceled the operation. (-128)"). Match ONLY the
+        # actual credential-helper signature — a generic "Docker Compose
+        # failed to start" must NOT be classified as a credential problem
+        # (it also covers port conflicts, image-missing, health timeouts,
+        # etc., and mislabeling them hides the real cause).
+        cred_signature = (
+            "getting credentials" in combined
+            or "User canceled the operation" in combined
+            or "docker-credential-" in combined
+        )
+        if cred_signature:
             pytest.skip(
                 "environment cannot pull required images: docker credential "
                 "helper unavailable non-interactively (pre-cache all stack "

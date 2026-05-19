@@ -45,3 +45,23 @@ def test_stat_multi_uses_stat_bulk(patched_fs, cli_runner: CliRunner):
     out = json.loads(res.output)["data"]
     assert out["/a.txt"]["size"] == rpc["/a.txt"]["size"] == 2
     assert out["/b.txt"]["size"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Task 3: nexus metadata (metadata_batch)
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_extended_parity(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import metadata_cmd
+
+    nx = patched_fs
+    nx.write("/m.txt", b"hi")
+    rpc = nx.metadata_batch(["/m.txt", "/nope.txt"])
+    res = cli_runner.invoke(metadata_cmd, ["/m.txt", "/nope.txt", "--json"])
+    assert res.exit_code == 0, res.output
+    out = json.loads(res.output)["data"]
+    assert out["/m.txt"]["size"] == rpc["/m.txt"]["size"] == 2
+    # metadata_batch carries the extended keys stat_bulk lacks:
+    assert "mime_type" in out["/m.txt"] and "created_at" in out["/m.txt"]
+    assert out["/nope.txt"] is None

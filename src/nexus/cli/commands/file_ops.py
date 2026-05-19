@@ -31,6 +31,7 @@ def register_commands(cli: click.Group) -> None:
     """
     cli.add_command(cat)
     cli.add_command(stat_cmd)
+    cli.add_command(metadata_cmd)
     cli.add_command(write)
     cli.add_command(append)
     cli.add_command(write_batch)
@@ -399,6 +400,47 @@ def stat_cmd(
                         # server-side permission probe rejects it even when
                         # PermissionConfig.enforce is False).
                         data = nx.stat_bulk(list(paths))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            render_error(e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+@click.command(name="metadata")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@add_output_options
+@add_backend_options
+@add_context_options
+def metadata_cmd(
+    paths: tuple[str, ...],
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Extended metadata for one or more paths (metadata_batch).
+
+    Unlike `nexus stat`, this includes mime_type, created_at, zone_id.
+    Missing paths map to null.
+
+    Examples:
+        nexus metadata /a.txt /b.txt --json
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.metadata_batch(list(paths))
             render_output(
                 data=data,
                 output_opts=output_opts,

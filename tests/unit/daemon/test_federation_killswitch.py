@@ -777,3 +777,132 @@ def test_non_sandbox_with_ambient_federation_env_unchanged(
         f"profile={profile!r} must NOT touch NEXUS_FEDERATION_DISABLED even "
         f"with ambient NEXUS_HOSTNAME — kill-switch is sandbox-only."
     )
+
+
+# ---------------------------------------------------------------------------
+# Review r10 (Issue #4126 HIGH): the r9 ``os.environ.setdefault`` keeps ANY
+# pre-set NEXUS_FEDERATION_DISABLED value. The Rust install() guard
+# (rust/raft/src/distributed_coordinator.rs) only treats EXACTLY "1"/"true" as
+# disabled — so a STALE inherited NEXUS_FEDERATION_DISABLED="false" (or "" /
+# any non-"0" value) would fall through setdefault, the real Raft coordinator
+# would install, and sandbox would bind 0.0.0.0:2126 — re-opening the
+# no-federation/no-:2126 invariant. r10 FORCES "1" for effective sandbox
+# UNLESS the value is EXACTLY the documented opt-out token "0". Cases (a)/(b)
+# FAIL pre-r10 (setdefault leaves "false"/"" unchanged).
+# ---------------------------------------------------------------------------
+
+
+def test_sandbox_inherited_false_value_forced_to_one(tmp_path: Path, monkeypatch) -> None:
+    """sandbox + inherited NEXUS_FEDERATION_DISABLED="false" → forced to "1".
+
+    Case (a). A stale/inherited ``"false"`` is NOT the documented opt-out
+    token (only literal ``"0"`` is). The Rust guard treats ``"false"`` as
+    NOT-disabled, so leaving it would re-enable Raft + bind :2126. r10
+    overwrites it to ``"1"``.
+
+    Pre-r10 this FAILS: ``os.environ.setdefault`` leaves the pre-set
+    ``"false"`` untouched.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.setenv("NEXUS_FEDERATION_DISABLED", "false")
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
+
+    assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1", (
+        'An inherited NEXUS_FEDERATION_DISABLED="false" is NOT the documented '
+        'opt-out token ("0") — sandbox must force it to "1" so the Rust guard '
+        "keeps NoopDistributedCoordinator."
+    )
+
+
+def test_sandbox_inherited_empty_value_forced_to_one(tmp_path: Path, monkeypatch) -> None:
+    """sandbox + inherited NEXUS_FEDERATION_DISABLED="" (empty) → forced "1".
+
+    Case (b). An inherited empty string is NOT the documented opt-out token;
+    the Rust guard treats "" as NOT-disabled. r10 overwrites it to "1".
+
+    Pre-r10 this FAILS: ``os.environ.setdefault`` treats the key as present
+    (empty string is still "set") and leaves "" untouched.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.setenv("NEXUS_FEDERATION_DISABLED", "")
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
+
+    assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1", (
+        "An inherited empty NEXUS_FEDERATION_DISABLED is NOT the documented "
+        'opt-out token ("0") — sandbox must force it to "1".'
+    )
+
+
+def test_sandbox_inherited_zero_value_preserved(tmp_path: Path, monkeypatch) -> None:
+    """sandbox + inherited NEXUS_FEDERATION_DISABLED="0" → preserved as "0".
+
+    Case (c). The SOLE supported opt-out — a literal ``"0"`` — is honored:
+    an operator deliberately re-enabling Raft in sandbox keeps that value.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.setenv("NEXUS_FEDERATION_DISABLED", "0")
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
+
+    assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "0", (
+        'A literal NEXUS_FEDERATION_DISABLED="0" is the SOLE supported sandbox '
+        "opt-out and must be preserved verbatim."
+    )
+
+
+def test_sandbox_unset_value_forced_to_one(tmp_path: Path, monkeypatch) -> None:
+    """sandbox + NEXUS_FEDERATION_DISABLED unset → "1" (unchanged from r9).
+
+    Case (d). The clean-env baseline still holds: no inherited value means
+    the kill-switch is set to "1".
+    """
+    _clean_federation_env(monkeypatch)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
+
+    assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1", (
+        'An unset NEXUS_FEDERATION_DISABLED in effective sandbox must be forced to "1".'
+    )
+
+
+@pytest.mark.parametrize("profile", _NON_SANDBOX_PROFILES)
+def test_non_sandbox_inherited_false_value_unchanged(
+    profile: str, tmp_path: Path, monkeypatch
+) -> None:
+    """Regression (case e): non-sandbox effective profile + inherited
+    NEXUS_FEDERATION_DISABLED="false" → value left EXACTLY as inherited.
+
+    The r10 force-to-"1" is scoped STRICTLY to effective sandbox; a
+    non-sandbox profile never enters the branch, so an inherited "false"
+    survives untouched (byte-identical boot path — Rust still installs the
+    real Raft coordinator exactly as before).
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.setenv("NEXUS_FEDERATION_DISABLED", "false")
+
+    result, _ = _run_daemon(profile, tmp_path, monkeypatch)
+
+    assert result.exit_code == 0, f"Unexpected exit for {profile!r}: {result.output}"
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "false", (
+        f"profile={profile!r} must NOT touch an inherited "
+        f'NEXUS_FEDERATION_DISABLED="false" — the r10 force-to-"1" is '
+        f"sandbox-only."
+    )

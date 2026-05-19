@@ -916,12 +916,20 @@ def main(
             # (SandboxBootstrapper, below) — NOT this Raft coordinator — so
             # disabling the local Raft coordinator does not affect it.
             #
-            # CONTRACT (Issue #4126 review r9, HIGH): sandbox → federation is
-            # DISABLED BY DEFAULT, UNCONDITIONALLY. The ONLY supported opt-out
-            # is an EXPLICIT operator-set ``NEXUS_FEDERATION_DISABLED`` env var
-            # (e.g. value ``0`` to re-enable zone federation in sandbox);
-            # ``os.environ.setdefault`` preserves that explicit value because
-            # it never overrides an already-present key.
+            # CONTRACT (Issue #4126 review r10, HIGH): sandbox → federation is
+            # FORCED DISABLED. The SOLE supported opt-out is a literal
+            # ``NEXUS_FEDERATION_DISABLED=0`` (operator deliberately re-enabling
+            # Raft in sandbox). ANY OTHER inherited value — empty string,
+            # ``"false"``, a stale ambient export, etc. — must NOT silently
+            # re-enable federation, so it is overwritten to ``"1"``.
+            # ``os.environ.setdefault`` is INSUFFICIENT here: it keeps any
+            # pre-set value, and the Rust ``install()`` guard
+            # (rust/raft/src/distributed_coordinator.rs) only treats exactly
+            # ``"1"`` / ``"true"`` as disabled — so ``"0"`` / ``"false"`` /
+            # ``""`` / any other inherited value would fall through and bind
+            # the Raft gRPC server on ``0.0.0.0:2126``. We therefore normalize
+            # to ``"1"`` unless the value is EXACTLY the documented ``"0"``
+            # opt-out token.
             #
             # The earlier r2/r3 exclusion (skip the kill-switch when any of
             # ``NEXUS_PEERS`` / ``NEXUS_HOSTNAME`` / ``NEXUS_BOOTSTRAP_NEW`` was
@@ -948,8 +956,18 @@ def main(
             # SandboxBootstrapper gate can never disagree (review r2); a
             # ``nexusd --config sandbox.yaml`` boot (raw ``deployment_profile``
             # still ``"auto"``) is correctly gated as sandbox.
-            if effective_profile == "sandbox":
-                os.environ.setdefault("NEXUS_FEDERATION_DISABLED", "1")
+            # Sandbox = no federation. The ONLY supported opt-out is an
+            # explicit NEXUS_FEDERATION_DISABLED=0 (re-enable Raft in sandbox
+            # deliberately). Any other inherited value (empty, "false", stale)
+            # must NOT silently re-enable federation — force "1". (Rust
+            # install() guard only treats "1"/"true" as disabled, so we
+            # normalize to "1" here.) Non-sandbox effective profiles short-
+            # circuit on the first conjunct and never touch the env var.
+            if (
+                effective_profile == "sandbox"
+                and os.environ.get("NEXUS_FEDERATION_DISABLED") != "0"
+            ):
+                os.environ["NEXUS_FEDERATION_DISABLED"] = "1"
 
             if config_path:
                 from nexus.config import load_config

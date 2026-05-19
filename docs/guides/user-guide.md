@@ -193,6 +193,161 @@ For anything beyond a one-off shell demo, prefer a config file such as
 machine-specific overrides. This is less error-prone than re-exporting a long
 set of values in every terminal.
 
+### Sandbox profile (per-agent runtime)
+
+**Goal:** start a lightweight, self-contained Nexus for a single agent
+sandbox with one command, and know exactly what it runs locally.
+
+**Why this profile:** `sandbox` runs with **no PostgreSQL, no
+Dragonfly/Redis, no Zoekt** — SQLite + in-process cache + BM25S keyword
+search. It is the per-agent runtime target: low RSS, fast boot, optional
+hub federation. Full reference: [Sandbox deployment
+profile](../deployment/sandbox-profile.md).
+
+> **Not to be confused with the sandbox-provisioning brick.** The
+> `sandbox` *deployment profile* is *how Nexus runs* (a lightweight
+> runtime). `BRICK_SANDBOX` is a *feature* — provisioning code-execution
+> sandboxes (E2B/Docker). They are orthogonal: the `sandbox` profile has
+> `BRICK_SANDBOX` **disabled** by default. A `full`/`cloud` profile can
+> provision sandboxes; a `sandbox`-profile runtime cannot.
+
+**Start it (from a source checkout or a package install):**
+
+```bash
+# One command — `nexus up` shells out to nexusd directly (no Docker).
+# --host/--port/--data-dir are passed through to nexusd and the
+# resolved connection is persisted so the follow-up workflow can find it:
+nexus up --profile sandbox --workspace ~/app \
+  --host 127.0.0.1 --port 2026 --data-dir ~/.nexus/sandbox
+
+# Equivalent direct daemon invocation:
+nexusd --profile sandbox --workspace ~/app --host 127.0.0.1 --port 2026
+```
+
+**Discover it afterwards (#4144 / #4126 — works on non-default host/port):**
+
+The sandbox daemon **always runs on an isolated data dir** — your explicit
+`--data-dir` if given, else `~/.nexus/sandbox`. It is never silently
+pointed at an existing project's `data_dir`, and it never modifies a
+project's `nexus.yaml` or clobbers/mixes its `.state.json`. How you
+discover the running sandbox depends on whether a project `nexus.yaml`
+exists in the current directory:
+
+- **No project `nexus.yaml`:** `nexus up --profile sandbox` writes a
+  minimal `nexus.yaml` *and* the runtime-state record
+  (`<isolated-data-dir>/.state.json`) so `nexus env`/`nexus status`
+  (no `--url`) discover the sandbox directly:
+
+  ```bash
+  # Connection vars resolved from persisted state (NEXUS_URL,
+  # NEXUS_GRPC_HOST, NEXUS_GRPC_PORT, NEXUS_PROFILE=sandbox,
+  # NEXUS_WORKSPACE) — the hub token is NEVER persisted:
+  eval "$(nexus env)"
+
+  # Health/status against the persisted sandbox endpoint:
+  nexus status
+  ```
+
+- **A project `nexus.yaml` already exists:** it stays authoritative for
+  your main stack — the sandbox does **not** touch it or its `.state.json`.
+  Discover the running sandbox via the purpose-built `nexus ready` command
+  and the daemon readiness file instead (it reports
+  `ready: true`, `profile: sandbox`, and the endpoint):
+
+  ```bash
+  # Default readiness file is ~/.nexus/nexusd.ready
+  nexus ready --json
+  ```
+
+**Verify what it started (RPC surface — HTTP only):**
+
+```bash
+# Wait for / check the daemon is up (exit 0 when ready):
+nexus ready --timeout 60
+# Machine-readable:
+nexus ready --json
+
+# HTTP health:
+curl -s http://127.0.0.1:2026/health
+
+# Profile + enabled/disabled bricks (public, no auth):
+curl -s http://127.0.0.1:2026/api/v2/features
+```
+
+**Expected behavior:**
+
+- **Success:** `/health` returns `200`; `/api/v2/features` reports
+  `"profile": "sandbox"` with `enabled_bricks` ⊇ `{search, mcp, parsers,
+  eventlog, namespace, permissions}` and `llm`/`pay`/`observability`/
+  `federation` **absent**.
+- **Denied (usage error, exit 64):** `--workspace`, `--hub-url`, or
+  `--hub-token` without `--profile sandbox`; `--hub-url` without
+  `--hub-token`.
+- **Unavailable by architecture:** the typed VFS gRPC `Ping`
+  (`NexusVfsService`) is bound **only by the cluster profile** (single
+  server spawn call site, `rust/profiles/cluster/src/main.rs`). The sandbox
+  profile is **HTTP-only for the VFS surface by architecture** — it never
+  binds the typed VFS gRPC server (verified: connection-refused on
+  `http_port + 2`). The sandbox profile also does **not** start Raft
+  federation: the boot path sets `NEXUS_FEDERATION_DISABLED` so the kernel
+  keeps its no-op distributed coordinator — no `ZoneManager`, no Raft gRPC
+  listener on `:2126`, no "federation bootstrap" ([#4126](https://github.com/nexi-lab/nexus/issues/4126);
+  `--hub-url` hub federation is a separate `SandboxBootstrapper` path,
+  unaffected). [#4148](https://github.com/nexi-lab/nexus/issues/4148)
+  (the issue that reported an UNAUTHENTICATED `Ping`) does not reproduce in
+  sandbox because no VFS gRPC server exists there; it is the **triage
+  issue** for this surface (close-recommended / reclassify as a cluster-only
+  feature request). Sandbox-provisioning RPCs/CLI are absent
+  (`BRICK_SANDBOX` disabled).
+
+**Correctness assertion you can run:** with the daemon up,
+`curl -s http://127.0.0.1:2026/api/v2/features | jq -r .profile` prints
+`sandbox`, and the boot succeeds with no Postgres/Redis/Zoekt process
+running. Proven in CI by `tests/integration/test_sandbox_boot_smoke.py`
+(real-subprocess boot, HTTP surface, no external services) and
+`tests/unit/cli/test_stack_sandbox.py` (flag-gating).
+
+**Performance:** boot is a **setup path** and the features endpoint is
+**control plane** — not performance-sensitive hot paths, so they are not
+regression-gated, only loosely bounded. Observed in the smoke test under
+cold CI conditions (cold Rust-kernel init + parallel test load — not a
+tuned product target): cold boot ≈ 43 s, warm boot ≈ 70 s, RSS ≈ 192 MB.
+(The "warm" figure exceeds the "cold" one here purely because of test-ordering and parallel xdist load — boot time is not a tuned target, so do not read this as a warm-vs-cold performance relationship.)
+The `docs/deployment/sandbox-profile.md` design target is the reference
+envelope; these are characterization numbers, not guarantees.
+
+**Story surface coverage** (this story; aggregated into the shared
+matrix, [#4139](https://github.com/nexi-lab/nexus/issues/4139)):
+
+| Surface | Type | Sandbox status | Test | Benchmark class |
+|---|---|---|---|---|
+| `nexus up --profile sandbox` | CLI | supported | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | setup path |
+| `--workspace` / `--hub-url` / `--hub-token` | CLI | supported (gated) | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | setup path |
+| `nexusd --profile sandbox` | CLI | supported | `tests/integration/test_sandbox_boot_smoke.py` | setup path |
+| `nexus ready` | CLI | supported | `tests/unit/cli/test_ready_cmd.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
+| HTTP `/health` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
+| HTTP `/api/v2/features` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
+| gRPC `Ping` | typed gRPC | unavailable — cluster-profile-only (`NexusVfsService`); not bound in sandbox by architecture — see #4148 | `tests/integration/test_sandbox_boot_smoke.py` (`test_sandbox_does_not_bind_typed_vfs_grpc`) | n/a |
+| `nexus status` | CLI | supported (reads persisted sandbox state, #4144) | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
+| `nexus env` / `nexus run` | CLI | supported (reads persisted sandbox state, #4144) | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
+
+**Missing-surface gate verdict:** all core boot-story surfaces exist, so
+this story is **not blocked**. The typed VFS gRPC `Ping` is unavailable in
+sandbox **by architecture** (cluster-profile-only — `NexusVfsService` is
+bound only by the cluster profile, never the sandbox path); #4148 is the
+triage issue for that surface (close-recommended / reclassify as
+cluster-only). The readiness/discovery gap — a sandbox started
+on a non-default host/port could not be found by the follow-up
+`nexus env` / `nexus status` / `nexus run` workflow — is **genuinely
+closed in this PR** ([#4144](https://github.com/nexi-lab/nexus/issues/4144)):
+`nexus up --profile sandbox` now passes `--host`/`--port`/`--data-dir`
+through to `nexusd` and persists a runtime-state record (resolved HTTP
+and gRPC ports, profile, workspace, bind host) that `nexus env`,
+`nexus run`, and `nexus status` consume. The hub token is never written
+to persistent state. `nexus ready` remains a complementary readiness
+probe (waits for `~/.nexus/nexusd.ready`, polls `/health` +
+`/api/v2/features`, exits `0` when ready). No build issue is required.
+
 ## 2.1 Capability checklist for a serious demo
 
 If you are evaluating Nexus as more than a toy filesystem, the first real

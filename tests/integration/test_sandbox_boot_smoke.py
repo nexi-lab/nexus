@@ -1,0 +1,928 @@
+"""Subprocess smoke test: `nexusd --profile sandbox` boot story (Issue #4126).
+
+Distinct from tests/integration/test_sandbox_boot.py (Issue #3778), which
+boots in-process via `nexus.connect()`. This test boots the *real daemon
+process* and exercises the readiness file, real HTTP socket, gRPC Ping,
+and process RSS — the surfaces a `nexus up --profile sandbox` operator
+actually touches. No PostgreSQL, Dragonfly/Redis, or Zoekt is started by
+this harness; the daemon must boot without them.
+
+Marked slow + integration. Serial via xdist_group (shared free-port range
+and the per-test HOME-scoped readiness file).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import grpc
+import httpx
+import pytest
+
+from nexus.cli.exit_codes import ExitCode
+from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.integration,
+    pytest.mark.xdist_group(name="sandbox_boot_smoke"),
+]
+
+BOOT_TIMEOUT_S = 90.0  # cold interpreter + Rust kernel init; generous for CI
+
+
+def _free_port() -> int:
+    """Return an OS-assigned free TCP port (best-effort; race-tolerant)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _spawn_sandbox_daemon(tmp_path: Path, port: int) -> tuple[subprocess.Popen[bytes], Path, Path]:
+    """Spawn `nexusd --profile sandbox` with an isolated HOME + data dir.
+
+    Returns (process, ready_file_path, log_file_path). The HOME override
+    scopes `~/.nexus/nexusd.ready` per-test (parallel-safe).
+    """
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    data_dir = tmp_path / "data"
+    for d in (home, workspace, data_dir, home / ".nexus"):
+        d.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env.pop("NEXUS_PROFILE", None)
+    env.pop("NEXUS_HOSTNAME", None)  # ensure no federation/Raft trigger
+    env.pop("NEXUS_HUB_URL", None)
+    env.pop("NEXUS_HUB_TOKEN", None)
+
+    log_path = tmp_path / "nexusd.log"
+    log_fh = log_path.open("wb")
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "nexus.daemon.main",
+            "--profile",
+            "sandbox",
+            "--workspace",
+            str(workspace),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--data-dir",
+            str(data_dir),
+        ],
+        env=env,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+    )
+    ready_file = home / ".nexus" / "nexusd.ready"
+    return proc, ready_file, log_path
+
+
+def _wait_ready(proc: subprocess.Popen[bytes], ready_file: Path, log_path: Path) -> tuple[str, int]:
+    """Poll the readiness file until it appears; return (host, port)."""
+    deadline = time.monotonic() + BOOT_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            log = log_path.read_text(errors="replace")
+            # #4146: a fresh env without the built Rust extension errors
+            # with ModuleNotFoundError. Skip cleanly instead of ERRORing.
+            if "No module named 'nexus_runtime'" in log:
+                pytest.skip(
+                    "nexus_runtime extension not built — see #4146; build via maturin then re-run"
+                )
+            raise AssertionError(f"nexusd exited early (code {proc.returncode}). Log:\n{log}")
+        if ready_file.exists():
+            # Post-r4 the readiness file is tokenized: line 1 is
+            # ``host:port`` (unchanged wire format), line 2 is ``pid=<pid>``
+            # (ownership token, Issue #4126 review r4 Finding A). Parse only
+            # the first non-empty line so this helper matches ``nexus
+            # ready``'s ``_parse_endpoint`` back-compat behavior.
+            first_line = next(
+                (ln for ln in ready_file.read_text().splitlines() if ln.strip()),
+                "",
+            ).strip()
+            host, _, port_s = first_line.partition(":")
+            return host, int(port_s)
+        time.sleep(0.25)
+    log = log_path.read_text(errors="replace")
+    raise AssertionError(f"nexusd not ready within {BOOT_TIMEOUT_S}s. Log:\n{log}")
+
+
+@pytest.fixture()
+def sandbox_daemon(tmp_path: Path):
+    """Boot a sandbox daemon for the test module; tear it down after."""
+    port = _free_port()
+    proc, ready_file, log_path = _spawn_sandbox_daemon(tmp_path, port)
+    try:
+        host, ready_port = _wait_ready(proc, ready_file, log_path)
+        yield {
+            "proc": proc,
+            "host": host,
+            "http_port": ready_port,
+            "grpc_port": ready_port + 2,
+            "log_path": log_path,
+            # Additive (#4126 Task 8b): the daemon's isolated readiness file
+            # so subprocess CLI tests can point `--readiness-file` at it
+            # (they inherit the test runner's HOME, not the daemon's).
+            "ready_file": ready_file,
+        }
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+
+
+def test_sandbox_daemon_boots_and_writes_readiness(sandbox_daemon) -> None:
+    """The daemon process boots with no external services and is ready."""
+    proc = sandbox_daemon["proc"]
+    assert proc.poll() is None, "daemon should still be running after readiness"
+    assert sandbox_daemon["host"] == "127.0.0.1"
+    assert sandbox_daemon["http_port"] > 0
+
+    log = Path(sandbox_daemon["log_path"]).read_text(errors="replace").lower()
+    # The harness starts NO Postgres/Dragonfly/Redis/Zoekt. The sandbox
+    # profile must not even attempt them: a forbidden service name must
+    # not co-occur with any connection-failure marker in the boot log.
+    failure_markers = (
+        "connection refused",
+        "could not connect",
+        "connectionrefusederror",
+        "connection error",
+        "timed out",
+    )
+    for forbidden in ("postgres", "dragonfly", "zoekt", "redis"):
+        if forbidden in log:
+            offending = [m for m in failure_markers if m in log]
+            assert not offending, (
+                f"sandbox appears to have attempted '{forbidden}' "
+                f"(failure markers {offending} present); log:\n{log}"
+            )
+
+
+def test_sandbox_uses_no_external_service_drivers(sandbox_daemon) -> None:
+    """Positive contract: sandbox runs with zero external-service drivers.
+
+    Strengthens the log-heuristic in
+    ``test_sandbox_daemon_boots_and_writes_readiness`` (kept as
+    defense-in-depth) into two positive assertions:
+
+    1. ``/api/v2/features`` reports ``profile == "sandbox"`` and the enabled
+       brick set excludes every external-service-implying brick
+       (``pay``/``llm``/``observability``/``federation``), proving no
+       postgres/dragonfly/zoekt-backed brick is active.
+    2. Process-level: the daemon process (and any children) holds zero
+       ESTABLISHED/SYN_SENT TCP connections to the default external-service
+       remote ports — PostgreSQL 5432, Redis/Dragonfly 6379, Zoekt 6070.
+
+    The connection check only flags ESTABLISHED/SYN_SENT to those *remote*
+    ports, so localhost HTTP / the daemon's own listen sockets never
+    trip it (no flakiness). ``psutil`` is optional: if absent only the
+    process-level sub-check is skipped, not the whole test.
+    """
+    base = f"http://{sandbox_daemon['host']}:{sandbox_daemon['http_port']}"
+    with httpx.Client(base_url=base, timeout=10.0) as client:
+        r = _http_get_with_retry(client, "/api/v2/features")
+        assert r.status_code == 200, r.text
+        body = r.json()
+
+    assert body["profile"] == "sandbox", body
+    enabled = set(body["enabled_bricks"])
+    # No external-service-implying brick is enabled in sandbox: pay/llm/
+    # observability/federation each pull a postgres/dragonfly/zoekt-class
+    # dependency in non-sandbox profiles.
+    for forbidden in ("pay", "llm", "observability", "federation"):
+        assert forbidden not in enabled, (
+            f"sandbox must not enable external-service brick '{forbidden}'; "
+            f"enabled={sorted(enabled)}"
+        )
+
+    # Process-level positive proof: no live connection to default external
+    # service ports. Optional dependency — skip only this sub-check.
+    psutil = pytest.importorskip("psutil")
+
+    external_remote_ports = {5432, 6379, 6070}
+    live_states = {psutil.CONN_ESTABLISHED, psutil.CONN_SYN_SENT}
+
+    proc = psutil.Process(sandbox_daemon["proc"].pid)
+    procs = [proc]
+    with contextlib.suppress(psutil.Error):
+        procs.extend(proc.children(recursive=True))
+
+    offending = []
+    for p in procs:
+        try:
+            conns = p.net_connections(kind="tcp")
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            continue
+        for c in conns:
+            if c.status in live_states and c.raddr and c.raddr.port in external_remote_ports:
+                offending.append((p.pid, c.status, c.raddr.ip, c.raddr.port))
+
+    assert not offending, (
+        f"sandbox daemon holds live TCP connections to external-service "
+        f"ports {sorted(external_remote_ports)}: {offending}"
+    )
+
+
+def _http_get_with_retry(client, path, *, attempts=40, delay=0.5):
+    """GET `path`, retrying transient connection errors.
+
+    The daemon writes its readiness file before the HTTP socket is
+    actually listening (src/nexus/daemon/main.py:514 precedes :520), so
+    the first requests after readiness may be refused. Retry for a
+    bounded window before giving up.
+    """
+    import time as _t
+
+    last_exc = None
+    for _ in range(attempts):
+        try:
+            return client.get(path)
+        except httpx.TransportError as exc:  # connect refused / reset
+            last_exc = exc
+            _t.sleep(delay)
+    raise AssertionError(f"GET {path} never succeeded after {attempts} attempts: {last_exc!r}")
+
+
+def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
+    """`/health` 200 and `/api/v2/features` reports profile=sandbox.
+
+    Real TCP socket (not ASGI in-process) — this is the value-add over
+    tests/integration/test_sandbox_boot.py.
+    """
+    base = f"http://{sandbox_daemon['host']}:{sandbox_daemon['http_port']}"
+    with httpx.Client(base_url=base, timeout=10.0) as client:
+        r = _http_get_with_retry(client, "/health")
+        assert r.status_code == 200, r.text
+
+        r = _http_get_with_retry(client, "/api/v2/features")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["profile"] == "sandbox", body
+
+        enabled = set(body["enabled_bricks"])
+        expected_subset = {
+            "search",
+            "mcp",
+            "parsers",
+            "eventlog",
+            "namespace",
+            "permissions",
+        }
+        assert expected_subset.issubset(enabled), (
+            f"sandbox missing bricks {expected_subset - enabled}; enabled={sorted(enabled)}"
+        )
+        for forbidden in ("llm", "pay", "observability", "federation"):
+            assert forbidden not in enabled, (
+                f"sandbox must not enable '{forbidden}'; enabled={sorted(enabled)}"
+            )
+
+
+def test_sandbox_does_not_bind_typed_vfs_grpc(sandbox_daemon) -> None:
+    """Sandbox does NOT bind the typed VFS gRPC server (root-caused #4126).
+
+    ROOT CAUSE (verified, definitive — encoded here as a contract):
+    The typed VFS gRPC service ``NexusVfsService`` (serving Ping/Read/Write,
+    defined in ``rust/transport/src/grpc.rs``) has exactly ONE server spawn
+    call site in the whole repo — ``rust/profiles/cluster/src/main.rs:422``,
+    the *cluster* profile binary. No call site exists in the sandbox path
+    (``rust/``, ``src/nexus/``). The only Python gRPC server is the
+    env-gated approvals brick (``src/nexus/server/lifespan/approvals.py``),
+    which is not in the sandbox profile and has no ``Ping``. What the
+    sandbox profile *does* start is the Raft/federation gRPC on the fixed
+    port :2126 (``rust/raft/src/transport/server.rs``) — a different
+    surface, not VFS ``Ping``, and not at ``http_port + 2``.
+
+    Therefore the typed VFS gRPC ``Ping`` is **unavailable in sandbox by
+    architecture (cluster-profile-only)** — empirically reproduced as
+    connection-refused on ``http_port + 2`` for the daemon's lifetime while
+    the daemon is otherwise healthy. #4148's "no-auth VFS Ping returns
+    UNAUTHENTICATED" does NOT reproduce in sandbox because no VFS gRPC
+    server exists there to return anything.
+
+    This test PASSES while the contract holds and would FAIL if a future
+    change made sandbox bind the typed VFS gRPC server — exactly the
+    regression signal we want.
+    """
+    target = f"{sandbox_daemon['host']}:{sandbox_daemon['grpc_port']}"
+    channel = grpc.insecure_channel(target)
+    try:
+        # The VFS gRPC server is cluster-profile-only, so the channel must
+        # never become ready within a generous-but-bounded window.
+        with pytest.raises(grpc.FutureTimeoutError):
+            grpc.channel_ready_future(channel).result(timeout=8)
+
+        # And an actual Ping attempt must fail with an unavailable/
+        # connection error (no server bound to answer it in sandbox).
+        stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
+        with pytest.raises(grpc.RpcError) as excinfo:
+            stub.Ping(vfs_pb2.PingRequest(auth_token=""), timeout=5)
+        assert excinfo.value.code() in (
+            grpc.StatusCode.UNAVAILABLE,
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+        ), (
+            f"expected UNAVAILABLE/DEADLINE_EXCEEDED (no VFS gRPC server in "
+            f"sandbox), got {excinfo.value.code()}: {excinfo.value}"
+        )
+    finally:
+        channel.close()
+
+
+def test_sandbox_does_not_bootstrap_federation_or_raft(sandbox_daemon) -> None:
+    """Sandbox must NOT bootstrap Raft federation (Issue #4126 — the fix).
+
+    ROOT CAUSE: ``rust/raft/src/distributed_coordinator.rs::install()`` —
+    the single per-process chokepoint, called from the cdylib boot path —
+    unconditionally built the real ``RaftDistributedCoordinator``, set it on
+    the kernel, and ran ``init_from_env``. ``init_from_env`` derives a
+    hostname from ``NEXUS_HOSTNAME`` *or the system ``hostname`` fallback*,
+    then binds a Raft gRPC server on ``0.0.0.0:2126`` and logs "federation
+    bootstrap complete" — even with ``NEXUS_HOSTNAME`` unset (the
+    ``_spawn_sandbox_daemon`` fixture explicitly unsets it). That violates
+    the sandbox profile contract (lightweight / no federation / no external
+    services).
+
+    THE FIX: the sandbox daemon boot path sets ``NEXUS_FEDERATION_DISABLED=1``
+    before ``nexus.connect(...)``, and ``install()`` early-returns on that
+    var, keeping the kernel's default ``NoopDistributedCoordinator``. So no
+    ZoneManager, no Raft gRPC :2126, no federation bootstrap — while the
+    daemon is otherwise fully healthy.
+
+    PRE-FIX this test FAILS (the boot log contained these markers).
+    POST-FIX it PASSES. Deterministic: pure log-substring assertions, plus
+    a positive health check that sandbox still works without federation.
+    """
+    log = Path(sandbox_daemon["log_path"]).read_text(errors="replace")
+
+    forbidden_markers = (
+        "federation bootstrap complete",
+        "Starting Raft gRPC server",
+        "ZoneManager node",
+        ":2126",
+    )
+    present = [m for m in forbidden_markers if m in log]
+    assert not present, (
+        f"sandbox bootstrapped Raft/federation (markers {present} present in "
+        f"boot log) — the #4126 kill-switch did not take effect. Log:\n{log}"
+    )
+
+    # Positive: sandbox boots fully WITHOUT federation. Process alive and
+    # /health 200 (readiness already gated by the fixture).
+    assert sandbox_daemon["proc"].poll() is None, (
+        "daemon must remain healthy after booting without federation"
+    )
+    base = f"http://{sandbox_daemon['host']}:{sandbox_daemon['http_port']}"
+    with httpx.Client(base_url=base, timeout=10.0) as client:
+        r = _http_get_with_retry(client, "/health")
+        assert r.status_code == 200, r.text
+
+
+RSS_CEILING_MB = 800  # loose gross-regression guard, not a tuned baseline
+# Boot-to-readiness varies widely across cold Rust-kernel init and CI
+# load (empirically ~7-105s in this suite). This ceiling only guards
+# against gross regressions of a setup path; it is intentionally loose.
+WARM_BOOT_CEILING_S = 150.0
+
+
+def _spawn_and_time(tmp_path: Path) -> tuple[float, float | None, object]:
+    """Spawn a sandbox daemon, time boot-to-readiness, sample RSS.
+
+    Returns (boot_seconds, rss_mb_or_None, proc). Caller must terminate
+    the returned process.
+    """
+    psutil = pytest.importorskip("psutil")
+    port = _free_port()
+    t0 = time.monotonic()
+    proc, ready_file, log_path = _spawn_sandbox_daemon(tmp_path, port)
+    _wait_ready(proc, ready_file, log_path)
+    boot_s = time.monotonic() - t0
+    try:
+        rss_mb = psutil.Process(proc.pid).memory_info().rss / (1024 * 1024)
+    except Exception:
+        rss_mb = None
+    return boot_s, rss_mb, proc
+
+
+def _terminate(proc) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=10)
+
+
+@contextlib.contextmanager
+def _timed_daemon(path: Path):
+    """Spawn+time a sandbox daemon, guaranteeing teardown.
+
+    Yields (boot_seconds, rss_mb_or_None). The daemon process is always
+    terminated on exit, including if the body or spawn raises.
+    """
+    boot_s, rss_mb, proc = _spawn_and_time(path)
+    try:
+        yield boot_s, rss_mb
+    finally:
+        _terminate(proc)
+
+
+def test_sandbox_boot_time_and_rss_within_loose_bounds(tmp_path: Path, record_property) -> None:
+    """Measure cold + warm boot time and RSS; assert loose ceilings only.
+
+    Boot is a setup path and RSS a resource budget — neither is a hot
+    path. These bounds guard against gross regressions; the observed
+    numbers are surfaced via record_property + stdout for the user guide.
+
+    Here "boot" means time-to-readiness-file, which is written before the
+    HTTP socket binds, so it deliberately undercounts full request-ready
+    time — acceptable for a loose setup-path gross-regression guard.
+    """
+    pytest.importorskip("psutil")
+
+    with _timed_daemon(tmp_path / "cold") as (cold_boot_s, rss_mb):
+        pass
+
+    with _timed_daemon(tmp_path / "warm") as (warm_boot_s, _):
+        pass
+
+    record_property("sandbox_cold_boot_s", round(cold_boot_s, 2))
+    record_property("sandbox_warm_boot_s", round(warm_boot_s, 2))
+    if rss_mb is not None:
+        record_property("sandbox_rss_mb", round(rss_mb, 1))
+    print(
+        f"\n[#4126] cold_boot={cold_boot_s:.2f}s "
+        f"warm_boot={warm_boot_s:.2f}s "
+        f"rss={'n/a' if rss_mb is None else f'{rss_mb:.1f}MB'}"
+    )
+
+    assert warm_boot_s < WARM_BOOT_CEILING_S, (
+        f"warm boot {warm_boot_s:.2f}s exceeds loose {WARM_BOOT_CEILING_S}s "
+        f"gross-regression ceiling"
+    )
+    if rss_mb is not None:
+        assert rss_mb < RSS_CEILING_MB, (
+            f"RSS {rss_mb:.1f}MB exceeds loose {RSS_CEILING_MB}MB ceiling"
+        )
+
+
+def test_sandbox_flag_without_profile_is_rejected_by_daemon() -> None:
+    """`--workspace` without `--profile sandbox` is a usage error.
+
+    Parity with tests/unit/cli/test_stack_sandbox.py, asserted against
+    the real daemon process (end-to-end gating, not just Click). This also
+    pins the `__main__` guard in `src/nexus/daemon/main.py` — without it
+    `python -m nexus.daemon.main` exits 0 and this test fails, surfacing
+    the regression.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nexus.daemon.main",
+            "--workspace",
+            "/tmp/should-not-be-allowed",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == ExitCode.USAGE_ERROR, (
+        f"daemon must reject --workspace without --profile sandbox with "
+        f"USAGE_ERROR; got returncode={proc.returncode} "
+        f"stdout={proc.stdout} stderr={proc.stderr}"
+    )
+    combined = (proc.stdout + proc.stderr).lower()
+    assert "sandbox" in combined, (
+        f"error should mention sandbox profile requirement; "
+        f"stdout={proc.stdout} stderr={proc.stderr}"
+    )
+
+
+def test_nexus_ready_reports_sandbox_daemon_ready(sandbox_daemon) -> None:
+    """`nexus ready` reports the booted sandbox daemon as ready (real e2e).
+
+    Invoked via `python -m nexus.cli` (the package exposes
+    `src/nexus/cli/__main__.py`), mirroring how this module already runs
+    the daemon as `python -m nexus.daemon.main`. This is robust under
+    `uv run pytest` without relying on a console-script being on PATH.
+
+    `--readiness-file` is pointed at the fixture's isolated readiness file:
+    this subprocess inherits the test runner's HOME, NOT the daemon's
+    per-test isolated HOME, so the default `~/.nexus/nexusd.ready` would be
+    wrong here.
+    """
+    import json as _json
+
+    ready_file = sandbox_daemon["ready_file"]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nexus.cli",
+            "ready",
+            "--readiness-file",
+            str(ready_file),
+            "--json",
+            "--timeout",
+            "30",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, (
+        f"nexus ready should exit 0; rc={result.returncode} "
+        f"stdout={result.stdout} stderr={result.stderr}"
+    )
+    payload = _json.loads(result.stdout)
+    data = payload.get("data", payload)
+    assert data["ready"] is True, data
+    assert data["profile"] == "sandbox", data
+    assert data["endpoint"] == (f"{sandbox_daemon['host']}:{sandbox_daemon['http_port']}"), data
+
+
+def test_sandbox_up_state_is_consumed_by_status(sandbox_daemon, tmp_path: Path) -> None:
+    """#4144 (strengthened, #4126 review r1): the artifacts the REAL
+    ``nexus up --profile sandbox`` producer writes are discovered by the
+    REAL ``nexus env`` / ``nexus status`` consumers with NO ``--url``.
+
+    Genuine ``nexus up --profile sandbox`` blocks on the foreground
+    daemon, so we cannot run it directly. Instead this test:
+
+      1. PRODUCER (real, not hand-rolled): calls
+         ``stack.persist_sandbox_runtime_artifacts`` — the exact helper the
+         ``nexus up --profile sandbox`` branch calls — with the booted
+         daemon's host/port, run with ``cwd`` = an isolated project dir so
+         it writes a production-shaped ``.state.json`` (via
+         ``save_runtime_state``: adds ``version``/``started_at``) AND a
+         minimal ``nexus.yaml`` (via ``save_project_config``) into the
+         discovery location, exactly as production does.
+      2. CONSUMER (real, no ``--url``): from that same project dir runs
+         ``python -m nexus.cli env`` and ``python -m nexus.cli status
+         --json``. Neither is passed ``--url``/``NEXUS_URL`` — resolution
+         must flow through ``load_project_config()`` →
+         ``load_runtime_state(cfg.data_dir)`` →
+         ``resolve_connection_env()`` INTERNALLY, proving the persisted
+         artifacts alone are sufficient for end-to-end discovery.
+
+    No mocking: the fixture daemon is a real healthy sandbox bound on
+    ``127.0.0.1:http_port``, so ``status`` reaches it deterministically and
+    fast over the real socket (bounded subprocess timeouts).
+    """
+    import json as _json
+
+    from nexus.cli.commands import stack
+
+    host = sandbox_daemon["host"]
+    http_port = sandbox_daemon["http_port"]
+    grpc_port = sandbox_daemon["grpc_port"]
+
+    project_dir = tmp_path / "consume-project"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = project_dir / "consume-data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    workspace = str(project_dir / "consume-ws")
+
+    # (1) PRODUCER — run the ACTUAL up-path writer from the project dir so
+    # the minimal nexus.yaml lands where the consumers will discover it
+    # (CONFIG_SEARCH_PATHS = ./nexus.yaml, CWD-relative).
+    cwd_before = os.getcwd()
+    os.chdir(project_dir)
+    try:
+        # Issue #4126 review r6, Finding A: the producer now also returns
+        # ``state_written`` + ``yaml_written`` (the EXACT bytes this launch
+        # wrote) so the ownership-aware rollback only ever touches a file
+        # that STILL holds our content. The consumers below only need the
+        # effective data dir / state paths / yaml path.
+        (
+            effective_dd,
+            state_paths,
+            yaml_path,
+            _snaps,
+            _written,
+            _yaml_written,
+        ) = stack.persist_sandbox_runtime_artifacts(
+            workspace=workspace,
+            http_port=http_port,
+            port_explicit=True,  # explicit port → grpc = http + 2 (= grpc_port)
+            host=host,
+            explicit_data_dir=str(data_dir),
+            sandbox_default_data_dir=str(data_dir),
+            hub_url=None,
+        )
+    finally:
+        os.chdir(cwd_before)
+
+    # No pre-existing config in this isolated dir → single state write at the
+    # explicit data_dir and a minimal nexus.yaml created.
+    assert effective_dd == str(data_dir.resolve())
+    assert len(state_paths) == 1, state_paths
+    state_path = state_paths[0]
+
+    # Production-shaped artifacts exist (state has version/started_at
+    # injected by save_runtime_state; yaml created since none pre-existed).
+    assert state_path.exists(), state_path
+    persisted = _json.loads(state_path.read_text())
+    assert persisted["profile"] == "sandbox"
+    assert persisted["ports"] == {"http": http_port, "grpc": grpc_port}
+    assert persisted["grpc_host"] == host
+    assert "version" in persisted and "started_at" in persisted
+    assert "hub_token" not in persisted  # secrets policy
+    assert yaml_path is not None and yaml_path.exists(), yaml_path
+
+    common = {"capture_output": True, "text": True, "cwd": str(project_dir)}
+    # Ensure no ambient NEXUS_URL leaks resolution past the persisted state.
+    child_env = {k: v for k, v in os.environ.items() if k != "NEXUS_URL"}
+
+    # (2a) CONSUMER `nexus env --json` — NO --url. Resolution is internal
+    # (load_project_config + load_runtime_state + resolve_connection_env).
+    # JSON form parsed so shell-quoting of the export format does not make
+    # the assertion brittle.
+    env_res = subprocess.run(
+        [sys.executable, "-m", "nexus.cli", "env", "--json"],
+        timeout=60,
+        env=child_env,
+        **common,
+    )
+    assert env_res.returncode == 0, (
+        f"nexus env should exit 0; rc={env_res.returncode} "
+        f"stdout={env_res.stdout} stderr={env_res.stderr}"
+    )
+    env_payload = _json.loads(env_res.stdout)
+    env_vars = env_payload.get("data", env_payload)
+    # NEXUS_GRPC_HOST is "host:port" (see resolve_connection_env); host is
+    # 127.0.0.1 here so normalize_connect_host passes it through unchanged.
+    assert env_vars["NEXUS_URL"] == f"http://{host}:{http_port}", env_vars
+    assert env_vars["NEXUS_GRPC_HOST"] == f"{host}:{grpc_port}", env_vars
+    assert env_vars["NEXUS_GRPC_PORT"] == str(grpc_port), env_vars
+    assert env_vars["NEXUS_PROFILE"] == "sandbox", env_vars
+    assert env_vars["NEXUS_WORKSPACE"] == workspace, env_vars
+
+    # (2b) CONSUMER `nexus status --json` — NO --url. Must resolve the
+    # sandbox endpoint from the persisted state and reach the real daemon.
+    status_res = subprocess.run(
+        [sys.executable, "-m", "nexus.cli", "status", "--json"],
+        timeout=60,
+        env=child_env,
+        **common,
+    )
+    assert status_res.returncode == 0, (
+        f"nexus status should exit 0; rc={status_res.returncode} "
+        f"stdout={status_res.stdout} stderr={status_res.stderr}"
+    )
+    status_payload = _json.loads(status_res.stdout)
+    status_data = status_payload.get("data", status_payload)
+    assert status_data["server_reachable"] is True, status_data
+    assert status_data["server_url"] == f"http://{host}:{http_port}", status_data
+
+
+def test_sandbox_up_with_preexisting_project_config_is_isolated(
+    sandbox_daemon, tmp_path: Path
+) -> None:
+    """Issue #4126 review r3, Finding B (REDESIGN): when a project
+    ``nexus.yaml`` ALREADY exists, the sandbox producer must NOT touch the
+    project's ``nexus.yaml`` or its ``.state.json`` (the r2 design clobbered
+    + unlink()'d the project's existing full/Docker state and mixed sandbox
+    files into the project's stack dir). Instead:
+
+      * the project ``nexus.yaml`` AND its pre-existing ``.state.json`` are
+        BYTE-UNCHANGED,
+      * the sandbox daemon's runtime state lives ONLY in the ISOLATED
+        sandbox data dir,
+      * the operator discovers the running sandbox via the purpose-built
+        ``nexus ready`` command + the daemon readiness file — NOT by
+        hijacking the project's ``env``/``status`` resolution.
+
+    Uses the real fixture daemon (already booted + readiness file written)
+    and the REAL ``persist_sandbox_runtime_artifacts`` producer.
+    """
+    import json as _json
+
+    from nexus.cli.commands import stack
+
+    host = sandbox_daemon["host"]
+    http_port = sandbox_daemon["http_port"]
+    ready_file = sandbox_daemon["ready_file"]
+
+    project_dir = tmp_path / "existing-project"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    proj_data = project_dir / "proj-data"
+    proj_data.mkdir(parents=True, exist_ok=True)
+    isolated = tmp_path / "isolated-sandbox"  # explicit, isolated data dir
+    workspace = str(project_dir / "ws")
+
+    # Pre-existing project config + a full/Docker-shaped .state.json.
+    project_yaml = project_dir / "nexus.yaml"
+    project_yaml_text = "project_name: real-stack\ndata_dir: ./proj-data\n"
+    project_yaml.write_text(project_yaml_text)
+    project_state = proj_data / ".state.json"
+    project_state_text = _json.dumps(
+        {
+            "profile": "full",
+            "ports": {"http": 8080, "grpc": 8082},
+            "image": "ghcr.io/nexi/nexus:latest",
+            "api_key": "sentinel-do-not-touch",
+            "version": 1,
+        },
+        indent=2,
+    )
+    project_state.write_text(project_state_text)
+
+    cwd_before = os.getcwd()
+    os.chdir(project_dir)
+    try:
+        # Issue #4126 review r6, Finding A: the producer now also returns
+        # ``state_written`` + ``yaml_written`` (the EXACT bytes this launch
+        # wrote) so the ownership-aware rollback only ever touches a file
+        # that STILL holds our content. The consumers below only need the
+        # effective data dir / state paths / yaml path.
+        (
+            effective_dd,
+            state_paths,
+            yaml_path,
+            _snaps,
+            _written,
+            _yaml_written,
+        ) = stack.persist_sandbox_runtime_artifacts(
+            workspace=workspace,
+            http_port=http_port,
+            port_explicit=True,
+            host=host,
+            explicit_data_dir=str(isolated),
+            sandbox_default_data_dir=str(isolated),
+            hub_url=None,
+        )
+    finally:
+        os.chdir(cwd_before)
+
+    # The sandbox daemon runs on the ISOLATED dir; exactly one state write,
+    # there; the project's nexus.yaml is never (re)written.
+    assert effective_dd == str(isolated.resolve())
+    assert len(state_paths) == 1, state_paths
+    assert state_paths[0] == isolated.resolve() / ".state.json"
+    assert yaml_path is None, "must not create/rewrite a project nexus.yaml"
+
+    # Project config AND its pre-existing .state.json are BYTE-identical.
+    assert project_yaml.read_text() == project_yaml_text
+    assert project_state.read_text() == project_state_text, (
+        "the project's pre-existing full/Docker .state.json was clobbered/mixed"
+    )
+
+    # Sandbox state is ONLY in the isolated dir, with sandbox profile.
+    sandbox_state = _json.loads((isolated / ".state.json").read_text())
+    assert sandbox_state["profile"] == "sandbox"
+    assert sandbox_state["ports"]["http"] == http_port
+
+    # Discovery for the operator is via `nexus ready` + the readiness file
+    # (NOT the project's env/status resolution). The fixture daemon already
+    # booted and wrote its isolated readiness file.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nexus.cli",
+            "ready",
+            "--readiness-file",
+            str(ready_file),
+            "--json",
+            "--timeout",
+            "30",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, (
+        f"nexus ready should exit 0; rc={result.returncode} "
+        f"stdout={result.stdout} stderr={result.stderr}"
+    )
+    payload = _json.loads(result.stdout)
+    data = payload.get("data", payload)
+    assert data["ready"] is True, data
+    assert data["profile"] == "sandbox", data
+    assert data["endpoint"] == f"{host}:{http_port}", data
+
+
+def _spawn_under_shared_home(
+    home: Path, tmp_path: Path, tag: str, port: int
+) -> tuple[subprocess.Popen[bytes], Path, Path, Path]:
+    """Spawn a sandbox daemon under an EXPLICIT shared *home* + isolated
+    data dir. Returns (proc, legacy_ready, scoped_ready, log_path)."""
+    workspace = tmp_path / f"ws-{tag}"
+    data_dir = tmp_path / f"data-{tag}"
+    for d in (home, workspace, data_dir, home / ".nexus"):
+        d.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    for v in ("NEXUS_PROFILE", "NEXUS_HOSTNAME", "NEXUS_HUB_URL", "NEXUS_HUB_TOKEN"):
+        env.pop(v, None)
+
+    log_path = tmp_path / f"nexusd-{tag}.log"
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "nexus.daemon.main",
+            "--profile",
+            "sandbox",
+            "--workspace",
+            str(workspace),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--data-dir",
+            str(data_dir),
+        ],
+        env=env,
+        stdout=log_path.open("wb"),
+        stderr=subprocess.STDOUT,
+    )
+    return proc, home / ".nexus" / "nexusd.ready", data_dir / ".nexusd.ready", log_path
+
+
+def test_two_sandboxes_same_home_readiness_no_cross_clobber(tmp_path: Path) -> None:
+    """Issue #4126 review r4, Finding A: two sandbox daemons under the SAME
+    HOME with distinct data dirs/ports both become ready, each has a
+    deterministic data-dir-scoped readiness record, and when one exits its
+    ownership-checked unlink does NOT remove the other's readiness (legacy
+    OR scoped) — so ``nexus ready`` keeps resolving the survivor."""
+    shared_home = tmp_path / "shared-home"
+    port_a, port_b = _free_port(), _free_port()
+    while port_b == port_a:
+        port_b = _free_port()
+
+    proc_a, legacy_a, scoped_a, log_a = _spawn_under_shared_home(shared_home, tmp_path, "a", port_a)
+    proc_b, legacy_b, scoped_b, log_b = _spawn_under_shared_home(shared_home, tmp_path, "b", port_b)
+    assert legacy_a == legacy_b, "both daemons share the legacy global path"
+    assert scoped_a != scoped_b, "scoped readiness paths must be distinct"
+
+    try:
+        # Wait for BOTH daemons' scoped readiness files (skip cleanly if the
+        # Rust extension isn't built, matching _wait_ready's #4146 contract).
+        deadline = time.monotonic() + BOOT_TIMEOUT_S
+        for proc, scoped, log_path in (
+            (proc_a, scoped_a, log_a),
+            (proc_b, scoped_b, log_b),
+        ):
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:
+                    log = log_path.read_text(errors="replace")
+                    if "No module named 'nexus_runtime'" in log:
+                        pytest.skip("nexus_runtime extension not built — see #4146")
+                    raise AssertionError(
+                        f"daemon exited early (code {proc.returncode}). Log:\n{log}"
+                    )
+                if scoped.exists() and scoped.read_text().strip():
+                    break
+                time.sleep(0.25)
+            else:
+                raise AssertionError(f"scoped readiness {scoped} not written within budget")
+
+        # Each scoped file resolves to ITS daemon's port (deterministic).
+        def _endpoint_port(p: Path) -> int:
+            first = next((ln for ln in p.read_text().splitlines() if ln.strip()), "").strip()
+            return int(first.rpartition(":")[2])
+
+        assert _endpoint_port(scoped_a) == port_a
+        assert _endpoint_port(scoped_b) == port_b
+        assert legacy_a.exists(), "a legacy readiness record must exist"
+
+        # Terminate daemon A; its finally{} runs ownership-checked unlink.
+        proc_a.terminate()
+        proc_a.wait(timeout=30)
+
+        # B is still alive: its scoped readiness MUST survive, and the legacy
+        # global file (whichever daemon wrote it last) must NOT have been
+        # clobbered by A's exit if it no longer holds A's token.
+        assert proc_b.poll() is None, "daemon B should still be running"
+        assert scoped_b.exists(), "B's scoped readiness must survive A exit"
+        assert _endpoint_port(scoped_b) == port_b
+        assert legacy_b.exists(), (
+            "legacy readiness clobbered: A's exit removed a file it no "
+            "longer owned (cross-sandbox clobber regression)"
+        )
+    finally:
+        for proc in (proc_a, proc_b):
+            with contextlib.suppress(Exception):
+                proc.terminate()
+                proc.wait(timeout=15)
+            if proc.poll() is None:
+                with contextlib.suppress(Exception):
+                    proc.kill()
+                    proc.wait(timeout=10)

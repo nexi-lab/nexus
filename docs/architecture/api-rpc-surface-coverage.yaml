@@ -1544,12 +1544,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
-  perf_class: setup
+  usage_example: null
+  correctness_test: null
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: auth.exchange
   module: auth
   summary: ''
@@ -1578,12 +1578,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
-  perf_class: setup
+  usage_example: null
+  correctness_test: null
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: auth.keys
   module: auth
   summary: ''
@@ -2635,12 +2635,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/daemon/test_full_profile_daemon.py
-  perf_class: setup
+  usage_example: null
+  correctness_test: null
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: daemon.enroll
   module: daemon
   summary: ''
@@ -3632,7 +3632,8 @@ operations:
   owning_issue: null
 - id: features.api_v2
   module: uncategorized
-  summary: ''
+  summary: 'GET /api/v2/features: reports enabled feature/brick set for the running profile. Exercised by the sandbox boot
+    smoke test.'
   transports:
     http:
       name: GET /api/v2/features
@@ -3641,12 +3642,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: null
+  usage_example: curl -s http://localhost:8080/api/v2/features
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
-  perf_link: null
+  perf_link: read-only feature introspection; queried once per boot smoke check, <10ms
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: 4126
 - id: federation.cli
   module: federation
   summary: ''
@@ -4217,6 +4218,24 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: filesystem.ready
+  module: filesystem
+  summary: 'CLI readiness probe: blocks until the daemon serves /health, or times out. Generic probe across all profiles (not
+    brick-gated).'
+  transports:
+    cli:
+      name: nexus ready
+      source: src/nexus/cli/commands/ready.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: nexus ready --timeout 60
+  correctness_test: tests/unit/cli/test_ready_cmd.py, tests/integration/test_sandbox_boot_smoke.py
+  perf_class: control
+  perf_link: invoked at most once per boot/CI gate; polls /health until ready, <60s budget
+  gap_issue: null
+  owning_issue: 4126
 - id: filesystem.rename
   module: filesystem
   summary: ''
@@ -4307,7 +4326,8 @@ operations:
   owning_issue: null
 - id: filesystem.status
   module: filesystem
-  summary: ''
+  summary: Service health overview. Resolves the server URL from the runtime-state record persisted by `nexus up --profile sandbox`
+    (#4144), so a sandbox started on a non-default host/port is reported reachable.
   transports:
     cli:
       name: nexus status
@@ -4316,12 +4336,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/cli/test_full_profile_parity.py
+  usage_example: nexus status
+  correctness_test: tests/unit/cli/test_stack_sandbox.py, tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: 4126
 - id: filesystem.stream
   module: filesystem
   summary: ''
@@ -5239,7 +5259,8 @@ operations:
   owning_issue: null
 - id: health.health
   module: uncategorized
-  summary: ''
+  summary: 'GET /health: liveness/readiness endpoint the sandbox daemon serves over HTTP. Polled by `nexus ready` and the
+    boot smoke test.'
   transports:
     http:
       name: GET /health
@@ -5248,12 +5269,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: null
+  usage_example: curl -s http://localhost:8080/health
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
-  perf_link: null
+  perf_link: lightweight liveness probe; polled during boot, <10ms per call
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: 4126
 - id: health.health_detailed
   module: uncategorized
   summary: ''
@@ -5265,12 +5286,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
+  usage_example: null
   correctness_test: null
-  perf_class: control
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: health.metrics_pool
   module: uncategorized
   summary: ''
@@ -6392,7 +6413,9 @@ operations:
   owning_issue: null
 - id: mount.up
   module: mount
-  summary: ''
+  summary: Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated
+    workspace, passing --host/--port/--data-dir through and persisting a runtime-state record (#4144) so nexus env/status/run can
+    discover a sandbox on a non-default host/port.
   transports:
     cli:
       name: nexus up
@@ -6401,12 +6424,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus up --profile sandbox --workspace ~/app --host 127.0.0.1 --port 2026 --data-dir ~/.nexus/sandbox
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py, tests/unit/cli/test_stack_sandbox.py
+  perf_class: setup
+  perf_link: one-time boot per session; sandbox daemon start measured in test_sandbox_boot_smoke.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4126
 - id: namespace.delete
   module: rebac
   summary: ''
@@ -6698,21 +6721,30 @@ operations:
   owning_issue: null
 - id: nexus_v_f_s_service.ping
   module: nexus_fs
-  summary: ''
+  summary: 'gRPC liveness ping on NexusVFSService. Unavailable in sandbox by architecture: the typed VFS gRPC server is
+    bound only by the cluster profile (single spawn call site rust/profiles/cluster/src/main.rs:422); the sandbox path
+    never binds it (reproduced connection-refused on http_port+2). As of #4126 the sandbox path also no longer starts
+    the Raft federation gRPC on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 (which reported an
+    UNAUTHENTICATED Ping) does not reproduce in sandbox — close-recommended / reclassify as cluster-only.'
   transports:
     grpc_typed:
       name: NexusVFSService.Ping
       source: proto/nexus/grpc/vfs/vfs.proto:28
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: null
+  usage_example: 'Cluster-profile-only by architecture: NexusVFSService is spawned solely by the cluster binary
+    (rust/profiles/cluster/src/main.rs:422). Sandbox is HTTP-only for the VFS surface; the typed VFS gRPC port is never
+    bound there (reproduced connection-refused on http_port+2). #4148 = triage issue (close-recommended).'
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
-  perf_link: null
-  gap_issue: null
-  owning_issue: 4132
+  perf_link: 'N/A in sandbox — the typed VFS gRPC server is cluster-profile-only and is never bound in the sandbox path
+    (reproduced connection-refused on http_port+2). As of #4126 sandbox also no longer starts the Raft federation gRPC
+    on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 tracked for triage (close-recommended / reclassify as
+    cluster-only).'
+  gap_issue: 4148
+  owning_issue: 4126
 - id: nexus_v_f_s_service.read
   module: nexus_fs
   summary: ''
@@ -7741,12 +7773,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
+  usage_example: null
   correctness_test: null
-  perf_class: control
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: probes.healthz_ready
   module: uncategorized
   summary: ''
@@ -7758,12 +7790,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
+  usage_example: null
   correctness_test: null
-  perf_class: control
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: probes.healthz_startup
   module: uncategorized
   summary: ''
@@ -7775,12 +7807,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
+  usage_example: null
   correctness_test: null
-  perf_class: control
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: provision.user
   module: identity
   summary: ''
@@ -8440,7 +8472,9 @@ operations:
   owning_issue: null
 - id: sandbox.run
   module: sandbox
-  summary: ''
+  summary: Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env`
+    (env_cmd.py load_project_config + load_runtime_state + resolve_connection_env), so it transitively benefits from the sandbox
+    runtime-state persisted by `nexus up --profile sandbox` (#4144). Covered via the shared resolver, not a run-specific sandbox test.
   transports:
     cli:
       name: nexus run
@@ -8449,9 +8483,9 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus run pytest tests/
+  correctness_test: tests/unit/cli/test_stack_sandbox.py
+  perf_class: control
   perf_link: null
   gap_issue: null
   owning_issue: null
@@ -9983,7 +10017,9 @@ operations:
   owning_issue: null
 - id: uncategorized.env
   module: uncategorized
-  summary: ''
+  summary: Print connection env vars for the running stack. Under the sandbox profile it consumes the runtime-state record persisted
+    by `nexus up --profile sandbox` (#4144), emitting NEXUS_URL/NEXUS_GRPC_HOST/NEXUS_GRPC_PORT/NEXUS_PROFILE/NEXUS_WORKSPACE; the
+    hub token is never persisted.
   transports:
     cli:
       name: nexus env
@@ -9992,12 +10028,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/cli/test_full_profile_parity.py
+  usage_example: eval "$(nexus env)"
+  correctness_test: tests/unit/cli/test_stack_sandbox.py, tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: 4126
 - id: uncategorized.extensions
   module: uncategorized
   summary: ''
@@ -12361,6 +12397,14 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: filesystem.profile
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: filesystem.ready
   has:
   - cli
   missing:

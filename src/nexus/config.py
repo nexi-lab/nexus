@@ -525,8 +525,13 @@ def _apply_sandbox_defaults(cfg: "NexusConfig") -> "NexusConfig":
         updates["db_path"] = db_path
     if "metastore_path" not in user_set:
         updates["metastore_path"] = db_path
+    # The kernel uses `<data_dir>/nexus.db` as its redb data *directory*
+    # (via NEXUS_DATA_DIR). The Python SQLAlchemy RecordStore must point at
+    # a SEPARATE sqlite file — sharing `<data_dir>/nexus.db` makes sqlite
+    # try to open a directory as a database and boot fails with
+    # "unable to open database file" (develop/#4132 collision).
     if "record_store_path" not in user_set:
-        updates["record_store_path"] = db_path
+        updates["record_store_path"] = f"{data_dir}/record_store.db"
 
     if "cache_size_mb" not in user_set:
         updates["cache_size_mb"] = 64

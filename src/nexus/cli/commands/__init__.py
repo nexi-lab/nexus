@@ -45,6 +45,7 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "network": ("network",),
     "tls": ("tls",),
     "status": ("status",),  # status [--watch] [--json]
+    "ready": ("ready",),  # ready [--timeout] [--readiness-file] [--json]
     "doctor": ("doctor",),  # doctor [--json] [--fix]
     # Issue #2809: Profile management
     "profile": ("profile",),  # profile list/add/use/delete/show/rename

@@ -32,6 +32,16 @@ class TestExitCode:
             assert isinstance(int(code), int)
 
     def test_no_bash_reserved_codes(self) -> None:
-        """Exit codes 126-255 are reserved by bash; we must not use them."""
+        """Exit codes 126-255 are reserved by bash; we must not use them.
+
+        Exception: signal-based codes (128+N) are intentional — e.g.
+        INTERRUPTED=130 (128+SIGINT) is the conventional shell code for
+        processes killed by a signal and must surface through ``nexus ready``.
+        """
+        # 128+1 .. 128+64 covers all standard POSIX signals.
+        _SIGNAL_CODES = set(range(128 + 1, 128 + 64 + 1))
         for code in ExitCode:
-            assert int(code) < 126 or int(code) > 255
+            v = int(code)
+            if v in _SIGNAL_CODES:
+                continue  # intentional signal-based exit code
+            assert v < 126 or v > 255, f"ExitCode.{code.name}={v} is in bash reserved range"

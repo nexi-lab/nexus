@@ -33,6 +33,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(stat_cmd)
     cli.add_command(metadata_cmd)
     cli.add_command(exists_cmd)
+    cli.add_command(read_bulk_cmd)
     cli.add_command(write)
     cli.add_command(append)
     cli.add_command(write_batch)
@@ -498,6 +499,71 @@ def exists_cmd(
                 sys.exit(1)
         except SystemExit:
             raise
+        except Exception as e:  # noqa: BLE001
+            render_error(e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+def _b2s(v: Any) -> Any:
+    """Decode bytes for JSON; pass through None / non-bytes."""
+    if isinstance(v, bytes):
+        try:
+            return v.decode()
+        except UnicodeDecodeError:
+            import base64
+
+            return {"_base64": base64.b64encode(v).decode()}
+    return v
+
+
+@click.command(name="read-bulk")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@click.option(
+    "--atomic",
+    is_flag=True,
+    help="Use read_batch (all-or-nothing: error on first missing path)",
+)
+@add_output_options
+@add_backend_options
+@add_context_options
+def read_bulk_cmd(
+    paths: tuple[str, ...],
+    atomic: bool,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Read multiple files in one round-trip.
+
+    Default uses read_bulk (missing paths -> null). --atomic uses read_batch
+    (raises on the first missing/inaccessible path).
+
+    Examples:
+        nexus read-bulk /a.txt /b.txt --json
+        nexus read-bulk /a.txt /b.txt --atomic --json
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    if atomic:
+                        items = nx.read_batch(list(paths), partial=False)
+                        data: Any = {it["path"]: _b2s(it.get("content")) for it in items}
+                    else:
+                        raw = nx.read_bulk(list(paths))
+                        data = {p: _b2s(v) for p, v in raw.items()}
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)

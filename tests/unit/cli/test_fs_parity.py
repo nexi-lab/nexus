@@ -86,3 +86,32 @@ def test_exists_batch_parity_and_exit(patched_fs, cli_runner: CliRunner):
     # plain: exit 0 iff ALL exist
     assert cli_runner.invoke(exists_cmd, ["/here.txt"]).exit_code == 0
     assert cli_runner.invoke(exists_cmd, ["/here.txt", "/gone.txt"]).exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 5: nexus read-bulk (read_bulk / read_batch)
+# ---------------------------------------------------------------------------
+
+
+def test_read_bulk_parity(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import read_bulk_cmd
+
+    nx = patched_fs
+    nx.write("/r1.txt", b"one")
+    nx.write("/r2.txt", b"two")
+    rpc = nx.read_bulk(["/r1.txt", "/r2.txt"])
+    res = cli_runner.invoke(read_bulk_cmd, ["/r1.txt", "/r2.txt", "--json"])
+    assert res.exit_code == 0, res.output
+    out = json.loads(res.output)["data"]
+    assert out["/r1.txt"] == rpc["/r1.txt"].decode() == "one"
+    assert out["/r2.txt"] == "two"
+
+
+def test_read_bulk_atomic_raises_on_missing(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import read_bulk_cmd
+
+    nx = patched_fs
+    nx.write("/r1.txt", b"one")
+    res = cli_runner.invoke(read_bulk_cmd, ["/r1.txt", "/missing.txt", "--atomic", "--json"])
+    # read_batch(partial=False) raises -> CLI catches and exits 1
+    assert res.exit_code == 1

@@ -224,6 +224,11 @@ nexusd --profile sandbox --workspace ~/app --host 127.0.0.1 --port 2026
 **Verify what it started (RPC surface — HTTP only):**
 
 ```bash
+# Wait for / check the daemon is up (exit 0 when ready):
+nexus ready --timeout 60
+# Machine-readable:
+nexus ready --json
+
 # HTTP health:
 curl -s http://127.0.0.1:2026/health
 
@@ -269,6 +274,7 @@ matrix, [#4139](https://github.com/nexi-lab/nexus/issues/4139)):
 | `nexus up --profile sandbox` | CLI | supported | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | setup path |
 | `--workspace` / `--hub-url` / `--hub-token` | CLI | supported (gated) | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | setup path |
 | `nexusd --profile sandbox` | CLI | supported | `tests/integration/test_sandbox_boot_smoke.py` | setup path |
+| `nexus ready` | CLI | supported | `tests/unit/cli/test_ready_cmd.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | HTTP `/health` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | HTTP `/api/v2/features` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | gRPC `Ping` | typed gRPC | intentionally-absent (HTTP-only) | `tests/integration/test_sandbox_boot_smoke.py` (documented skip) | n/a |
@@ -277,11 +283,12 @@ matrix, [#4139](https://github.com/nexi-lab/nexus/issues/4139)):
 
 **Missing-surface gate verdict:** all core boot-story surfaces exist, so
 this story is **not blocked**. gRPC absence under sandbox is *intentional*
-(HTTP-only design), not a missing-needed surface. One ergonomic gap is
-tracked as a non-blocking enhancement: a first-class sandbox
-readiness/status CLI (`nexus status` is Docker/HTTP-oriented; the sandbox
-profile currently exposes only the bare `~/.nexus/nexusd.ready` file). See
-<!-- BUILD-ISSUE-LINK -->_(non-blocking build issue — link added in Task 8)_.
+(HTTP-only design), not a missing-needed surface. The one ergonomic gap —
+no first-class readiness probe for the non-Docker sandbox profile — is
+**closed in this PR** by the `nexus ready` command: it waits for the
+readiness file (`~/.nexus/nexusd.ready`), polls `/health` +
+`/api/v2/features`, and exits `0` when the daemon is ready (`--json` for
+machine use). No build issue is required.
 
 ## 2.1 Capability checklist for a serious demo
 

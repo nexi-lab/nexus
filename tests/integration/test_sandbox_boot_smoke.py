@@ -25,6 +25,7 @@ import grpc
 import httpx
 import pytest
 
+from nexus.cli.exit_codes import ExitCode
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 
 pytestmark = [
@@ -339,7 +340,10 @@ def test_sandbox_flag_without_profile_is_rejected_by_daemon() -> None:
     """`--workspace` without `--profile sandbox` is a usage error.
 
     Parity with tests/unit/cli/test_stack_sandbox.py, asserted against
-    the real daemon process (end-to-end gating, not just Click).
+    the real daemon process (end-to-end gating, not just Click). This also
+    pins the `__main__` guard in `src/nexus/daemon/main.py` — without it
+    `python -m nexus.daemon.main` exits 0 and this test fails, surfacing
+    the regression.
     """
     proc = subprocess.run(
         [
@@ -351,10 +355,11 @@ def test_sandbox_flag_without_profile_is_rejected_by_daemon() -> None:
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=20,
     )
-    assert proc.returncode != 0, (
-        f"daemon must reject --workspace without --profile sandbox; "
+    assert proc.returncode == ExitCode.USAGE_ERROR, (
+        f"daemon must reject --workspace without --profile sandbox with "
+        f"USAGE_ERROR; got returncode={proc.returncode} "
         f"stdout={proc.stdout} stderr={proc.stderr}"
     )
     combined = (proc.stdout + proc.stderr).lower()

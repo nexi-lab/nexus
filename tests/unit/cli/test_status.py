@@ -316,6 +316,59 @@ class TestStatusCommand:
     @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features")
     @patch("nexus.cli.commands.status._load_project_config_optional")
     @patch("nexus.cli.commands.status._collect_status")
+    def test_local_stack_key_not_sent_to_remote_url(
+        self,
+        mock_collect: MagicMock,
+        mock_project_cfg: MagicMock,
+        mock_fetch: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """Auth-boundary: `nexus status --url <remote>` run inside a local
+        project must NOT send the local stack's bearer token to the
+        remote features probe. It uses the explicitly-supplied remote key
+        (or none) — never conn_env's local NEXUS_API_KEY."""
+        mock_collect.return_value = {
+            "server_url": "http://otherhub:2026",
+            "server_reachable": True,
+            "server_health": None,
+            "docker_services": [],
+        }
+        mock_project_cfg.return_value = {"auth": "static", "data_dir": "./nx"}
+        mock_fetch.return_value = "lite"
+
+        with (
+            patch("nexus.cli.state.load_runtime_state", return_value={}),
+            patch(
+                "nexus.cli.state.resolve_connection_env",
+                return_value={
+                    "NEXUS_URL": "http://localhost:2026",  # local stack
+                    "NEXUS_API_KEY": "LOCAL-SECRET",  # must NOT leak to remote
+                },
+            ),
+            patch(
+                "nexus.cli.commands.stack._resolve_image_ref_from_config",
+                return_value="nexus:latest",
+            ),
+        ):
+            result = cli_runner.invoke(
+                status,
+                [
+                    "--json",
+                    "--url",
+                    "http://otherhub:2026",
+                    "--remote-api-key",
+                    "REMOTE-K",
+                ],
+            )
+        assert result.exit_code == 0
+        # the probe key is the explicit remote key, never the local one
+        sent_key = mock_fetch.call_args.args[1]
+        assert sent_key == "REMOTE-K"
+        assert sent_key != "LOCAL-SECRET"
+
+    @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features")
+    @patch("nexus.cli.commands.status._load_project_config_optional")
+    @patch("nexus.cli.commands.status._collect_status")
     def test_features_probe_uses_connection_api_key(
         self,
         mock_collect: MagicMock,

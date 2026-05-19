@@ -1,9 +1,12 @@
 # FULL deployment profile
 
-Nexus's `full` profile is the all-feature shared hub for a team:
-PostgreSQL + Dragonfly + Zoekt, the complete brick set, and local
-inference. Use it for a shared node that exposes the full CLI/RPC
-surface; use `sandbox` for per-agent clients that connect to it.
+Nexus's `full` profile is the all-feature shared hub for a team. The
+`shared`/`demo` preset stack provisions **PostgreSQL + Dragonfly** (plus
+the Nexus server), the complete brick set, and local inference. Keyword
+search uses **BM25S**; Zoekt is an *optional, separately-run* code-search
+backend the preset does **not** start (see the user guide, "What about
+Zoekt?"). Use this profile for a shared node that exposes the full
+CLI/RPC surface; use `sandbox` for per-agent clients that connect to it.
 
 ## Three things called "profile" (read this first)
 
@@ -24,7 +27,7 @@ FULL.
 |---|---|
 | Storage | PostgreSQL |
 | Cache | Dragonfly / Redis |
-| Keyword search | BM25S + Zoekt |
+| Keyword search | BM25S (Zoekt optional, not started by the preset) |
 | Bricks | LITE + search, pay, llm, mcp, workspace, snapshot, versioning, identity, delegation, share_link, portability, task_manager, observability, … (see contract test) |
 | Federation | OFF (that is the `cloud` profile) |
 | Auth | static (`NEXUS_API_KEY`) or database (`DatabaseAPIKeyAuth`) |
@@ -107,7 +110,7 @@ profile.
 ## Benchmark guidance
 
 Boot time and idle RSS are setup-path metrics, not CI gates; the FULL
-stack (PostgreSQL + Dragonfly + Zoekt) targets multi-GB RSS and a
+stack (PostgreSQL + Dragonfly + the Nexus server) targets multi-GB RSS and a
 15–60 s boot. `health` / `features` / `Ping` are control-plane calls
 with sub-100 ms expectations on a warm hub. There is no steady-state
 data-plane hot path in the startup story.

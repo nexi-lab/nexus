@@ -102,7 +102,9 @@ def _same_endpoint(a: str, b: str) -> bool:
     return (pa.scheme, pa.hostname, pa.port) == (pb.scheme, pb.hostname, pb.port)
 
 
-def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
+def _enrich_with_image_info(
+    data: dict[str, Any], status_api_key: str | None = None
+) -> dict[str, Any]:
     """Add the *effective* image_ref, connection env, and project info into *data*.
 
     Uses the same precedence logic as ``nexus up`` (env vars > config ref >
@@ -144,13 +146,17 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
         # locally-managed stack; otherwise it does not describe that hub.
         data["auth_mode"] = project_cfg.get("auth", "none") if is_local_stack else "unknown"
 
+        # Credential boundary: send the LOCAL stack key to the features
+        # probe ONLY when the target IS the local stack. For a different
+        # remote --url, use the key the caller supplied for THIS status
+        # invocation (or none) — never the local conn_env bearer token.
+        probe_key = conn_env.get("NEXUS_API_KEY") if is_local_stack else status_api_key
+
         # deployment_profile: resolved against the actual status target
-        # (features-first; env is offline fallback only). Forward the
-        # connection's API key so an authenticated features endpoint
-        # isn't silently 401'd into the env/unknown fallback.
+        # (features-first; env is offline fallback only).
         data["deployment_profile"] = _resolve_deployment_profile(
             target_url or local_stack_url,
-            conn_env.get("NEXUS_API_KEY"),
+            probe_key,
             # NEXUS_PROFILE may stand in only when the target IS the
             # local managed stack; never for a different remote --url.
             allow_env_fallback=is_local_stack,
@@ -170,7 +176,7 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
         _target = data.get("server_url", "")
         _is_local_default = (not _target) or _same_endpoint(_target, "http://localhost:2026")
         data["deployment_profile"] = _resolve_deployment_profile(
-            _target, allow_env_fallback=_is_local_default
+            _target, status_api_key, allow_env_fallback=_is_local_default
         )
 
     return data
@@ -461,7 +467,8 @@ def status(
             timing = CommandTiming()
             with timing.phase("collect"):
                 data = _enrich_with_image_info(
-                    _collect_status(server_url, remote_api_key, profile_list)
+                    _collect_status(server_url, remote_api_key, profile_list),
+                    remote_api_key,
                 )
             render_output(
                 data=data,
@@ -479,14 +486,14 @@ def _watch_loop(server_url: str, api_key: str | None, profiles: list[str] | None
     """Continuously refresh the status table every 2 seconds."""
     from rich.live import Live
 
-    data = _enrich_with_image_info(_collect_status(server_url, api_key, profiles))
+    data = _enrich_with_image_info(_collect_status(server_url, api_key, profiles), api_key)
 
     with Live(_build_table(data), refresh_per_second=1, console=console) as live:
         while True:
             time.sleep(2)
             live.update(
                 _build_table(
-                    _enrich_with_image_info(_collect_status(server_url, api_key, profiles))
+                    _enrich_with_image_info(_collect_status(server_url, api_key, profiles), api_key)
                 )
             )
 

@@ -284,7 +284,7 @@ Packages behind this:
 | `nexus init --preset` | Docker stack | Deployment profile |
 |---|---|---|
 | `local` | none (embedded) | embedded/lite |
-| `shared` | postgres+dragonfly+zoekt | **full** |
+| `shared` | postgres+dragonfly (+nexus server) | **full** |
 | `demo` | shared + seed data | **full** |
 
 Use `nexusd` when you want multiple terminals, users, or SDK clients to hit

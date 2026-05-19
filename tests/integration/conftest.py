@@ -1,7 +1,7 @@
 """Shared fixtures for integration tests (Issue #4132).
 
 Provides the ``full_stack`` fixture: boots a real Docker Compose stack
-(PostgreSQL + Dragonfly + Zoekt) via ``nexus init`` / ``nexus up`` /
+(PostgreSQL + Dragonfly + the Nexus server) via ``nexus init`` / ``nexus up`` /
 ``nexus down``, and exposes ``.url``, ``.api_key``, and ``.http_get(path)``
 to callers.
 
@@ -70,7 +70,7 @@ def _teardown_stack(nexus_bin: str, project_dir: Path) -> None:
 
 @dataclasses.dataclass
 class FullStack:
-    """Handle for a running FULL nexus stack (PostgreSQL + Dragonfly + Zoekt).
+    """Handle for a running FULL nexus stack (PostgreSQL + Dragonfly + Nexus server).
 
     Attributes:
         url:      HTTP base URL (e.g. ``http://localhost:2026``).

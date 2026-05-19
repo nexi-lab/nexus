@@ -252,9 +252,11 @@ class TestSandboxOnlyFlagSourceAwareness:
         rule fired on truthiness) this FAILS.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            # No nexus.yaml here → the Docker path will error for an
-            # unrelated reason; we assert only that it is NOT the
-            # sandbox-only USAGE_ERROR and that message is absent.
+            # Provide a preset:local nexus.yaml so the non-sandbox Docker
+            # path exits immediately (SystemExit(0)) instead of trying to
+            # auto-init and launch Docker Compose — which hangs without a
+            # running Docker daemon.
+            Path("nexus.yaml").write_text("preset: local\n")
             result = runner.invoke(
                 up, [], env={"NEXUS_WORKSPACE": str(tmp_path / "ws"), "PATH": "/usr/bin"}
             )
@@ -269,6 +271,9 @@ class TestSandboxOnlyFlagSourceAwareness:
         """``NEXUS_DATA_DIR`` in env + plain ``nexus up`` must NOT raise the
         sandbox-only usage error (host/port/data-dir are also env-aware)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Provide a preset:local nexus.yaml so the non-sandbox Docker
+            # path exits immediately instead of launching Docker Compose.
+            Path("nexus.yaml").write_text("preset: local\n")
             result = runner.invoke(
                 up, [], env={"NEXUS_DATA_DIR": str(tmp_path / "dd"), "PATH": "/usr/bin"}
             )

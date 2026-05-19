@@ -23,14 +23,32 @@ import tempfile
 import traceback
 from pathlib import Path
 
-WIN_TS_IP = "100.64.0.26"  # Tailscale IP, matches `tailscale status`
+from scripts._tailscale_peers import TailscaleNotInstalledError, resolve_self_ip
+
 RAFT_PORT = 2126
 
 
 def setup_env(tmp: Path) -> None:
-    """Configure single-voter federation before importing nexus."""
-    os.environ["NEXUS_HOSTNAME"] = WIN_TS_IP
-    os.environ["NEXUS_PEERS"] = f"{WIN_TS_IP}:{RAFT_PORT}"
+    """Configure single-voter federation before importing nexus.
+
+    The local Tailscale IP is resolved at runtime via ``tailscale
+    status --json`` rather than hardcoded — surviving SSD swaps, OS
+    reinstalls, and Headscale IP shuffles without code edits.  Set
+    ``NEXUS_HOSTNAME`` in the environment to override (e.g. when
+    running outside the Tailscale tailnet).
+    """
+    hostname = os.environ.get("NEXUS_HOSTNAME")
+    if not hostname:
+        try:
+            hostname = resolve_self_ip()
+        except TailscaleNotInstalledError as exc:
+            raise RuntimeError(
+                f"NEXUS_HOSTNAME not set and Tailscale unavailable: {exc}. "
+                "Either install Tailscale and run `tailscale up`, or set "
+                "NEXUS_HOSTNAME=<addr> explicitly."
+            ) from exc
+    os.environ["NEXUS_HOSTNAME"] = hostname
+    os.environ["NEXUS_PEERS"] = f"{hostname}:{RAFT_PORT}"
     os.environ["NEXUS_BIND_ADDR"] = f"0.0.0.0:{RAFT_PORT}"
     os.environ["NEXUS_DATA_DIR"] = str(tmp / "zones")
     os.environ["NEXUS_RAFT_TLS"] = "false"

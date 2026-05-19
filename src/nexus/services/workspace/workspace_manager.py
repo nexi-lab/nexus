@@ -78,10 +78,6 @@ class WorkspaceManager:
             record_store: RecordStoreABC instance providing session_factory
         """
         self._nexus_fs = nexus_fs
-        # Direct kernel handle for the remaining sys_stat / sys_unlink /
-        # sys_setattr calls in restore() — these are existing syscall users,
-        # not the listing migration touched in this commit.
-        self._kernel: Any = getattr(nexus_fs, "_kernel", None)
         self.backend = backend
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id
@@ -207,24 +203,36 @@ class WorkspaceManager:
         # Ensure workspace_path ends with / for prefix matching
         workspace_prefix = workspace_path if workspace_path.endswith("/") else workspace_path + "/"
 
-        # Get all files in workspace
+        # Get all files in workspace via the §2.5 syscall surface.
         with self.metadata_session_factory() as session:
-            from nexus.kernel_helpers import metastore_list_iter
-
-            files = metastore_list_iter(self._kernel, prefix=workspace_prefix)
+            sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+            entries = self._nexus_fs.sys_readdir(
+                workspace_prefix,
+                recursive=True,
+                details=True,
+                context=sys_ctx,
+            )
 
             # Collect file metadata for manifest
             file_entries: list[tuple[str, str, int, str | None]] = []
 
-            for file_meta in files:
-                # Skip directories (no content) and files without content_id
-                if file_meta.mime_type == "directory" or not file_meta.content_id:
+            for e in entries:
+                if not isinstance(e, dict):
                     continue
-
-                # Relative path within workspace
-                rel_path = file_meta.path[len(workspace_prefix) :]
+                # Skip directories (entry_type=1) and files without content_id
+                if e.get("entry_type") == 1 or not e.get("content_id"):
+                    continue
+                entry_path = e.get("path") or ""
+                if not entry_path:
+                    continue
+                rel_path = entry_path[len(workspace_prefix) :]
                 file_entries.append(
-                    (rel_path, file_meta.content_id, file_meta.size, file_meta.mime_type)
+                    (
+                        rel_path,
+                        e["content_id"],
+                        int(e.get("size") or 0),
+                        e.get("mime_type"),
+                    )
                 )
 
             # Build manifest (handles sorting and deterministic JSON)
@@ -359,13 +367,13 @@ class WorkspaceManager:
                 if isinstance(e, dict) and e.get("content_id") and e.get("path")
             }
 
-            # Delete files not in snapshot
+            # Delete files not in snapshot — via the §2.5 syscall surface.
             manifest_paths = manifest.paths()
             files_deleted = 0
             for current_path in current_paths:
                 if current_path not in manifest_paths and not current_path.endswith("/"):
                     full_path = workspace_prefix + current_path
-                    self._kernel.sys_unlink(full_path, context=_sys_ctx)
+                    self._nexus_fs.sys_unlink(full_path, context=_sys_ctx)
                     files_deleted += 1
 
             # Restore files from snapshot
@@ -380,15 +388,16 @@ class WorkspaceManager:
                 full_path = workspace_prefix + rel_path
 
                 # Check if file exists with same content
-                existing = self._kernel.sys_stat(full_path, "root")
+                existing = self._nexus_fs.sys_stat(full_path, context=_sys_ctx)
                 if existing and existing.get("content_id") == entry.content_id:
                     continue  # Already up to date
 
                 # Create metadata entry pointing to existing CAS content
                 # No need to read/write content - it's already in CAS!
                 now_ms = int(datetime.now(UTC).timestamp() * 1000)
-                self._kernel.sys_setattr(
+                self._nexus_fs.sys_setattr(
                     full_path,
+                    context=_sys_ctx,
                     entry_type=0,  # DT_REG upsert
                     content_id=entry.content_id,
                     size=entry.size,

@@ -737,24 +737,62 @@ def main(
     effective_profile = _resolve_effective_profile(deployment_profile, config_path)
 
     # --- Sandbox flag validation --------------------------------------------
-    # --workspace, --hub-url, --hub-token are ONLY valid with --profile sandbox
-    _sandbox_flags = {
-        "--workspace": workspace,
-        "--hub-url": hub_url,
-        "--hub-token": hub_token,
+    # --workspace, --hub-url, --hub-token are ONLY valid with --profile
+    # sandbox.
+    #
+    # Issue #4126 review r8 (the DAEMON-side parallel of the r3 ``nexus up``
+    # fix in ``src/nexus/cli/commands/stack.py``): the rejection must fire
+    # ONLY for flags actually set ON THE COMMAND LINE, NOT for values sourced
+    # from env vars or the option default. These three options are
+    # envvar-backed (``NEXUS_WORKSPACE``/``NEXUS_HUB_URL``/``NEXUS_HUB_TOKEN``)
+    # and this branch's ``nexus env`` now EMITS ``NEXUS_WORKSPACE`` (and
+    # friends), so after ``eval "$(nexus env)"`` a later ``nexusd --profile
+    # full`` (or ``nexusd --config full.yaml``) would otherwise spuriously
+    # fail USAGE_ERROR purely from the stale environment despite passing NO
+    # sandbox flag on the command line. Click's ``get_parameter_source``
+    # distinguishes COMMANDLINE from ENVIRONMENT/DEFAULT, so we gate strictly
+    # on COMMANDLINE — exactly mirroring the r3 stack.py pattern. An EXPLICIT
+    # command-line ``--workspace``/``--hub-url``/``--hub-token`` without an
+    # effective sandbox profile STILL errors (regression preserved). The
+    # decision uses ``effective_profile`` (the r3/r7 ``_resolve_effective_
+    # profile`` value already used by the kill-switch + the
+    # ``--profile``/``--config`` conflict), NOT the raw ``deployment_profile``,
+    # so a ``--config sandbox.yaml`` boot with a command-line ``--workspace``
+    # stays allowed (r3 established).
+    _CMDLINE = click.core.ParameterSource.COMMANDLINE
+    _sandbox_flag_params = {
+        "workspace": "--workspace",
+        "hub_url": "--hub-url",
+        "hub_token": "--hub-token",
     }
-    _has_sandbox_flag = any(v is not None for v in _sandbox_flags.values())
-    if _has_sandbox_flag and effective_profile != "sandbox":
-        _used = [k for k, v in _sandbox_flags.items() if v is not None]
+    _cmdline_sandbox_flags = [
+        _flag
+        for _param, _flag in _sandbox_flag_params.items()
+        if ctx.get_parameter_source(_param) == _CMDLINE
+    ]
+    if _cmdline_sandbox_flags and effective_profile != "sandbox":
         click.echo(
-            f"Error: {', '.join(_used)} {'is' if len(_used) == 1 else 'are'} only valid "
+            f"Error: {', '.join(_cmdline_sandbox_flags)} "
+            f"{'is' if len(_cmdline_sandbox_flags) == 1 else 'are'} only valid "
             "with --profile sandbox.",
             err=True,
         )
         sys.exit(ExitCode.USAGE_ERROR)
 
-    # --hub-url without any token is an error
-    if hub_url is not None and not hub_token:
+    # --hub-url without any token is an error. Gate this so it only applies
+    # when the sandbox flags are actually in play on the command line for an
+    # effective-sandbox boot — do NOT enforce the pairing off a stale
+    # ``NEXUS_HUB_URL`` env on a non-sandbox boot (Issue #4126 review r8).
+    # Preserve: an explicit command-line ``--hub-url`` without ``--hub-token``
+    # under sandbox STILL errors (env ``NEXUS_HUB_TOKEN`` still satisfies it,
+    # unchanged). The token value itself may legitimately come from env, so
+    # only the ``--hub-url`` SOURCE is gated on COMMANDLINE here.
+    if (
+        effective_profile == "sandbox"
+        and ctx.get_parameter_source("hub_url") == _CMDLINE
+        and hub_url is not None
+        and not hub_token
+    ):
         click.echo(
             "Error: --hub-url requires a token. Pass --hub-token or set NEXUS_HUB_TOKEN.",
             err=True,

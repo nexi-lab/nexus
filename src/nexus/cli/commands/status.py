@@ -61,7 +61,9 @@ def _fetch_deployment_profile_from_features(
     return None
 
 
-def _resolve_deployment_profile(server_url: str, api_key: str | None = None) -> str:
+def _resolve_deployment_profile(
+    server_url: str, api_key: str | None = None, *, allow_env_fallback: bool = True
+) -> str:
     """Resolve the *running hub's* deployment profile.
 
     `nexus status` reports the hub at *server_url*, so the live hub's
@@ -72,16 +74,19 @@ def _resolve_deployment_profile(server_url: str, api_key: str | None = None) -> 
     Hierarchy (single source of truth):
     1. Live ``GET /api/v2/features`` for *server_url* (authoritative when
        a server URL is available and reachable).
-    2. ``NEXUS_PROFILE`` env var — offline/local fallback only (used when
-       there is no server URL or the hub is unreachable).
+    2. ``NEXUS_PROFILE`` env var — ONLY when *allow_env_fallback* (the
+       target is the local managed/default stack). For an explicit
+       remote target whose features probe failed there is NO evidence,
+       so the env var must not be reported as that hub's profile.
     3. ``"unknown"`` fallback.
     """
     fetched = _fetch_deployment_profile_from_features(server_url, api_key) if server_url else None
     if fetched:
         return fetched
-    profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
-    if profile_env:
-        return profile_env
+    if allow_env_fallback:
+        profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
+        if profile_env:
+            return profile_env
     return "unknown"
 
 
@@ -144,7 +149,11 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
         # connection's API key so an authenticated features endpoint
         # isn't silently 401'd into the env/unknown fallback.
         data["deployment_profile"] = _resolve_deployment_profile(
-            target_url or local_stack_url, conn_env.get("NEXUS_API_KEY")
+            target_url or local_stack_url,
+            conn_env.get("NEXUS_API_KEY"),
+            # NEXUS_PROFILE may stand in only when the target IS the
+            # local managed stack; never for a different remote --url.
+            allow_env_fallback=is_local_stack,
         )
     else:
         # No project config: there is no locally-managed stack to compare
@@ -153,9 +162,16 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
         # authenticated remote hub (--url / NEXUS_URL).
         data["auth_mode"] = "unknown"
 
-        # deployment_profile: resolved against the status target
-        # (NexusApiClient also picks up NEXUS_API_KEY from the env).
-        data["deployment_profile"] = _resolve_deployment_profile(data.get("server_url", ""))
+        # deployment_profile: resolved against the status target.
+        # With no project config there is no managed stack; only the
+        # loopback default may borrow NEXUS_PROFILE as an offline
+        # fallback — an explicit remote --url must report "unknown" when
+        # its features probe fails (no evidence about that hub).
+        _target = data.get("server_url", "")
+        _is_local_default = (not _target) or _same_endpoint(_target, "http://localhost:2026")
+        data["deployment_profile"] = _resolve_deployment_profile(
+            _target, allow_env_fallback=_is_local_default
+        )
 
     return data
 

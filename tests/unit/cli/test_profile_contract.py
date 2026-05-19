@@ -527,6 +527,41 @@ class TestContractRemoteTargeting:
         assert result.exit_code == 0, result.output
         mock_client_cls.assert_called_once_with(url="http://localhost:2026", api_key=None)
 
+    def test_bare_contract_uses_managed_stack_resolved_endpoint(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Bare `nexus profile contract` (no --url) with a project config
+        must hit the managed stack's *resolved* endpoint (derived/runtime
+        ports + key), NOT a hard-coded localhost:2026 that could be an
+        unrelated daemon."""
+        config = make_config()
+        with (
+            patch("nexus.cli.commands.profile.load_cli_config", return_value=config),
+            patch("nexus.cli.commands.profile.NexusApiClient") as mock_client_cls,
+            patch(
+                "nexus.cli.commands.profile.load_project_config_optional",
+                return_value={"data_dir": "./nx", "auth": "static"},
+            ),
+            patch("nexus.cli.state.load_runtime_state", return_value={}),
+            patch(
+                "nexus.cli.state.resolve_connection_env",
+                return_value={
+                    "NEXUS_URL": "http://localhost:34567",  # runtime-resolved port
+                    "NEXUS_API_KEY": "sk-managed",
+                },
+            ),
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get.return_value = FULL_FEATURES_PAYLOAD
+            mock_client_cls.return_value = mock_instance
+
+            result = cli_runner.invoke(
+                profile_group, ["contract"], env={"NEXUS_URL": "", "NEXUS_API_KEY": ""}
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_client_cls.assert_called_once_with(url="http://localhost:34567", api_key="sk-managed")
+
     def test_global_profile_forwarded_to_resolve_connection(self, cli_runner: CliRunner) -> None:
         """`nexus --profile staging profile contract` must pass the global
         profile through to resolve_connection (regression: it used to be

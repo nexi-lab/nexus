@@ -289,13 +289,33 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
         profile_name=profile_name,
         config=config,
     )
-    url = resolved.url or "http://localhost:2026"
 
-    # resolve_connection only preserves remote_api_key when a remote_url
-    # is set, so an explicit `--api-key`/NEXUS_API_KEY against the default
-    # localhost hub would otherwise be dropped → 401 on a static-auth
-    # hub. Keep the explicitly-provided key in that case.
-    effective_api_key = api_key or resolved.api_key
+    if resolved.url:
+        # Explicit remote target (--url / NEXUS_URL / named profile).
+        target_url = resolved.url
+        # resolve_connection only preserves remote_api_key when a
+        # remote_url is set; keep an explicit key for the localhost case
+        # too so a static-auth hub isn't 401'd.
+        effective_api_key = api_key or resolved.api_key
+    else:
+        # Bare `nexus profile contract`: resolve the *locally-managed
+        # stack's actual endpoint* the same way `nexus env`/`status` do
+        # (derived/resolved ports from project config + runtime state) —
+        # NOT a hard-coded localhost:2026 that could hit an unrelated
+        # daemon.
+        project_cfg = load_project_config_optional()
+        if project_cfg:
+            from nexus.cli.state import load_runtime_state, resolve_connection_env
+
+            state = load_runtime_state(project_cfg.get("data_dir", "./nexus-data"))
+            conn = resolve_connection_env(project_cfg, state)
+            target_url = conn.get("NEXUS_URL") or "http://localhost:2026"
+            effective_api_key = api_key or conn.get("NEXUS_API_KEY")
+        else:
+            target_url = "http://localhost:2026"
+            effective_api_key = api_key or resolved.api_key
+
+    url = target_url
     try:
         features: dict[str, Any] = NexusApiClient(url=url, api_key=effective_api_key).get(
             "/api/v2/features"

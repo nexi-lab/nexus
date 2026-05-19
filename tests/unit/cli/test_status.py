@@ -278,6 +278,41 @@ class TestStatusCommand:
         data = parsed.get("data", parsed)
         assert data["deployment_profile"] == "lite"  # live hub wins, not env
 
+    @patch(
+        "nexus.cli.commands.status._fetch_deployment_profile_from_features",
+        return_value=None,  # remote features probe fails (unreachable/401)
+    )
+    @patch("nexus.cli.commands.status._load_project_config_optional")
+    @patch("nexus.cli.commands.status._collect_status")
+    def test_remote_url_probe_failure_does_not_borrow_local_env_profile(
+        self,
+        mock_collect: MagicMock,
+        mock_project_cfg: MagicMock,
+        mock_fetch: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """`NEXUS_PROFILE=full nexus status --json --url http://otherhub`
+        with a failed features probe must report deployment_profile
+        "unknown" — NOT the local NEXUS_PROFILE (no evidence about that
+        remote hub)."""
+        mock_collect.return_value = {
+            "server_url": "http://otherhub:2026",
+            "server_reachable": False,
+            "server_health": None,
+            "docker_services": [],
+        }
+        mock_project_cfg.return_value = {}  # no project config
+
+        result = cli_runner.invoke(
+            status,
+            ["--json", "--url", "http://otherhub:2026"],
+            env={"NEXUS_PROFILE": "full"},
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        data = data.get("data", data)
+        assert data["deployment_profile"] == "unknown"  # NOT "full"
+
     @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features")
     @patch("nexus.cli.commands.status._load_project_config_optional")
     @patch("nexus.cli.commands.status._collect_status")

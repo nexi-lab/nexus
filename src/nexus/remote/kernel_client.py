@@ -342,12 +342,19 @@ class KernelClient:
         self,
         items: list[tuple[str, int, int | None]],
         context: Any = None,
-    ) -> Any:
-        """Batch read via generic Call RPC (no typed BatchRead endpoint)."""
-        return self._call(
-            "sys_read_batch",
-            {"items": [(path, offset, count) for path, offset, count in items]},
-        )
+    ) -> list[Any]:
+        """Batch read — loop individual typed Read RPCs.
+
+        Uses the existing typed Read RPC per item (same as sys_read).
+        Returns list of _SysReadResult in same order as items.
+        """
+        results: list[Any] = []
+        for path, offset, _count in items:
+            try:
+                results.append(self.sys_read(path, offset=offset))
+            except Exception:
+                results.append(_SysReadResult(content=b""))
+        return results
 
     def stat_batch(self, paths: list[str], zone_id: str = ROOT_ZONE_ID) -> list[Any]:
         """Batch stat multiple paths — returns list of stat dicts or None."""

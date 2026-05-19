@@ -78,9 +78,6 @@ pub fn dispatch(
             &format!("{method} is not available in subprocess mode"),
         )),
 
-        // Read batch — delegate to individual reads
-        "sys_read_batch" => do_sys_read_batch(kernel, &params, ctx),
-
         // Write batch — delegate to individual writes
         "write_batch" => do_write_batch(kernel, &params, ctx),
 
@@ -563,47 +560,6 @@ fn do_stream_collect_all(
         Ok(data) => ok_json(serde_json::json!(encode_bytes(&data))),
         Err(e) => Err(kernel_err_to_payload(e)),
     }
-}
-
-fn do_sys_read_batch(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let items = params
-        .get("items")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let mut results = Vec::new();
-    for item in &items {
-        let arr = item.as_array();
-        let path = arr
-            .and_then(|a| a.first())
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let offset = arr
-            .and_then(|a| a.get(1))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        match KernelAbi::sys_read(kernel, path, ctx, 5000, offset) {
-            Ok(r) => {
-                let data = r.data.unwrap_or_default();
-                results.push(serde_json::json!({
-                    "content": encode_bytes(&data),
-                    "content_id": r.content_id,
-                    "size": data.len(),
-                    "gen": r.gen,
-                }));
-            }
-            Err(e) => {
-                // Include error as null entry so batch order is preserved
-                results.push(serde_json::json!(null));
-                let _ = e; // swallow per-item errors in batch
-            }
-        }
-    }
-    ok_json(serde_json::json!(results))
 }
 
 fn do_write_batch(

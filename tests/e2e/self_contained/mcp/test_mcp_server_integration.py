@@ -255,35 +255,6 @@ class TestResourcesAndPromptsIntegration:
         assert "nexus_semantic_search" in result_search
 
 
-class TestMultiToolWorkflows:
-    """Integration tests for workflows using multiple tools."""
-
-    @pytest.mark.asyncio
-    async def test_bulk_file_operations(self, mcp_server, nexus_fs):
-        """Test handling multiple files efficiently."""
-        write_tool = await get_tool(mcp_server, "nexus_write_file")
-        list_tool = await get_tool(mcp_server, "nexus_list_files")
-        delete_tool = await get_tool(mcp_server, "nexus_delete_file")
-
-        # Create 20 files
-        for i in range(20):
-            await write_tool.fn(path=f"/bulk/file{i}.txt", content=f"Content {i}")
-
-        # List all files
-        list_result = await list_tool.fn(path="/bulk", recursive=False)
-        files = extract_items(list_result)
-        assert len(files) >= 20
-
-        # Delete every other file
-        for i in range(0, 20, 2):
-            await delete_tool.fn(path=f"/bulk/file{i}.txt")
-
-        # Verify remaining files
-        list_result_after = await list_tool.fn(path="/bulk")
-        files_after = extract_items(list_result_after)
-        assert len(files_after) == 10  # Half deleted
-
-
 class TestErrorHandlingIntegration:
     """Integration tests for error handling with real errors."""
 

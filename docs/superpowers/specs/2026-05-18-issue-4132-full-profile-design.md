@@ -19,10 +19,13 @@ no user-runnable command prints the resolved profile contract.
 
 - The `cloud` profile, federation, or multi-tenant behavior (FULL
   deliberately excludes `federation` — that is `cloud`).
-- Implementing any missing CLI/RPC surface. Gaps are enumerated and
+- ~~Implementing any missing CLI/RPC surface. Gaps are enumerated and
   filed as linked build issues; this story documents and tests the
   existing surface and is blocked from closing until required gaps are
-  tracked.
+  tracked.~~ **SUPERSEDED:** at the user's request the scope was
+  expanded — all 3 missing-surface gaps were implemented directly on
+  this branch (see "Missing-surface gate" §). The original non-goal of
+  *filing* (not building) the gaps no longer applies.
 - Sibling feature surfaces (#4133–#4138): filesystem, ReBAC, search,
   MCP, agents, admin. This story covers startup/auth/remote/contract
   only.
@@ -37,7 +40,7 @@ no user-runnable command prints the resolved profile contract.
 | Q1 | Doc shape | **Hybrid**: standalone `docs/deployment/full-profile.md` (profile contract reference) + a "start a shared hub & connect remotely" narrative section in `docs/guides/user-guide.md` that links to it |
 | Q2 | Scope width | #4132 only + light matrix wiring. Reuse #4161 `api-rpc-surface-coverage.yaml`/`gaps.yaml` as-is; add only `full` startup/auth/status rows |
 | Q3 | Test depth | Always-on unit/contract + parity tests (no Docker); one real-Docker-boot E2E + benchmarks gated behind `NEXUS_E2E=1` (`@pytest.mark.integration`). Matches sibling #3778 |
-| Q4 | Missing-surface gate | Enumerate every gap with a full build-issue template in this spec; file via `gh issue create` and link to #4132/#4121 **only after user approval** |
+| Q4 | Missing-surface gate | ~~Enumerate every gap with a full build-issue template; file via `gh issue create` only after user approval~~ → **SUPERSEDED:** user expanded scope; all 3 gaps were implemented directly on this branch with tests (see "Missing-surface gate" §). No issues filed — surfaces built instead |
 | Q5 | Benchmark posture | Boot/RSS/connect = setup path (recorded as guidance, not CI gates); health/features/Ping = control plane (latency asserted with generous bounds); no steady-state data-plane hot path in this story |
 | Q6 | Boot fixture reuse | Boot fixture written profile-agnostic so siblings #4133–#4138 can reuse it; no speculative abstraction beyond that |
 

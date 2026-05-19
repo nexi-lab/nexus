@@ -1070,6 +1070,45 @@ class SearchService:
 
         return all_files, _preapproved_dirs, _use_fast_path, _revision_before
 
+    def _sys_readdir_as_metadata(self, list_prefix: str) -> builtins.list[Any]:
+        """Recursive sys_readdir → list of FileMetadata for the slow-path scan.
+
+        Bridges the §2.5 syscall surface to the downstream pipeline, which
+        consumes FileMetadata attributes (.path, .zone_id, etc). Runs under
+        is_system=True so the wrapper's zone filter is skipped — the service
+        applies its own stronger filter (zone post-filter + tiger_cache
+        predicate-pushdown) downstream.
+        """
+        from nexus.contracts.metadata import FileMetadata
+        from nexus.contracts.types import OperationContext
+
+        if self._nexus_fs is None:
+            return []
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        entries = self._nexus_fs.sys_readdir(
+            list_prefix or "/",
+            recursive=True,
+            details=True,
+            context=ctx,
+        )
+        out: builtins.list[FileMetadata] = []
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            out.append(
+                FileMetadata(
+                    path=e.get("path", ""),
+                    size=int(e.get("size") or 0),
+                    content_id=e.get("content_id"),
+                    entry_type=int(e.get("entry_type") or 0),
+                    zone_id=e.get("zone_id"),
+                    owner_id=e.get("owner_id"),
+                    version=int(e.get("version") or 1),
+                    gen=int(e.get("gen") or 0),
+                )
+            )
+        return out
+
     def _list_slow_path(
         self,
         list_prefix: str,
@@ -1121,16 +1160,12 @@ class SearchService:
                     _accessible_int_ids = None
 
         _meta_start = _time.time()
-        # Issue #3779 follow-up: when the backing store is not zone-scoped
-        # (standalone/embedded metastore has self._zone_id=None), passing a
-        # non-root zone_id raises in RaftMetadataStore._list_raw. In that
-        # case we fetch everything and rely on the service-layer zone
-        # post-filter (applied by list()). ``kernel.metastore_list`` is
-        # single-zone (zone scoping is handled at the mount-router level
-        # in federation mode), so ``list_zone_id`` is intentionally not
-        # passed to the kernel call here — it's still used by the
-        # zone-revision check below.
-        all_files = self._kernel.metastore_list_paginated(list_prefix, True, 100000, None)["items"]
+        # §2.5 mediation: reach MetaStore through the syscall surface, not
+        # directly via kernel.metastore_*. is_system=True bypasses the
+        # wrapper's zone filter — the service applies its own stronger
+        # filter below (zone post-filter + tiger_cache predicate-pushdown),
+        # so the wrapper filter would only add cost.
+        all_files = self._sys_readdir_as_metadata(list_prefix)
         logger.info(
             f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
             f"{len(all_files)} files"
@@ -1186,9 +1221,7 @@ class SearchService:
                         "[PREDICATE-PUSHDOWN] Revision changed, re-running without filter"
                     )
                     _meta_start = _time.time()
-                    all_files = self._kernel.metastore_list_paginated(
-                        list_prefix, True, 100000, None
-                    )["items"]
+                    all_files = self._sys_readdir_as_metadata(list_prefix)
                     # Fix nexi-lab/nexus#3733 Bug B: same synthetic-entry
                     # guard as the primary list path above.
                     all_files = [f for f in all_files if f.path.startswith("/")]

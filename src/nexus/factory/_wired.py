@@ -560,7 +560,7 @@ def _boot_post_kernel_services(
             if _rebac_for_dc
             else None,
             permission_enforcer=services.get("permission_enforcer"),
-            metadata_store=nx._kernel,
+            nexus_fs=nx,
         )
         logger.debug("[BOOT:WIRED] DescendantAccessChecker created")
     except Exception as exc:

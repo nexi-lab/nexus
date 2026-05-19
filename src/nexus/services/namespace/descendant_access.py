@@ -11,9 +11,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.types import OperationContext
 
 if TYPE_CHECKING:
-    from nexus.contracts.types import OperationContext, Permission
+    from nexus.contracts.filesystem import NexusFilesystem
+    from nexus.contracts.types import Permission
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +34,13 @@ class DescendantAccessChecker:
         rebac_service: Any,
         dir_visibility_cache: Any | None,
         permission_enforcer: Any,
-        metadata_store: Any,
+        nexus_fs: "NexusFilesystem",
     ) -> None:
         self._rebac_manager = rebac_manager
         self._rebac_service = rebac_service
         self._dir_visibility_cache = dir_visibility_cache
         self._permission_enforcer = permission_enforcer
-        self._metadata_store = metadata_store
-        # Pull the kernel out of the proxy so listing goes directly to
-        # ``kernel.metastore_*`` (survives W3).
-        self._kernel: Any = metadata_store
+        self._nexus_fs = nexus_fs
 
     # ------------------------------------------------------------------
     # Public API
@@ -88,7 +87,7 @@ class DescendantAccessChecker:
             >>> checker.has_access("/other", READ, joe_ctx)
             False  # No access to /other or any descendants
         """
-        from nexus.contracts.types import OperationContext, Permission
+        from nexus.contracts.types import Permission
 
         # Admin/system bypass
         if context.is_admin or context.is_system:
@@ -199,18 +198,33 @@ class DescendantAccessChecker:
         # =============================================================
         logger.debug(f"has_access: Falling back to slow path for {path}")
 
-        # Get all files/directories under this path (recursive)
+        # Get all files/directories under this path (recursive) — §2.5 syscall
+        # boundary. Background descendant-access scan runs is_system=True so the
+        # wrapper's zone filter is skipped; the rebac_check_bulk call below
+        # applies the real subject-level permission filter.
         prefix = path if path.endswith("/") else path + "/"
-        if path == "/":
-            prefix = ""
+        list_path = prefix if prefix else "/"
 
         try:
-            all_descendants = self._kernel.metastore_list_paginated(prefix, True, 100000, None)[
-                "items"
+            sys_ctx = OperationContext(
+                user_id="system",
+                groups=[],
+                zone_id=zone_id,
+                is_system=True,
+            )
+            descendant_paths = [
+                str(p)
+                for p in self._nexus_fs.sys_readdir(
+                    list_path,
+                    recursive=True,
+                    details=False,
+                    context=sys_ctx,
+                )
+                if p
             ]
         except Exception as exc:
             # If metadata query fails, return False
-            logger.debug("Metadata query failed for prefix %s: %s", prefix, exc)
+            logger.debug("sys_readdir failed for prefix %s: %s", list_path, exc)
             return False
 
         # OPTIMIZATION 5 (legacy): Use Tiger Cache for batch descendant check
@@ -236,12 +250,13 @@ class DescendantAccessChecker:
         # Instead of checking each descendant individually (N queries), use rebac_check_bulk()
         if self._rebac_manager is not None and hasattr(self._rebac_manager, "rebac_check_bulk"):
             logger.debug(
-                f"has_access: Using bulk check for {len(all_descendants)} descendants of {path}"
+                f"has_access: Using bulk check for {len(descendant_paths)} descendants of {path}"
             )
 
             # Build list of checks for all descendants
             checks = [
-                (subject_tuple, rebac_permission, ("file", meta.path)) for meta in all_descendants
+                (subject_tuple, rebac_permission, ("file", desc_path))
+                for desc_path in descendant_paths
             ]
 
             try:
@@ -288,8 +303,8 @@ class DescendantAccessChecker:
         if hasattr(self._rebac_service, "rebac_check_bulk_sync"):
             try:
                 checks = [
-                    (subject_tuple, rebac_permission, ("file", meta.path))
-                    for meta in all_descendants
+                    (subject_tuple, rebac_permission, ("file", desc_path))
+                    for desc_path in descendant_paths
                 ]
                 results = self._rebac_service.rebac_check_bulk_sync(checks, zone_id=context.zone_id)
                 for check in checks:
@@ -338,11 +353,11 @@ class DescendantAccessChecker:
                 logger.debug("has_access: Tiger Cache fallback failed, using individual checks")
 
         # Final fallback: individual checks with early exit
-        for meta in all_descendants:
+        for desc_path in descendant_paths:
             descendant_access = self._rebac_service.rebac_check_sync(
                 subject=subject_tuple,
                 permission=rebac_permission,
-                object=("file", meta.path),
+                object=("file", desc_path),
                 zone_id=zone_id,
             )
             if descendant_access:
@@ -353,7 +368,7 @@ class DescendantAccessChecker:
                         subject_id,
                         path,
                         True,
-                        f"fallback:{meta.path}",
+                        f"fallback:{desc_path}",
                     )
                 return True
 
@@ -440,16 +455,31 @@ class DescendantAccessChecker:
             else:
                 common_prefix = "/"
 
-            # Query common ancestor ONCE and cache all descendants
+            # Query common ancestor ONCE and cache all descendants — via the
+            # §2.5 syscall surface. Background bulk-access scan runs is_system=
+            # True; the rebac_check_bulk call in PHASE 2 applies the real
+            # subject-level filter.
             logger.debug(
                 f"has_access_bulk: Using common ancestor optimization - "
                 f"querying '{common_prefix}' once for {len(paths)} directories"
             )
             try:
-                all_descendants = self._kernel.metastore_list_paginated(
-                    common_prefix if common_prefix else "/", True, 100000, None
-                )["items"]
-                all_paths_set = {meta.path for meta in all_descendants}
+                sys_ctx = OperationContext(
+                    user_id="system",
+                    groups=[],
+                    zone_id=context.zone_id or ROOT_ZONE_ID,
+                    is_system=True,
+                )
+                all_paths_set = {
+                    str(p)
+                    for p in self._nexus_fs.sys_readdir(
+                        common_prefix if common_prefix else "/",
+                        recursive=True,
+                        details=False,
+                        context=sys_ctx,
+                    )
+                    if p
+                }
                 logger.debug(
                     f"has_access_bulk: Got {len(all_paths_set)} paths from common ancestor"
                 )
@@ -477,21 +507,32 @@ class DescendantAccessChecker:
                 for desc_path in descendant_paths:
                     all_checks.append((subject_tuple, rebac_permission, ("file", desc_path)))
         else:
-            # Single path - just query directly
+            # Single path - query via the §2.5 syscall surface.
+            sys_ctx = OperationContext(
+                user_id="system",
+                groups=[],
+                zone_id=context.zone_id or ROOT_ZONE_ID,
+                is_system=True,
+            )
             for path in paths:
                 # Check direct access to the directory itself
                 all_checks.append((subject_tuple, rebac_permission, ("file", path)))
 
                 # Get all descendants
                 prefix = path if path.endswith("/") else path + "/"
-                if path == "/":
-                    prefix = ""
+                list_path = prefix if prefix else "/"
 
                 try:
-                    descendants = self._kernel.metastore_list_paginated(prefix, True, 100000, None)[
-                        "items"
+                    descendant_paths = [
+                        str(p)
+                        for p in self._nexus_fs.sys_readdir(
+                            list_path,
+                            recursive=True,
+                            details=False,
+                            context=sys_ctx,
+                        )
+                        if p
                     ]
-                    descendant_paths = [meta.path for meta in descendants]
                     path_to_descendants[path] = descendant_paths
 
                     # Add checks for all descendants

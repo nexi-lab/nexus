@@ -104,32 +104,19 @@ class _HttpResponse:
 
 
 # ---------------------------------------------------------------------------
-# full_stack fixture
+# Internal boot/lifecycle helper (sibling-reusable)
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="function")
-def full_stack(
-    tmp_path: Path,
-    *,
-    preset: str = "shared",
-) -> Iterator[FullStack]:
-    """Boot a FULL nexus stack and yield a :class:`FullStack` handle.
+def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullStack]:
+    """Internal: boot a FULL nexus stack and yield a FullStack handle.
 
-    Skipped when:
-    - ``NEXUS_E2E != "1"`` (the test-level ``requires_e2e`` skip fires first,
-      but this guard ensures no Docker work happens if the fixture is invoked
-      outside a properly-gated test).
-    - Docker is not available.
+    Shared by the ``full_stack`` fixture and sibling integration fixtures
+    (#4133–#4138) that need a different preset.  NEXUS_E2E gating and
+    Docker availability are checked here so non-E2E collection does no
+    Docker work.
 
     Teardown: ``nexus down --volumes`` + temp dir removal.
-
-    ``preset`` defaults to ``"shared"`` (FULL PostgreSQL + Dragonfly + Zoekt).
-    Sibling issues (#4133–#4138) can pass a different preset, e.g.::
-
-        @pytest.fixture
-        def my_stack(tmp_path):
-            yield from full_stack.__wrapped__(tmp_path, preset="demo")
     """
     # Guard: no Docker work without NEXUS_E2E=1
     if os.environ.get("NEXUS_E2E") != "1":
@@ -289,3 +276,30 @@ def full_stack(
                 cwd=str(project_dir),
             )
             shutil.rmtree(project_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# full_stack fixture (thin wrapper around _boot_full_stack)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="function")
+def full_stack(tmp_path: Path) -> Iterator[FullStack]:
+    """Boot a FULL nexus stack (preset=shared). Skipped unless NEXUS_E2E=1.
+
+    Skipped when:
+    - ``NEXUS_E2E != "1"`` (the test-level ``requires_e2e`` skip fires first,
+      but this guard ensures no Docker work happens if the fixture is invoked
+      outside a properly-gated test).
+    - Docker is not available.
+
+    Teardown: ``nexus down --volumes`` + temp dir removal.
+
+    Sibling integration suites needing another preset define their own
+    one-line fixture::
+
+        @pytest.fixture
+        def demo_stack(tmp_path):
+            yield from _boot_full_stack(tmp_path, preset="demo")
+    """
+    yield from _boot_full_stack(tmp_path, preset="shared")

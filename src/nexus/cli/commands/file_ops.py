@@ -115,6 +115,18 @@ def init(path: str) -> None:
     default=None,
     help="(Markdown) Filter by block type within --section",
 )
+@click.option(
+    "--offset",
+    type=int,
+    default=None,
+    help="Start byte offset for a range read (read_range)",
+)
+@click.option(
+    "--length",
+    type=int,
+    default=None,
+    help="Number of bytes from --offset (requires --offset)",
+)
 @add_output_options
 @add_backend_options
 @add_context_options
@@ -124,6 +136,8 @@ def cat(
     at_operation: str | None,
     section: str | None,
     block_type: str | None,
+    offset: int | None,
+    length: int | None,
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -162,6 +176,16 @@ def cat(
                     return
 
                 with timing.phase("server"):
+                    if offset is not None:
+                        if offset < 0 or (length is not None and length < 0):
+                            render_error(ValueError("--offset/--length must be non-negative"))
+                            sys.exit(2)
+                        end = offset + length if length is not None else nx.stat(path)["size"]
+                        chunk = nx.read_range(
+                            path, offset, end, context=cast(Any, operation_context)
+                        )
+                        sys.stdout.buffer.write(chunk)
+                        return
                     if metadata:
                         read_result = nx.read(
                             path, context=cast(Any, operation_context), return_metadata=True

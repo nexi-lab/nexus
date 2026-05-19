@@ -157,3 +157,29 @@ def test_rm_batch_per_item_independent(patched_fs, cli_runner: CliRunner):
     assert out["/d2.txt"]["success"] is True
     assert out["/missing.txt"]["success"] is False
     assert not nx.access("/d1.txt")
+
+
+# ---------------------------------------------------------------------------
+# Task 8: nexus cat --offset / --length (read_range)
+# ---------------------------------------------------------------------------
+
+
+def test_cat_range_equals_slice(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import cat
+
+    nx = patched_fs
+    nx.write("/big.txt", b"0123456789")
+    assert nx.read_range("/big.txt", 2, 5) == b"234"
+    res = cli_runner.invoke(cat, ["/big.txt", "--offset", "2", "--length", "3"])
+    assert res.exit_code == 0, res.output
+    assert res.output.rstrip("\n") == "234" or res.stdout_bytes == b"234"
+
+
+def test_cat_no_range_unchanged(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import cat
+
+    nx = patched_fs
+    nx.write("/whole.txt", b"hello world")
+    res = cli_runner.invoke(cat, ["/whole.txt"])
+    assert res.exit_code == 0, res.output
+    assert "hello world" in res.output

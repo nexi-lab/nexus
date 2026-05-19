@@ -218,8 +218,8 @@ class KernelClient:
     def sys_stat(self, path: str, zone_id: str = ROOT_ZONE_ID) -> Any:
         """Stat a path — returns metadata dict or None on not-found.
 
-        Enriches the Rust JSON response with Python-friendly fields:
-        - modified_at / created_at: datetime objects from epoch-ms fields
+        Enriches the Rust JSON response with ISO-8601 string fields:
+        - modified_at / created_at: ISO strings from epoch-ms fields
         """
         try:
             result = self._call("sys_stat", {"path": path, "zone_id": zone_id})
@@ -228,16 +228,17 @@ class KernelClient:
             return None
         if result is None:
             return None
-        # Enrich with datetime objects that Python callers expect.
+        # Enrich with ISO-string timestamps that Python callers expect.
+        # Callers that need datetime objects should parse via fromisoformat().
         if isinstance(result, dict):
             from datetime import UTC, datetime
 
             ms = result.get("modified_at_ms")
             if ms is not None and "modified_at" not in result:
-                result["modified_at"] = datetime.fromtimestamp(ms / 1000.0, UTC)
+                result["modified_at"] = datetime.fromtimestamp(ms / 1000.0, UTC).isoformat()
             ms = result.get("created_at_ms")
             if ms is not None and "created_at" not in result:
-                result["created_at"] = datetime.fromtimestamp(ms / 1000.0, UTC)
+                result["created_at"] = datetime.fromtimestamp(ms / 1000.0, UTC).isoformat()
         return result
 
     def sys_setattr(self, path: str, **kwargs: Any) -> Any:

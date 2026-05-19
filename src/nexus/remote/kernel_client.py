@@ -565,15 +565,28 @@ class KernelClient:
     # ── Xattr (file metadata side-car) ──────────────────────────────────
 
     def get_xattr(self, path: str, key: str) -> str | None:
-        """Get extended attribute — no-op in subprocess mode."""
-        return None
+        """Get extended attribute via Rust kernel metastore."""
+        try:
+            result = self._call("get_xattr", {"path": path, "key": key})
+            return str(result) if result is not None else None
+        except Exception:
+            return None
 
     def set_xattr(self, path: str, key: str, value: str) -> None:
-        """Set extended attribute — no-op in subprocess mode."""
-        pass
+        """Set extended attribute via Rust kernel metastore."""
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._call("set_xattr", {"path": path, "key": key, "value": value})
 
     def get_xattr_bulk(self, paths: list[str], key: str) -> dict[str, str | None]:
-        """Bulk get extended attribute — no-op in subprocess mode."""
+        """Bulk get extended attribute via Rust kernel metastore."""
+        try:
+            result = self._call("get_xattr_bulk", {"paths": paths, "key": key})
+            if isinstance(result, dict):
+                return result
+        except Exception:
+            pass
         return dict.fromkeys(paths)
 
     # ── IPC: Pipes ─────────────────────────────────────────────────────

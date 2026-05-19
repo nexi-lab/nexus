@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use kernel::abi::KernelAbi;
+use kernel::kernel::convenience::KernelConvenience;
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 use kernel::kernel::vfs_proto::{CallResponse};
 use tonic::{Response, Status};
@@ -77,6 +78,11 @@ pub fn dispatch(
             RpcErrorCode::InternalError,
             &format!("{method} is not available in subprocess mode"),
         )),
+
+        // Xattr (file metadata side-car)
+        "set_xattr" => do_set_xattr(kernel, &params),
+        "get_xattr" => do_get_xattr(kernel, &params),
+        "get_xattr_bulk" => do_get_xattr_bulk(kernel, &params),
 
         // Write batch — delegate to individual writes
         "write_batch" => do_write_batch(kernel, &params, ctx),
@@ -558,6 +564,55 @@ fn do_stream_collect_all(
     let path = s(params, "path");
     match kernel.stream_collect_all(&path) {
         Ok(data) => ok_json(serde_json::json!(encode_bytes(&data))),
+        Err(e) => Err(kernel_err_to_payload(e)),
+    }
+}
+
+// ── Xattr (file metadata side-car) ──────────────────────────────
+
+fn do_set_xattr(
+    kernel: &Kernel,
+    params: &serde_json::Value,
+) -> Result<Vec<u8>, Vec<u8>> {
+    let path = s(params, "path");
+    let key = s(params, "key");
+    let value = s(params, "value");
+    match kernel.set_xattr(&path, &key, value, kernel::ROOT_ZONE_ID) {
+        Ok(()) => ok_json(serde_json::json!(null)),
+        Err(e) => Err(kernel_err_to_payload(e)),
+    }
+}
+
+fn do_get_xattr(
+    kernel: &Kernel,
+    params: &serde_json::Value,
+) -> Result<Vec<u8>, Vec<u8>> {
+    let path = s(params, "path");
+    let key = s(params, "key");
+    match kernel.get_xattr(&path, &key, kernel::ROOT_ZONE_ID) {
+        Ok(val) => ok_json(serde_json::json!(val)),
+        Err(e) => Err(kernel_err_to_payload(e)),
+    }
+}
+
+fn do_get_xattr_bulk(
+    kernel: &Kernel,
+    params: &serde_json::Value,
+) -> Result<Vec<u8>, Vec<u8>> {
+    let paths: Vec<String> = params
+        .get("paths")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    let key = s(params, "key");
+    match kernel.get_xattr_bulk(&paths, &key, kernel::ROOT_ZONE_ID) {
+        Ok(results) => {
+            let map: serde_json::Map<String, serde_json::Value> = results
+                .into_iter()
+                .map(|(p, v)| (p, v.map_or(serde_json::Value::Null, |s| serde_json::json!(s))))
+                .collect();
+            ok_json(serde_json::json!(map))
+        }
         Err(e) => Err(kernel_err_to_payload(e)),
     }
 }

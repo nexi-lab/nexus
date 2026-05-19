@@ -53,6 +53,11 @@ class _Kernel:
     def write(self, path: str, _ctx: object, content: bytes, _offset: int = 0) -> Any:
         return self.sys_write(path, _ctx, content, _offset)
 
+    def read_batch(
+        self, items: list[tuple[str, int, int | None]], context: Any = None
+    ) -> list[Any]:
+        return [self.sys_read(path, None, 0) for path, _, _ in items]
+
     def stat_batch(self, paths: list[str], zone_id: str = "root") -> list[Any]:
         return [
             {
@@ -107,14 +112,18 @@ class _ErrorKernel(_Kernel):
 
 
 class _FallbackKernel(_Kernel):
-    def sys_read_batch(self, paths: list[str], _ctx: object) -> list[Any]:
+    def read_batch(
+        self, items: list[tuple[str, int, int | None]], context: Any = None
+    ) -> list[Any]:
         return [
             SimpleNamespace(
                 data=None,
                 content_id=f"cid-{index}",
                 gen=index + 1,
+                entry_type=1,
+                stream_next_offset=None,
             )
-            for index, _path in enumerate(paths)
+            for index, _item in enumerate(items)
         ]
 
 

@@ -6,6 +6,8 @@ Verifies:
   3. Happy path: valid file + mocked /health 200 + /api/v2/features 200 →
      exit 0, JSON parses to ready:true, profile/endpoint correct.
   4. Valid file but /health never 200 → exit(TEMPFAIL).
+  5. /health 200 but /api/v2/features fails → still ready (best-effort probe).
+  6. --timeout 0 → Click usage error (exit 2).
 
 All tests use tiny timeouts and patched httpx (no real network/daemon).
 """

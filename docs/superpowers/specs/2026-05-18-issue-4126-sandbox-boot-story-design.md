@@ -88,7 +88,7 @@ slow/integration:
 - Assert the process boots with **no Postgres/Redis/Zoekt** running (none
   started by the harness; no connection attempts/errors in output).
 - HTTP `/health` → 200; `/api/v2/features` → `profile=sandbox` and expected
-  disabled bricks; gRPC `Ping` → ok.
+  disabled bricks; gRPC `Ping` → intentionally absent (sandbox is HTTP-only; documented skip, recorded as an intentionally-absent coverage row).
 - Capture warm boot time, cold boot time, RSS via `psutil`; assert loose upper
   bounds (guard gross regression only — no statistical baselines, no CI gate).
 - Cover positive flow, denied flow (parity with CLI usage errors), profile
@@ -151,6 +151,4 @@ replaced with the `nexus ready` documentation).
 - Fixed readiness path under `$HOME`: mitigated by per-test `HOME` env override.
 - Subprocess boot may be slow / flaky in CI: mitigated by slow/integration
   marker and generous timeout with readiness polling.
-- gRPC `Ping` requires the gRPC server up in sandbox: verify it is exposed under
-  the sandbox brick set; if not, that becomes a missing-surface row instead of a
-  test assertion.
+- gRPC `Ping`: investigation confirmed the sandbox daemon binds no gRPC server (HTTP-only by design). Recorded as an intentionally-absent coverage row with a documented test skip — not a missing-surface gap and not a test assertion.

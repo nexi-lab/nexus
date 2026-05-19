@@ -165,6 +165,71 @@ def test_sandbox_daemon_boots_and_writes_readiness(sandbox_daemon) -> None:
             )
 
 
+def test_sandbox_uses_no_external_service_drivers(sandbox_daemon) -> None:
+    """Positive contract: sandbox runs with zero external-service drivers.
+
+    Strengthens the log-heuristic in
+    ``test_sandbox_daemon_boots_and_writes_readiness`` (kept as
+    defense-in-depth) into two positive assertions:
+
+    1. ``/api/v2/features`` reports ``profile == "sandbox"`` and the enabled
+       brick set excludes every external-service-implying brick
+       (``pay``/``llm``/``observability``/``federation``), proving no
+       postgres/dragonfly/zoekt-backed brick is active.
+    2. Process-level: the daemon process (and any children) holds zero
+       ESTABLISHED/SYN_SENT TCP connections to the default external-service
+       remote ports — PostgreSQL 5432, Redis/Dragonfly 6379, Zoekt 6070.
+
+    The connection check only flags ESTABLISHED/SYN_SENT to those *remote*
+    ports, so localhost HTTP / the daemon's own listen sockets never
+    trip it (no flakiness). ``psutil`` is optional: if absent only the
+    process-level sub-check is skipped, not the whole test.
+    """
+    base = f"http://{sandbox_daemon['host']}:{sandbox_daemon['http_port']}"
+    with httpx.Client(base_url=base, timeout=10.0) as client:
+        r = _http_get_with_retry(client, "/api/v2/features")
+        assert r.status_code == 200, r.text
+        body = r.json()
+
+    assert body["profile"] == "sandbox", body
+    enabled = set(body["enabled_bricks"])
+    # No external-service-implying brick is enabled in sandbox: pay/llm/
+    # observability/federation each pull a postgres/dragonfly/zoekt-class
+    # dependency in non-sandbox profiles.
+    for forbidden in ("pay", "llm", "observability", "federation"):
+        assert forbidden not in enabled, (
+            f"sandbox must not enable external-service brick '{forbidden}'; "
+            f"enabled={sorted(enabled)}"
+        )
+
+    # Process-level positive proof: no live connection to default external
+    # service ports. Optional dependency — skip only this sub-check.
+    psutil = pytest.importorskip("psutil")
+
+    external_remote_ports = {5432, 6379, 6070}
+    live_states = {psutil.CONN_ESTABLISHED, psutil.CONN_SYN_SENT}
+
+    proc = psutil.Process(sandbox_daemon["proc"].pid)
+    procs = [proc]
+    with contextlib.suppress(psutil.Error):
+        procs.extend(proc.children(recursive=True))
+
+    offending = []
+    for p in procs:
+        try:
+            conns = p.net_connections(kind="tcp")
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            continue
+        for c in conns:
+            if c.status in live_states and c.raddr and c.raddr.port in external_remote_ports:
+                offending.append((p.pid, c.status, c.raddr.ip, c.raddr.port))
+
+    assert not offending, (
+        f"sandbox daemon holds live TCP connections to external-service "
+        f"ports {sorted(external_remote_ports)}: {offending}"
+    )
+
+
 def _http_get_with_retry(client, path, *, attempts=40, delay=0.5):
     """GET `path`, retrying transient connection errors.
 
@@ -219,40 +284,52 @@ def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
             )
 
 
-# Empirical observation (Task 3, issue #4126): a fresh `nexus.daemon.main
-# --profile sandbox` daemon refuses connections on the gRPC port (no gRPC
-# server bound in this configuration). However, this behavior is
-# CONTESTED: open issue #4148 (parent #4126) reports the sandbox typed VFS
-# gRPC `Ping` returns UNAUTHENTICATED. The true status is unresolved and
-# tracked by #4148 — it is NOT asserted as intentional/by-design.
-#
-#   True  -> a sandbox-bound gRPC server with Ping exists; assert it.
-#   False -> not reachable here (connection refused); contested, see #4148.
-#
-# REVIVAL NOTE: do not just flip this to True. If sandbox ever exposes
-# gRPC, re-derive the stub/service in the test body from whatever
-# servicer is actually bound (NexusVFSService is bound by no server
-# today; ApprovalsV1 has no Ping), or the test will fail opaquely.
-SANDBOX_GRPC_PING_SUPPORTED = False
+def test_sandbox_does_not_bind_typed_vfs_grpc(sandbox_daemon) -> None:
+    """Sandbox does NOT bind the typed VFS gRPC server (root-caused #4126).
 
+    ROOT CAUSE (verified, definitive — encoded here as a contract):
+    The typed VFS gRPC service ``NexusVfsService`` (serving Ping/Read/Write,
+    defined in ``rust/transport/src/grpc.rs``) has exactly ONE server spawn
+    call site in the whole repo — ``rust/profiles/cluster/src/main.rs:422``,
+    the *cluster* profile binary. No call site exists in the sandbox path
+    (``rust/``, ``src/nexus/``). The only Python gRPC server is the
+    env-gated approvals brick (``src/nexus/server/lifespan/approvals.py``),
+    which is not in the sandbox profile and has no ``Ping``. What the
+    sandbox profile *does* start is the Raft/federation gRPC on the fixed
+    port :2126 (``rust/raft/src/transport/server.rs``) — a different
+    surface, not VFS ``Ping``, and not at ``http_port + 2``.
 
-@pytest.mark.skipif(
-    not SANDBOX_GRPC_PING_SUPPORTED,
-    reason=(
-        "gRPC Ping not reachable under sandbox in this config (connection "
-        "refused); behavior contested and tracked by open issue #4148 "
-        "(parent #4126)."
-    ),
-)
-def test_sandbox_grpc_ping_over_real_socket(sandbox_daemon) -> None:
-    """gRPC `Ping` responds when the sandbox gRPC server is bound."""
+    Therefore the typed VFS gRPC ``Ping`` is **unavailable in sandbox by
+    architecture (cluster-profile-only)** — empirically reproduced as
+    connection-refused on ``http_port + 2`` for the daemon's lifetime while
+    the daemon is otherwise healthy. #4148's "no-auth VFS Ping returns
+    UNAUTHENTICATED" does NOT reproduce in sandbox because no VFS gRPC
+    server exists there to return anything.
+
+    This test PASSES while the contract holds and would FAIL if a future
+    change made sandbox bind the typed VFS gRPC server — exactly the
+    regression signal we want.
+    """
     target = f"{sandbox_daemon['host']}:{sandbox_daemon['grpc_port']}"
     channel = grpc.insecure_channel(target)
     try:
-        grpc.channel_ready_future(channel).result(timeout=15)
+        # The VFS gRPC server is cluster-profile-only, so the channel must
+        # never become ready within a generous-but-bounded window.
+        with pytest.raises(grpc.FutureTimeoutError):
+            grpc.channel_ready_future(channel).result(timeout=8)
+
+        # And an actual Ping attempt must fail with an unavailable/
+        # connection error (no server bound to answer it in sandbox).
         stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-        resp = stub.Ping(vfs_pb2.PingRequest(auth_token=""), timeout=10)
-        assert resp is not None
+        with pytest.raises(grpc.RpcError) as excinfo:
+            stub.Ping(vfs_pb2.PingRequest(auth_token=""), timeout=5)
+        assert excinfo.value.code() in (
+            grpc.StatusCode.UNAVAILABLE,
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+        ), (
+            f"expected UNAVAILABLE/DEADLINE_EXCEEDED (no VFS gRPC server in "
+            f"sandbox), got {excinfo.value.code()}: {excinfo.value}"
+        )
     finally:
         channel.close()
 

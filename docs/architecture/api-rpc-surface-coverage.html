@@ -12893,10 +12893,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_v_f_s_service.ping" data-op-text="nexus_v_f_s_service.ping gRPC liveness ping on NexusVFSService. Not reachable under sandbox in current testing (connection refused); behavior contested and tracked by #4148. Not asserted as intentional. NexusVFSService.Ping ">
+<div class="op" data-op-id="nexus_v_f_s_service.ping" data-op-text="nexus_v_f_s_service.ping gRPC liveness ping on NexusVFSService. Unavailable in sandbox by architecture: the typed VFS gRPC server is bound only by the cluster profile (single spawn call site rust/profiles/cluster/src/main.rs:422); the sandbox path never binds it (reproduced connection-refused on http_port+2; only the Raft federation gRPC binds, on :2126). #4148 (which reported an UNAUTHENTICATED Ping) does not reproduce in sandbox — close-recommended / reclassify as cluster-only. NexusVFSService.Ping ">
   <div class="op-header">
     <span class="op-id">nexus_v_f_s_service.ping</span>
-    <span class="op-summary">&mdash; gRPC liveness ping on NexusVFSService. Not reachable under sandbox in current testing (connection refused); behavior contested and tracked by #4148. Not asserted as intentional.</span>
+    <span class="op-summary">&mdash; gRPC liveness ping on NexusVFSService. Unavailable in sandbox by architecture: the typed VFS gRPC server is bound only by the cluster profile (single spawn call site rust/profiles/cluster/src/main.rs:422); the sandbox path never binds it (reproduced connection-refused on http_port+2; only the Raft federation gRPC binds, on :2126). #4148 (which reported an UNAUTHENTICATED Ping) does not reproduce in sandbox — close-recommended / reclassify as cluster-only.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="rpc"><span class="label">RPC</span> <span>NexusVFSService.Ping</span></span>
@@ -12907,7 +12907,7 @@ graph TB
 <span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>Not reachable under sandbox in current testing (connection refused); behavior contested and tracked by #4148. Not asserted as intentional.</code></span>
+    <span>usage: <code>Cluster-profile-only by architecture: NexusVFSService is spawned solely by the cluster binary (rust/profiles/cluster/src/main.rs:422). Sandbox is HTTP-only for the VFS surface; the typed VFS gRPC port is never bound there (reproduced connection-refused on http_port+2). #4148 = triage issue (close-recommended).</code></span>
     <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py">tests/integration/test_sandbox_boot_smoke.py</a></span>
     <span>perf: control</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>

@@ -88,7 +88,17 @@ slow/integration:
 - Assert the process boots with **no Postgres/Redis/Zoekt** running (none
   started by the harness; no connection attempts/errors in output).
 - HTTP `/health` → 200; `/api/v2/features` → `profile=sandbox` and expected
-  disabled bricks; gRPC `Ping` → not reachable under sandbox in this configuration (connection refused in fresh empirical test). Behavior is contested — issue #4148 (open, parent #4126) reports it returns UNAUTHENTICATED. Recorded as a tracked gap (#4148), NOT asserted as intentional/by-design.
+  disabled bricks. Typed VFS gRPC `Ping` (`NexusVfsService`) is bound **only**
+  by the cluster profile (single spawn call site
+  `rust/profiles/cluster/src/main.rs:422`); the sandbox profile never binds
+  it (verified: connection-refused on `http_port + 2` for the daemon's
+  lifetime; the only gRPC the sandbox starts is the Raft/federation gRPC on
+  the fixed port `:2126`, a different surface). #4148's no-auth-VFS-`Ping`
+  scenario does **not** reproduce in sandbox because no VFS gRPC server
+  exists there. Status: **unavailable in sandbox by architecture
+  (cluster-profile-only)** — not a sandbox auth bug. #4148 is tracked for
+  product triage (recommend close as not-reproducible / reclassify as a
+  cluster-only feature request).
 - Capture warm boot time, cold boot time, RSS via `psutil`; assert loose upper
   bounds (guard gross regression only — no statistical baselines, no CI gate).
 - Cover positive flow, denied flow (parity with CLI usage errors), profile
@@ -174,4 +184,11 @@ missing-surface gate verdict and coverage table are updated accordingly.
 - Fixed readiness path under `$HOME`: mitigated by per-test `HOME` env override.
 - Subprocess boot may be slow / flaky in CI: mitigated by slow/integration
   marker and generous timeout with readiness polling.
-- gRPC `Ping` under sandbox: empirically connection-refused here, but open issue #4148 contests this (claims UNAUTHENTICATED). Status is unresolved and tracked by #4148; do not document it as "intentional/by-design".
+- Typed VFS gRPC `Ping` under sandbox: root-caused as **cluster-profile-only
+  by architecture**. The `NexusVfsService` server has a single spawn call
+  site (`rust/profiles/cluster/src/main.rs:422`); the sandbox path never
+  binds it (reproduced: connection-refused on `http_port + 2`; only the Raft
+  federation gRPC binds, on `:2126`). #4148's UNAUTHENTICATED claim does not
+  reproduce in sandbox (no VFS gRPC server there to respond). #4148
+  referenced as the triage issue (close-recommended / reclassify as
+  cluster-only).

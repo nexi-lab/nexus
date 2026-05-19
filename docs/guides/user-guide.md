@@ -265,12 +265,18 @@ curl -s http://127.0.0.1:2026/api/v2/features
 - **Denied (usage error, exit 64):** `--workspace`, `--hub-url`, or
   `--hub-token` without `--profile sandbox`; `--hub-url` without
   `--hub-token`.
-- **Unavailable / contested:** gRPC `Ping` is **not reachable under the
-  sandbox profile in current testing (connection refused)**; this behavior
-  is **contested and tracked by
-  [#4148](https://github.com/nexi-lab/nexus/issues/4148)** (open) — it is
-  NOT asserted as an intentional/by-design omission.
-  Sandbox-provisioning RPCs/CLI are absent (`BRICK_SANDBOX` disabled).
+- **Unavailable by architecture:** the typed VFS gRPC `Ping`
+  (`NexusVfsService`) is bound **only by the cluster profile** (single
+  server spawn call site, `rust/profiles/cluster/src/main.rs`). The sandbox
+  profile is **HTTP-only for the VFS surface by architecture** — it never
+  binds the typed VFS gRPC server (verified: connection-refused on
+  `http_port + 2`; the only gRPC sandbox starts is the Raft federation gRPC
+  on the fixed port `:2126`, a different surface). [#4148](https://github.com/nexi-lab/nexus/issues/4148)
+  (the issue that reported an UNAUTHENTICATED `Ping`) does not reproduce in
+  sandbox because no VFS gRPC server exists there; it is the **triage
+  issue** for this surface (close-recommended / reclassify as a cluster-only
+  feature request). Sandbox-provisioning RPCs/CLI are absent
+  (`BRICK_SANDBOX` disabled).
 
 **Correctness assertion you can run:** with the daemon up,
 `curl -s http://127.0.0.1:2026/api/v2/features | jq -r .profile` prints
@@ -299,13 +305,16 @@ matrix, [#4139](https://github.com/nexi-lab/nexus/issues/4139)):
 | `nexus ready` | CLI | supported | `tests/unit/cli/test_ready_cmd.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | HTTP `/health` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | HTTP `/api/v2/features` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
-| gRPC `Ping` | typed gRPC | unavailable — not reachable; tracked by #4148 | `tests/integration/test_sandbox_boot_smoke.py` (documented skip) | n/a |
+| gRPC `Ping` | typed gRPC | unavailable — cluster-profile-only (`NexusVfsService`); not bound in sandbox by architecture — see #4148 | `tests/integration/test_sandbox_boot_smoke.py` (`test_sandbox_does_not_bind_typed_vfs_grpc`) | n/a |
 | `nexus status` | CLI | supported (reads persisted sandbox state, #4144) | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | `nexus env` / `nexus run` | CLI | supported (reads persisted sandbox state, #4144) | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 
 **Missing-surface gate verdict:** all core boot-story surfaces exist, so
-this story is **not blocked**. gRPC `Ping` under sandbox is unresolved and
-tracked by #4148 (open). The readiness/discovery gap — a sandbox started
+this story is **not blocked**. The typed VFS gRPC `Ping` is unavailable in
+sandbox **by architecture** (cluster-profile-only — `NexusVfsService` is
+bound only by the cluster profile, never the sandbox path); #4148 is the
+triage issue for that surface (close-recommended / reclassify as
+cluster-only). The readiness/discovery gap — a sandbox started
 on a non-default host/port could not be found by the follow-up
 `nexus env` / `nexus status` / `nexus run` workflow — is **genuinely
 closed in this PR** ([#4144](https://github.com/nexi-lab/nexus/issues/4144)):

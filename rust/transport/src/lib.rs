@@ -35,16 +35,14 @@
 /// JWT, OIDC, …) live in the deployment-tier service that introduces
 /// them, not here.
 pub mod auth;
-/// Federation peer client — only used by `PyFederationClient` (Python deployment).
-#[cfg(feature = "python")]
+/// Federation peer client — discover/join RPCs for cross-zone membership.
 pub mod federation;
+/// Generic `Call` RPC dispatcher — JSON in, kernel syscall, JSON out.
+pub mod call_dispatch;
 /// VFS gRPC server (in-bound). Always compiled — zero PyO3 coupling.
 pub mod grpc;
 pub mod ipc;
 pub mod peer_blob;
-
-#[cfg(feature = "python")]
-pub mod python;
 
 /// Out-bound VFS gRPC client. Re-exported from `kernel::rpc_transport`
 /// where the type is declared (kernel-internal `RemoteMetaStore`

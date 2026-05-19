@@ -43,6 +43,11 @@ kernel = { workspace = true }
 # backend or raft-replicated behaviour reach it through `kernel.sys_*`
 # syscalls (the same path Python takes), never via direct cross-crate
 # imports. See `services/src/lib.rs` for the rationale.
+# tonic — used by `password_vault::PasswordVaultService` (and any
+# future Rust gRPC service in this crate) for `Request` / `Response` /
+# `Status` types. Unconditional because each service module is
+# feature-gated, but tonic itself is shared infrastructure for them.
+tonic = { workspace = true }
 redb = "4"
 # Tasks engine storage backend.
 fjall = "3"

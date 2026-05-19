@@ -32,6 +32,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(cat)
     cli.add_command(stat_cmd)
     cli.add_command(metadata_cmd)
+    cli.add_command(exists_cmd)
     cli.add_command(write)
     cli.add_command(append)
     cli.add_command(write_batch)
@@ -447,6 +448,56 @@ def metadata_cmd(
                 timing=timing,
                 human_formatter=lambda d: console.print(d),
             )
+        except Exception as e:  # noqa: BLE001
+            render_error(e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+@click.command(name="exists")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@add_output_options
+@add_backend_options
+@add_context_options
+def exists_cmd(
+    paths: tuple[str, ...],
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Check existence of one or more paths (exists_batch).
+
+    Exit 0 iff every path exists; 1 otherwise. --json prints the full map.
+
+    Examples:
+        nexus exists /a.txt /b.txt
+        nexus exists /a.txt --json
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.exists_batch(list(paths))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+            # Exit 1 if any path is missing — but only when --json was NOT
+            # passed explicitly. With --json the caller consumes the map
+            # directly. Use json_output_explicit (not json_output) so the
+            # auto-JSON-on-pipe fallback does not clobber the exit-code
+            # signal a shell script piping our output relies on.
+            if not output_opts.json_output_explicit and not all(data.values()):
+                sys.exit(1)
+        except SystemExit:
+            raise
         except Exception as e:  # noqa: BLE001
             render_error(e)
             sys.exit(1)

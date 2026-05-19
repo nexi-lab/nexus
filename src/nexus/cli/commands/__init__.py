@@ -19,6 +19,7 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
         "cat",
         "stat",
         "metadata",
+        "exists",
         "write",
         "append",
         "write-batch",

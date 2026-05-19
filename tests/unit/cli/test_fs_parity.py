@@ -65,3 +65,24 @@ def test_metadata_extended_parity(patched_fs, cli_runner: CliRunner):
     # metadata_batch carries the extended keys stat_bulk lacks:
     assert "mime_type" in out["/m.txt"] and "created_at" in out["/m.txt"]
     assert out["/nope.txt"] is None
+
+
+# ---------------------------------------------------------------------------
+# Task 4: nexus exists (exists_batch)
+# ---------------------------------------------------------------------------
+
+
+def test_exists_batch_parity_and_exit(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import exists_cmd
+
+    nx = patched_fs
+    nx.write("/here.txt", b"x")
+    rpc = nx.exists_batch(["/here.txt", "/gone.txt"])
+    assert rpc == {"/here.txt": True, "/gone.txt": False}
+    # --json: full map, exit 0
+    res = cli_runner.invoke(exists_cmd, ["/here.txt", "/gone.txt", "--json"])
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output)["data"] == {"/here.txt": True, "/gone.txt": False}
+    # plain: exit 0 iff ALL exist
+    assert cli_runner.invoke(exists_cmd, ["/here.txt"]).exit_code == 0
+    assert cli_runner.invoke(exists_cmd, ["/here.txt", "/gone.txt"]).exit_code == 1

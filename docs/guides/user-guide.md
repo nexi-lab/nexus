@@ -557,6 +557,105 @@ Packages behind this:
 - Remote client transport: `nexus.remote`, `nexus.grpc`
 - Auth, policy, and server-side feature wiring: `nexus.bricks.*`, `nexus.system_services.*`
 
+## 4.5 Files: lifecycle, batch, streaming, and locks
+
+This is the full file API as a single workflow. Every CLI command below has
+an equivalent RPC — the CLI is a thin wrapper, the SDK calls the same
+methods. See also [FULL deployment profile — Filesystem
+surface](../deployment/full-profile.md#filesystem-surface).
+
+### Lifecycle (write → stat → read → rename → delete)
+
+```bash
+echo "hello" | nexus write /workspace/a.txt --stream
+nexus stat   /workspace/a.txt --json        # size, content_id, version, is_directory
+nexus cat    /workspace/a.txt               # -> hello
+nexus rename-batch /workspace/a.txt:/workspace/b.txt --json
+nexus rm-batch /workspace/b.txt --json
+```
+
+SDK equivalent:
+
+```python
+import nexus
+nx = nexus.connect()
+nx.write("/workspace/a.txt", b"hello")
+print(nx.stat("/workspace/a.txt")["size"])     # 5
+assert nx.read("/workspace/a.txt") == b"hello"
+```
+
+**Correctness check you can run:** `content_id` from `write` equals
+`content_id` from `stat` equals the id seen by `cat` — same bytes, one
+identity. `nexus stat` proves it without re-reading content.
+
+### Batch (one round-trip for many files)
+
+```bash
+nexus read-bulk  /w/a.txt /w/b.txt --json          # {path: content}
+nexus stat       /w/a.txt /w/b.txt --json          # multi -> stat_bulk
+nexus metadata   /w/a.txt /w/b.txt --json          # extended (mime_type, created_at)
+nexus exists     /w/a.txt /w/missing.txt --json    # {path: bool}; exit 1 if any missing
+nexus rename-batch /w/a.txt:/w/c.txt --json
+nexus rm-batch   /w/b.txt /w/c.txt --json
+```
+
+- `read-bulk` skips missing paths (null); `read-bulk --atomic` uses
+  `read_batch` and fails on the first missing path.
+- `rename-batch`, `rm-batch`, and `metadata` are **per-item independent** —
+  one failure does not abort the others; the JSON result reports per-path
+  `{success, ...}`.
+- `stat` (multi-arg) vs `metadata`: `stat`/`stat_bulk` return the five core
+  fields (size, content_id, version, modified_at, is_directory);
+  `metadata`/`metadata_batch` adds mime_type, created_at, zone_id.
+
+### Streaming and range reads
+
+```bash
+nexus cat /w/big.bin --offset 0 --length 1048576     # first 1 MiB (read_range)
+nexus cat /w/big.bin --stream --chunk-size 65536     # chunked (stream)
+cat ./local.bin | nexus write /w/big.bin --stream    # chunked write (write_stream)
+```
+
+`read_range(path, start, end)` is start-inclusive, end-exclusive;
+`nexus cat --offset N --length M` reads bytes `[N, N+M)`. An end past EOF
+returns the available bytes (bounded, not an error).
+
+### Locks
+
+```bash
+nexus lock list
+nexus lock info /w/a.txt
+nexus lock release /w/a.txt --force
+```
+
+A second acquirer of a held lock is refused/blocked; release frees it.
+`nexus lock info` reflects current state.
+
+### Failure and unavailable behavior
+
+- Unauthenticated request → HTTP 401 (not a traceback).
+- Authenticated but unpermitted → explicit denial.
+- `nexus admin fs backfill-index` / `flush-write-observer` are **admin-only**;
+  a non-admin caller is refused server-side.
+- The legacy `POST /api/nfs/{method}` HTTP endpoint is **deprecated,
+  migration-only**, sunset **2026-06-25** (Issue #1133). Use gRPC `Call` or
+  the typed `Read`/`Write`/`Delete` RPCs (what the CLI uses).
+
+### Performance (guidance, not CI gates)
+
+Hot paths benchmarked in `tests/benchmarks/bench_read_write_overhead.py`
+(median, dev laptop, in-process FS):
+
+| Operation                        | Median  |
+|----------------------------------|---------|
+| Typed `nx.read` (1 KiB file)     | ~165 µs |
+| `read_range(64 KiB)` of 1 MiB    | ~2.9 ms |
+| `stat_bulk` of 100 files         | ~1.7 ms (≈17 µs / path) |
+| `sys_lock` + `sys_unlock` cycle  | ~1.0 ms |
+
+These are guidance, not CI gates. Re-run on your hardware with:
+`pytest tests/benchmarks/bench_read_write_overhead.py --benchmark-only -k "RangeRead or StatBulk or TypedVsGenericRead or LockAcquireRelease"`.
+
 ## 5. Search, Parsing, And Indexing
 
 Think about search in three layers:

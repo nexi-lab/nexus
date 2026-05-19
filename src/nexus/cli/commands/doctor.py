@@ -23,6 +23,7 @@ from nexus.cli.output import OutputOptions, add_output_options, render_output
 from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import handle_error
+from nexus.remote.rpc_transport import RPCTransport
 
 # ---------------------------------------------------------------------------
 # Check result model
@@ -590,14 +591,15 @@ def _display_results(results: dict[str, list[CheckResult]]) -> int:
 
 
 # ---------------------------------------------------------------------------
-# CLI command
+# CLI command group
 # ---------------------------------------------------------------------------
 
 
-@click.command(name="doctor")
+@click.group(name="doctor", invoke_without_command=True)
 @click.option("--fix", "auto_fix", is_flag=True, help="Attempt to auto-fix issues.")
 @add_output_options
-def doctor(output_opts: OutputOptions, auto_fix: bool) -> None:
+@click.pass_context
+def doctor(ctx: click.Context, output_opts: OutputOptions, auto_fix: bool) -> None:
     """Run diagnostic checks on your Nexus environment.
 
     Checks connectivity, storage, federation, security, and dependencies.
@@ -606,7 +608,12 @@ def doctor(output_opts: OutputOptions, auto_fix: bool) -> None:
         nexus doctor
         nexus doctor --json
         nexus doctor --fix
+        nexus doctor remote --url http://hub:2026
     """
+    # If a subcommand was invoked, let it run — skip the local checks.
+    if ctx.invoked_subcommand is not None:
+        return
+
     try:
         timing = CommandTiming()
         with timing.phase("checks"):
@@ -641,6 +648,189 @@ def doctor(output_opts: OutputOptions, auto_fix: bool) -> None:
         handle_error(exc)
 
 
+# ---------------------------------------------------------------------------
+# nexus doctor remote — HTTP + gRPC preflight for remote hubs (Gap 3 / #4132)
+# ---------------------------------------------------------------------------
+
+
+def _compute_grpc_address(url: str) -> tuple[str, int]:
+    """Return (grpc_address_string, grpc_port) for *url*.
+
+    Port precedence (mirrors nexus/__init__.py remote-profile block):
+      1. ``NEXUS_GRPC_PORT`` env var
+      2. nexus.yaml ``ports.grpc``
+      3. default 2028
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = parsed.hostname or "localhost"
+
+    grpc_port_str = os.getenv("NEXUS_GRPC_PORT", "")
+    if not grpc_port_str:
+        import contextlib
+        from pathlib import Path as _Path
+
+        with contextlib.suppress(Exception):
+            import yaml as _yaml
+
+            _pf = _Path("nexus.yaml")
+            if _pf.exists():
+                with open(_pf) as _f:
+                    _pc = _yaml.safe_load(_f) or {}
+                grpc_port_str = str(_pc.get("ports", {}).get("grpc", ""))
+    grpc_port = int(grpc_port_str) if grpc_port_str else 2028
+    return f"{host}:{grpc_port}", grpc_port
+
+
+def _check_remote_http(url: str) -> CheckResult:
+    """GET {url}/health — OK on 200, WARNING/ERROR otherwise."""
+    health_url = url.rstrip("/") + "/health"
+    try:
+        import httpx
+
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(health_url)
+            if resp.status_code == 200:
+                return CheckResult(
+                    name="remote-http",
+                    status=CheckStatus.OK,
+                    message=f"HTTP health OK at {health_url}.",
+                )
+            return CheckResult(
+                name="remote-http",
+                status=CheckStatus.WARNING,
+                message=f"HTTP health returned {resp.status_code} at {health_url}.",
+                fix_hint=f"Check the hub server is running and {health_url} is accessible.",
+            )
+    except Exception as exc:
+        return CheckResult(
+            name="remote-http",
+            status=CheckStatus.ERROR,
+            message=f"HTTP health unreachable at {health_url}: {exc}",
+            fix_hint=f"Check NEXUS_URL and that the hub is running at {url}.",
+        )
+
+
+def _check_remote_grpc(url: str, api_key: str | None) -> CheckResult:
+    """Attempt a gRPC health check via RPCTransport.health_check()."""
+    grpc_address, grpc_port = _compute_grpc_address(url)
+    transport = None
+    try:
+        transport = RPCTransport(
+            server_address=grpc_address,
+            auth_token=api_key,
+            timeout=2.0,
+            connect_timeout=2.0,
+        )
+        transport.health_check()
+        return CheckResult(
+            name="remote-grpc",
+            status=CheckStatus.OK,
+            message=f"gRPC reachable at {grpc_address}.",
+        )
+    except ValueError as exc:
+        # RPCTransport refuses insecure non-loopback channels.
+        return CheckResult(
+            name="remote-grpc",
+            status=CheckStatus.WARNING,
+            message=f"gRPC channel refused (insecure non-loopback): {exc}",
+            fix_hint=(
+                "Configure TLS for remote connections (NEXUS_GRPC_TLS=true + certs), "
+                "or set NEXUS_GRPC_ALLOW_INSECURE=true for trusted private networks "
+                "(docker-compose, k8s pod-local)."
+            ),
+        )
+    except Exception as exc:
+        return CheckResult(
+            name="remote-grpc",
+            status=CheckStatus.ERROR,
+            message=f"gRPC unreachable at {grpc_address}: {exc}",
+            fix_hint=(
+                f"gRPC port {grpc_port} unreachable; set NEXUS_GRPC_PORT to the correct port "
+                "and ensure the port is open in your firewall."
+            ),
+        )
+    finally:
+        if transport is not None:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                transport.close()
+
+
+@doctor.command(name="remote")
+@click.option(
+    "--url",
+    default=None,
+    envvar="NEXUS_URL",
+    help="Base HTTP URL of the remote hub (e.g. http://hub:2026).",
+)
+@click.option(
+    "--api-key",
+    "api_key",
+    default=None,
+    envvar="NEXUS_API_KEY",
+    help="API key for hub authentication.",
+)
+@add_output_options
+def doctor_remote(output_opts: OutputOptions, url: str | None, api_key: str | None) -> None:
+    """Probe a remote hub's HTTP and gRPC reachability.
+
+    Runs two checks and returns an actionable diagnosis:
+      1. HTTP health (GET <url>/health)
+      2. gRPC reachability (via RPCTransport ping)
+
+    Examples:
+        nexus doctor remote --url http://hub:2026 --api-key mykey
+        NEXUS_URL=http://hub:2026 nexus doctor remote
+    """
+    if not url:
+        raise click.UsageError("--url / NEXUS_URL is required for `doctor remote`.")
+
+    try:
+        timing = CommandTiming()
+        with timing.phase("remote-checks"):
+            http_result = _check_remote_http(url)
+            grpc_result = _check_remote_grpc(url, api_key)
+
+        results: list[CheckResult] = [http_result, grpc_result]
+        serializable = [asdict(r) for r in results]
+        for item in serializable:
+            item["status"] = item["status"].value
+
+        def _human_display(_data: list[dict[str, Any]]) -> None:  # noqa: ARG002
+            console.print("\n[bold]Remote preflight[/bold]")
+            has_error = False
+            for check in results:
+                icon = _STATUS_ICONS[check.status]
+                console.print(f"  {icon}  {check.name}: {check.message}")
+                if check.fix_hint and check.status != CheckStatus.OK:
+                    console.print(f"       [nexus.muted]Fix: {check.fix_hint}[/nexus.muted]")
+                if check.status == CheckStatus.ERROR:
+                    has_error = True
+            console.print()
+            if has_error:
+                sys.exit(1)
+
+        render_output(
+            data=serializable,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_human_display,
+        )
+
+        # For JSON mode, exit with error if any check is ERROR
+        if output_opts.json_output:
+            has_error = any(r.status == CheckStatus.ERROR for r in results)
+            if has_error:
+                sys.exit(1)
+    except click.UsageError:
+        raise
+    except Exception as exc:
+        handle_error(exc)
+
+
 def register_commands(cli: click.Group) -> None:
-    """Register doctor command."""
+    """Register doctor command group."""
     cli.add_command(doctor)

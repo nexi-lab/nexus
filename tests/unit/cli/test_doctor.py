@@ -36,6 +36,7 @@ from nexus.cli.commands.doctor import (
     check_tls_expiry,
     check_zone_isolation,
     doctor,
+    doctor_remote,
 )
 
 
@@ -777,3 +778,299 @@ class TestDoctorCommand:
         result = cli_runner.invoke(doctor, ["--fix"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(fix=True)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — group conversion must not change bare doctor behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorGroupRegressions:
+    """Prove that converting doctor to a group doesn't change bare-doctor behaviour."""
+
+    @patch("nexus.cli.commands.doctor._run_all_checks_async")
+    def test_bare_doctor_runs_checks(
+        self,
+        mock_run: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """nexus doctor (no subcommand) still runs _run_all_checks_async."""
+
+        async def fake_run(fix: bool = False) -> dict:
+            return {
+                "connectivity": [
+                    CheckResult("docker", CheckStatus.OK, "Docker found"),
+                ],
+            }
+
+        mock_run.side_effect = fake_run
+        result = cli_runner.invoke(doctor, [])
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+
+    @patch("nexus.cli.commands.doctor._run_all_checks_async")
+    def test_bare_doctor_json(
+        self,
+        mock_run: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """nexus doctor --json still emits the JSON envelope."""
+
+        async def fake_run(fix: bool = False) -> dict:
+            return {
+                "connectivity": [
+                    CheckResult("docker", CheckStatus.OK, "Docker found"),
+                ],
+            }
+
+        mock_run.side_effect = fake_run
+        result = cli_runner.invoke(doctor, ["--json"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "data" in parsed
+        assert "connectivity" in parsed["data"]
+
+    @patch("nexus.cli.commands.doctor._run_all_checks_async")
+    def test_bare_doctor_fix(
+        self,
+        mock_run: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """nexus doctor --fix passes fix=True to _run_all_checks_async."""
+
+        async def fake_run(fix: bool = False) -> dict:
+            return {
+                "connectivity": [
+                    CheckResult("docker", CheckStatus.OK, "Docker found"),
+                ],
+            }
+
+        mock_run.side_effect = fake_run
+        result = cli_runner.invoke(doctor, ["--fix"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(fix=True)
+
+    @patch("nexus.cli.commands.doctor._run_all_checks_async")
+    def test_bare_doctor_error_exit_code(
+        self,
+        mock_run: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """nexus doctor exits 1 when any check is ERROR."""
+
+        async def fake_run(fix: bool = False) -> dict:
+            return {
+                "connectivity": [
+                    CheckResult("docker", CheckStatus.ERROR, "Not found"),
+                ],
+            }
+
+        mock_run.side_effect = fake_run
+        result = cli_runner.invoke(doctor, [])
+        assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# nexus doctor remote — new preflight subcommand
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorRemote:
+    """Tests for `nexus doctor remote --url <URL> --api-key <KEY>`."""
+
+    def _make_http_mock(self, status_code: int = 200) -> MagicMock:
+        mock_client = MagicMock()
+        mock_resp = MagicMock(status_code=status_code)
+        mock_client.get.return_value = mock_resp
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        return mock_client
+
+    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("httpx.Client")
+    def test_happy_path_both_ok(
+        self,
+        mock_http_cls: MagicMock,
+        mock_rpc_cls: MagicMock,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Both HTTP and gRPC healthy → exit 0, both results OK."""
+        monkeypatch.setenv("NEXUS_GRPC_ALLOW_INSECURE", "true")
+        mock_http_cls.return_value = self._make_http_mock(200)
+        mock_transport = MagicMock()
+        mock_transport.health_check.return_value = True
+        mock_rpc_cls.return_value = mock_transport
+
+        result = cli_runner.invoke(
+            doctor_remote, ["--url", "http://hub.example.com:2026", "--api-key", "testkey"]
+        )
+        assert result.exit_code == 0
+        # No traceback
+        assert "Traceback" not in result.output
+        # transport is closed
+        mock_transport.close.assert_called_once()
+
+    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("httpx.Client")
+    def test_happy_path_json(
+        self,
+        mock_http_cls: MagicMock,
+        mock_rpc_cls: MagicMock,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--json mode emits valid JSON with both checks OK."""
+        monkeypatch.setenv("NEXUS_GRPC_ALLOW_INSECURE", "true")
+        mock_http_cls.return_value = self._make_http_mock(200)
+        mock_transport = MagicMock()
+        mock_transport.health_check.return_value = True
+        mock_rpc_cls.return_value = mock_transport
+
+        result = cli_runner.invoke(
+            doctor_remote,
+            ["--url", "http://hub.example.com:2026", "--api-key", "testkey", "--json"],
+        )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "data" in parsed
+        checks = parsed["data"]
+        statuses = {c["name"]: c["status"] for c in checks}
+        assert statuses.get("remote-http") == "ok"
+        assert statuses.get("remote-grpc") == "ok"
+
+    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("httpx.Client")
+    def test_http_ok_grpc_unreachable(
+        self,
+        mock_http_cls: MagicMock,
+        mock_rpc_cls: MagicMock,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """HTTP 200 but gRPC unreachable → exit 1, ERROR result, actionable hint."""
+        from nexus.contracts.exceptions import RemoteConnectionError
+
+        monkeypatch.setenv("NEXUS_GRPC_ALLOW_INSECURE", "true")
+        mock_http_cls.return_value = self._make_http_mock(200)
+        mock_transport = MagicMock()
+        mock_transport.health_check.side_effect = RemoteConnectionError(
+            "gRPC server unavailable", details={}, method="Ping"
+        )
+        mock_rpc_cls.return_value = mock_transport
+
+        result = cli_runner.invoke(
+            doctor_remote, ["--url", "http://hub.example.com:2026", "--api-key", "testkey"]
+        )
+        assert result.exit_code == 1
+        # No raw traceback
+        assert "Traceback" not in result.output
+        # Actionable hint: should mention NEXUS_GRPC_PORT
+        assert "NEXUS_GRPC_PORT" in result.output
+        # Transport is closed despite failure
+        mock_transport.close.assert_called_once()
+
+    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("httpx.Client")
+    def test_grpc_unreachable_json(
+        self,
+        mock_http_cls: MagicMock,
+        mock_rpc_cls: MagicMock,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--json mode with gRPC failure emits ERROR check result and exits 1."""
+        from nexus.contracts.exceptions import RemoteConnectionError
+
+        monkeypatch.setenv("NEXUS_GRPC_ALLOW_INSECURE", "true")
+        mock_http_cls.return_value = self._make_http_mock(200)
+        mock_transport = MagicMock()
+        mock_transport.health_check.side_effect = RemoteConnectionError(
+            "gRPC server unavailable", details={}, method="Ping"
+        )
+        mock_rpc_cls.return_value = mock_transport
+
+        result = cli_runner.invoke(
+            doctor_remote,
+            ["--url", "http://hub.example.com:2026", "--api-key", "testkey", "--json"],
+        )
+        assert result.exit_code == 1
+        parsed = json.loads(result.output)
+        checks = parsed["data"]
+        grpc_check = next(c for c in checks if c["name"] == "remote-grpc")
+        assert grpc_check["status"] == "error"
+        assert grpc_check["fix_hint"] is not None
+        assert "NEXUS_GRPC_PORT" in grpc_check["fix_hint"]
+
+    @patch("httpx.Client")
+    def test_insecure_non_loopback_surfaces_as_warning(
+        self,
+        mock_http_cls: MagicMock,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """RPCTransport ValueError (insecure non-loopback) → WARNING, not crash."""
+        # Remove the escape hatch so RPCTransport refuses the insecure channel
+        monkeypatch.delenv("NEXUS_GRPC_ALLOW_INSECURE", raising=False)
+        mock_http_cls.return_value = self._make_http_mock(200)
+
+        with patch(
+            "nexus.cli.commands.doctor.RPCTransport",
+            side_effect=ValueError(
+                "Insecure gRPC channel refused for non-loopback address 'hub.example.com:2028'."
+            ),
+        ):
+            result = cli_runner.invoke(
+                doctor_remote, ["--url", "http://hub.example.com:2026", "--api-key", "testkey"]
+            )
+
+        # Not a crash — should exit 0 (warning doesn't count as error) or 1 depending on impl.
+        # The key assertion is: no raw traceback and actionable message.
+        assert "Traceback" not in result.output
+        assert "NEXUS_GRPC_ALLOW_INSECURE" in result.output or "TLS" in result.output
+
+    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("httpx.Client")
+    def test_grpc_port_from_env(
+        self,
+        mock_http_cls: MagicMock,
+        mock_rpc_cls: MagicMock,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """NEXUS_GRPC_PORT env var is used to build the gRPC address."""
+        monkeypatch.setenv("NEXUS_GRPC_PORT", "9999")
+        monkeypatch.setenv("NEXUS_GRPC_ALLOW_INSECURE", "true")
+        mock_http_cls.return_value = self._make_http_mock(200)
+        mock_transport = MagicMock()
+        mock_transport.health_check.return_value = True
+        mock_rpc_cls.return_value = mock_transport
+
+        result = cli_runner.invoke(
+            doctor_remote, ["--url", "http://hub.example.com:2026", "--api-key", "testkey"]
+        )
+        assert result.exit_code == 0
+        # RPCTransport should have been constructed with the custom port
+        call_kwargs = mock_rpc_cls.call_args
+        assert "hub.example.com:9999" in str(call_kwargs)
+
+    @patch("nexus.cli.commands.doctor.RPCTransport")
+    @patch("httpx.Client")
+    def test_url_from_env(
+        self,
+        mock_http_cls: MagicMock,
+        mock_rpc_cls: MagicMock,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--url can be supplied via NEXUS_URL env var."""
+        monkeypatch.setenv("NEXUS_URL", "http://hub.example.com:2026")
+        monkeypatch.setenv("NEXUS_API_KEY", "envkey")
+        monkeypatch.setenv("NEXUS_GRPC_ALLOW_INSECURE", "true")
+        mock_http_cls.return_value = self._make_http_mock(200)
+        mock_transport = MagicMock()
+        mock_transport.health_check.return_value = True
+        mock_rpc_cls.return_value = mock_transport
+
+        result = cli_runner.invoke(doctor_remote, [])
+        assert result.exit_code == 0

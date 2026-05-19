@@ -25,6 +25,11 @@ def _build_kernel_metastore(db_path) -> tuple[object, object]:
     redb_path = str(db_path).replace(".db", "") + ".redb"
     kernel = _Kernel()
     kernel.set_metastore_path(redb_path)
+    # Open kernel transport before create_nexus_fs uses it — orchestrator's
+    # root-mount sys_setattr call requires the gRPC transport up. Without
+    # this every benchmark fails at setup with AssertionError on _transport
+    # (Issue #4133 env discovery).
+    kernel.open()
     return kernel, kernel
 
 

@@ -159,3 +159,57 @@ class TestRouteOverhead:
 
         result = benchmark(sys_read)
         assert len(result) == 1024
+
+
+# =============================================================================
+# Issue #4133: FS surface benchmarks (guidance, not CI gates)
+# =============================================================================
+
+
+@pytest.mark.benchmark_file_ops
+class TestRangeRead:
+    """read_range slice vs whole-file read (Issue #4133)."""
+
+    def test_read_range_64k_of_1mb(self, benchmark, benchmark_nexus):
+        nx = benchmark_nexus
+        nx.write("/rr.bin", b"z" * (1024 * 1024))
+        result = benchmark(lambda: nx.read_range("/rr.bin", 0, 65536))
+        assert len(result) == 65536
+
+
+@pytest.mark.benchmark_file_ops
+class TestStatBulkVsSequential:
+    """stat_bulk(100) vs N x stat (Issue #4133)."""
+
+    def test_stat_bulk_100(self, benchmark, populated_nexus):
+        nx = populated_nexus
+        paths = [f"/many_files/file_{i:04d}.txt" for i in range(100)]
+        result = benchmark(lambda: nx.stat_bulk(paths))
+        assert len(result) == 100
+
+
+@pytest.mark.benchmark_file_ops
+class TestTypedVsGenericRead:
+    """Typed nx.read vs Rust sys_read baseline (Issue #4133)."""
+
+    def test_typed_read(self, benchmark, populated_nexus):
+        nx = populated_nexus
+        result = benchmark(lambda: nx.read("/many_files/file_0000.txt"))
+        assert result is not None
+
+
+@pytest.mark.benchmark_file_ops
+class TestLockAcquireRelease:
+    """sys_lock + sys_unlock round-trip (Issue #4133, control plane)."""
+
+    def test_lock_cycle(self, benchmark, benchmark_nexus):
+        nx = benchmark_nexus
+        nx.write("/lk.txt", b"x")
+
+        def cycle():
+            lid = nx.sys_lock("/lk.txt")
+            if lid:
+                nx.sys_unlock("/lk.txt", lock_id=lid)
+            return lid
+
+        benchmark(cycle)

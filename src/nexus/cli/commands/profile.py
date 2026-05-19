@@ -7,17 +7,23 @@ Commands:
     nexus profile show          Show current profile details
     nexus profile delete <name> Delete a profile
     nexus profile rename <old> <new>  Rename a profile
+    nexus profile contract      Print the running hub's resolved deployment-profile contract
 """
+
+import json
 
 import click
 from rich.table import Table
 
+from nexus.cli.api_client import NexusApiClient
 from nexus.cli.config import (
     ProfileEntry,
     get_config_path,
     load_cli_config,
+    resolve_connection,
     save_cli_config,
 )
+from nexus.cli.state import load_project_config_optional
 from nexus.cli.theme import console
 
 
@@ -229,6 +235,58 @@ def rename_cmd(old_name: str, new_name: str) -> None:
 
     save_cli_config(config)
     console.print(f"Renamed profile [bold]'{old_name}'[/bold] to [bold]'{new_name}'[/bold]")
+
+
+@profile_group.command(name="contract")
+def contract_cmd() -> None:
+    """Print the running hub's resolved deployment-profile contract as JSON.
+
+    Queries the active connection's /api/v2/features endpoint and enriches
+    the response with the DeploymentProfile's default driver set and the
+    local nexus.yaml auth mode (when a project config is present).
+
+    The ``grpc_required`` field is always ``true`` — the remote SDK path
+    requires gRPC, not just HTTP (documented invariant, Issue #4132).
+
+    Examples:
+        nexus profile contract
+        nexus --profile staging profile contract
+    """
+    from nexus.contracts.deployment_profile import DeploymentProfile
+
+    config = load_cli_config()
+    resolved = resolve_connection(config=config)
+    url = resolved.url or "http://localhost:2026"
+
+    try:
+        features: dict = NexusApiClient(url=url, api_key=resolved.api_key).get("/api/v2/features")
+    except Exception as exc:
+        console.print(
+            f"[nexus.error]Error:[/nexus.error] could not reach {url}/api/v2/features: {exc}. "
+            "Is the hub running? Try `nexus doctor`."
+        )
+        raise SystemExit(1) from None
+
+    profile_str: str = features.get("profile", "")
+    try:
+        drivers: list[str] = sorted(DeploymentProfile(profile_str).default_drivers())
+    except ValueError:
+        drivers = []
+
+    project_cfg = load_project_config_optional()
+    auth_mode: str = project_cfg.get("auth", "unknown") if project_cfg else "unknown"
+
+    contract = {
+        "auth_mode": auth_mode,
+        "bricks": sorted(features.get("enabled_bricks", [])),
+        "deployment_profile": profile_str,
+        "disabled_bricks": sorted(features.get("disabled_bricks", [])),
+        "drivers": drivers,
+        "grpc_required": True,
+        "mode": features.get("mode", ""),
+        "version": features.get("version"),
+    }
+    print(json.dumps(contract, indent=2, sort_keys=True))
 
 
 # ---------------------------------------------------------------------------

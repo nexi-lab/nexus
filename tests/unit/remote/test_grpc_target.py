@@ -1,0 +1,67 @@
+"""Tests for the shared remote gRPC target resolver (Issue #4132).
+
+`resolve_grpc_target` is the single source of truth used by BOTH
+`nexus.connect(profile="remote")` and `nexus doctor remote`, so the
+preflight reflects the exact connection behavior the SDK uses.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import pytest
+
+from nexus.remote.grpc_target import resolve_grpc_target
+
+
+def test_port_precedence_env_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXUS_GRPC_PORT", "9999")
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+    addr, port, tls = resolve_grpc_target("http://hub.example.com:2026")
+    assert addr == "hub.example.com:9999"
+    assert port == 9999
+    assert tls is None  # no TLS signals → insecure
+
+
+def test_default_port_no_tls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NEXUS_GRPC_PORT", raising=False)
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+    addr, port, tls = resolve_grpc_target("http://hub:2026")
+    assert addr == "hub:2028"
+    assert port == 2028
+    assert tls is None
+
+
+def test_grpc_tls_true_resolves_tls_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NEXUS_GRPC_TLS=true + a data dir with certs → tls_config is
+    resolved (so the preflight uses TLS like the SDK, instead of
+    wrongly reporting a TLS hub as insecure)."""
+    monkeypatch.setenv("NEXUS_GRPC_TLS", "true")
+    monkeypatch.setenv("NEXUS_DATA_DIR", "/some/data")
+    monkeypatch.delenv("NEXUS_GRPC_PORT", raising=False)
+    sentinel = object()
+    with patch(
+        "nexus.security.tls.config.ZoneTlsConfig.from_data_dir_any",
+        return_value=sentinel,
+    ):
+        addr, port, tls = resolve_grpc_target("https://hub:443")
+    assert tls is sentinel  # SDK-equivalent TLS config, not None
+
+
+def test_grpc_tls_true_no_certs_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail-closed: NEXUS_GRPC_TLS=true but nothing resolves → RuntimeError
+    (identical to the SDK; `doctor remote` turns this into an actionable
+    ERROR rather than a misleading 'reachable')."""
+    monkeypatch.setenv("NEXUS_GRPC_TLS", "true")
+    monkeypatch.setenv("NEXUS_DATA_DIR", "/no/certs/here")
+    monkeypatch.delenv("NEXUS_TLS_CERT", raising=False)
+    with (
+        patch(
+            "nexus.security.tls.config.ZoneTlsConfig.from_data_dir_any",
+            return_value=None,
+        ),
+        pytest.raises(RuntimeError, match="NEXUS_GRPC_TLS=true"),
+    ):
+        resolve_grpc_target("https://hub:443")

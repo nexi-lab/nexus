@@ -12,6 +12,7 @@ at import/collection time.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
@@ -47,6 +48,19 @@ def _docker_available() -> bool:
 def _nexus_bin() -> str:
     """Resolve the venv-local ``nexus`` CLI binary."""
     return str(Path(sys.executable).parent / "nexus")
+
+
+def _teardown_stack(nexus_bin: str, project_dir: Path) -> None:
+    """Best-effort `nexus down --volumes` (used before fail/skip so a
+    failed boot does not leak containers/ports into later tests)."""
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            [nexus_bin, "down", "--volumes"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(project_dir),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +198,12 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
             env=up_env,
         )
     except subprocess.TimeoutExpired:
-        pytest.skip(
-            "nexus up timed out after 300s"
+        # The stack was attempted — this is a product/perf failure, not an
+        # unmet precondition. A gated E2E that skips here has no blocking
+        # value, so FAIL (after teardown).
+        _teardown_stack(nexus_bin, project_dir)
+        pytest.fail(
+            "nexus up timed out after 300s — the FULL stack did not boot"
             + (" (NEXUS_E2E_BUILD=1 forces a slow source build)" if force_build else "")
         )
     if up_result.returncode != 0:
@@ -196,13 +214,13 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
             f"--- stderr ---\n{up_result.stderr}\n"
         )
         combined = f"{up_result.stdout}\n{up_result.stderr}"
-        # Environmental: a docker *registry credential helper* that is
-        # unavailable in non-interactive shells (e.g. macOS osxkeychain
-        # returns "User canceled the operation. (-128)"). Match ONLY the
-        # actual credential-helper signature — a generic "Docker Compose
-        # failed to start" must NOT be classified as a credential problem
-        # (it also covers port conflicts, image-missing, health timeouts,
-        # etc., and mislabeling them hides the real cause).
+        # ONLY a genuinely unmet precondition is skip-worthy: a docker
+        # registry credential helper unavailable in non-interactive
+        # shells (e.g. macOS osxkeychain → "User canceled the operation.
+        # (-128)"). Match ONLY that signature. EVERY other `nexus up`
+        # failure (broken compose, bad image, health timeout, port
+        # conflict, CLI regression) is a real product failure the gated
+        # E2E must BLOCK on — so tear down and FAIL, never skip.
         cred_signature = (
             "getting credentials" in combined
             or "User canceled the operation" in combined
@@ -214,8 +232,10 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
                 "helper unavailable non-interactively (pre-cache all stack "
                 f"images, or run on CI with anonymous pulls). log: {debug_path}"
             )
-        pytest.skip(
-            f"nexus up failed (rc={up_result.returncode}, log: {debug_path}): "
+        _teardown_stack(nexus_bin, project_dir)
+        pytest.fail(
+            f"nexus up failed (rc={up_result.returncode}) — FULL stack did "
+            f"not boot. Debug log: {debug_path}. "
             f"stderr_tail={up_result.stderr[-400:]!r}"
         )
 
@@ -228,27 +248,16 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
         cwd=str(project_dir),
     )
     if env_result.returncode != 0:
-        # Teardown and skip — env command failed
-        subprocess.run(
-            [nexus_bin, "down", "--volumes"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=str(project_dir),
-        )
-        pytest.skip(f"nexus env --json failed: {env_result.stderr[-400:]!r}")
+        # The stack booted but `nexus env` failed — a real product/CLI
+        # failure the gated E2E must block on, not skip.
+        _teardown_stack(nexus_bin, project_dir)
+        pytest.fail(f"nexus env --json failed after boot: {env_result.stderr[-400:]!r}")
 
     try:
         env_payload = json.loads(env_result.stdout)
     except json.JSONDecodeError as exc:
-        subprocess.run(
-            [nexus_bin, "down", "--volumes"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=str(project_dir),
-        )
-        pytest.skip(f"nexus env --json produced invalid JSON: {exc}")
+        _teardown_stack(nexus_bin, project_dir)
+        pytest.fail(f"nexus env --json produced invalid JSON after boot: {exc}")
 
     url = env_payload.get("NEXUS_URL", "http://localhost:2026")
     api_key = env_payload.get("NEXUS_API_KEY", "")

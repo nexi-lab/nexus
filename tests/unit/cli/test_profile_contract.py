@@ -141,8 +141,8 @@ class TestContractFullProfile:
         ):
             result = cli_runner.invoke(profile_group, ["contract"])
         data = json.loads(result.output)
-        assert len(data["drivers"]) > 0
-        assert data["drivers"] == sorted(data["drivers"])
+        assert len(data["client_inferred_drivers"]) > 0
+        assert data["client_inferred_drivers"] == sorted(data["client_inferred_drivers"])
 
     def test_grpc_required_is_true(self, cli_runner: CliRunner) -> None:
         config = make_config()
@@ -285,7 +285,7 @@ class TestContractUnknownProfile:
             result = cli_runner.invoke(profile_group, ["contract"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["drivers"] == []
+        assert data["client_inferred_drivers"] == []
         assert data["deployment_profile"] == "weird"
 
     def test_unknown_profile_still_emits_bricks(self, cli_runner: CliRunner) -> None:
@@ -553,7 +553,7 @@ class TestContractRemoteTargeting:
         data = json.loads(result.output)
         assert data["auth_mode"] == "unknown"  # NOT "database" (that's local-only)
         assert "_sources" in data
-        assert "client-inferred" in data["_sources"]["drivers"]
+        assert "client-inferred" in data["_sources"]["client_inferred_drivers"]
         assert "remote target" in data["_sources"]["auth_mode"]
         # Hub-authoritative fields still come straight from /api/v2/features
         assert data["deployment_profile"] == "full"

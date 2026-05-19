@@ -260,9 +260,10 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
 
     Hub-returned fields (``deployment_profile``, ``bricks``,
     ``disabled_bricks``, ``mode``, ``version``) are authoritative.
-    ``drivers`` is *client-inferred* from the hub's profile name via this
-    client's DeploymentProfile enum (can diverge under CLI/server version
-    skew). ``auth_mode`` reflects the local nexus.yaml only for the
+    ``client_inferred_drivers`` is *not* hub-authoritative: the hub does
+    not return its driver set, so it is inferred from the hub's profile
+    name via this client's DeploymentProfile enum (can diverge under
+    CLI/server version skew). ``auth_mode`` reflects the local nexus.yaml only for the
     locally-managed stack — for an explicit remote target (``--url`` /
     ``NEXUS_URL`` / global ``--profile``) it is ``"unknown"`` because
     local config does not describe a remote hub. A ``_sources`` map in
@@ -323,7 +324,11 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
         "bricks": sorted(features.get("enabled_bricks", [])),
         "deployment_profile": profile_str,
         "disabled_bricks": sorted(features.get("disabled_bricks", [])),
-        "drivers": drivers,
+        # NOT named "drivers": the hub does not return its driver set, so
+        # this is inferred from the hub's profile name via THIS client's
+        # DeploymentProfile enum. The name makes the non-authoritative
+        # nature explicit for machine consumers and operators.
+        "client_inferred_drivers": drivers,
         "grpc_required": True,
         "mode": features.get("mode", ""),
         "version": features.get("version"),
@@ -333,7 +338,7 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
             "disabled_bricks": "hub /api/v2/features (authoritative)",
             "mode": "hub /api/v2/features (authoritative)",
             "version": "hub /api/v2/features (authoritative)",
-            "drivers": "client-inferred from hub profile via DeploymentProfile enum (not hub-authoritative; may differ under version skew)",
+            "client_inferred_drivers": "client-inferred from hub profile via DeploymentProfile enum (NOT hub-authoritative; may differ under CLI/server version skew)",
             "grpc_required": "documented invariant (Issue #4132)",
             "auth_mode": auth_mode_source,
         },

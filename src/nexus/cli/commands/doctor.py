@@ -17,10 +17,8 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import click
-import yaml
 
 from nexus.cli.output import OutputOptions, add_output_options, render_output
 from nexus.cli.theme import console
@@ -656,35 +654,6 @@ def doctor(ctx: click.Context, output_opts: OutputOptions, auto_fix: bool) -> No
 # ---------------------------------------------------------------------------
 
 
-def _compute_grpc_address(url: str) -> tuple[str, int]:
-    """Return (grpc_address_string, grpc_port) for *url*.
-
-    Port precedence (mirrors nexus/__init__.py remote-profile block):
-      1. ``NEXUS_GRPC_PORT`` env var
-      2. nexus.yaml ``ports.grpc``
-      3. default 2028
-    """
-    parsed = urlparse(url)
-    host = parsed.hostname or "localhost"
-
-    grpc_port_str = os.getenv("NEXUS_GRPC_PORT", "")
-    if not grpc_port_str:
-        with contextlib.suppress(Exception):
-            _pf = Path("nexus.yaml")
-            if _pf.exists():
-                with open(_pf) as _f:
-                    _pc = yaml.safe_load(_f) or {}
-                grpc_port_str = str(_pc.get("ports", {}).get("grpc", ""))
-    if grpc_port_str:
-        try:
-            grpc_port = int(grpc_port_str)
-        except ValueError:
-            grpc_port = 2028
-    else:
-        grpc_port = 2028
-    return f"{host}:{grpc_port}", grpc_port
-
-
 def _check_remote_http(url: str) -> CheckResult:
     """GET {url}/health — OK on 200, ERROR otherwise.
 
@@ -720,15 +689,37 @@ def _check_remote_http(url: str) -> CheckResult:
 
 
 def _check_remote_grpc(url: str, api_key: str | None) -> CheckResult:
-    """Attempt a gRPC health check via RPCTransport.health_check()."""
-    grpc_address, grpc_port = _compute_grpc_address(url)
+    """Attempt a gRPC health check, mirroring the real remote SDK path.
+
+    Uses the shared ``resolve_grpc_target`` helper so the preflight
+    resolves the SAME gRPC address AND TLS config the SDK would use
+    (NEXUS_GRPC_TLS / data-dir / nexus.yaml). Without this a TLS-enabled
+    hub the SDK connects to fine could be reported insecure/unreachable.
+    """
+    from nexus.remote.grpc_target import resolve_grpc_target
+
     transport = None
     try:
+        try:
+            grpc_address, grpc_port, tls_config = resolve_grpc_target(url)
+        except RuntimeError as exc:
+            # Fail-closed: NEXUS_GRPC_TLS=true but no certs resolved — the
+            # SDK raises the same; the remote path is unusable as-is.
+            return CheckResult(
+                name="remote-grpc",
+                status=CheckStatus.ERROR,
+                message=f"gRPC TLS misconfigured: {exc}",
+                fix_hint=(
+                    "Provide certs via NEXUS_TLS_CERT/KEY/CA, in "
+                    "{data_dir}/tls/, or unset NEXUS_GRPC_TLS."
+                ),
+            )
         transport = RPCTransport(
             server_address=grpc_address,
             auth_token=api_key,
             timeout=2.0,
             connect_timeout=2.0,
+            tls_config=tls_config,
         )
         transport.health_check()
         return CheckResult(

@@ -79,6 +79,18 @@ def _resolve_deployment_profile(server_url: str) -> str:
     return "unknown"
 
 
+def _same_endpoint(a: str, b: str) -> bool:
+    """True if two URLs point at the same scheme://host:port (path/trailing
+    slash ignored). Used to decide whether a status target is the local
+    stack (so local nexus.yaml auth applies) or a different remote hub."""
+    if not a or not b:
+        return False
+    from urllib.parse import urlparse
+
+    pa, pb = urlparse(a.rstrip("/")), urlparse(b.rstrip("/"))
+    return (pa.scheme, pa.hostname, pa.port) == (pb.scheme, pb.hostname, pb.port)
+
+
 def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
     """Add the *effective* image_ref, connection env, and project info into *data*.
 
@@ -108,13 +120,22 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
         data["project_name"] = state.get("project_name", "")
         data["data_dir"] = data_dir
 
-        # auth_mode: from project config (preset maps: shared→static,
-        # demo→database, local→none)
-        data["auth_mode"] = project_cfg.get("auth", "none")
+        # `nexus status` reports the hub at the *effective status target*
+        # (`data["server_url"]`, which honors an explicit --url). The local
+        # nexus.yaml only describes the locally-managed stack, so its
+        # `auth` and the local stack URL must NOT be reported for a
+        # different remote target.
+        target_url = data.get("server_url", "")
+        local_stack_url = conn_env.get("NEXUS_URL", "")
+        is_local_stack = (not target_url) or _same_endpoint(target_url, local_stack_url)
 
-        # deployment_profile: single hierarchy via helper
-        server_url = conn_env.get("NEXUS_URL") or data.get("server_url", "")
-        data["deployment_profile"] = _resolve_deployment_profile(server_url)
+        # auth_mode: local nexus.yaml auth only when the target IS the
+        # locally-managed stack; otherwise it does not describe that hub.
+        data["auth_mode"] = project_cfg.get("auth", "none") if is_local_stack else "unknown"
+
+        # deployment_profile: resolved against the actual status target
+        # (features-first; env is offline fallback only).
+        data["deployment_profile"] = _resolve_deployment_profile(target_url or local_stack_url)
     else:
         # No project config: auth defaults to "none"
         data["auth_mode"] = "none"

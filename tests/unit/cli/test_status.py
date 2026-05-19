@@ -278,6 +278,51 @@ class TestStatusCommand:
         data = parsed.get("data", parsed)
         assert data["deployment_profile"] == "lite"  # live hub wins, not env
 
+    @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features")
+    @patch("nexus.cli.commands.status._load_project_config_optional")
+    @patch("nexus.cli.commands.status._collect_status")
+    def test_explicit_remote_url_does_not_leak_local_auth_or_profile(
+        self,
+        mock_collect: MagicMock,
+        mock_project_cfg: MagicMock,
+        mock_fetch: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """Project config present + explicit --url to a DIFFERENT hub: the
+        local nexus.yaml auth and the local stack URL must NOT be reported
+        for that remote hub. auth_mode → 'unknown'; deployment_profile is
+        resolved against the actual --url target."""
+        mock_collect.return_value = {
+            "server_url": "http://otherhub:2026",  # the --url status target
+            "server_reachable": True,
+            "server_health": None,
+            "docker_services": [],
+        }
+        mock_project_cfg.return_value = {"auth": "database", "data_dir": "./nx"}
+        mock_fetch.return_value = "lite"  # otherhub actually runs `lite`
+
+        with (
+            patch("nexus.cli.state.load_runtime_state", return_value={}),
+            patch(
+                "nexus.cli.state.resolve_connection_env",
+                return_value={"NEXUS_URL": "http://localhost:2026"},  # LOCAL stack
+            ),
+            patch(
+                "nexus.cli.commands.stack._resolve_image_ref_from_config",
+                return_value="nexus:latest",
+            ),
+        ):
+            result = cli_runner.invoke(
+                status, ["--json", "--url", "http://otherhub:2026"], env={"NEXUS_PROFILE": ""}
+            )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        data = data.get("data", data)
+        # local nexus.yaml auth="database" must NOT leak to a remote target
+        assert data["auth_mode"] == "unknown"
+        # profile comes from the --url target's features, not the local stack
+        assert data["deployment_profile"] == "lite"
+
     @patch("nexus.cli.commands.status._load_project_config_optional")
     @patch("nexus.cli.commands.status._collect_status")
     def test_auth_mode_from_project_config(

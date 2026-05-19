@@ -137,3 +137,23 @@ def test_rename_batch_per_item_independent(patched_fs, cli_runner: CliRunner):
     assert out["/old1.txt"]["new_path"] == "/new1.txt"
     assert out["/old2.txt"]["success"] is False
     assert nx.read("/new1.txt") == b"1"
+
+
+# ---------------------------------------------------------------------------
+# Task 7: nexus rm-batch (delete_batch — per-item independent)
+# ---------------------------------------------------------------------------
+
+
+def test_rm_batch_per_item_independent(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import rm_batch_cmd
+
+    nx = patched_fs
+    nx.write("/d1.txt", b"1")
+    nx.write("/d2.txt", b"2")
+    res = cli_runner.invoke(rm_batch_cmd, ["/d1.txt", "/missing.txt", "/d2.txt", "--json"])
+    assert res.exit_code == 0, res.output
+    out = json.loads(res.output)["data"]
+    assert out["/d1.txt"]["success"] is True
+    assert out["/d2.txt"]["success"] is True
+    assert out["/missing.txt"]["success"] is False
+    assert not nx.access("/d1.txt")

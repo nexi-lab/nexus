@@ -35,6 +35,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(exists_cmd)
     cli.add_command(read_bulk_cmd)
     cli.add_command(rename_batch_cmd)
+    cli.add_command(rm_batch_cmd)
     cli.add_command(write)
     cli.add_command(append)
     cli.add_command(write_batch)
@@ -606,6 +607,49 @@ def rename_batch_cmd(
             async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
                 with timing.phase("server"):
                     data = nx.rename_batch(renames)
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            render_error(e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+@click.command(name="rm-batch")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@click.option("--recursive", "-r", is_flag=True, help="Delete non-empty directories")
+@add_output_options
+@add_backend_options
+@add_context_options
+def rm_batch_cmd(
+    paths: tuple[str, ...],
+    recursive: bool,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Delete multiple files/directories (delete_batch).
+
+    Per-item independent. Use -r for non-empty directories.
+
+    Examples:
+        nexus rm-batch /a.txt /b.txt --json
+        nexus rm-batch /dir1 /dir2 -r
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.delete_batch(list(paths), recursive=recursive)
             render_output(
                 data=data,
                 output_opts=output_opts,

@@ -127,6 +127,19 @@ def init(path: str) -> None:
     default=None,
     help="Number of bytes from --offset (requires --offset)",
 )
+@click.option(
+    "--stream",
+    "stream_mode",
+    is_flag=True,
+    help="Stream content in chunks (stream / stream_range)",
+)
+@click.option(
+    "--chunk-size",
+    type=int,
+    default=65536,
+    show_default=True,
+    help="Chunk size for --stream",
+)
 @add_output_options
 @add_backend_options
 @add_context_options
@@ -138,6 +151,8 @@ def cat(
     block_type: str | None,
     offset: int | None,
     length: int | None,
+    stream_mode: bool,
+    chunk_size: int,
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -181,10 +196,28 @@ def cat(
                             render_error(ValueError("--offset/--length must be non-negative"))
                             sys.exit(2)
                         end = offset + length if length is not None else nx.stat(path)["size"]
-                        chunk = nx.read_range(
-                            path, offset, end, context=cast(Any, operation_context)
-                        )
-                        sys.stdout.buffer.write(chunk)
+                        if stream_mode:
+                            for ch in nx.stream_range(
+                                path,
+                                offset,
+                                end,
+                                chunk_size=chunk_size,
+                                context=cast(Any, operation_context),
+                            ):
+                                sys.stdout.buffer.write(ch)
+                        else:
+                            chunk = nx.read_range(
+                                path, offset, end, context=cast(Any, operation_context)
+                            )
+                            sys.stdout.buffer.write(chunk)
+                        return
+                    if stream_mode:
+                        for ch in nx.stream(
+                            path,
+                            chunk_size=chunk_size,
+                            context=cast(Any, operation_context),
+                        ):
+                            sys.stdout.buffer.write(ch)
                         return
                     if metadata:
                         read_result = nx.read(
@@ -711,6 +744,12 @@ def rm_batch_cmd(
     is_flag=True,
     help="Show metadata (content_id, version) after writing",
 )
+@click.option(
+    "--stream",
+    "stream_mode",
+    is_flag=True,
+    help="Read content from stdin in chunks and write via write_stream",
+)
 @add_dry_run_option
 @add_backend_options
 @add_context_options
@@ -722,6 +761,7 @@ def write(
     if_none_match: bool,
     force: bool,
     show_metadata: bool,
+    stream_mode: bool,
     dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -754,6 +794,27 @@ def write(
 
     async def _impl() -> None:
         try:
+            if stream_mode:
+                # Read stdin in chunks and write via write_stream
+                raw = sys.stdin.buffer.read()
+                if dry_run:
+                    preview = dry_run_preview("write-stream", path=path, details={"size": len(raw)})
+                    render_dry_run(preview)
+                    return
+                cs = 65536
+                chunks = (raw[i : i + cs] for i in range(0, len(raw), cs))
+                async with open_filesystem(
+                    remote_url, remote_api_key, allow_local_default=True
+                ) as nx:
+                    result = nx.write_stream(path, chunks)
+                if show_metadata:
+                    console.print(result)
+                else:
+                    console.print(
+                        f"[nexus.success]✓[/nexus.success] {len(raw)} bytes -> [nexus.path]{path}[/nexus.path]"
+                    )
+                return
+
             file_content = resolve_content(content, input_file)
 
             if dry_run:

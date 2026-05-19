@@ -183,3 +183,28 @@ def test_cat_no_range_unchanged(patched_fs, cli_runner: CliRunner):
     res = cli_runner.invoke(cat, ["/whole.txt"])
     assert res.exit_code == 0, res.output
     assert "hello world" in res.output
+
+
+# ---------------------------------------------------------------------------
+# Task 9: cat --stream / write --stream
+# ---------------------------------------------------------------------------
+
+
+def test_cat_stream_matches_full(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import cat
+
+    nx = patched_fs
+    body = b"x" * 200_000
+    nx.write("/strm.bin", body)
+    res = cli_runner.invoke(cat, ["/strm.bin", "--stream", "--chunk-size", "65536"])
+    assert res.exit_code == 0, res.output
+    assert res.stdout_bytes == body
+
+
+def test_write_stream_from_stdin(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import write
+
+    nx = patched_fs
+    res = cli_runner.invoke(write, ["/ws.txt", "--stream"], input="streamed-bytes")
+    assert res.exit_code == 0, res.output
+    assert nx.read("/ws.txt") == b"streamed-bytes"

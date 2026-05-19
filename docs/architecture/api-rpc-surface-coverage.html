@@ -140,7 +140,7 @@
     <a href="#m-delegation">delegation<span class="count">12</span></a>
     <a href="#m-access_manifest">access_manifest<span class="count">10</span></a>
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Storage &amp; layout</h2>
-    <a href="#m-filesystem">filesystem<span class="count">105</span></a>
+    <a href="#m-filesystem">filesystem<span class="count">106</span></a>
     <a href="#m-mount">mount<span class="count">37</span></a>
     <a href="#m-share_link">share_link<span class="count">12</span></a>
     <a href="#m-workspace">workspace<span class="count">16</span></a>
@@ -184,7 +184,7 @@
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
       <div class="stat"><div class="stat-value">28</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">transports</div></div>
-      <div class="stat"><div class="stat-value">627</div><div class="stat-label">operations</div></div>
+      <div class="stat"><div class="stat-value">628</div><div class="stat-label">operations</div></div>
       <div class="stat"><div class="stat-value">14</div><div class="stat-label">missing</div></div>
     </div>
 
@@ -874,10 +874,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/core/test_full_profile.py">tests/unit/core/test_full_profile.py</a></span>
-    <span>perf: setup</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -916,10 +916,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/core/test_full_profile.py">tests/unit/core/test_full_profile.py</a></span>
-    <span>perf: setup</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -3600,7 +3600,7 @@ graph TB
           <span class="mod-name">filesystem</span>
           <span class="mod-desc">&mdash; Path-scoping wrappers for NexusFS.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-independent">independent</span>            <span>105 ops</span>
+<span class="tier-badge tier-independent">independent</span>            <span>106 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -4594,6 +4594,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="filesystem.ready" data-op-text="filesystem.ready CLI readiness probe: blocks until the daemon serves /health, or times out. Generic probe across all profiles (not brick-gated). nexus ready ">
+  <div class="op-header">
+    <span class="op-id">filesystem.ready</span>
+    <span class="op-summary">&mdash; CLI readiness probe: blocks until the daemon serves /health, or times out. Generic probe across all profiles (not brick-gated).</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus ready</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>nexus ready --timeout 60</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_ready_cmd.py, tests/integration/test_sandbox_boot_smoke.py">tests/unit/cli/test_ready_cmd.py, tests/integration/test_sandbox_boot_smoke.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="filesystem.rename" data-op-text="filesystem.rename  rename ">
   <div class="op-header">
     <span class="op-id">filesystem.rename</span>
@@ -4714,10 +4735,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/cli/test_full_profile_parity.py">tests/unit/cli/test_full_profile_parity.py</a></span>
-    <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6498,10 +6519,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mount.up" data-op-text="mount.up  nexus up ">
+<div class="op" data-op-id="mount.up" data-op-text="mount.up Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated workspace. nexus up ">
   <div class="op-header">
     <span class="op-id">mount.up</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated workspace.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus up</span></span>
@@ -6512,10 +6533,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus up --profile sandbox --workspace ~/app</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py, tests/unit/cli/test_stack_sandbox.py">tests/integration/test_sandbox_boot_smoke.py, tests/unit/cli/test_stack_sandbox.py</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -12496,10 +12517,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/daemon/test_full_profile_daemon.py">tests/unit/daemon/test_full_profile_daemon.py</a></span>
-    <span>perf: setup</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -12872,10 +12893,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_v_f_s_service.ping" data-op-text="nexus_v_f_s_service.ping  NexusVFSService.Ping ">
+<div class="op" data-op-id="nexus_v_f_s_service.ping" data-op-text="nexus_v_f_s_service.ping gRPC liveness ping on NexusVFSService. Intentionally absent in the sandbox profile: the sandbox daemon binds no gRPC server (HTTP-only by design); use GET /health instead. NexusVFSService.Ping ">
   <div class="op-header">
     <span class="op-id">nexus_v_f_s_service.ping</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; gRPC liveness ping on NexusVFSService. Intentionally absent in the sandbox profile: the sandbox daemon binds no gRPC server (HTTP-only by design); use GET /health instead.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="rpc"><span class="label">RPC</span> <span>NexusVFSService.Ping</span></span>
@@ -12883,13 +12904,13 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/core/test_full_profile.py">tests/unit/core/test_full_profile.py</a></span>
+    <span>usage: <code>sandbox is HTTP-only by design — no gRPC server is bound; use GET /health for sandbox liveness. gRPC Ping applies to lite/full only.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py">tests/integration/test_sandbox_boot_smoke.py</a></span>
     <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13182,10 +13203,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="features.api_v2" data-op-text="features.api_v2  GET /api/v2/features ">
+<div class="op" data-op-id="features.api_v2" data-op-text="features.api_v2 GET /api/v2/features: reports enabled feature/brick set for the running profile. Exercised by the sandbox boot smoke test. GET /api/v2/features ">
   <div class="op-header">
     <span class="op-id">features.api_v2</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; GET /api/v2/features: reports enabled feature/brick set for the running profile. Exercised by the sandbox boot smoke test.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/features</span></span>
@@ -13196,10 +13217,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/core/test_full_profile.py">tests/unit/core/test_full_profile.py</a></span>
+    <span>usage: <code>curl -s http://localhost:8080/api/v2/features</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py">tests/integration/test_sandbox_boot_smoke.py</a></span>
     <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13245,10 +13266,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="health.health" data-op-text="health.health  GET /health ">
+<div class="op" data-op-id="health.health" data-op-text="health.health GET /health: liveness/readiness endpoint the sandbox daemon serves over HTTP. Polled by `nexus ready` and the boot smoke test. GET /health ">
   <div class="op-header">
     <span class="op-id">health.health</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; GET /health: liveness/readiness endpoint the sandbox daemon serves over HTTP. Polled by `nexus ready` and the boot smoke test.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /health</span></span>
@@ -13259,10 +13280,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/core/test_full_profile.py">tests/unit/core/test_full_profile.py</a></span>
+    <span>usage: <code>curl -s http://localhost:8080/health</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py">tests/integration/test_sandbox_boot_smoke.py</a></span>
     <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13280,10 +13301,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/core/test_full_profile.py">tests/unit/core/test_full_profile.py</a></span>
-    <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13469,10 +13490,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/core/test_full_profile.py">tests/unit/core/test_full_profile.py</a></span>
-    <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13490,10 +13511,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/core/test_full_profile.py">tests/unit/core/test_full_profile.py</a></span>
-    <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13511,10 +13532,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/core/test_full_profile.py">tests/unit/core/test_full_profile.py</a></span>
-    <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13658,10 +13679,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>docs/deployment/full-profile.md</code></span>
-    <span>test: <a href="../../tests/unit/cli/test_full_profile_parity.py">tests/unit/cli/test_full_profile_parity.py</a></span>
-    <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4132">#4132</a></span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
 </div>

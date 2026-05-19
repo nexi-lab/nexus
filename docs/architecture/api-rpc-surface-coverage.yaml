@@ -1544,12 +1544,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
-  perf_class: setup
+  usage_example: null
+  correctness_test: null
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: auth.exchange
   module: auth
   summary: ''
@@ -1578,12 +1578,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/core/test_full_profile.py
-  perf_class: setup
+  usage_example: null
+  correctness_test: null
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: auth.keys
   module: auth
   summary: ''
@@ -2635,12 +2635,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/daemon/test_full_profile_daemon.py
-  perf_class: setup
+  usage_example: null
+  correctness_test: null
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: daemon.enroll
   module: daemon
   summary: ''
@@ -3632,7 +3632,8 @@ operations:
   owning_issue: null
 - id: features.api_v2
   module: uncategorized
-  summary: ''
+  summary: 'GET /api/v2/features: reports enabled feature/brick set for the running profile. Exercised by the sandbox boot
+    smoke test.'
   transports:
     http:
       name: GET /api/v2/features
@@ -3641,12 +3642,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: null
+  usage_example: curl -s http://localhost:8080/api/v2/features
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
-  perf_link: null
+  perf_link: read-only feature introspection; queried once per boot smoke check, <10ms
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: 4126
 - id: federation.cli
   module: federation
   summary: ''
@@ -4217,6 +4218,24 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: filesystem.ready
+  module: filesystem
+  summary: 'CLI readiness probe: blocks until the daemon serves /health, or times out. Generic probe across all profiles (not
+    brick-gated).'
+  transports:
+    cli:
+      name: nexus ready
+      source: src/nexus/cli/commands/ready.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: nexus ready --timeout 60
+  correctness_test: tests/unit/cli/test_ready_cmd.py, tests/integration/test_sandbox_boot_smoke.py
+  perf_class: control
+  perf_link: invoked at most once per boot/CI gate; polls /health until ready, <60s budget
+  gap_issue: null
+  owning_issue: 4126
 - id: filesystem.rename
   module: filesystem
   summary: ''
@@ -4316,12 +4335,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/cli/test_full_profile_parity.py
-  perf_class: control
+  usage_example: null
+  correctness_test: null
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: filesystem.stream
   module: filesystem
   summary: ''
@@ -5239,7 +5258,8 @@ operations:
   owning_issue: null
 - id: health.health
   module: uncategorized
-  summary: ''
+  summary: 'GET /health: liveness/readiness endpoint the sandbox daemon serves over HTTP. Polled by `nexus ready` and the
+    boot smoke test.'
   transports:
     http:
       name: GET /health
@@ -5248,12 +5268,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: null
+  usage_example: curl -s http://localhost:8080/health
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
-  perf_link: null
+  perf_link: lightweight liveness probe; polled during boot, <10ms per call
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: 4126
 - id: health.health_detailed
   module: uncategorized
   summary: ''
@@ -5265,12 +5285,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
+  usage_example: null
   correctness_test: null
-  perf_class: control
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: health.metrics_pool
   module: uncategorized
   summary: ''
@@ -6392,7 +6412,8 @@ operations:
   owning_issue: null
 - id: mount.up
   module: mount
-  summary: ''
+  summary: Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated
+    workspace.
   transports:
     cli:
       name: nexus up
@@ -6401,12 +6422,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus up --profile sandbox --workspace ~/app
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py, tests/unit/cli/test_stack_sandbox.py
+  perf_class: setup
+  perf_link: one-time boot per session; sandbox daemon start measured in test_sandbox_boot_smoke.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4126
 - id: namespace.delete
   module: rebac
   summary: ''
@@ -6698,21 +6719,23 @@ operations:
   owning_issue: null
 - id: nexus_v_f_s_service.ping
   module: nexus_fs
-  summary: ''
+  summary: 'gRPC liveness ping on NexusVFSService. Intentionally absent in the sandbox profile: the sandbox daemon binds no
+    gRPC server (HTTP-only by design); use GET /health instead.'
   transports:
     grpc_typed:
       name: NexusVFSService.Ping
       source: proto/nexus/grpc/vfs/vfs.proto:28
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: null
+  usage_example: "sandbox is HTTP-only by design \u2014 no gRPC server is bound; use GET /health for sandbox liveness. gRPC\
+    \ Ping applies to lite/full only."
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
-  perf_link: null
+  perf_link: liveness ping; not exercised in sandbox (no gRPC server). HTTP /health covers sandbox.
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: 4126
 - id: nexus_v_f_s_service.read
   module: nexus_fs
   summary: ''
@@ -7741,12 +7764,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
+  usage_example: null
   correctness_test: null
-  perf_class: control
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: probes.healthz_ready
   module: uncategorized
   summary: ''
@@ -7758,12 +7781,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
+  usage_example: null
   correctness_test: null
-  perf_class: control
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: probes.healthz_startup
   module: uncategorized
   summary: ''
@@ -7775,12 +7798,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
+  usage_example: null
   correctness_test: null
-  perf_class: control
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: provision.user
   module: identity
   summary: ''
@@ -9992,12 +10015,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: docs/deployment/full-profile.md
-  correctness_test: tests/unit/cli/test_full_profile_parity.py
-  perf_class: control
+  usage_example: null
+  correctness_test: null
+  perf_class: null
   perf_link: null
   gap_issue: null
-  owning_issue: 4132
+  owning_issue: null
 - id: uncategorized.extensions
   module: uncategorized
   summary: ''
@@ -12361,6 +12384,14 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: filesystem.profile
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: filesystem.ready
   has:
   - cli
   missing:

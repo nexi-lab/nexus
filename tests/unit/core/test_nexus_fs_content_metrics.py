@@ -56,7 +56,16 @@ class _Kernel:
     def read_batch(
         self, items: list[tuple[str, int, int | None]], context: Any = None
     ) -> list[Any]:
-        return [self.sys_read(path, None, 0) for path, _, _ in items]
+        return [
+            SimpleNamespace(
+                data=f"b{index}".encode(),
+                content_id=f"cid-{index}",
+                gen=index + 1,
+                entry_type=1,
+                stream_next_offset=None,
+            )
+            for index, (_path, _off, _cnt) in enumerate(items)
+        ]
 
     def stat_batch(self, paths: list[str], zone_id: str = "root") -> list[Any]:
         return [
@@ -67,16 +76,6 @@ class _Kernel:
                 "gen": 1,
                 "modified_at": None,
             }
-            for index, _path in enumerate(paths)
-        ]
-
-    def sys_read_batch(self, paths: list[str], _ctx: object) -> list[Any]:
-        return [
-            SimpleNamespace(
-                data=f"b{index}".encode(),
-                content_id=f"cid-{index}",
-                gen=index + 1,
-            )
             for index, _path in enumerate(paths)
         ]
 

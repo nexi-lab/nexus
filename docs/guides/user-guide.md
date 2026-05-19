@@ -257,6 +257,7 @@ running. Proven in CI by `tests/integration/test_sandbox_boot_smoke.py`
 regression-gated, only loosely bounded. Observed in the smoke test under
 cold CI conditions (cold Rust-kernel init + parallel test load — not a
 tuned product target): cold boot ≈ 43 s, warm boot ≈ 70 s, RSS ≈ 192 MB.
+(The "warm" figure exceeds the "cold" one here purely because of test-ordering and parallel xdist load — boot time is not a tuned target, so do not read this as a warm-vs-cold performance relationship.)
 The `docs/deployment/sandbox-profile.md` design target is the reference
 envelope; these are characterization numbers, not guarantees.
 

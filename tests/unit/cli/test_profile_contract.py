@@ -418,3 +418,88 @@ class TestContractConnectionFailure:
         ):
             result = cli_runner.invoke(profile_group, ["contract"])
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Remote targeting — regression test for the real bug
+# (contract_cmd must honour --url/--api-key and NEXUS_URL/NEXUS_API_KEY)
+# ---------------------------------------------------------------------------
+
+
+class TestContractRemoteTargeting:
+    """Verify that --url/--api-key (and their env-var equivalents) are forwarded
+    to NexusApiClient so the command can actually reach a non-localhost hub."""
+
+    def test_explicit_flags_forwarded_to_api_client(self, cli_runner: CliRunner) -> None:
+        """--url and --api-key must be used when constructing NexusApiClient."""
+        config = make_config()
+        remote_url = "http://hub:9999"
+        remote_key = "K"
+        with (
+            patch("nexus.cli.commands.profile.load_cli_config", return_value=config),
+            patch("nexus.cli.commands.profile.NexusApiClient") as mock_client_cls,
+            patch(
+                "nexus.cli.commands.profile.load_project_config_optional",
+                return_value={},
+            ),
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get.return_value = FULL_FEATURES_PAYLOAD
+            mock_client_cls.return_value = mock_instance
+
+            result = cli_runner.invoke(
+                profile_group, ["contract", "--url", remote_url, "--api-key", remote_key]
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_client_cls.assert_called_once_with(url=remote_url, api_key=remote_key)
+
+    def test_envvar_nexus_url_forwarded_to_api_client(self, cli_runner: CliRunner) -> None:
+        """NEXUS_URL env var must cause NexusApiClient to use the remote URL."""
+        config = make_config()
+        remote_url = "http://hub-env:8888"
+        remote_key = "envkey"
+        with (
+            patch("nexus.cli.commands.profile.load_cli_config", return_value=config),
+            patch("nexus.cli.commands.profile.NexusApiClient") as mock_client_cls,
+            patch(
+                "nexus.cli.commands.profile.load_project_config_optional",
+                return_value={},
+            ),
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get.return_value = FULL_FEATURES_PAYLOAD
+            mock_client_cls.return_value = mock_instance
+
+            result = cli_runner.invoke(
+                profile_group,
+                ["contract"],
+                env={"NEXUS_URL": remote_url, "NEXUS_API_KEY": remote_key},
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_client_cls.assert_called_once_with(url=remote_url, api_key=remote_key)
+
+    def test_no_remote_args_uses_default_localhost(self, cli_runner: CliRunner) -> None:
+        """When no --url / env vars are set, behaviour is unchanged (localhost:2026)."""
+        config = make_config()
+        with (
+            patch("nexus.cli.commands.profile.load_cli_config", return_value=config),
+            patch("nexus.cli.commands.profile.NexusApiClient") as mock_client_cls,
+            patch(
+                "nexus.cli.commands.profile.load_project_config_optional",
+                return_value={},
+            ),
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get.return_value = FULL_FEATURES_PAYLOAD
+            mock_client_cls.return_value = mock_instance
+
+            result = cli_runner.invoke(
+                profile_group,
+                ["contract"],
+                env={"NEXUS_URL": "", "NEXUS_API_KEY": ""},
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_client_cls.assert_called_once_with(url="http://localhost:2026", api_key=None)

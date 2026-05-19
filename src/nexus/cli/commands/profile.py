@@ -240,7 +240,21 @@ def rename_cmd(old_name: str, new_name: str) -> None:
 
 
 @profile_group.command(name="contract")
-def contract_cmd() -> None:
+@click.option(
+    "--url",
+    "--remote-url",
+    default=None,
+    envvar="NEXUS_URL",
+    help="Server URL to query (default: http://localhost:2026).",
+)
+@click.option(
+    "--api-key",
+    "--remote-api-key",
+    default=None,
+    envvar="NEXUS_API_KEY",
+    help="API key for authenticated requests.",
+)
+def contract_cmd(url: str | None, api_key: str | None) -> None:
     """Print the running hub's resolved deployment-profile contract as JSON.
 
     Queries the active connection's /api/v2/features endpoint and enriches
@@ -252,10 +266,11 @@ def contract_cmd() -> None:
 
     Examples:
         nexus profile contract
+        nexus profile contract --url http://hub:9999 --api-key nx_xxx
         nexus --profile staging profile contract
     """
     config = load_cli_config()
-    resolved = resolve_connection(config=config)
+    resolved = resolve_connection(remote_url=url, remote_api_key=api_key, config=config)
     url = resolved.url or "http://localhost:2026"
 
     try:

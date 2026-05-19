@@ -118,6 +118,10 @@ def sandbox_daemon(tmp_path: Path):
             "http_port": ready_port,
             "grpc_port": ready_port + 2,
             "log_path": log_path,
+            # Additive (#4126 Task 8b): the daemon's isolated readiness file
+            # so subprocess CLI tests can point `--readiness-file` at it
+            # (they inherit the test runner's HOME, not the daemon's).
+            "ready_file": ready_file,
         }
     finally:
         proc.terminate()
@@ -367,3 +371,46 @@ def test_sandbox_flag_without_profile_is_rejected_by_daemon() -> None:
         f"error should mention sandbox profile requirement; "
         f"stdout={proc.stdout} stderr={proc.stderr}"
     )
+
+
+def test_nexus_ready_reports_sandbox_daemon_ready(sandbox_daemon) -> None:
+    """`nexus ready` reports the booted sandbox daemon as ready (real e2e).
+
+    Invoked via `python -m nexus.cli` (the package exposes
+    `src/nexus/cli/__main__.py`), mirroring how this module already runs
+    the daemon as `python -m nexus.daemon.main`. This is robust under
+    `uv run pytest` without relying on a console-script being on PATH.
+
+    `--readiness-file` is pointed at the fixture's isolated readiness file:
+    this subprocess inherits the test runner's HOME, NOT the daemon's
+    per-test isolated HOME, so the default `~/.nexus/nexusd.ready` would be
+    wrong here.
+    """
+    import json as _json
+
+    ready_file = sandbox_daemon["ready_file"]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nexus.cli",
+            "ready",
+            "--readiness-file",
+            str(ready_file),
+            "--json",
+            "--timeout",
+            "30",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, (
+        f"nexus ready should exit 0; rc={result.returncode} "
+        f"stdout={result.stdout} stderr={result.stderr}"
+    )
+    payload = _json.loads(result.stdout)
+    data = payload.get("data", payload)
+    assert data["ready"] is True, data
+    assert data["profile"] == "sandbox", data
+    assert data["endpoint"] == (f"{sandbox_daemon['host']}:{sandbox_daemon['http_port']}"), data

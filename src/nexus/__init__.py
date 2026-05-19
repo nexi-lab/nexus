@@ -267,8 +267,13 @@ def connect(
         from nexus.remote.grpc_target import resolve_grpc_target
         from nexus.remote.rpc_transport import RPCTransport
 
+        # profile="remote" with an explicit url/NEXUS_URL is an explicit
+        # remote target: do NOT let the cwd ./nexus.yaml (a *different*
+        # local project) override this hub's gRPC port / TLS.
         grpc_address, _grpc_port, _tls_config = resolve_grpc_target(
-            server_url, cfg_data_dir=getattr(cfg, "data_dir", None)
+            server_url,
+            cfg_data_dir=getattr(cfg, "data_dir", None),
+            trust_local_project=False,
         )
 
         transport = RPCTransport(

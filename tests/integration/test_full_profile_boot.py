@@ -10,14 +10,18 @@ shared` returns rc=1 because its health gate waits for `zoekt` even
 though the shared preset does not start it (a pre-existing `nexus up`
 health-gate defect, out of #4132's docs/test scope; see
 docs/superpowers/specs/2026-05-18-issue-4132-full-profile-design.md
-"Bug B"). That ONE precise case is converted to ``pytest.xfail`` *in
-the fixture* (`tests/integration/conftest.py`) by signature match — so
-it neither masquerades as green nor hard-reds CI, and XPASSes once
-Bug B is fixed. Every OTHER `nexus up`/health/gRPC failure still
-hard-FAILS, so this gate keeps full blocking value for real
-regressions (no blanket module-level xfail). Empirical #4132
-verification was also done directly against a live hub (recorded in
-the spec), independent of this gate.
+"Bug B"). For that ONE precise signature the fixture
+(`tests/integration/conftest.py`) does NOT blind-xfail: it first
+PROVES the hub actually serves by hitting the running container's
+``/health`` (200) and ``/api/v2/features`` (non-empty) directly. Only
+if the hub is verifiably serving is it ``pytest.xfail``ed (so it
+neither masquerades as green nor hard-reds CI, and XPASSes once Bug B
+is fixed). If the hub does NOT serve, it hard-FAILS — a real
+FULL-stack regression hiding behind a zoekt mention cannot pass. Every
+OTHER `nexus up`/health/gRPC failure also hard-FAILS, so this gate
+keeps full blocking value (no blanket module-level xfail). Empirical
+#4132 verification was also done directly against a live hub (recorded
+in the spec), independent of this gate.
 """
 
 import os

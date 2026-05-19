@@ -701,7 +701,12 @@ def _check_remote_grpc(url: str, api_key: str | None) -> CheckResult:
     transport = None
     try:
         try:
-            grpc_address, grpc_port, tls_config = resolve_grpc_target(url)
+            # `doctor remote --url` is always an explicit remote target —
+            # ignore any cwd ./nexus.yaml so a local project's gRPC
+            # port/TLS cannot poison the diagnosis of a different hub.
+            grpc_address, grpc_port, tls_config = resolve_grpc_target(
+                url, trust_local_project=False
+            )
         except ValueError as exc:
             # Invalid gRPC port config (NEXUS_GRPC_PORT / nexus.yaml). The
             # SDK fails the same way — surface it as an actionable ERROR,

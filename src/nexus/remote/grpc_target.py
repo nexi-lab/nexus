@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from nexus.security.tls.config import ZoneTlsConfig
 
 
-def _grpc_port(default: int = 2028) -> int:
+def _grpc_port(default: int = 2028, *, trust_local_project: bool = True) -> int:
     """Resolve the gRPC port.
 
     NEXUS_GRPC_PORT env > nexus.yaml ``ports.grpc`` > *default*.
@@ -36,10 +36,15 @@ def _grpc_port(default: int = 2028) -> int:
     both the SDK and ``nexus doctor remote`` rely on this resolver, so a
     silent fallback would produce false preflight results or connect to
     an unrelated local service.
+
+    When *trust_local_project* is False (an explicit remote target), the
+    cwd ``./nexus.yaml`` is NOT consulted — local project ports must not
+    poison a different remote hub (e.g. local ``ports.grpc: 3028`` must
+    not make ``--url http://prod:2026`` dial ``prod:3028``).
     """
     grpc_port_str = os.getenv("NEXUS_GRPC_PORT")
     source = "NEXUS_GRPC_PORT"
-    if not grpc_port_str:
+    if not grpc_port_str and trust_local_project:
         source = "nexus.yaml ports.grpc"
         with contextlib.suppress(Exception):
             pf = Path("nexus.yaml")
@@ -66,17 +71,26 @@ def resolve_grpc_target(
     server_url: str,
     *,
     cfg_data_dir: str | None = None,
+    trust_local_project: bool = True,
 ) -> tuple[str, int, "ZoneTlsConfig | None"]:
     """Resolve ``(grpc_address, grpc_port, tls_config)`` for *server_url*.
 
     Mirrors the remote-profile resolution in ``nexus.connect`` exactly so
     a preflight reflects real SDK connection behavior.
 
+    *trust_local_project*: when False (an explicit remote target — e.g.
+    ``nexus doctor remote --url`` or ``connect(profile="remote",
+    url=...)`` not proven to be the locally-managed stack), the cwd
+    ``./nexus.yaml`` is IGNORED for port/TLS/data_dir. Only env
+    (``NEXUS_GRPC_PORT``, ``NEXUS_GRPC_TLS``, ``NEXUS_DATA_DIR``,
+    ``NEXUS_TLS_*``) and explicit *cfg_data_dir* apply, so a local
+    project cannot poison a different remote hub's port/TLS.
+
     Raises:
         RuntimeError: ``NEXUS_GRPC_TLS=true`` but no certificates resolve
             (fail-closed — same as the SDK).
     """
-    grpc_port = _grpc_port()
+    grpc_port = _grpc_port(trust_local_project=trust_local_project)
     parsed = urlparse(server_url)
     grpc_address = f"{parsed.hostname}:{grpc_port}"
 
@@ -88,7 +102,7 @@ def resolve_grpc_target(
     data_dir = os.getenv("NEXUS_DATA_DIR")
     if data_dir and not tls_disabled:
         tls_enabled = True  # NEXUS_DATA_DIR auto-detect (backward compat)
-    if not data_dir:
+    if not data_dir and trust_local_project:
         project_yaml = Path("nexus.yaml")
         if project_yaml.exists():
             with contextlib.suppress(Exception):

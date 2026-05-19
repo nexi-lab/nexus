@@ -50,6 +50,56 @@ def _nexus_bin() -> str:
     return str(Path(sys.executable).parent / "nexus")
 
 
+def _verify_hub_serving(data_dir: Path) -> bool:
+    """Best-effort: prove the FULL hub is actually serving even when
+    `nexus up` returned rc=1 (Bug B). Discovers this project's nexus
+    container via the compose project name (md5 of the resolved
+    data_dir, matching stack.py) and checks ``/health`` == 200 AND a
+    non-empty ``/api/v2/features``. Returns True only if BOTH pass —
+    so a real Nexus-unhealthy failure is NOT mistaken for Bug B.
+    """
+    import hashlib
+
+    try:
+        proj = "nexus-" + hashlib.md5(str(data_dir.resolve()).encode()).hexdigest()[:8]
+        cid = (
+            subprocess.run(
+                ["docker", "ps", "--filter", f"name={proj}-nexus", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            .stdout.strip()
+            .splitlines()
+        )
+        if not cid:
+            return False
+        port = (
+            subprocess.run(
+                ["docker", "port", cid[0], "2026"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            .stdout.strip()
+            .splitlines()
+        )
+        if not port:
+            return False
+        host_port = port[0].rsplit(":", 1)[-1]
+        base = f"http://localhost:{host_port}"
+        with urllib.request.urlopen(f"{base}/health", timeout=5) as r:
+            if r.status != 200:
+                return False
+        with urllib.request.urlopen(f"{base}/api/v2/features", timeout=5) as r:
+            if r.status != 200:
+                return False
+            body = json.loads(r.read() or b"{}")
+        return bool(body)
+    except Exception:
+        return False
+
+
 def _teardown_stack(nexus_bin: str, project_dir: Path) -> None:
     """Best-effort `nexus down --volumes` (used before fail/skip so a
     failed boot does not leak containers/ports into later tests)."""
@@ -265,17 +315,33 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
             and not nexus_failed
             and "Some services did not become healthy" in combined
         )
-        _teardown_stack(nexus_bin, project_dir)
-        if zoekt_gate_failure:
-            pytest.xfail(
-                "Bug B: `nexus up --preset shared` rc=1 — health gate waits "
-                "on unstarted `zoekt` though the hub itself is healthy "
-                f"(pre-existing nexus up defect, out of #4132 scope). log: {debug_path}"
+        if not zoekt_gate_failure:
+            _teardown_stack(nexus_bin, project_dir)
+            pytest.fail(
+                f"nexus up failed (rc={up_result.returncode}) — FULL stack "
+                f"did not boot. Debug log: {debug_path}. "
+                f"stderr_tail={up_result.stderr[-400:]!r}"
             )
-        pytest.fail(
-            f"nexus up failed (rc={up_result.returncode}) — FULL stack did "
-            f"not boot. Debug log: {debug_path}. "
-            f"stderr_tail={up_result.stderr[-400:]!r}"
+        # Bug B suspected (signature matched). Do NOT blind-xfail — first
+        # PROVE the hub actually serves (/health 200 + non-empty
+        # /api/v2/features) by talking to the running container directly.
+        # If it does NOT serve, this is a real regression hiding behind a
+        # zoekt mention → tear down and hard-FAIL (gate keeps its value).
+        if not _verify_hub_serving(data_dir):
+            _teardown_stack(nexus_bin, project_dir)
+            pytest.fail(
+                f"nexus up rc={up_result.returncode} AND the hub did not "
+                f"serve /health + /api/v2/features — this is NOT Bug B "
+                f"(real FULL-stack regression). Debug log: {debug_path}. "
+                f"stderr_tail={up_result.stderr[-400:]!r}"
+            )
+        # Hub PROVEN healthy; only `nexus up`'s aggregate exit is wrong
+        # because of the out-of-scope zoekt health gate (Bug B).
+        _teardown_stack(nexus_bin, project_dir)
+        pytest.xfail(
+            "Bug B: `nexus up --preset shared` rc=1 (health gate waits on "
+            "unstarted `zoekt`) BUT the hub was verified serving /health + "
+            f"/api/v2/features directly. Out of #4132 scope. log: {debug_path}"
         )
 
     # ---- nexus env --json --------------------------------------------------

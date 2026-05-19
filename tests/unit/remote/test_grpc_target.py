@@ -53,6 +53,30 @@ def test_invalid_nexus_yaml_port_fails_fast(
         resolve_grpc_target("http://hub:2026")
 
 
+def test_explicit_remote_ignores_local_nexus_yaml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Boundary: with trust_local_project=False (explicit remote target
+    — `doctor remote --url` / `connect(profile=remote, url=...)`), a cwd
+    ./nexus.yaml must NOT poison the remote hub's port/TLS. Local
+    `ports.grpc: 3028` must not make `--url http://prod:2026` dial
+    `prod:3028`."""
+    monkeypatch.delenv("NEXUS_GRPC_PORT", raising=False)
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "nexus.yaml").write_text("ports:\n  grpc: 3028\ntls: true\n")
+
+    # default (trust_local_project=True) DOES read it — sanity
+    addr_local, port_local, _ = resolve_grpc_target("http://prod:2026")
+    assert (addr_local, port_local) == ("prod:3028", 3028)
+
+    # explicit remote IGNORES it → default 2028, no TLS from local cfg
+    addr, port, tls = resolve_grpc_target("http://prod:2026", trust_local_project=False)
+    assert (addr, port) == ("prod:2028", 2028)
+    assert tls is None  # local `tls: true` must not apply to the remote
+
+
 def test_default_port_no_tls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEXUS_GRPC_PORT", raising=False)
     monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)

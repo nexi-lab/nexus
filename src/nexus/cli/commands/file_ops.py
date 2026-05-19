@@ -30,6 +30,7 @@ def register_commands(cli: click.Group) -> None:
     It is registered separately in ``__init__.py``.
     """
     cli.add_command(cat)
+    cli.add_command(stat_cmd)
     cli.add_command(write)
     cli.add_command(append)
     cli.add_command(write_batch)
@@ -361,6 +362,54 @@ def _print_content(path: str, content: bytes) -> None:
     except UnicodeDecodeError:
         console.print(f"[nexus.warning]Binary file ({len(content)} bytes)[/nexus.warning]")
         console.print(f"[nexus.muted]{content[:100]!r}...[/nexus.muted]")
+
+
+@click.command(name="stat")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@add_output_options
+@add_backend_options
+@add_context_options
+def stat_cmd(
+    paths: tuple[str, ...],
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Show file metadata without reading content.
+
+    One path -> stat; multiple paths -> stat_bulk (one round-trip).
+
+    Examples:
+        nexus stat /workspace/data.txt
+        nexus stat /a.txt /b.txt --json
+    """
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    if len(paths) == 1:
+                        data: Any = nx.stat(paths[0], context=cast(Any, operation_context))
+                    else:
+                        # Batch RPC: mirror write-batch precedent and omit
+                        # context (the CLI's dict-shaped operation_context
+                        # is not an OperationContext object; stat_bulk's
+                        # server-side permission probe rejects it even when
+                        # PermissionConfig.enforce is False).
+                        data = nx.stat_bulk(list(paths))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            render_error(e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
 
 
 @click.command()

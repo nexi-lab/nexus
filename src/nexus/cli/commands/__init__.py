@@ -17,6 +17,7 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "file_ops": (
         "init",
         "cat",
+        "stat",
         "write",
         "append",
         "write-batch",

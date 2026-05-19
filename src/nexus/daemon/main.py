@@ -338,13 +338,11 @@ def _print_lifecycle_summary(nx: Any) -> None:
         pass  # best-effort — never block startup
 
 
-def _read_config_file_profile(config_path: str) -> str | None:
-    """Return the ``profile:`` key from a YAML config file, or ``None``.
+def _read_config_file_key(config_path: str, key: str) -> str | None:
+    """Return a top-level string *key* from a YAML config file, or ``None``.
 
     Best-effort: any read/parse failure returns ``None`` (the real failure is
-    deferred to ``load_config`` for a clearer error). Shared by
-    ``_resolve_effective_profile`` and the ``--profile``/``--config`` conflict
-    check so both observe the exact same file value.
+    deferred to ``load_config`` for a clearer error).
     """
     try:
         import yaml
@@ -354,7 +352,7 @@ def _read_config_file_profile(config_path: str) -> str | None:
             with open(path) as fh:
                 loaded = yaml.safe_load(fh)
             if isinstance(loaded, dict):
-                raw = loaded.get("profile")
+                raw = loaded.get(key)
                 if isinstance(raw, str) and raw:
                     return raw
     except Exception:
@@ -398,7 +396,7 @@ def _resolve_effective_profile(
 
     # --config given: replicate load_config's profile precedence.
     # 1. config file profile wins (config_dict.update over env overrides).
-    file_profile = _read_config_file_profile(config_path)
+    file_profile = _read_config_file_key(config_path, "profile")
     if file_profile is not None:
         return file_profile
     # 2. then NEXUS_PROFILE env.
@@ -407,29 +405,6 @@ def _resolve_effective_profile(
         return env_profile
     # 3. then the NexusConfig default.
     return "full"
-
-
-def _read_config_file_data_dir(config_path: str) -> str | None:
-    """Return the ``data_dir:`` key from a YAML config file, or ``None``.
-
-    Best-effort, identical contract/shape to ``_read_config_file_profile``
-    (any read/parse failure → ``None``; ``load_config`` re-raises later with
-    a clearer error). Shared by ``_resolve_effective_data_dir``.
-    """
-    try:
-        import yaml
-
-        path = Path(config_path)
-        if path.exists() and path.suffix in (".yaml", ".yml"):
-            with open(path) as fh:
-                loaded = yaml.safe_load(fh)
-            if isinstance(loaded, dict):
-                raw = loaded.get("data_dir")
-                if isinstance(raw, str) and raw:
-                    return raw
-    except Exception:
-        return None
-    return None
 
 
 def _resolve_effective_data_dir(
@@ -491,7 +466,7 @@ def _resolve_effective_data_dir(
     # --config given: the Click --data-dir value is NOT forwarded on this
     # branch (main() calls load_config(Path(config_path)) only). Replicate
     # load_config: config-file data_dir overrides $NEXUS_DATA_DIR.
-    file_data_dir = _read_config_file_data_dir(config_path)
+    file_data_dir = _read_config_file_key(config_path, "data_dir")
     if file_data_dir:
         return file_data_dir
     env_data_dir = os.environ.get("NEXUS_DATA_DIR")
@@ -695,7 +670,7 @@ def main(
     if config_path and _profile_src == click.core.ParameterSource.COMMANDLINE:
         _config_effective = _resolve_effective_profile(deployment_profile, config_path)
         if _config_effective != deployment_profile:
-            _file_profile = _read_config_file_profile(config_path)
+            _file_profile = _read_config_file_key(config_path, "profile")
             if _file_profile is not None:
                 _src_desc = f"sets profile: {_file_profile!r}"
             else:

@@ -95,6 +95,12 @@ def _wait_ready(proc: subprocess.Popen[bytes], ready_file: Path, log_path: Path)
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             log = log_path.read_text(errors="replace")
+            # #4146: a fresh env without the built Rust extension errors
+            # with ModuleNotFoundError. Skip cleanly instead of ERRORing.
+            if "No module named 'nexus_runtime'" in log:
+                pytest.skip(
+                    "nexus_runtime extension not built — see #4146; build via maturin then re-run"
+                )
             raise AssertionError(f"nexusd exited early (code {proc.returncode}). Log:\n{log}")
         if ready_file.exists():
             content = ready_file.read_text().strip()
@@ -213,16 +219,15 @@ def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
             )
 
 
-# Resolved empirically (Task 3, issue #4126). Observed reality: the
-# `nexus.daemon.main --profile sandbox` daemon is HTTP-only. NO daemon
-# profile binds `NexusVFSService` anywhere in the codebase, and the only
-# in-process gRPC server that ever binds (the env-gated `approvals`
-# brick's `ApprovalsV1` servicer) exposes no `Ping` RPC. So gRPC Ping is
-# intentionally absent under sandbox — recorded as intentionally-absent
-# in the #4126 coverage table, NOT a missing-needed build issue.
+# Empirical observation (Task 3, issue #4126): a fresh `nexus.daemon.main
+# --profile sandbox` daemon refuses connections on the gRPC port (no gRPC
+# server bound in this configuration). However, this behavior is
+# CONTESTED: open issue #4148 (parent #4126) reports the sandbox typed VFS
+# gRPC `Ping` returns UNAUTHENTICATED. The true status is unresolved and
+# tracked by #4148 — it is NOT asserted as intentional/by-design.
 #
 #   True  -> a sandbox-bound gRPC server with Ping exists; assert it.
-#   False -> intentionally absent (current reality).
+#   False -> not reachable here (connection refused); contested, see #4148.
 #
 # REVIVAL NOTE: do not just flip this to True. If sandbox ever exposes
 # gRPC, re-derive the stub/service in the test body from whatever
@@ -234,9 +239,9 @@ SANDBOX_GRPC_PING_SUPPORTED = False
 @pytest.mark.skipif(
     not SANDBOX_GRPC_PING_SUPPORTED,
     reason=(
-        "gRPC Ping intentionally absent in sandbox profile (HTTP-only "
-        "surface); recorded as intentionally-absent in the #4126 coverage "
-        "table, not a missing-needed build issue."
+        "gRPC Ping not reachable under sandbox in this config (connection "
+        "refused); behavior contested and tracked by open issue #4148 "
+        "(parent #4126)."
     ),
 )
 def test_sandbox_grpc_ping_over_real_socket(sandbox_daemon) -> None:

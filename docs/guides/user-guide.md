@@ -245,10 +245,12 @@ curl -s http://127.0.0.1:2026/api/v2/features
 - **Denied (usage error, exit 64):** `--workspace`, `--hub-url`, or
   `--hub-token` without `--profile sandbox`; `--hub-url` without
   `--hub-token`.
-- **Unavailable (by design):** the sandbox daemon is **HTTP-only** — it
-  binds no gRPC server, so there is no gRPC `Ping` under this profile.
-  Sandbox-provisioning RPCs/CLI are also absent (`BRICK_SANDBOX`
-  disabled). These are intentional, not missing features.
+- **Unavailable / contested:** gRPC `Ping` is **not reachable under the
+  sandbox profile in current testing (connection refused)**; this behavior
+  is **contested and tracked by
+  [#4148](https://github.com/nexi-lab/nexus/issues/4148)** (open) — it is
+  NOT asserted as an intentional/by-design omission.
+  Sandbox-provisioning RPCs/CLI are absent (`BRICK_SANDBOX` disabled).
 
 **Correctness assertion you can run:** with the daemon up,
 `curl -s http://127.0.0.1:2026/api/v2/features | jq -r .profile` prints
@@ -277,13 +279,13 @@ matrix, [#4139](https://github.com/nexi-lab/nexus/issues/4139)):
 | `nexus ready` | CLI | supported | `tests/unit/cli/test_ready_cmd.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | HTTP `/health` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | HTTP `/api/v2/features` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
-| gRPC `Ping` | typed gRPC | intentionally-absent (HTTP-only) | `tests/integration/test_sandbox_boot_smoke.py` (documented skip) | n/a |
+| gRPC `Ping` | typed gRPC | unavailable — not reachable; tracked by #4148 | `tests/integration/test_sandbox_boot_smoke.py` (documented skip) | n/a |
 | `nexus status` | CLI | supported (Docker/HTTP-oriented) | `tests/unit/cli/test_stack_sandbox.py` | control plane |
 | `nexus env` | CLI | supported | existing CLI tests | not performance-sensitive |
 
 **Missing-surface gate verdict:** all core boot-story surfaces exist, so
-this story is **not blocked**. gRPC absence under sandbox is *intentional*
-(HTTP-only design), not a missing-needed surface. The one ergonomic gap —
+this story is **not blocked**. gRPC `Ping` under sandbox is unresolved and
+tracked by #4148 (open). The one ergonomic gap —
 no first-class readiness probe for the non-Docker sandbox profile — is
 **closed in this PR** by the `nexus ready` command: it waits for the
 readiness file (`~/.nexus/nexusd.ready`), polls `/health` +

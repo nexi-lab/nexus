@@ -6719,8 +6719,8 @@ operations:
   owning_issue: null
 - id: nexus_v_f_s_service.ping
   module: nexus_fs
-  summary: 'gRPC liveness ping on NexusVFSService. Intentionally absent in the sandbox profile: the sandbox daemon binds no
-    gRPC server (HTTP-only by design); use GET /health instead.'
+  summary: 'gRPC liveness ping on NexusVFSService. Not reachable under sandbox in current testing (connection refused);
+    behavior contested and tracked by #4148. Not asserted as intentional.'
   transports:
     grpc_typed:
       name: NexusVFSService.Ping
@@ -6729,12 +6729,13 @@ operations:
     lite: supported
     sandbox: unavailable
     full: supported
-  usage_example: "sandbox is HTTP-only by design \u2014 no gRPC server is bound; use GET /health for sandbox liveness. gRPC\
-    \ Ping applies to lite/full only."
+  usage_example: 'Not reachable under sandbox in current testing (connection refused); behavior contested and tracked by
+    #4148. Not asserted as intentional.'
   correctness_test: tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
-  perf_link: liveness ping; not exercised in sandbox (no gRPC server). HTTP /health covers sandbox.
-  gap_issue: null
+  perf_link: 'Not reachable under sandbox in current testing (connection refused); behavior contested and tracked by #4148.
+    Not asserted as intentional.'
+  gap_issue: 4148
   owning_issue: 4126
 - id: nexus_v_f_s_service.read
   module: nexus_fs

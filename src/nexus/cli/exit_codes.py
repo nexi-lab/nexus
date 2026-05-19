@@ -22,3 +22,8 @@ class ExitCode(IntEnum):
     TEMPFAIL = 75  # EX_TEMPFAIL — temporary failure (timeout, retry)
     PERMISSION_DENIED = 77  # EX_NOPERM — permission denied
     CONFIG_ERROR = 78  # EX_CONFIG — bad configuration
+    # Interrupted by SIGINT (Ctrl-C). Conventional shell code 128+SIGINT(2).
+    # NOT a sysexits.h code: ``nexus ready`` is a CI/boot gate whose exit
+    # code is the signal, so an interrupt must surface as a deterministic
+    # NON-zero (never a false "ready" 0). 130 is the standard SIGINT code.
+    INTERRUPTED = 130

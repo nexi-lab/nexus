@@ -1335,3 +1335,295 @@ class TestPreExistingProjectStatePreservedRegression:
             "daemon-failure rollback unlink()'d/altered the project's "
             "pre-existing .state.json instead of leaving it untouched"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #4126 review r6, Finding A — concurrent ``nexus up --profile sandbox``
+# for the SAME isolated data dir must not let the loser's rollback wipe the
+# winner's live discovery state. Two layers:
+#   1. OWNERSHIP-aware rollback: only touch a file whose on-disk bytes STILL
+#      equal what THIS launch wrote.
+#   2. Per-effective-data-dir advisory lock (fail-fast, non-blocking) so two
+#      same-dir ups cannot interleave at all; DIFFERENT data dirs never block.
+# ---------------------------------------------------------------------------
+class TestOwnershipAwareRollback:
+    """Layer 1: ``_rollback_sandbox_runtime_artifacts`` must NEVER delete or
+    restore over a CONCURRENT WINNER's content. Pre-fix (snapshot-only) it
+    unconditionally unlink()'d run-created paths / restored snapshots,
+    clobbering the winner — these tests fail without the ownership guard."""
+
+    def test_loser_rollback_preserves_winner_created_state(self, tmp_path: Path) -> None:
+        """No pre-existing state (both snapshot ``None``). The loser wrote its
+        bytes, then the WINNER overwrote ``.state.json`` with its OWN live
+        state. The loser's rollback must NOT unlink the winner's file.
+
+        Pre-fix: ``_original is None`` ⇒ unconditional ``unlink()`` ⇒ the
+        winner's healthy sandbox becomes undiscoverable."""
+        from nexus.cli.commands.stack import _rollback_sandbox_runtime_artifacts
+
+        ddir = tmp_path / "dd"
+        ddir.mkdir()
+        state = ddir / ".state.json"
+        loser_bytes = b'{"profile":"sandbox","loser":1}'
+        winner_bytes = b'{"profile":"sandbox","winner":1}'
+        # The winner currently owns the on-disk file.
+        state.write_bytes(winner_bytes)
+
+        _rollback_sandbox_runtime_artifacts(
+            state_paths=[state],
+            state_snapshots={state: None},  # loser saw no pre-existing file
+            state_written={state: loser_bytes},  # but the loser wrote THESE
+            yaml_created_path=None,
+            yaml_written=None,
+        )
+
+        assert state.exists(), "loser rollback deleted the winner's .state.json"
+        assert state.read_bytes() == winner_bytes, (
+            "loser rollback clobbered the winner's live discovery state"
+        )
+
+    def test_loser_rollback_does_not_restore_over_winner(self, tmp_path: Path) -> None:
+        """A snapshot existed (pre-existing file). The loser wrote its bytes,
+        the WINNER then replaced the file with its own. The loser's rollback
+        must NOT restore the stale snapshot over the winner's content.
+
+        Pre-fix: ``_original is not None`` ⇒ unconditional snapshot restore
+        ⇒ the winner's state is overwritten with stale bytes."""
+        from nexus.cli.commands.stack import _rollback_sandbox_runtime_artifacts
+
+        ddir = tmp_path / "dd"
+        ddir.mkdir()
+        state = ddir / ".state.json"
+        snapshot_bytes = b'{"profile":"sandbox","prev":1}'
+        loser_bytes = b'{"profile":"sandbox","loser":1}'
+        winner_bytes = b'{"profile":"sandbox","winner":1}'
+        state.write_bytes(winner_bytes)  # winner owns it now
+
+        _rollback_sandbox_runtime_artifacts(
+            state_paths=[state],
+            state_snapshots={state: snapshot_bytes},
+            state_written={state: loser_bytes},
+            yaml_created_path=None,
+            yaml_written=None,
+        )
+
+        assert state.read_bytes() == winner_bytes, (
+            "loser rollback restored a stale snapshot over the winner's live .state.json"
+        )
+
+    def test_loser_rollback_preserves_winner_minimal_yaml(self, tmp_path: Path) -> None:
+        """The minimal ``nexus.yaml`` is only unlinked while it still holds
+        OUR bytes — a concurrent winner's minimal yaml survives.
+
+        Pre-fix: ``yaml_created_path`` was unconditionally unlink()'d."""
+        from nexus.cli.commands.stack import _rollback_sandbox_runtime_artifacts
+
+        yml = tmp_path / "nexus.yaml"
+        loser_yaml = b"profile: sandbox\ndata_dir: /loser\n"
+        winner_yaml = b"profile: sandbox\ndata_dir: /winner\n"
+        yml.write_bytes(winner_yaml)  # winner owns it now
+
+        _rollback_sandbox_runtime_artifacts(
+            state_paths=[],
+            state_snapshots={},
+            state_written={},
+            yaml_created_path=yml,
+            yaml_written=loser_yaml,
+        )
+
+        assert yml.exists(), "loser rollback deleted the winner's minimal yaml"
+        assert yml.read_bytes() == winner_yaml
+
+    def test_single_process_still_rolls_back_own_created_state(self, tmp_path: Path) -> None:
+        """Regression: with NO concurrent writer (on-disk bytes == what we
+        wrote) the helper still unlinks the run-created ``.state.json`` and
+        the run-created minimal ``nexus.yaml`` — single-process rollback is
+        not weakened by the ownership guard."""
+        from nexus.cli.commands.stack import _rollback_sandbox_runtime_artifacts
+
+        ddir = tmp_path / "dd"
+        ddir.mkdir()
+        state = ddir / ".state.json"
+        mine = b'{"profile":"sandbox","mine":1}'
+        state.write_bytes(mine)
+        yml = tmp_path / "nexus.yaml"
+        my_yaml = b"profile: sandbox\n"
+        yml.write_bytes(my_yaml)
+
+        _rollback_sandbox_runtime_artifacts(
+            state_paths=[state],
+            state_snapshots={state: None},
+            state_written={state: mine},
+            yaml_created_path=yml,
+            yaml_written=my_yaml,
+        )
+
+        assert not state.exists(), "single-process rollback no longer removes its own state"
+        assert not yml.exists(), "single-process rollback no longer removes its own minimal yaml"
+
+    def test_single_process_restores_own_preexisting_snapshot(self, tmp_path: Path) -> None:
+        """Regression: a pre-existing ``.state.json`` (snapshot captured) is
+        still restored to its pre-write bytes when on-disk still equals what
+        THIS run wrote (no concurrent winner)."""
+        from nexus.cli.commands.stack import _rollback_sandbox_runtime_artifacts
+
+        ddir = tmp_path / "dd"
+        ddir.mkdir()
+        state = ddir / ".state.json"
+        snapshot_bytes = b'{"profile":"sandbox","prev":1}'
+        mine = b'{"profile":"sandbox","mine":1}'
+        state.write_bytes(mine)  # what this run wrote, still on disk
+
+        _rollback_sandbox_runtime_artifacts(
+            state_paths=[state],
+            state_snapshots={state: snapshot_bytes},
+            state_written={state: mine},
+            yaml_created_path=None,
+            yaml_written=None,
+        )
+
+        assert state.read_bytes() == snapshot_bytes, (
+            "single-process rollback failed to restore the pre-existing .state.json snapshot"
+        )
+
+
+class TestPerDataDirUpLock:
+    """Layer 2: ``_sandbox_up_data_dir_lock`` serializes ``nexus up`` PER
+    EFFECTIVE DATA DIR, fail-fast (non-blocking) and NEVER across distinct
+    data dirs (per-agent concurrency must not be serialized)."""
+
+    def test_same_data_dir_second_acquire_fails_fast(self, tmp_path: Path) -> None:
+        """While one holder has the lock for a data dir, a SECOND acquire for
+        the SAME dir raises ``SandboxUpInProgressError`` immediately (no
+        block). Pre-fix (no lock) the second acquire would silently proceed
+        and race the producer + rollback."""
+        from nexus.cli.commands.stack import (
+            SandboxUpInProgressError,
+            _sandbox_up_data_dir_lock,
+        )
+
+        dd = str(tmp_path / "dd")
+        # First context acquires the lock; the THIRD (same dir, while the
+        # first is still held) must raise SandboxUpInProgressError, caught by
+        # the middle pytest.raises — exercising the fail-fast same-dir reject.
+        with (
+            _sandbox_up_data_dir_lock(dd),
+            pytest.raises(SandboxUpInProgressError),
+            _sandbox_up_data_dir_lock(dd),
+        ):
+            pass
+
+    def test_distinct_data_dirs_not_serialized(self, tmp_path: Path) -> None:
+        """Holding the lock for data dir A does NOT block acquiring the lock
+        for a DIFFERENT data dir B (distinct sandboxes / per-agent
+        concurrency must never be serialized)."""
+        from nexus.cli.commands.stack import _sandbox_up_data_dir_lock
+
+        dd_a = str(tmp_path / "dd_a")
+        dd_b = str(tmp_path / "dd_b")
+        # Must NOT raise — different lock file, different sandbox. ``dd_b`` is
+        # acquired WHILE ``dd_a`` is still held (combined with-statement
+        # enters dd_a then dd_b without releasing dd_a).
+        with _sandbox_up_data_dir_lock(dd_a), _sandbox_up_data_dir_lock(dd_b):
+            pass
+
+    def test_lock_released_after_context_exit(self, tmp_path: Path) -> None:
+        """The lock is released in ``finally`` so a SUBSEQUENT (sequential)
+        ``nexus up`` for the same dir succeeds — fail-fast only applies while
+        a sibling is ACTIVELY holding it."""
+        from nexus.cli.commands.stack import _sandbox_up_data_dir_lock
+
+        dd = str(tmp_path / "dd")
+        with _sandbox_up_data_dir_lock(dd):
+            pass
+        # Re-acquire after release: must succeed (no deadlock / stale lock).
+        with _sandbox_up_data_dir_lock(dd):
+            pass
+
+    def test_lock_released_on_body_exception(self, tmp_path: Path) -> None:
+        """An exception inside the locked block still releases the lock
+        (``finally``) so a later acquire is not deadlocked."""
+        from nexus.cli.commands.stack import _sandbox_up_data_dir_lock
+
+        dd = str(tmp_path / "dd")
+        with pytest.raises(RuntimeError), _sandbox_up_data_dir_lock(dd):
+            raise RuntimeError("boom")
+        with _sandbox_up_data_dir_lock(dd):
+            pass
+
+
+class TestConcurrentSandboxUpRejected:
+    """End-to-end: a SECOND ``nexus up --profile sandbox`` for the SAME
+    effective data dir while the first still holds the lock exits non-zero
+    with a clear message (instead of racing the producer + rollback)."""
+
+    def test_second_up_same_data_dir_rejected_nonzero(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from nexus.cli.commands.stack import _sandbox_up_data_dir_lock
+
+        ws = str(tmp_path / "ws")
+        ddir = str((tmp_path / "ddir").resolve())
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+
+        # Simulate a sibling ``nexus up`` actively holding the per-data-dir
+        # lock for the SAME effective dir while the second invocation runs.
+        with (
+            _sandbox_up_data_dir_lock(ddir),
+            runner.isolated_filesystem(temp_dir=tmp_path),
+            patch("shutil.which", return_value=fake_nexusd),
+            patch("subprocess.run", return_value=mock_proc) as mock_run,
+            patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+        ):
+            result = runner.invoke(
+                up,
+                [
+                    "--profile",
+                    "sandbox",
+                    "--workspace",
+                    ws,
+                    "--data-dir",
+                    ddir,
+                ],
+            )
+        assert result.exit_code == ExitCode.UNAVAILABLE, result.output
+        assert "already" in result.output.lower()
+        # The daemon must NOT have been launched on the rejected path.
+        mock_run.assert_not_called()
+
+    def test_second_up_distinct_data_dir_not_blocked(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A concurrent ``nexus up`` for a DIFFERENT data dir is NOT blocked
+        by a sibling holding a different sandbox's lock (no false
+        serialization of distinct sandboxes / per-agent concurrency)."""
+        from nexus.cli.commands.stack import _sandbox_up_data_dir_lock
+
+        ws = str(tmp_path / "ws")
+        held_dir = str((tmp_path / "held").resolve())
+        other_dir = str((tmp_path / "other").resolve())
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+
+        with (
+            _sandbox_up_data_dir_lock(held_dir),
+            runner.isolated_filesystem(temp_dir=tmp_path),
+            patch("shutil.which", return_value=fake_nexusd),
+            patch("subprocess.run", return_value=mock_proc),
+            patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+        ):
+            result = runner.invoke(
+                up,
+                [
+                    "--profile",
+                    "sandbox",
+                    "--workspace",
+                    ws,
+                    "--data-dir",
+                    other_dir,
+                ],
+            )
+        assert result.exit_code == 0, result.output

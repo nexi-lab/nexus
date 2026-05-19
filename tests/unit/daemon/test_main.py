@@ -673,3 +673,192 @@ class TestLifecycleReport:
         _print_lifecycle_summary(nx)  # should not raise
         out = capsys.readouterr().out
         assert out == ""
+
+
+# ---------------------------------------------------------------------------
+# Issue #4126 review r6, Finding B: config-file data_dir must be seen
+# BEFORE PID/readiness scoping
+# ---------------------------------------------------------------------------
+
+
+class TestResolveEffectiveDataDir:
+    """``_resolve_effective_data_dir`` replicates ``nexus.config``
+    precedence so PID/readiness scoping keys off the data dir the daemon
+    will ACTUALLY use — not just the Click ``--data-dir`` option computed
+    before ``--config`` is loaded."""
+
+    def test_no_config_explicit_data_dir_wins(self) -> None:
+        from nexus.daemon.main import _resolve_effective_data_dir
+
+        assert _resolve_effective_data_dir("/explicit/dd", None, "sandbox") == "/explicit/dd"
+        assert _resolve_effective_data_dir("/explicit/dd", None, "full") == "/explicit/dd"
+
+    def test_no_config_no_data_dir_sandbox_default(self, tmp_path: Path, monkeypatch) -> None:
+        from nexus.daemon.main import _resolve_effective_data_dir
+
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        assert _resolve_effective_data_dir(None, None, "sandbox") == str(
+            tmp_path / ".nexus" / "sandbox"
+        )
+
+    def test_no_config_no_data_dir_nonsandbox_keeps_legacy_none(self) -> None:
+        """Back-compat: no --data-dir, no --config, non-sandbox ⇒ None ⇒
+        legacy shared global PID/readiness paths (unchanged)."""
+        from nexus.daemon.main import _resolve_effective_data_dir
+
+        assert _resolve_effective_data_dir(None, None, "full") is None
+
+    def test_config_file_data_dir_overrides_env(self, tmp_path: Path, monkeypatch) -> None:
+        """``--config`` branch: ``load_config`` does
+        ``merged=_build_env_overrides(); merged.update(config_dict)`` so a
+        config FILE ``data_dir`` overrides ``$NEXUS_DATA_DIR``."""
+        from nexus.daemon.main import _resolve_effective_data_dir
+
+        cfg = tmp_path / "sandbox.yaml"
+        cfg.write_text("profile: sandbox\ndata_dir: /from/config/file\n")
+        monkeypatch.setenv("NEXUS_DATA_DIR", "/from/env")
+        assert _resolve_effective_data_dir(None, str(cfg), "sandbox") == "/from/config/file"
+
+    def test_config_no_data_dir_falls_back_to_env(self, tmp_path: Path, monkeypatch) -> None:
+        from nexus.daemon.main import _resolve_effective_data_dir
+
+        cfg = tmp_path / "sandbox.yaml"
+        cfg.write_text("profile: sandbox\n")  # no data_dir key
+        monkeypatch.setenv("NEXUS_DATA_DIR", "/from/env")
+        assert _resolve_effective_data_dir(None, str(cfg), "sandbox") == "/from/env"
+
+    def test_config_no_data_dir_no_env_sandbox_default(self, tmp_path: Path, monkeypatch) -> None:
+        from nexus.daemon.main import _resolve_effective_data_dir
+
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+        cfg = tmp_path / "sandbox.yaml"
+        cfg.write_text("profile: sandbox\n")
+        assert _resolve_effective_data_dir(None, str(cfg), "sandbox") == str(
+            tmp_path / ".nexus" / "sandbox"
+        )
+
+    def test_two_distinct_config_files_distinct_scoped_paths(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Finding B core: two sandbox config FILES under one HOME with
+        DIFFERENT ``data_dir`` (NO ``--data-dir`` flag) resolve to distinct
+        effective data dirs ⇒ distinct scoped PID + readiness paths.
+
+        Pre-fix ``_manage_pid_file(data_dir)``/``_scoped_readiness_path
+        (data_dir)`` were fed the Click ``--data-dir`` (``None`` here) ⇒
+        BOTH collapsed to the shared global paths, re-blocking concurrent
+        same-HOME sandboxes."""
+        from nexus.daemon.main import (
+            _resolve_effective_data_dir,
+            _scoped_pid_path,
+            _scoped_readiness_path,
+        )
+
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        cfg_a = tmp_path / "a.yaml"
+        cfg_b = tmp_path / "b.yaml"
+        cfg_a.write_text(f"profile: sandbox\ndata_dir: {tmp_path / 'dd_a'}\n")
+        cfg_b.write_text(f"profile: sandbox\ndata_dir: {tmp_path / 'dd_b'}\n")
+
+        eff_a = _resolve_effective_data_dir(None, str(cfg_a), "sandbox")
+        eff_b = _resolve_effective_data_dir(None, str(cfg_b), "sandbox")
+        assert eff_a == str(tmp_path / "dd_a")
+        assert eff_b == str(tmp_path / "dd_b")
+        assert eff_a != eff_b
+
+        pid_a = _scoped_pid_path(eff_a)
+        pid_b = _scoped_pid_path(eff_b)
+        rdy_a = _scoped_readiness_path(eff_a)
+        rdy_b = _scoped_readiness_path(eff_b)
+        assert pid_a is not None and pid_b is not None and pid_a != pid_b
+        assert rdy_a is not None and rdy_b is not None and rdy_a != rdy_b
+
+
+class TestConfigFileDataDirGate:
+    """End-to-end: two sandboxes same HOME via distinct ``--config`` files
+    (each config sets a different ``data_dir``, NO ``--data-dir`` flag) →
+    both pass the PID gate and write distinct scoped readiness records."""
+
+    def _boot(
+        self,
+        cfg_path: Path,
+        tmp_path: Path,
+        monkeypatch,
+        captured: list,
+    ):
+        import functools
+        import importlib
+        import sys
+        import types
+
+        # ``nexus.daemon.main`` the NAME resolves to the click Group
+        # (re-exported by the package); the real module is in sys.modules.
+        importlib.import_module("nexus.daemon.main")
+        dm = sys.modules["nexus.daemon.main"]
+
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        mock_nx = MagicMock()
+        mock_connect = MagicMock(return_value=mock_nx)
+        mock_app = MagicMock()
+        fake_mod = types.ModuleType("nexus.server.fastapi_server")
+        fake_mod.create_app = MagicMock(return_value=mock_app)
+        fake_mod.run_server = MagicMock()
+        monkeypatch.setitem(sys.modules, "nexus.server.fastapi_server", fake_mod)
+
+        # Capture the ORIGINAL (unspied) writer so a second _boot under the
+        # same function-scoped monkeypatch does not chain into the first
+        # boot's spy (which would cross-contaminate the capture lists).
+        real_write = (
+            dm._write_readiness_atomic.__wrapped__
+            if hasattr(dm._write_readiness_atomic, "__wrapped__")
+            else dm._write_readiness_atomic
+        )
+
+        # ``functools.wraps`` sets ``spy_write.__wrapped__ = real_write``
+        # (a properly-typed stdlib decorator, so no type suppression is
+        # needed) so a SECOND ``_boot`` under the same function-scoped
+        # monkeypatch unwraps to the original writer (captured above)
+        # instead of chaining onto this spy.
+        @functools.wraps(real_write)
+        def spy_write(path: Path, host: str, port: int) -> None:
+            captured.append(Path(path))
+            real_write(path, host, port)
+
+        monkeypatch.setattr(dm, "_write_readiness_atomic", spy_write)
+
+        with patch("nexus.connect", mock_connect):
+            return CliRunner().invoke(main, ["--config", str(cfg_path)])
+
+    def test_two_config_files_same_home_both_gate_distinct_scoped(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        cfg_a = tmp_path / "sbx_a.yaml"
+        cfg_b = tmp_path / "sbx_b.yaml"
+        cfg_a.write_text(f"profile: sandbox\ndata_dir: {tmp_path / 'dd_a'}\n")
+        cfg_b.write_text(f"profile: sandbox\ndata_dir: {tmp_path / 'dd_b'}\n")
+
+        cap_a: list = []
+        r_a = self._boot(cfg_a, tmp_path, monkeypatch, cap_a)
+        assert r_a.exit_code == 0, r_a.output
+
+        cap_b: list = []
+        r_b = self._boot(cfg_b, tmp_path, monkeypatch, cap_b)
+        # Pre-fix: B's PID gate keyed off the shared legacy global (data_dir
+        # was None pre-config-load) ⇒ A's still-fresh global PID could block
+        # B; and both scoped readiness writes collapsed to the same global
+        # path. Post-fix B passes its own scoped gate.
+        assert r_b.exit_code == 0, r_b.output
+
+        # Each boot wrote a SCOPED readiness path distinct from the other's
+        # (in addition to the shared legacy global path).
+        from nexus.daemon.main import _scoped_readiness_path
+
+        scoped_a = _scoped_readiness_path(str(tmp_path / "dd_a"))
+        scoped_b = _scoped_readiness_path(str(tmp_path / "dd_b"))
+        assert scoped_a is not None and scoped_b is not None
+        assert scoped_a != scoped_b
+        assert scoped_a in cap_a, f"A scoped readiness not written: {cap_a}"
+        assert scoped_b in cap_b, f"B scoped readiness not written: {cap_b}"
+        assert scoped_b not in cap_a and scoped_a not in cap_b

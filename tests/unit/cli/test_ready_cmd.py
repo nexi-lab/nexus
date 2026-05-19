@@ -359,3 +359,38 @@ def test_ready_parses_tokenized_multiline_file(
     )
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert json.loads(result.output)["data"]["endpoint"] == "127.0.0.1:2026"
+
+
+# ---------------------------------------------------------------------------
+# Issue #4126 review r6, Finding C: KeyboardInterrupt must NOT exit 0
+# ---------------------------------------------------------------------------
+
+
+def test_ready_keyboard_interrupt_exits_130_not_ready(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An interrupted wait (Ctrl-C during the readiness poll) must surface
+    as a deterministic NON-zero exit (130 = 128+SIGINT), never a false
+    "ready" 0.
+
+    Pre-fix this FAILS: ``except KeyboardInterrupt: pass`` let Click exit 0,
+    so a CI/boot gate interrupted by Ctrl-C would falsely report success."""
+    import nexus.cli.commands.ready as ready_mod
+
+    def _interrupt(*_a, **_k):
+        raise KeyboardInterrupt
+
+    # Interrupt the readiness-file wait (the long blocking phase).
+    monkeypatch.setattr(ready_mod, "_wait_for_file", _interrupt)
+
+    f = tmp_path / "nexusd.ready"
+    result = runner.invoke(
+        _ready_cmd(),
+        ["--readiness-file", str(f), "--timeout", "5"],
+    )
+    assert result.exit_code == ExitCode.INTERRUPTED, result.output
+    assert result.exit_code == 130, result.output
+    assert result.exit_code != 0
+    # Output must NOT claim readiness.
+    assert '"ready": true' not in result.output.lower()
+    assert "healthy" not in result.output.lower()

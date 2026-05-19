@@ -409,6 +409,101 @@ def _resolve_effective_profile(
     return "full"
 
 
+def _read_config_file_data_dir(config_path: str) -> str | None:
+    """Return the ``data_dir:`` key from a YAML config file, or ``None``.
+
+    Best-effort, identical contract/shape to ``_read_config_file_profile``
+    (any read/parse failure → ``None``; ``load_config`` re-raises later with
+    a clearer error). Shared by ``_resolve_effective_data_dir``.
+    """
+    try:
+        import yaml
+
+        path = Path(config_path)
+        if path.exists() and path.suffix in (".yaml", ".yml"):
+            with open(path) as fh:
+                loaded = yaml.safe_load(fh)
+            if isinstance(loaded, dict):
+                raw = loaded.get("data_dir")
+                if isinstance(raw, str) and raw:
+                    return raw
+    except Exception:
+        return None
+    return None
+
+
+def _resolve_effective_data_dir(
+    cli_data_dir: str | None,
+    config_path: str | None,
+    effective_profile: str,
+) -> str | None:
+    """Resolve the data dir the kernel will ACTUALLY use (Issue #4126
+    review r6, Finding B). Sibling of ``_resolve_effective_profile``.
+
+    PID + readiness scoping must key off the SAME data dir
+    ``load_config``/``_apply_sandbox_defaults`` will resolve, NOT just the
+    Click ``--data-dir`` option (which is computed BEFORE ``--config`` is
+    loaded). If a sandbox config FILE supplies ``data_dir`` and the user
+    did NOT pass ``--data-dir``, scoping previously fell back to the shared
+    ``~/.nexus`` globals → concurrent same-HOME sandboxes via distinct
+    config files still blocked each other and ``nexus ready --data-dir``
+    couldn't target them.
+
+    Returns the EFFECTIVE data dir, or ``None`` to PRESERVE legacy
+    single-daemon behavior (no ``--data-dir``, no ``--config`` ⇒ shared
+    global PID/readiness paths, unchanged back-compat).
+
+    Replicates ``nexus.config`` precedence EXACTLY so this never diverges
+    from how the daemon later resolves it:
+
+      * NO ``--config`` (daemon passes ``{"profile": …, "data_dir":
+        cli_data_dir?}`` to ``nexus.connect``): the Click ``--data-dir`` /
+        ``$NEXUS_DATA_DIR`` value wins when set; else the profile default
+        (sandbox ⇒ ``~/.nexus/sandbox`` per ``_apply_sandbox_defaults``;
+        any other profile ⇒ ``None`` ⇒ keep legacy globals).
+      * ``--config`` given (daemon calls ``load_config(Path(config_path))``
+        — the Click ``--data-dir`` value is NOT forwarded on this branch;
+        only ``$NEXUS_DATA_DIR`` reaches it, via ``_build_env_overrides``):
+        ``load_config`` does ``merged = _build_env_overrides();
+        merged.update(config_dict)`` so the config FILE's ``data_dir``
+        overrides ``$NEXUS_DATA_DIR``; if neither is set,
+        ``_apply_sandbox_defaults`` fills ``~/.nexus/sandbox`` for sandbox
+        (else ``None`` ⇒ legacy globals).
+
+    Best-effort: any failure reading the config file degrades to the
+    no-config rule (``load_config`` itself raises later with a clearer
+    error), preserving prior behavior.
+    """
+    sandbox_default = str(Path.home() / ".nexus" / "sandbox")
+
+    if not config_path:
+        # No --config: nexus.connect gets data_dir=cli_data_dir verbatim
+        # (Click already folds $NEXUS_DATA_DIR into it). Explicit wins.
+        if cli_data_dir:
+            return cli_data_dir
+        # Unset: _apply_sandbox_defaults supplies ~/.nexus/sandbox ONLY for
+        # the sandbox profile. Any other profile keeps data_dir=None →
+        # legacy global PID/readiness (single-daemon back-compat).
+        if effective_profile == "sandbox":
+            return sandbox_default
+        return None
+
+    # --config given: the Click --data-dir value is NOT forwarded on this
+    # branch (main() calls load_config(Path(config_path)) only). Replicate
+    # load_config: config-file data_dir overrides $NEXUS_DATA_DIR.
+    file_data_dir = _read_config_file_data_dir(config_path)
+    if file_data_dir:
+        return file_data_dir
+    env_data_dir = os.environ.get("NEXUS_DATA_DIR")
+    if env_data_dir:
+        return env_data_dir
+    # Neither set: _apply_sandbox_defaults fills ~/.nexus/sandbox for the
+    # sandbox profile; any other profile keeps None → legacy globals.
+    if effective_profile == "sandbox":
+        return sandbox_default
+    return None
+
+
 # ---------------------------------------------------------------------------
 # CLI group — bare ``nexusd`` starts the daemon, subcommands are node-local ops
 # ---------------------------------------------------------------------------
@@ -652,21 +747,37 @@ def main(
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         )
 
+    # Resolve the EFFECTIVE data dir BEFORE PID/readiness scoping (Issue
+    # #4126 review r6, Finding B). The Click ``--data-dir`` option is
+    # computed BEFORE ``--config`` is loaded, so a sandbox config FILE that
+    # supplies ``data_dir`` (with no ``--data-dir`` flag) would otherwise
+    # fall back to the shared ``~/.nexus`` globals — re-blocking concurrent
+    # same-HOME sandboxes and breaking ``nexus ready --data-dir``. Mirror
+    # the r3 ``_resolve_effective_profile`` pattern: replicate
+    # ``load_config``/``_apply_sandbox_defaults`` precedence so this never
+    # diverges from how the daemon later resolves the data dir. Returns
+    # ``None`` for the legacy no-data-dir / no-config single-daemon case,
+    # preserving the shared global PID/readiness back-compat unchanged.
+    effective_data_dir = _resolve_effective_data_dir(data_dir, config_path, effective_profile)
+
     # --- PID file -----------------------------------------------------------
     # Scope the PID gate per EFFECTIVE data dir (Issue #4126 review r5,
-    # Finding A) using the SAME ``data_dir`` value the r4 scoped readiness
-    # uses below — so two sandboxes under one HOME with distinct data dirs
-    # BOTH pass the PID gate and reach the scoped readiness write (the old
-    # single global PID gate exited the second sandbox first, defeating r4).
-    # The legacy global ``~/.nexus/nexusd.pid`` is still written for
-    # single-daemon back-compat; the BLOCKING decision is instance-scoped.
-    scoped_pid_path, legacy_pid_path = _manage_pid_file(data_dir)
+    # Finding A; r6 Finding B now feeds the config-file-aware effective
+    # value) using the SAME data dir the r4 scoped readiness uses below —
+    # so two sandboxes under one HOME with distinct data dirs (whether via
+    # ``--data-dir`` OR distinct ``--config`` files) BOTH pass the PID gate
+    # and reach the scoped readiness write (the old single global PID gate
+    # exited the second sandbox first, defeating r4). The legacy global
+    # ``~/.nexus/nexusd.pid`` is still written for single-daemon
+    # back-compat; the BLOCKING decision is instance-scoped.
+    scoped_pid_path, legacy_pid_path = _manage_pid_file(effective_data_dir)
     # Legacy global readiness file (single-daemon default / back-compat) and
     # an ADDITIONAL data-dir-scoped one so two sandboxes under the same HOME
     # with distinct data dirs each get a deterministically-addressable,
-    # non-clobbering readiness record (Issue #4126 review r4, Finding A).
+    # non-clobbering readiness record (Issue #4126 review r4, Finding A;
+    # r6 Finding B: scoped off the config-file-aware effective data dir).
     ready_path = Path.home() / ".nexus" / "nexusd.ready"
-    scoped_ready_path = _scoped_readiness_path(data_dir)
+    scoped_ready_path = _scoped_readiness_path(effective_data_dir)
 
     # Guard: daemon cannot run in remote profile (gate on the EFFECTIVE
     # profile so a ``--config remote.yaml`` boot is rejected too).

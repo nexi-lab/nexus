@@ -281,9 +281,17 @@ def ready(
         )
         sys.exit(ExitCode.SUCCESS)
     except SystemExit:
+        # Deliberate exit-code paths (TEMPFAIL/DATA_ERROR/SUCCESS/…) must
+        # propagate UNCHANGED — they ARE the gate signal.
         raise
     except KeyboardInterrupt:
-        pass
+        # ``nexus ready`` is a CI/boot gate: its exit code is the signal.
+        # Swallowing Ctrl-C and ``pass``ing let Click exit 0, FALSELY
+        # marking readiness success on an interrupted wait (Issue #4126
+        # review r6, Finding C). Exit deterministically non-zero with the
+        # conventional 130 (128+SIGINT) so an interrupt is never mistaken
+        # for "ready". No success output is emitted on this path.
+        sys.exit(ExitCode.INTERRUPTED)
     except Exception as exc:
         handle_error(exc)
 

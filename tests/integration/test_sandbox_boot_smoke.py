@@ -603,7 +603,19 @@ def test_sandbox_up_state_is_consumed_by_status(sandbox_daemon, tmp_path: Path) 
     cwd_before = os.getcwd()
     os.chdir(project_dir)
     try:
-        effective_dd, state_paths, yaml_path, _snaps = stack.persist_sandbox_runtime_artifacts(
+        # Issue #4126 review r6, Finding A: the producer now also returns
+        # ``state_written`` + ``yaml_written`` (the EXACT bytes this launch
+        # wrote) so the ownership-aware rollback only ever touches a file
+        # that STILL holds our content. The consumers below only need the
+        # effective data dir / state paths / yaml path.
+        (
+            effective_dd,
+            state_paths,
+            yaml_path,
+            _snaps,
+            _written,
+            _yaml_written,
+        ) = stack.persist_sandbox_runtime_artifacts(
             workspace=workspace,
             http_port=http_port,
             port_explicit=True,  # explicit port → grpc = http + 2 (= grpc_port)
@@ -733,7 +745,19 @@ def test_sandbox_up_with_preexisting_project_config_is_isolated(
     cwd_before = os.getcwd()
     os.chdir(project_dir)
     try:
-        effective_dd, state_paths, yaml_path, _snaps = stack.persist_sandbox_runtime_artifacts(
+        # Issue #4126 review r6, Finding A: the producer now also returns
+        # ``state_written`` + ``yaml_written`` (the EXACT bytes this launch
+        # wrote) so the ownership-aware rollback only ever touches a file
+        # that STILL holds our content. The consumers below only need the
+        # effective data dir / state paths / yaml path.
+        (
+            effective_dd,
+            state_paths,
+            yaml_path,
+            _snaps,
+            _written,
+            _yaml_written,
+        ) = stack.persist_sandbox_runtime_artifacts(
             workspace=workspace,
             http_port=http_port,
             port_explicit=True,

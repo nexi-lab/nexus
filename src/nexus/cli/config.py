@@ -288,18 +288,25 @@ def resolve_connection(
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443}
+
+
 def same_endpoint(a: str | None, b: str | None) -> bool:
     """True if two URLs point at the same scheme://host:port.
 
     Path and trailing slash are ignored. Returns False when either
     argument is None or empty — there is no evidence to compare.
+    Normalizes default ports (http→80, https→443) so that
+    ``http://localhost`` and ``http://localhost:80`` compare equal.
     """
     if not a or not b:
         return False
     from urllib.parse import urlparse
 
     pa, pb = urlparse(a.rstrip("/")), urlparse(b.rstrip("/"))
-    return (pa.scheme, pa.hostname, pa.port) == (pb.scheme, pb.hostname, pb.port)
+    port_a = pa.port or _DEFAULT_PORTS.get(pa.scheme, 0)
+    port_b = pb.port or _DEFAULT_PORTS.get(pb.scheme, 0)
+    return (pa.scheme, pa.hostname, port_a) == (pb.scheme, pb.hostname, port_b)
 
 
 # ---------------------------------------------------------------------------

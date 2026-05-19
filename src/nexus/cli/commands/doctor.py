@@ -24,7 +24,6 @@ from nexus.cli.output import OutputOptions, add_output_options, render_output
 from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import handle_error
-from nexus.remote.rpc_transport import RPCTransport
 
 # ---------------------------------------------------------------------------
 # Check result model
@@ -729,6 +728,8 @@ def _check_remote_grpc(url: str, api_key: str | None) -> CheckResult:
                     "{data_dir}/tls/, or unset NEXUS_GRPC_TLS."
                 ),
             )
+        from nexus.remote.rpc_transport import RPCTransport
+
         transport = RPCTransport(
             server_address=grpc_address,
             auth_token=api_key,

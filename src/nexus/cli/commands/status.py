@@ -63,7 +63,11 @@ def _fetch_deployment_profile_from_features(
 
 
 def _resolve_deployment_profile(
-    server_url: str, api_key: str | None = None, *, allow_env_fallback: bool = True
+    server_url: str,
+    api_key: str | None = None,
+    *,
+    allow_env_fallback: bool = True,
+    prefetched_profile: str | None = None,
 ) -> str:
     """Resolve the *running hub's* deployment profile.
 
@@ -71,6 +75,9 @@ def _resolve_deployment_profile(
     ``/api/v2/features`` value is authoritative and MUST win over a local
     ``NEXUS_PROFILE`` env var (otherwise ``NEXUS_PROFILE=full nexus status
     --url <other-hub>`` would mislabel a different hub).
+
+    When *prefetched_profile* is provided (from ``_collect_status_async``),
+    it is used directly instead of making a redundant HTTP call.
 
     Hierarchy (single source of truth):
     1. Live ``GET /api/v2/features`` for *server_url* (authoritative when
@@ -81,7 +88,9 @@ def _resolve_deployment_profile(
        so the env var must not be reported as that hub's profile.
     3. ``"unknown"`` fallback.
     """
-    fetched = _fetch_deployment_profile_from_features(server_url, api_key) if server_url else None
+    fetched = prefetched_profile
+    if fetched is None and server_url:
+        fetched = _fetch_deployment_profile_from_features(server_url, api_key)
     if fetched:
         return fetched
     if allow_env_fallback:
@@ -155,6 +164,7 @@ def _enrich_with_image_info(
             # NEXUS_PROFILE may stand in only when the target IS the
             # local managed stack; never for a different remote --url.
             allow_env_fallback=is_local_stack,
+            prefetched_profile=data.pop("_features_profile", None),
         )
     else:
         # No project config: there is no locally-managed stack to compare
@@ -171,7 +181,10 @@ def _enrich_with_image_info(
         _target = data.get("server_url", "")
         _is_local_default = (not _target) or same_endpoint(_target, "http://localhost:2026")
         data["deployment_profile"] = _resolve_deployment_profile(
-            _target, status_api_key, allow_env_fallback=_is_local_default
+            _target,
+            status_api_key,
+            allow_env_fallback=_is_local_default,
+            prefetched_profile=data.pop("_features_profile", None),
         )
 
     return data
@@ -249,15 +262,21 @@ async def _collect_status_async(
     api_key: str | None = None,
     profiles: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Collect all status data concurrently."""
+    """Collect all status data concurrently.
+
+    Runs health, docker, and features probes in parallel so the
+    features call (used for deployment_profile) does not add latency.
+    """
     health_task = asyncio.to_thread(_server_health, server_url, api_key)
     docker_task = asyncio.to_thread(_docker_services, profiles)
-    health, docker = await asyncio.gather(health_task, docker_task)
+    features_task = asyncio.to_thread(_fetch_deployment_profile_from_features, server_url, api_key)
+    health, docker, features_profile = await asyncio.gather(health_task, docker_task, features_task)
     return {
         "server_url": server_url,
         "server_reachable": health is not None,
         "server_health": health,
         "docker_services": docker,
+        "_features_profile": features_profile,
     }
 
 

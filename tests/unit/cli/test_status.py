@@ -90,20 +90,26 @@ class TestServerHealth:
 
 
 class TestCollectStatus:
+    @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features", return_value=None)
     @patch("nexus.cli.commands.status._docker_services", return_value=[])
     @patch("nexus.cli.commands.status._server_health", return_value=None)
-    def test_server_unreachable(self, mock_health: MagicMock, mock_docker: MagicMock) -> None:
+    def test_server_unreachable(
+        self, mock_health: MagicMock, mock_docker: MagicMock, mock_features: MagicMock
+    ) -> None:
         data = _collect_status("http://localhost:2026")
         assert data["server_reachable"] is False
         assert data["server_health"] is None
         assert data["docker_services"] == []
 
+    @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features", return_value=None)
     @patch(
         "nexus.cli.commands.status._docker_services",
         return_value=[{"Name": "nexus-server", "State": "running"}],
     )
     @patch("nexus.cli.commands.status._server_health", return_value={"status": "healthy"})
-    def test_server_reachable(self, mock_health: MagicMock, mock_docker: MagicMock) -> None:
+    def test_server_reachable(
+        self, mock_health: MagicMock, mock_docker: MagicMock, mock_features: MagicMock
+    ) -> None:
         data = _collect_status("http://localhost:2026")
         assert data["server_reachable"] is True
         assert len(data["docker_services"]) == 1

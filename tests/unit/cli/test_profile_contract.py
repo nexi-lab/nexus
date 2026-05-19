@@ -612,6 +612,45 @@ class TestContractRemoteTargeting:
         assert data["auth_mode"] == "unknown"  # NOT "database" (that's local-only)
         assert "_sources" in data
         assert "client-inferred" in data["_sources"]["client_inferred_drivers"]
-        assert "remote target" in data["_sources"]["auth_mode"]
+        assert "not the locally-managed stack" in data["_sources"]["auth_mode"]
         # Hub-authoritative fields still come straight from /api/v2/features
         assert data["deployment_profile"] == "full"
+
+    def test_saved_current_profile_remote_does_not_leak_local_auth(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """A bare `nexus profile contract` where ~/.nexus/config.yaml's
+        current-profile resolves to a REMOTE hub, run inside a local
+        project with nexus.yaml: auth_mode must be 'unknown' (the resolved
+        target ≠ the local managed stack), NOT the local project's auth."""
+        config = make_config()
+        with (
+            patch("nexus.cli.commands.profile.load_cli_config", return_value=config),
+            patch("nexus.cli.commands.profile.NexusApiClient") as mock_client_cls,
+            patch(
+                "nexus.cli.commands.profile.resolve_connection",
+                # simulates current-profile in ~/.nexus/config.yaml → remote
+                return_value=_make_resolved(url="http://remote-hub:2026", api_key="rk"),
+            ),
+            patch(
+                "nexus.cli.commands.profile.load_project_config_optional",
+                return_value={"auth": "database", "data_dir": "./nx"},  # local project
+            ),
+            patch("nexus.cli.state.load_runtime_state", return_value={}),
+            patch(
+                "nexus.cli.state.resolve_connection_env",
+                return_value={"NEXUS_URL": "http://localhost:2026"},  # local managed stack
+            ),
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get.return_value = FULL_FEATURES_PAYLOAD
+            mock_client_cls.return_value = mock_instance
+
+            result = cli_runner.invoke(profile_group, ["contract"])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        # target = remote-hub (current-profile) ≠ local managed localhost
+        assert data["auth_mode"] == "unknown"  # NOT "database"
+        assert "not the locally-managed stack" in data["_sources"]["auth_mode"]
+        mock_client_cls.assert_called_once_with(url="http://remote-hub:2026", api_key="rk")

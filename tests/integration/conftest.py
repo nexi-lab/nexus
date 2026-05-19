@@ -221,11 +221,15 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
         # failure (broken compose, bad image, health timeout, port
         # conflict, CLI regression) is a real product failure the gated
         # E2E must BLOCK on — so tear down and FAIL, never skip.
-        cred_signature = (
-            "getting credentials" in combined
-            or "User canceled the operation" in combined
-            or "docker-credential-" in combined
-        )
+        # Precise conjunction: a credential-helper invocation AND the
+        # non-interactive cancel marker. A bare "getting credentials"
+        # failure on its own (real auth/registry error) must NOT skip —
+        # it fails the gate. Only the macOS osxkeychain-style
+        # non-interactive cancel ("User canceled the operation. (-128)")
+        # is an unmet environment precondition.
+        helper_invoked = "getting credentials" in combined or "docker-credential-" in combined
+        non_interactive_cancel = "User canceled the operation" in combined or "(-128)" in combined
+        cred_signature = helper_invoked and non_interactive_cancel
         if cred_signature:
             pytest.skip(
                 "environment cannot pull required images: docker credential "

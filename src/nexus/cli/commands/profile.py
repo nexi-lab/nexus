@@ -239,6 +239,19 @@ def rename_cmd(old_name: str, new_name: str) -> None:
     console.print(f"Renamed profile [bold]'{old_name}'[/bold] to [bold]'{new_name}'[/bold]")
 
 
+def _same_endpoint(a: str | None, b: str | None) -> bool:
+    """True if two URLs point at the same scheme://host:port (path /
+    trailing slash ignored). Used to decide whether the resolved contract
+    target is the locally-managed stack (so local nexus.yaml auth applies)
+    or a different/remote hub."""
+    if not a or not b:
+        return False
+    from urllib.parse import urlparse
+
+    pa, pb = urlparse(a.rstrip("/")), urlparse(b.rstrip("/"))
+    return (pa.scheme, pa.hostname, pa.port) == (pb.scheme, pb.hostname, pb.port)
+
+
 @profile_group.command(name="contract")
 @click.option(
     "--url",
@@ -279,10 +292,6 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
     """
     config = load_cli_config()
     profile_name = (ctx.obj or {}).get("profile")
-    # Explicit remote target: a URL/api-key flag-or-env, or a named
-    # global --profile. Local nexus.yaml auth does not describe such a
-    # hub, so auth_mode must not be presented as its contract.
-    is_remote_target = bool(url) or bool(api_key) or bool(profile_name)
     resolved = resolve_connection(
         remote_url=url,
         remote_api_key=api_key,
@@ -290,30 +299,42 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
         config=config,
     )
 
-    if resolved.url:
-        # Explicit remote target (--url / NEXUS_URL / named profile).
-        target_url = resolved.url
-        # resolve_connection only preserves remote_api_key when a
-        # remote_url is set; keep an explicit key for the localhost case
-        # too so a static-auth hub isn't 401'd.
-        effective_api_key = api_key or resolved.api_key
-    else:
-        # Bare `nexus profile contract`: resolve the *locally-managed
-        # stack's actual endpoint* the same way `nexus env`/`status` do
-        # (derived/resolved ports from project config + runtime state) —
-        # NOT a hard-coded localhost:2026 that could hit an unrelated
-        # daemon.
-        project_cfg = load_project_config_optional()
-        if project_cfg:
-            from nexus.cli.state import load_runtime_state, resolve_connection_env
+    # Resolve the locally-managed stack's *actual* endpoint (derived /
+    # runtime-resolved ports) so we can both (a) target it for bare
+    # `nexus profile contract` and (b) decide whether the resolved target
+    # is in fact that local stack — the ONLY case where local nexus.yaml
+    # auth describes the hub being queried.
+    project_cfg = load_project_config_optional()
+    local_managed_url: str | None = None
+    local_managed_key: str | None = None
+    if project_cfg:
+        from nexus.cli.state import load_runtime_state, resolve_connection_env
 
-            state = load_runtime_state(project_cfg.get("data_dir", "./nexus-data"))
-            conn = resolve_connection_env(project_cfg, state)
-            target_url = conn.get("NEXUS_URL") or "http://localhost:2026"
-            effective_api_key = api_key or conn.get("NEXUS_API_KEY")
-        else:
-            target_url = "http://localhost:2026"
-            effective_api_key = api_key or resolved.api_key
+        _state = load_runtime_state(project_cfg.get("data_dir", "./nexus-data"))
+        _conn = resolve_connection_env(project_cfg, _state)
+        local_managed_url = _conn.get("NEXUS_URL")
+        local_managed_key = _conn.get("NEXUS_API_KEY")
+
+    if resolved.url:
+        # Any resolved URL — explicit --url/NEXUS_URL, named global
+        # --profile, OR the saved current-profile in ~/.nexus/config.yaml.
+        target_url = resolved.url
+        effective_api_key = api_key or resolved.api_key
+    elif local_managed_url:
+        # Bare invocation, project present: target the managed stack's
+        # real endpoint (NOT a hard-coded localhost:2026).
+        target_url = local_managed_url
+        effective_api_key = api_key or local_managed_key
+    else:
+        target_url = "http://localhost:2026"
+        effective_api_key = api_key or resolved.api_key
+
+    # auth_mode is trustworthy ONLY when the resolved target is provably
+    # the locally-managed stack (endpoint match). A saved current-profile
+    # pointing at a remote hub must NOT inherit the local project's auth.
+    is_local_managed = bool(
+        project_cfg and local_managed_url and _same_endpoint(target_url, local_managed_url)
+    )
 
     url = target_url
     try:
@@ -334,15 +355,17 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
         drivers = []
 
     # auth_mode: local nexus.yaml only describes the locally-managed
-    # stack. For an explicit remote target it is not evidence about that
-    # hub, so report "unknown" rather than a misleading local value.
-    if is_remote_target:
-        auth_mode = "unknown"
-        auth_mode_source = "unknown (remote target — local config does not describe it)"
-    else:
-        project_cfg = load_project_config_optional()
+    # stack. Report it ONLY when the resolved target IS that stack;
+    # otherwise (explicit/profile/current-profile remote) report
+    # "unknown" rather than a misleading local value.
+    if is_local_managed:
         auth_mode = project_cfg.get("auth", "unknown")
         auth_mode_source = "local nexus.yaml (locally-managed stack)"
+    else:
+        auth_mode = "unknown"
+        auth_mode_source = (
+            "unknown (target is not the locally-managed stack — local config does not describe it)"
+        )
 
     contract = {
         "auth_mode": auth_mode,

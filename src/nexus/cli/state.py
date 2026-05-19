@@ -38,6 +38,33 @@ STATE_VERSION = 1
 
 
 # ---------------------------------------------------------------------------
+# gRPC port derivation — single source of truth (Issue #4144 MINOR 6)
+# ---------------------------------------------------------------------------
+
+
+def derive_grpc_port(http_port: int, port_explicit: bool) -> int:
+    """Derive the gRPC port from the HTTP port using nexusd's precedence.
+
+    This is the ONE implementation of the rule that ``nexus up`` (the
+    sandbox branch in ``cli/commands/stack.py``) and ``nexusd``
+    (``daemon/main.py``) must agree on, so persisted state matches the
+    port the daemon actually binds.
+
+    Precedence (Issue #3980 follow-up):
+      1. ``port_explicit`` (user passed ``--port``) → ``http_port + 2``.
+         An explicit ``--port`` overrides any inherited
+         ``NEXUS_GRPC_PORT`` so a child nexusd does not bind a parent
+         hub's gRPC port leaked via ``eval $(nexus env)``.
+      2. ``NEXUS_GRPC_PORT`` set in env → honor it. Required for Docker
+         compose deployments that map host:N → container:N.
+      3. Otherwise default to ``http_port + 2`` (HTTP 2026 → gRPC 2028).
+    """
+    if port_explicit or "NEXUS_GRPC_PORT" not in os.environ:
+        return http_port + 2
+    return int(os.environ["NEXUS_GRPC_PORT"])
+
+
+# ---------------------------------------------------------------------------
 # Project config (nexus.yaml) — declarative, version-controlled
 # ---------------------------------------------------------------------------
 
@@ -162,11 +189,20 @@ def resolve_connection_env(
     if grpc_host in ("0.0.0.0", ""):
         grpc_host = "localhost"
 
+    # NEXUS_URL host: when state records a connectable bind host (sandbox
+    # `up` may bind a non-localhost address — #4144 MINOR 4), point HTTP
+    # at the same host as gRPC so `eval $(nexus env)` is internally
+    # consistent. Docker/existing state has no `grpc_host` key, so this
+    # stays byte-identical (`localhost`) for those callers.
+    http_host = "localhost"
+    if state.get("grpc_host"):
+        http_host = grpc_host
+
     # NEXUS_URL is always http:// — the HTTP server does not serve TLS.
     # TLS is gRPC-only (mTLS for zone federation). The TLS env vars
     # (NEXUS_TLS_CERT/KEY/CA) are emitted separately for gRPC clients.
     env_vars: dict[str, str] = {
-        "NEXUS_URL": f"http://localhost:{http_port}",
+        "NEXUS_URL": f"http://{http_host}:{http_port}",
         "NEXUS_GRPC_HOST": f"{grpc_host}:{grpc_port}",
         "NEXUS_GRPC_PORT": str(grpc_port),
     }
@@ -174,7 +210,11 @@ def resolve_connection_env(
     # #4144: surface the active profile/workspace when the runtime state
     # records them (the sandbox `up` path does). Additive — the Docker
     # `up` path does not set these keys, so its env output is unchanged.
-    profile = state.get("profile", config.get("profile", ""))
+    # State-only (Issue #4144 BLOCKER 2): NEXUS_PROFILE must reflect the
+    # *running* daemon's profile, not the declarative nexus.yaml. Falling
+    # back to config here leaked a project's `profile:` into the env even
+    # when no sandbox was running. Mirror the `workspace` handling below.
+    profile = state.get("profile", "")
     if profile:
         env_vars["NEXUS_PROFILE"] = profile
     workspace = state.get("workspace", "")

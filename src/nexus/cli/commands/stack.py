@@ -12,6 +12,7 @@ declarative config stays clean and concurrent worktrees don't collide.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import hashlib
 import os
@@ -40,15 +41,18 @@ from nexus.cli.port_utils import (
     resolve_ports,
 )
 from nexus.cli.state import (
+    CONFIG_SEARCH_PATHS,
+    STATE_FILENAME,
+    derive_grpc_port,
+    load_runtime_state,
+    resolve_connection_env,
+    save_runtime_state,
+)
+from nexus.cli.state import (
     load_project_config as _load_project_config,
 )
 from nexus.cli.state import (
     load_project_config_optional as _load_project_config_optional,
-)
-from nexus.cli.state import (
-    load_runtime_state,
-    resolve_connection_env,
-    save_runtime_state,
 )
 from nexus.cli.state import (
     save_project_config as _save_project_config,
@@ -623,15 +627,30 @@ def up(
     # Sandbox shortcut: invoke nexusd directly, bypassing Docker Compose.
     # ------------------------------------------------------------------
 
-    # Validate: sandbox-only flags must not be used without --profile sandbox
-    _sandbox_flags = {
+    # Validate: sandbox-only flags must not be used without --profile
+    # sandbox. host/port/data-dir are passed straight to nexusd and have
+    # no effect on the Docker path, so silently ignoring them is a UX
+    # trap (#4144 MINOR 5) — reject them too, but only when the user
+    # explicitly set them (default None must not trip the gate).
+    _sandbox_flags: dict[str, str] = {
         "workspace": workspace,
         "hub-url": hub_url,
         "hub-token": hub_token,
     }
+    # host/port/data-dir default to None; only an explicit value (not the
+    # default) should trip the gate.
+    _sandbox_optional_flags: dict[str, object] = {
+        "host": host,
+        "port": port,
+        "data-dir": data_dir,
+    }
     if profile != "sandbox":
         for flag_name, flag_value in _sandbox_flags.items():
             if flag_value:
+                click.echo(f"Error: --{flag_name} is only valid with --profile sandbox.")
+                raise SystemExit(ExitCode.USAGE_ERROR)
+        for flag_name, opt_value in _sandbox_optional_flags.items():
+            if opt_value is not None:
                 click.echo(f"Error: --{flag_name} is only valid with --profile sandbox.")
                 raise SystemExit(ExitCode.USAGE_ERROR)
 
@@ -648,6 +667,30 @@ def up(
         else:
             cmd = [sys.executable, "-m", "nexus.daemon.main"]
 
+        # ------------------------------------------------------------------
+        # #4144 BLOCKER 1: single source of truth for data_dir.
+        #
+        # When --data-dir is omitted the CLI must persist state to the
+        # SAME directory nexusd will actually use, otherwise `nexus env`/
+        # `run`/`status` look in the wrong place. nexusd is launched with
+        # `--profile sandbox`, so its connect path runs through
+        # `nexus.config._apply_sandbox_defaults`, which resolves data_dir
+        # (when neither --data-dir nor $NEXUS_DATA_DIR is set) to
+        # ``~/.nexus/sandbox`` — NOT ``~/.nexus/data`` (the non-sandbox
+        # default) and NOT ``./nexus-data``. Replicate that exact chain
+        # here and pass the resolved value explicitly on the nexusd argv
+        # so CLI and daemon can never diverge.
+        #   1. --data-dir <X>            → X
+        #   2. $NEXUS_DATA_DIR           → that value
+        #   3. ~/.nexus/sandbox          → sandbox profile default
+        # (Verified empirically against config.load_config({'profile':
+        # 'sandbox'}); see src/nexus/config.py _apply_sandbox_defaults.)
+        _resolved_data_dir = (
+            data_dir
+            or os.environ.get("NEXUS_DATA_DIR")
+            or str(Path(os.path.expanduser("~")) / ".nexus" / "sandbox")
+        )
+
         # Build the command. --host/--port/--data-dir are passed through to
         # nexusd so a sandbox started on a non-default host/port is
         # discoverable by the follow-up env/status/run workflow (#4144).
@@ -658,8 +701,10 @@ def up(
             cmd.extend(["--host", host])
         if port is not None:
             cmd.extend(["--port", str(port)])
-        if data_dir:
-            cmd.extend(["--data-dir", data_dir])
+        # Always pass the resolved data_dir so the daemon writes/reads the
+        # exact directory the CLI persisted state to (single source of
+        # truth — never let the daemon fall back to its own default).
+        cmd.extend(["--data-dir", _resolved_data_dir])
         if hub_url:
             cmd.extend(["--hub-url", hub_url])
         if hub_token:
@@ -684,14 +729,11 @@ def up(
         # recorded; --hub-token is NEVER written to persistent state.
         # --------------------------------------------------------------
         _http_port = port if port is not None else 2026
-        # Mirror nexusd gRPC derivation (src/nexus/daemon/main.py ~294-306):
-        # explicit --port wins; otherwise honor NEXUS_GRPC_PORT; else +2.
-        if port is not None or "NEXUS_GRPC_PORT" not in os.environ:
-            _grpc_port = _http_port + 2
-        else:
-            _grpc_port = int(os.environ["NEXUS_GRPC_PORT"])
+        # gRPC port: use the ONE shared derivation helper so the value we
+        # persist is exactly what nexusd will bind (#4144 MINOR 6).
+        _grpc_port = derive_grpc_port(_http_port, port is not None)
         _grpc_host = host or "localhost"
-        _data_dir = data_dir or "./nexus-data"
+        _data_dir = _resolved_data_dir
 
         _sandbox_state: dict[str, Any] = {
             "profile": "sandbox",
@@ -702,10 +744,19 @@ def up(
         if hub_url:  # hub_url MAY be recorded; hub_token MUST NOT.
             _sandbox_state["hub_url"] = hub_url
         save_runtime_state(_data_dir, _sandbox_state)
+        _state_path = Path(_data_dir) / STATE_FILENAME
 
         # Write a minimal nexus.yaml only if absent — NEVER clobber an
-        # existing project config.
+        # existing project config. Track whether THIS invocation created
+        # it so we only roll back our own write (see below).
+        _yaml_created_path: Path | None = None
         if not _load_project_config_optional():
+            # Resolve the same target save_project_config will write to,
+            # so the failure rollback removes exactly that file.
+            _yaml_created_path = next(
+                (Path(c) for c in CONFIG_SEARCH_PATHS if Path(c).exists()),
+                Path(CONFIG_SEARCH_PATHS[0]),
+            )
             _save_project_config(
                 {
                     "profile": "sandbox",
@@ -714,7 +765,22 @@ def up(
                 }
             )
 
+        # Blocking-foreground trade-off: we persist state/yaml BEFORE the
+        # daemon launches so concurrent shells (`nexus env`/`run`) can
+        # discover a healthy daemon while it runs in the foreground (the
+        # Docker path can write AFTER its health check; this path cannot —
+        # subprocess.run blocks until the daemon exits). To avoid leaving
+        # stale/misleading state when the daemon fails to start, we roll
+        # back OUR OWN writes (and only ours) on a non-zero exit: always
+        # the .state.json we wrote, and the minimal nexus.yaml only if we
+        # created it this run (never a pre-existing user config).
         _sandbox_result = subprocess.run(cmd)
+        if _sandbox_result.returncode != 0:
+            with contextlib.suppress(OSError):
+                _state_path.unlink()
+            if _yaml_created_path is not None:
+                with contextlib.suppress(OSError):
+                    _yaml_created_path.unlink()
         sys.exit(_sandbox_result.returncode)
 
     config = _load_project_config_optional()
@@ -722,8 +788,6 @@ def up(
     # Auto-init: if no nexus.yaml in CWD, search parent directories first
     # to avoid creating a nested project inside an existing workspace.
     if not config:
-        from nexus.cli.state import CONFIG_SEARCH_PATHS
-
         cwd = Path.cwd()
         for parent in cwd.parents:
             for name in CONFIG_SEARCH_PATHS:
@@ -986,7 +1050,6 @@ def up(
     # same JWTs survive a restart).
     bootstrap_token: str | None = None
     if with_daemon:
-        import contextlib
         import secrets
 
         _stack_secrets_dir = Path.home() / ".nexus" / "stacks" / compose_env["COMPOSE_PROJECT_NAME"]

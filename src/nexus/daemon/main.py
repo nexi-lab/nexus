@@ -294,16 +294,12 @@ def main(
     port = port or 2026
     log_level = log_level or "info"
 
-    # gRPC port resolution (Issue #3980 follow-up):
-    #   1. ``--port`` explicit  → derive grpc = port + 2 (overrides env). This
-    #      stops a child nexusd from inheriting a parent hub's NEXUS_GRPC_PORT
-    #      via ``eval $(nexus env)`` when the user explicitly chose --port.
-    #   2. ``NEXUS_GRPC_PORT`` set in env → honor it. Required for Docker
-    #      compose deployments that map host:N → container:N and need the
-    #      server to actually bind on N (not on the default 2028).
-    #   3. Otherwise default to ``port + 2`` (HTTP 2026 → gRPC 2028).
-    if _port_explicit or "NEXUS_GRPC_PORT" not in os.environ:
-        os.environ["NEXUS_GRPC_PORT"] = str(port + 2)
+    # gRPC port resolution (Issue #3980 follow-up): shared with the
+    # ``nexus up`` sandbox branch via ``derive_grpc_port`` so persisted
+    # state matches the port nexusd actually binds (Issue #4144 MINOR 6).
+    from nexus.cli.state import derive_grpc_port
+
+    os.environ["NEXUS_GRPC_PORT"] = str(derive_grpc_port(port, _port_explicit))
 
     deployment_profile = deployment_profile or "auto"
 

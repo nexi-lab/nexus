@@ -441,7 +441,12 @@ def test_sandbox_up_state_is_consumed_by_status(sandbox_daemon, tmp_path: Path) 
     data_dir.mkdir(parents=True, exist_ok=True)
     workspace = str(tmp_path / "consume-ws")
 
-    # Mirror exactly what the sandbox `up` path writes (#4144).
+    # Mirror exactly what the sandbox `up` path writes (#4144). This test
+    # validates the *consumer* contract only (state → env/status); the
+    # *producer* side — that stack.py emits exactly these keys
+    # (profile/workspace/ports.{http,grpc}/grpc_host, hub_token absent) —
+    # is locked by TestSandboxStateDictShape in
+    # tests/unit/cli/test_stack_sandbox.py. Keep the two in sync.
     (data_dir / ".state.json").write_text(
         _json.dumps(
             {

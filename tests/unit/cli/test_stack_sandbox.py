@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from nexus.cli.commands.env_cmd import env_cmd
@@ -462,3 +463,315 @@ class TestSandboxStatePersistence:
             assert emitted["NEXUS_GRPC_PORT"] == "3032"
             assert "NEXUS_GRPC_HOST" in emitted
             assert secret not in env_result.output
+
+
+# ---------------------------------------------------------------------------
+# Issue #4144 review fixes
+# ---------------------------------------------------------------------------
+
+
+class TestDataDirSingleSourceOfTruth:
+    """BLOCKER 1: when --data-dir is omitted, the CLI must persist state
+    where nexusd (launched with --profile sandbox) actually reads it.
+
+    The sandbox connect path resolves data_dir via
+    ``nexus.config._apply_sandbox_defaults`` to ``~/.nexus/sandbox`` (NOT
+    ``~/.nexus/data``, NOT ``./nexus-data``) unless --data-dir or
+    $NEXUS_DATA_DIR is set. The CLI must (a) write .state.json there and
+    (b) pass that exact path to the nexusd argv.
+    """
+
+    def test_omitted_data_dir_resolves_to_sandbox_home(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        ws = str(tmp_path / "ws")
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        expected = str(fake_home / ".nexus" / "sandbox")
+
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        with (
+            runner.isolated_filesystem(temp_dir=tmp_path),
+            patch("shutil.which", return_value=fake_nexusd),
+            patch("subprocess.run", return_value=mock_proc) as mock_run,
+            patch.dict("os.environ", {"PATH": "/usr/bin", "HOME": str(fake_home)}, clear=True),
+        ):
+            result = runner.invoke(up, ["--profile", "sandbox", "--workspace", ws])
+            assert result.exit_code == 0, result.output
+
+            # (a) nexusd argv carries the resolved --data-dir
+            argv = mock_run.call_args[0][0]
+            assert "--data-dir" in argv
+            assert argv[argv.index("--data-dir") + 1] == expected
+
+            # (b) .state.json written at the resolved location
+            state = load_runtime_state(expected)
+            assert state, f".state.json not written at {expected}"
+            assert state["profile"] == "sandbox"
+
+    def test_omitted_data_dir_honors_nexus_data_dir_env(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """$NEXUS_DATA_DIR wins over the sandbox default (matches daemon)."""
+        ws = str(tmp_path / "ws")
+        env_dir = str(tmp_path / "envdir")
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        with (
+            runner.isolated_filesystem(temp_dir=tmp_path),
+            patch("shutil.which", return_value=fake_nexusd),
+            patch("subprocess.run", return_value=mock_proc) as mock_run,
+            patch.dict(
+                "os.environ",
+                {"PATH": "/usr/bin", "HOME": str(fake_home), "NEXUS_DATA_DIR": env_dir},
+                clear=True,
+            ),
+        ):
+            result = runner.invoke(up, ["--profile", "sandbox", "--workspace", ws])
+            assert result.exit_code == 0, result.output
+            argv = mock_run.call_args[0][0]
+            assert argv[argv.index("--data-dir") + 1] == env_dir
+            state = load_runtime_state(env_dir)
+            assert state and state["profile"] == "sandbox"
+
+    def test_explicit_data_dir_always_on_argv(self, runner: CliRunner, tmp_path: Path) -> None:
+        ws = str(tmp_path / "ws")
+        ddir = str(tmp_path / "explicit")
+        result, mock_run = _invoke_sandbox_up(
+            runner, tmp_path, ["--workspace", ws, "--data-dir", ddir]
+        )
+        assert result.exit_code == 0, result.output
+        argv = mock_run.call_args[0][0]
+        assert argv[argv.index("--data-dir") + 1] == ddir
+
+
+class TestSandboxFailureRollback:
+    """IMPORTANT 2: roll back our own .state.json + minimal nexus.yaml when
+    the daemon exits non-zero; never delete a pre-existing user config."""
+
+    def test_state_and_created_yaml_removed_on_daemon_failure(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        ws = str(tmp_path / "ws")
+        ddir = str(tmp_path / "ddir")
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1  # daemon failed to start
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with (
+                patch("shutil.which", return_value=fake_nexusd),
+                patch("subprocess.run", return_value=mock_proc),
+                patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            ):
+                result = runner.invoke(
+                    up, ["--profile", "sandbox", "--workspace", ws, "--data-dir", ddir]
+                )
+            assert result.exit_code == 1, result.output
+            assert not (Path(ddir) / ".state.json").exists(), "stale .state.json left behind"
+            assert not Path("nexus.yaml").exists(), "stale minimal nexus.yaml left behind"
+
+    def test_preexisting_yaml_not_removed_on_daemon_failure(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        ws = str(tmp_path / "ws")
+        ddir = str(tmp_path / "ddir")
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+
+        sentinel = "project_name: my-precious-existing-project\n"
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("nexus.yaml").write_text(sentinel)
+            with (
+                patch("shutil.which", return_value=fake_nexusd),
+                patch("subprocess.run", return_value=mock_proc),
+                patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            ):
+                result = runner.invoke(
+                    up, ["--profile", "sandbox", "--workspace", ws, "--data-dir", ddir]
+                )
+            assert result.exit_code == 1, result.output
+            # Pre-existing user config must survive a daemon failure.
+            assert Path("nexus.yaml").exists()
+            assert Path("nexus.yaml").read_text() == sentinel
+            # Our .state.json is still rolled back (we always wrote it).
+            assert not (Path(ddir) / ".state.json").exists()
+
+
+class TestSandboxOptionalFlagValidation:
+    """MINOR 5: --host/--port/--data-dir are sandbox-only; reject them
+    (only when explicitly set) on the Docker path."""
+
+    def test_port_without_sandbox_profile_errors(self, runner: CliRunner) -> None:
+        result = runner.invoke(up, ["--port", "3030"])
+        assert result.exit_code == ExitCode.USAGE_ERROR
+        assert "sandbox" in result.output.lower()
+
+    def test_host_without_sandbox_profile_errors(self, runner: CliRunner) -> None:
+        result = runner.invoke(up, ["--host", "127.0.0.1"])
+        assert result.exit_code == ExitCode.USAGE_ERROR
+        assert "sandbox" in result.output.lower()
+
+    def test_data_dir_without_sandbox_profile_errors(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(up, ["--data-dir", str(tmp_path / "d")])
+        assert result.exit_code == ExitCode.USAGE_ERROR
+        assert "sandbox" in result.output.lower()
+
+
+class TestEmptyNexusYamlBehavior:
+    """MINOR 7(a): an empty nexus.yaml (parses to {}) is treated as ABSENT
+    — the minimal sandbox config is written. Lock this current behavior."""
+
+    def test_empty_yaml_is_overwritten_with_minimal_config(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        ws = str(tmp_path / "ws")
+        ddir = str(tmp_path / "ddir")
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("nexus.yaml").write_text("")  # empty → parses to {}
+            with (
+                patch("shutil.which", return_value=fake_nexusd),
+                patch("subprocess.run", return_value=mock_proc),
+                patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            ):
+                result = runner.invoke(
+                    up, ["--profile", "sandbox", "--workspace", ws, "--data-dir", ddir]
+                )
+            assert result.exit_code == 0, result.output
+            written = yaml.safe_load(Path("nexus.yaml").read_text())
+            assert written is not None, "empty yaml should be replaced by minimal config"
+            assert written["profile"] == "sandbox"
+            assert written["data_dir"] == ddir
+
+
+class TestSandboxStateDictShape:
+    """MINOR 7(b): lock the EXACT state dict shape stack.py produces so
+    the consumer-side integration test (which hand-writes state) stays
+    aligned with the producer."""
+
+    def test_exact_state_keys(self, runner: CliRunner, tmp_path: Path) -> None:
+        ws = str(tmp_path / "ws")
+        ddir = str(tmp_path / "ddir")
+        result, _ = _invoke_sandbox_up(
+            runner,
+            tmp_path,
+            ["--workspace", ws, "--host", "127.0.0.1", "--port", "3030", "--data-dir", ddir],
+        )
+        assert result.exit_code == 0, result.output
+        state = load_runtime_state(ddir)
+        # version/started_at are added by save_runtime_state; the
+        # producer-controlled keys must be exactly these:
+        producer_keys = set(state) - {"version", "started_at"}
+        assert producer_keys == {"profile", "workspace", "ports", "grpc_host"}
+        assert set(state["ports"]) == {"http", "grpc"}
+        assert "hub_token" not in state
+        assert "hub-token" not in json.dumps(state)
+
+    def test_hub_url_recorded_when_supplied(self, runner: CliRunner, tmp_path: Path) -> None:
+        ws = str(tmp_path / "ws")
+        ddir = str(tmp_path / "ddir")
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            fake_nexusd = "/usr/local/bin/nexusd"
+            mock_proc = MagicMock()
+            mock_proc.returncode = 0
+            with (
+                patch("shutil.which", return_value=fake_nexusd),
+                patch("subprocess.run", return_value=mock_proc),
+                patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            ):
+                result = runner.invoke(
+                    up,
+                    [
+                        "--profile",
+                        "sandbox",
+                        "--workspace",
+                        ws,
+                        "--data-dir",
+                        ddir,
+                        "--hub-url",
+                        "grpc://hub:50051",
+                        "--hub-token",
+                        "secret",
+                    ],
+                )
+            assert result.exit_code == 0, result.output
+            state = load_runtime_state(ddir)
+            assert state["hub_url"] == "grpc://hub:50051"
+            assert "secret" not in json.dumps(state)
+
+
+class TestDeriveGrpcPortHelper:
+    """MINOR 6: focused tests for the ONE shared port-derivation helper."""
+
+    def test_explicit_port_plus_two_ignores_env(self) -> None:
+        from nexus.cli.state import derive_grpc_port
+
+        with patch.dict("os.environ", {"NEXUS_GRPC_PORT": "9999"}, clear=False):
+            # explicit --port wins over inherited NEXUS_GRPC_PORT
+            assert derive_grpc_port(4000, port_explicit=True) == 4002
+
+    def test_env_override_when_no_explicit_port(self) -> None:
+        from nexus.cli.state import derive_grpc_port
+
+        with patch.dict("os.environ", {"NEXUS_GRPC_PORT": "9999"}, clear=False):
+            assert derive_grpc_port(2026, port_explicit=False) == 9999
+
+    def test_default_plus_two(self) -> None:
+        from nexus.cli.state import derive_grpc_port
+
+        env = {k: v for k, v in __import__("os").environ.items() if k != "NEXUS_GRPC_PORT"}
+        with patch.dict("os.environ", env, clear=True):
+            assert derive_grpc_port(2026, port_explicit=False) == 2028
+
+
+class TestNexusUrlHostConsistency:
+    """MINOR 4: NEXUS_URL uses the state-recorded connectable host so HTTP
+    and gRPC point at the same place; Docker/legacy state stays
+    byte-identical (localhost)."""
+
+    def test_state_host_used_for_nexus_url(self) -> None:
+        state = {
+            "profile": "sandbox",
+            "ports": {"http": 3030, "grpc": 3032},
+            "grpc_host": "127.0.0.1",
+        }
+        env = resolve_connection_env({}, state)
+        assert env["NEXUS_URL"] == "http://127.0.0.1:3030"
+        assert env["NEXUS_GRPC_HOST"] == "127.0.0.1:3032"
+
+    def test_no_host_key_keeps_localhost(self) -> None:
+        # Docker/legacy state has no grpc_host key → unchanged.
+        state = {"ports": {"http": 2026, "grpc": 2028}}
+        env = resolve_connection_env({}, state)
+        assert env["NEXUS_URL"] == "http://localhost:2026"
+
+    def test_wildcard_host_maps_to_localhost_for_url(self) -> None:
+        # 0.0.0.0 is a bind wildcard, not connectable → localhost.
+        state = {"ports": {"http": 2026, "grpc": 2028}, "grpc_host": "0.0.0.0"}
+        env = resolve_connection_env({}, state)
+        assert env["NEXUS_URL"] == "http://localhost:2026"
+
+
+class TestProfileStateOnly:
+    """BLOCKER 2: resolve_connection_env must NOT fall back to config for
+    NEXUS_PROFILE (state-only, mirrors workspace handling)."""
+
+    def test_config_profile_does_not_leak(self) -> None:
+        env = resolve_connection_env({"profile": "shared"}, {})
+        assert "NEXUS_PROFILE" not in env
+
+    def test_state_profile_still_emitted(self) -> None:
+        env = resolve_connection_env({}, {"profile": "sandbox"})
+        assert env["NEXUS_PROFILE"] == "sandbox"

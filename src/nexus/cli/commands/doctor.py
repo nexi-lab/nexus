@@ -8,6 +8,7 @@ dependencies.  Each check is an independent function returning a structured
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import subprocess
@@ -23,6 +24,7 @@ from nexus.cli.output import OutputOptions, add_output_options, render_output
 from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import handle_error
+from nexus.remote.rpc_transport import RPCTransport
 
 # ---------------------------------------------------------------------------
 # Check result model
@@ -590,14 +592,15 @@ def _display_results(results: dict[str, list[CheckResult]]) -> int:
 
 
 # ---------------------------------------------------------------------------
-# CLI command
+# CLI command group
 # ---------------------------------------------------------------------------
 
 
-@click.command(name="doctor")
+@click.group(name="doctor", invoke_without_command=True)
 @click.option("--fix", "auto_fix", is_flag=True, help="Attempt to auto-fix issues.")
 @add_output_options
-def doctor(output_opts: OutputOptions, auto_fix: bool) -> None:
+@click.pass_context
+def doctor(ctx: click.Context, output_opts: OutputOptions, auto_fix: bool) -> None:
     """Run diagnostic checks on your Nexus environment.
 
     Checks connectivity, storage, federation, security, and dependencies.
@@ -606,7 +609,12 @@ def doctor(output_opts: OutputOptions, auto_fix: bool) -> None:
         nexus doctor
         nexus doctor --json
         nexus doctor --fix
+        nexus doctor remote --url http://hub:2026
     """
+    # If a subcommand was invoked, let it run — skip the local checks.
+    if ctx.invoked_subcommand is not None:
+        return
+
     try:
         timing = CommandTiming()
         with timing.phase("checks"):
@@ -641,6 +649,242 @@ def doctor(output_opts: OutputOptions, auto_fix: bool) -> None:
         handle_error(exc)
 
 
+# ---------------------------------------------------------------------------
+# nexus doctor remote — HTTP + gRPC preflight for remote hubs (Gap 3 / #4132)
+# ---------------------------------------------------------------------------
+
+
+def _check_remote_http(url: str) -> CheckResult:
+    """GET {url}/health — OK on 200, ERROR otherwise.
+
+    This is a *preflight*: a non-200 health response means the remote
+    path is not usable, so it is an ERROR (non-zero exit), not a
+    soft WARNING.
+    """
+    health_url = url.rstrip("/") + "/health"
+    try:
+        import httpx
+
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(health_url)
+            if resp.status_code == 200:
+                return CheckResult(
+                    name="remote-http",
+                    status=CheckStatus.OK,
+                    message=f"HTTP health OK at {health_url}.",
+                )
+            return CheckResult(
+                name="remote-http",
+                status=CheckStatus.ERROR,
+                message=f"HTTP health returned {resp.status_code} at {health_url}.",
+                fix_hint=f"Check the hub server is running and {health_url} is accessible.",
+            )
+    except Exception as exc:
+        return CheckResult(
+            name="remote-http",
+            status=CheckStatus.ERROR,
+            message=f"HTTP health unreachable at {health_url}: {exc}",
+            fix_hint=f"Check NEXUS_URL and that the hub is running at {url}.",
+        )
+
+
+def _check_remote_grpc(url: str, api_key: str | None) -> CheckResult:
+    """Attempt a gRPC health check, mirroring the real remote SDK path.
+
+    Uses the shared ``resolve_grpc_target`` helper so the preflight
+    resolves the SAME gRPC address AND TLS config the SDK would use
+    (NEXUS_GRPC_TLS / data-dir / nexus.yaml). Without this a TLS-enabled
+    hub the SDK connects to fine could be reported insecure/unreachable.
+    """
+    from nexus.remote.grpc_target import resolve_grpc_target
+
+    transport = None
+    try:
+        try:
+            # `doctor remote --url` is always an explicit remote target —
+            # ignore any cwd ./nexus.yaml so a local project's gRPC
+            # port/TLS cannot poison the diagnosis of a different hub.
+            grpc_address, grpc_port, tls_config = resolve_grpc_target(
+                url, trust_local_project=False
+            )
+        except ValueError as exc:
+            # Invalid gRPC port config (NEXUS_GRPC_PORT / nexus.yaml). The
+            # SDK fails the same way — surface it as an actionable ERROR,
+            # not a silent wrong-port dial or a traceback.
+            return CheckResult(
+                name="remote-grpc",
+                status=CheckStatus.ERROR,
+                message=f"gRPC port misconfigured: {exc}",
+                fix_hint="Set NEXUS_GRPC_PORT (or nexus.yaml ports.grpc) to a valid integer 1–65535.",
+            )
+        except RuntimeError as exc:
+            # Fail-closed: NEXUS_GRPC_TLS=true but no certs resolved — the
+            # SDK raises the same; the remote path is unusable as-is.
+            return CheckResult(
+                name="remote-grpc",
+                status=CheckStatus.ERROR,
+                message=f"gRPC TLS misconfigured: {exc}",
+                fix_hint=(
+                    "Provide certs via NEXUS_TLS_CERT/KEY/CA, in "
+                    "{data_dir}/tls/, or unset NEXUS_GRPC_TLS."
+                ),
+            )
+        transport = RPCTransport(
+            server_address=grpc_address,
+            auth_token=api_key,
+            timeout=2.0,
+            connect_timeout=2.0,
+            tls_config=tls_config,
+        )
+        transport.health_check()
+        return CheckResult(
+            name="remote-grpc",
+            status=CheckStatus.OK,
+            message=f"gRPC reachable at {grpc_address}.",
+        )
+    except ValueError as exc:
+        # RPCTransport refuses insecure non-loopback channels. The real
+        # remote SDK connection would be refused the same way *before*
+        # dialing — so for a preflight this is an ERROR (the remote path
+        # is not usable as-is), not a soft WARNING.
+        return CheckResult(
+            name="remote-grpc",
+            status=CheckStatus.ERROR,
+            message=f"gRPC channel refused (insecure non-loopback): {exc}",
+            fix_hint=(
+                "Configure TLS for remote connections (NEXUS_GRPC_TLS=true + certs), "
+                "or set NEXUS_GRPC_ALLOW_INSECURE=true for trusted private networks "
+                "(docker-compose, k8s pod-local)."
+            ),
+        )
+    except Exception as exc:
+        # The Ping path is auth-gated: a missing/invalid key yields gRPC
+        # UNAUTHENTICATED/PERMISSION_DENIED, NOT an unreachable port.
+        # Misreporting that as "set NEXUS_GRPC_PORT/firewall" sends the
+        # operator down the wrong recovery path, so diagnose auth
+        # distinctly. Inspect the exception chain for a grpc.RpcError
+        # status code, with a string fallback (RemoteConnectionError
+        # embeds the gRPC detail text).
+        import grpc
+
+        code = None
+        _e: BaseException | None = exc
+        _seen: set[int] = set()
+        while _e is not None and id(_e) not in _seen:
+            _seen.add(id(_e))
+            if isinstance(_e, grpc.RpcError):
+                try:
+                    code = _e.code()
+                except Exception:
+                    code = None
+                break
+            _e = _e.__cause__ or _e.__context__
+        _msg = str(exc)
+        is_auth = code in (
+            grpc.StatusCode.UNAUTHENTICATED,
+            grpc.StatusCode.PERMISSION_DENIED,
+        ) or any(tok in _msg for tok in ("UNAUTHENTICATED", "PERMISSION_DENIED", "Unauthenticated"))
+        if is_auth:
+            return CheckResult(
+                name="remote-grpc",
+                status=CheckStatus.ERROR,
+                message=(
+                    f"gRPC authentication failed at {grpc_address} "
+                    f"(UNAUTHENTICATED/PERMISSION_DENIED): {exc}"
+                ),
+                fix_hint=(
+                    "The API key is missing or invalid for this hub. Provide a "
+                    "valid key via --api-key <key> or NEXUS_API_KEY (the gRPC "
+                    "Ping path is auth-gated; this is NOT a port/firewall issue)."
+                ),
+            )
+        return CheckResult(
+            name="remote-grpc",
+            status=CheckStatus.ERROR,
+            message=f"gRPC unreachable at {grpc_address}: {exc}",
+            fix_hint=(
+                f"gRPC port {grpc_port} unreachable; set NEXUS_GRPC_PORT to the correct port "
+                "and ensure the port is open in your firewall."
+            ),
+        )
+    finally:
+        if transport is not None:
+            with contextlib.suppress(Exception):
+                transport.close()
+
+
+@doctor.command(name="remote")
+@click.option(
+    "--url",
+    default=None,
+    envvar="NEXUS_URL",
+    help="Base HTTP URL of the remote hub (e.g. http://hub:2026).",
+)
+@click.option(
+    "--api-key",
+    "api_key",
+    default=None,
+    envvar="NEXUS_API_KEY",
+    help="API key for hub authentication.",
+)
+@add_output_options
+def doctor_remote(output_opts: OutputOptions, url: str | None, api_key: str | None) -> None:
+    """Probe a remote hub's HTTP and gRPC reachability.
+
+    Runs two checks and returns an actionable diagnosis:
+      1. HTTP health (GET <url>/health)
+      2. gRPC reachability (via RPCTransport ping)
+
+    Examples:
+        nexus doctor remote --url http://hub:2026 --api-key mykey
+        NEXUS_URL=http://hub:2026 nexus doctor remote
+    """
+    if not url:
+        raise click.UsageError("--url / NEXUS_URL is required for `doctor remote`.")
+
+    try:
+        timing = CommandTiming()
+        with timing.phase("remote-checks"):
+            http_result = _check_remote_http(url)
+            grpc_result = _check_remote_grpc(url, api_key)
+
+        results: list[CheckResult] = [http_result, grpc_result]
+        serializable = [asdict(r) for r in results]
+        for item in serializable:
+            item["status"] = item["status"].value
+
+        def _human_display(_data: list[dict[str, Any]]) -> None:  # noqa: ARG002
+            console.print("\n[bold]Remote preflight[/bold]")
+            has_error = False
+            for check in results:
+                icon = _STATUS_ICONS[check.status]
+                console.print(f"  {icon}  {check.name}: {check.message}")
+                if check.fix_hint and check.status != CheckStatus.OK:
+                    console.print(f"       [nexus.muted]Fix: {check.fix_hint}[/nexus.muted]")
+                if check.status == CheckStatus.ERROR:
+                    has_error = True
+            console.print()
+            if has_error:
+                sys.exit(1)
+
+        render_output(
+            data=serializable,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_human_display,
+        )
+
+        # For JSON mode, exit with error if any check is ERROR
+        if output_opts.json_output:
+            has_error = any(r.status == CheckStatus.ERROR for r in results)
+            if has_error:
+                sys.exit(1)
+    except click.UsageError:
+        raise
+    except Exception as exc:
+        handle_error(exc)
+
+
 def register_commands(cli: click.Group) -> None:
-    """Register doctor command."""
+    """Register doctor command group."""
     cli.add_command(doctor)

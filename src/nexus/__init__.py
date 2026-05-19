@@ -249,8 +249,6 @@ def connect(
 
     # ── Profile: remote ──────────────────────────────────────────────
     if cfg.profile == "remote":
-        from urllib.parse import urlparse
-
         server_url = cfg.url or os.getenv("NEXUS_URL")
         if not server_url:
             raise ValueError(
@@ -261,87 +259,22 @@ def connect(
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
 
-        # Build gRPC address from NEXUS_URL hostname + gRPC port.
-        # Port precedence: NEXUS_GRPC_PORT env > nexus.yaml ports.grpc > default 2028
-        _grpc_port_str = os.getenv("NEXUS_GRPC_PORT")
-        if not _grpc_port_str:
-            try:
-                import yaml as _yaml
-
-                _pf = Path("nexus.yaml")
-                if _pf.exists():
-                    with open(_pf) as _f:
-                        _pc = _yaml.safe_load(_f) or {}
-                    _grpc_port_str = str(_pc.get("ports", {}).get("grpc", ""))
-            except Exception:
-                pass
-        grpc_port = int(_grpc_port_str) if _grpc_port_str else 2028
-        parsed = urlparse(server_url)
-        grpc_address = f"{parsed.hostname}:{grpc_port}"
-
-        # Single shared RPCTransport (gRPC channel) for all remote proxies.
+        # Resolve gRPC address + TLS via the shared helper so the
+        # `nexus doctor remote` preflight reflects the *exact* connection
+        # behavior this SDK path uses (Issue #4132 — single source of
+        # truth for port precedence + NEXUS_GRPC_TLS / data-dir / nexus.yaml
+        # TLS resolution and fail-closed semantics).
+        from nexus.remote.grpc_target import resolve_grpc_target
         from nexus.remote.rpc_transport import RPCTransport
 
-        # TLS: NEXUS_GRPC_TLS env var overrides all other TLS signals.
-        #   true  → force TLS
-        #   false → force insecure
-        #   unset → fall back to nexus.yaml tls / NEXUS_DATA_DIR auto-detect
-        _tls_config = None
-        _grpc_tls_env = os.getenv("NEXUS_GRPC_TLS", "").lower()
-        _tls_enabled = _grpc_tls_env in ("true", "1", "yes")
-        _tls_disabled = _grpc_tls_env in ("false", "0", "no")
-        _tls_from_config = False  # set when nexus.yaml explicitly enables TLS
-        _data_dir = os.getenv("NEXUS_DATA_DIR")
-        if _data_dir and not _tls_disabled:
-            _tls_enabled = True  # Auto-detect from NEXUS_DATA_DIR (backward compat)
-        if not _data_dir:
-            _project_yaml = Path("nexus.yaml")
-            if _project_yaml.exists():
-                try:
-                    import yaml as _yaml
-
-                    with open(_project_yaml) as _f:
-                        _project_cfg = _yaml.safe_load(_f) or {}
-                    _data_dir = _project_cfg.get("data_dir")
-                    # nexus.yaml tls: only used when env var is unset
-                    if not _grpc_tls_env:
-                        _tls_from_config = bool(_project_cfg.get("tls"))
-                        _tls_enabled = _tls_from_config
-                except Exception:
-                    pass
-        if not _data_dir:
-            _data_dir = getattr(cfg, "data_dir", None)
-
-        if _data_dir and _tls_enabled:
-            from nexus.security.tls.config import ZoneTlsConfig
-
-            # TLS explicitly requested (env var or config) → check both layouts
-            # NEXUS_DATA_DIR auto-detect only → Raft-only (backward compat)
-            _tls_intentional = _grpc_tls_env in ("true", "1", "yes") or _tls_from_config
-            _tls_config = (
-                ZoneTlsConfig.from_data_dir_any(_data_dir)
-                if _tls_intentional
-                else ZoneTlsConfig.from_data_dir(_data_dir)
-            )
-
-        # Fail closed: NEXUS_GRPC_TLS=true but no certs resolved.
-        # As a last resort, check NEXUS_TLS_* env vars — but only when
-        # TLS was explicitly requested, to avoid stale env vars from a
-        # previous session flipping a plaintext stack onto mTLS.
-        _tls_explicit = _grpc_tls_env in ("true", "1", "yes")
-        if _tls_explicit and _tls_config is None and os.getenv("NEXUS_TLS_CERT"):
-            import contextlib
-
-            from nexus.security.tls.config import ZoneTlsConfig
-
-            with contextlib.suppress(Exception):
-                _tls_config = ZoneTlsConfig.from_env()
-        if _tls_explicit and _tls_config is None:
-            raise RuntimeError(
-                "NEXUS_GRPC_TLS=true but no TLS certificates found. "
-                "Provide certs via NEXUS_TLS_CERT/KEY/CA, "
-                "in {data_dir}/tls/, or set data_dir in nexus.yaml."
-            )
+        # profile="remote" with an explicit url/NEXUS_URL is an explicit
+        # remote target: do NOT let the cwd ./nexus.yaml (a *different*
+        # local project) override this hub's gRPC port / TLS.
+        grpc_address, _grpc_port, _tls_config = resolve_grpc_target(
+            server_url,
+            cfg_data_dir=getattr(cfg, "data_dir", None),
+            trust_local_project=False,
+        )
 
         transport = RPCTransport(
             server_address=grpc_address,

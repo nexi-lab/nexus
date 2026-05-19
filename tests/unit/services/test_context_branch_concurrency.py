@@ -44,8 +44,6 @@ def record_store(session_factory):
 @pytest.fixture
 def service(record_store):
     wm = MagicMock()
-    wm.metadata = MagicMock()
-    wm.backend = MagicMock()
     return ContextBranchService(
         workspace_manager=wm,
         record_store=record_store,

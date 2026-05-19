@@ -66,20 +66,24 @@ def _store_snapshot(
 
 
 def _make_service(session_factory, manifest_store: dict[str, bytes]) -> ContextBranchService:
-    """Create service with mocked backend that serves manifests from a dict."""
+    """Create service with a mocked WorkspaceManager.
+
+    Mocks the §2.5 manifest I/O helpers (_read_manifest, _write_manifest)
+    rather than the kernel-internal backend.read_content / write_content
+    surface — services don't touch ObjectStore directly anymore.
+    """
     wm = MagicMock()
-    wm.metadata = MagicMock()
 
-    def read_content(hash_val, context=None):
-        return manifest_store[hash_val]
+    def _read_manifest(snap):
+        return manifest_store[snap.manifest_hash]
 
-    def write_content(data, content_id="", *, offset: int = 0, context=None):
+    def _write_manifest(workspace_path, snapshot_id, data):
         h = hashlib.sha256(data).hexdigest()
         manifest_store[h] = data
-        return SimpleNamespace(content_id=h)
+        return h
 
-    wm.backend.read_content = read_content
-    wm.backend.write_content = write_content
+    wm._read_manifest = _read_manifest
+    wm._write_manifest = _write_manifest
 
     return ContextBranchService(
         workspace_manager=wm,

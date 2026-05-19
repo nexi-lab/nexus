@@ -49,8 +49,6 @@ def record_store(session_factory):
 @pytest.fixture
 def service(record_store):
     wm = MagicMock()
-    wm.metadata = MagicMock()
-    wm.backend = MagicMock()
     wm.create_snapshot.return_value = {
         "snapshot_id": "snap-new",
         "snapshot_number": 1,

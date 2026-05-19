@@ -19,7 +19,6 @@ from nexus.storage.models import WorkspaceSnapshotModel
 from .workspace_permissions import check_workspace_permission
 
 if TYPE_CHECKING:
-    from nexus.backends.base.backend import Backend
     from nexus.contracts.filesystem import NexusFilesystem
     from nexus.contracts.protocols.rebac import ReBACBrickProtocol
     from nexus.storage.record_store import RecordStoreABC
@@ -59,7 +58,6 @@ class WorkspaceManager:
     def __init__(
         self,
         nexus_fs: "NexusFilesystem",
-        backend: "Backend",
         rebac_manager: "ReBACBrickProtocol | None" = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
@@ -68,17 +66,17 @@ class WorkspaceManager:
         """Initialize workspace manager.
 
         Args:
-            nexus_fs: NexusFS handle — workspace listing reaches MetaStore
-                through the §2.2 syscall surface (sys_readdir), not the
-                kernel-internal MetaStore directly.
-            backend: Backend for storing manifest in CAS
+            nexus_fs: NexusFS handle — manifest I/O and workspace listing
+                go through the §2.2 syscall surface (sys_read / sys_write /
+                sys_readdir / sys_stat / sys_setattr / sys_unlink). The
+                kernel-internal ObjectStore + MetaStore pillars are not
+                directly accessible from this service.
             rebac_manager: ReBAC manager for permission checks (optional)
             zone_id: Default zone ID for operations (optional)
             agent_id: Default agent ID for operations (optional)
             record_store: RecordStoreABC instance providing session_factory
         """
         self._nexus_fs = nexus_fs
-        self.backend = backend
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id
         self.agent_id = agent_id
@@ -104,24 +102,15 @@ class WorkspaceManager:
     def _read_manifest(self, snapshot: WorkspaceSnapshotModel) -> bytes:
         """Read a manifest blob from the syscall path namespace.
 
-        Dual-read window (Issue #4218 follow-up): try the §2.5 path first,
-        fall back to the legacy hash-addressed backend.read_content for
-        snapshots written before the migration. Removal of the fallback
-        is tracked alongside the workspace-history cleanup follow-up.
+        Single-source contract: manifests live at the §2.5 path; the
+        ``manifest_hash`` SQL column is an integrity check, not a separate
+        storage key. Snapshots written before this migration were keyed
+        only by hash and are unreachable from the service tier — by design
+        (KERNEL-ARCHITECTURE.md §2.5).
         """
         sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         path = _manifest_path(snapshot.workspace_path, snapshot.snapshot_id)
-        try:
-            return self._nexus_fs.sys_read(path, context=sys_ctx)
-        except (FileNotFoundError, NexusFileNotFoundError):
-            logger.warning(
-                "workspace manifest missing at %s — falling back to legacy "
-                "hash-addressed read for snapshot %s; remove once the "
-                "deprecation window closes",
-                path,
-                snapshot.snapshot_id,
-            )
-            return self.backend.read_content(snapshot.manifest_hash, context=None)
+        return self._nexus_fs.sys_read(path, context=sys_ctx)
 
     def _check_workspace_permission(
         self,

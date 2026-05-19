@@ -381,7 +381,6 @@ def _boot_post_kernel_services(
         _ws_agent_id = getattr(_nx_init_cred, "agent_id", None)
         workspace_manager = WorkspaceManager(
             nexus_fs=nx,
-            backend=getattr(nx, "backend", None),
             rebac_manager=cast(ReBACBrickProtocol, services.get("rebac_manager")),
             zone_id=_ws_zone_id,
             agent_id=_ws_agent_id,

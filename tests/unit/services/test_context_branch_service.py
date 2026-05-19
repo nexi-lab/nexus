@@ -46,8 +46,6 @@ def session_factory(engine):
 def mock_workspace_manager():
     """Mocked WorkspaceManager with realistic behavior."""
     wm = MagicMock()
-    wm.metadata = MagicMock()
-    wm.backend = MagicMock()
 
     # Default: create_snapshot returns a valid snapshot dict
     wm.create_snapshot.return_value = {

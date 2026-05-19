@@ -702,6 +702,16 @@ def _check_remote_grpc(url: str, api_key: str | None) -> CheckResult:
     try:
         try:
             grpc_address, grpc_port, tls_config = resolve_grpc_target(url)
+        except ValueError as exc:
+            # Invalid gRPC port config (NEXUS_GRPC_PORT / nexus.yaml). The
+            # SDK fails the same way — surface it as an actionable ERROR,
+            # not a silent wrong-port dial or a traceback.
+            return CheckResult(
+                name="remote-grpc",
+                status=CheckStatus.ERROR,
+                message=f"gRPC port misconfigured: {exc}",
+                fix_hint="Set NEXUS_GRPC_PORT (or nexus.yaml ports.grpc) to a valid integer 1–65535.",
+            )
         except RuntimeError as exc:
             # Fail-closed: NEXUS_GRPC_TLS=true but no certs resolved — the
             # SDK raises the same; the remote path is unusable as-is.

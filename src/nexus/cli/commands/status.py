@@ -35,17 +35,23 @@ def _load_project_config_optional() -> dict[str, Any]:
     return load_project_config_optional()
 
 
-def _fetch_deployment_profile_from_features(server_url: str) -> str | None:
+def _fetch_deployment_profile_from_features(
+    server_url: str, api_key: str | None = None
+) -> str | None:
     """Best-effort fetch of *profile* from ``GET /api/v2/features``.
 
     Returns the profile string on success, or *None* on any failure.
     Never raises; uses a short timeout so ``nexus status`` stays responsive
-    even when the server is offline.
+    even when the server is offline. The *api_key* is forwarded so an
+    authenticated hub's features endpoint is not silently 401'd into the
+    env/unknown fallback.
     """
     try:
         from nexus.cli.api_client import NexusApiClient
 
-        features = NexusApiClient(url=server_url, timeout=2.0).get("/api/v2/features")
+        features = NexusApiClient(url=server_url, api_key=api_key, timeout=2.0).get(
+            "/api/v2/features"
+        )
         if isinstance(features, dict):
             profile = features.get("profile")
             if profile and isinstance(profile, str):
@@ -55,7 +61,7 @@ def _fetch_deployment_profile_from_features(server_url: str) -> str | None:
     return None
 
 
-def _resolve_deployment_profile(server_url: str) -> str:
+def _resolve_deployment_profile(server_url: str, api_key: str | None = None) -> str:
     """Resolve the *running hub's* deployment profile.
 
     `nexus status` reports the hub at *server_url*, so the live hub's
@@ -70,7 +76,7 @@ def _resolve_deployment_profile(server_url: str) -> str:
        there is no server URL or the hub is unreachable).
     3. ``"unknown"`` fallback.
     """
-    fetched = _fetch_deployment_profile_from_features(server_url) if server_url else None
+    fetched = _fetch_deployment_profile_from_features(server_url, api_key) if server_url else None
     if fetched:
         return fetched
     profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
@@ -134,13 +140,21 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
         data["auth_mode"] = project_cfg.get("auth", "none") if is_local_stack else "unknown"
 
         # deployment_profile: resolved against the actual status target
-        # (features-first; env is offline fallback only).
-        data["deployment_profile"] = _resolve_deployment_profile(target_url or local_stack_url)
+        # (features-first; env is offline fallback only). Forward the
+        # connection's API key so an authenticated features endpoint
+        # isn't silently 401'd into the env/unknown fallback.
+        data["deployment_profile"] = _resolve_deployment_profile(
+            target_url or local_stack_url, conn_env.get("NEXUS_API_KEY")
+        )
     else:
-        # No project config: auth defaults to "none"
-        data["auth_mode"] = "none"
+        # No project config: there is no locally-managed stack to compare
+        # against, so we have NO evidence about the target's auth. Report
+        # "unknown" rather than fabricating "none" for what may be an
+        # authenticated remote hub (--url / NEXUS_URL).
+        data["auth_mode"] = "unknown"
 
-        # deployment_profile: single hierarchy via helper
+        # deployment_profile: resolved against the status target
+        # (NexusApiClient also picks up NEXUS_API_KEY from the env).
         data["deployment_profile"] = _resolve_deployment_profile(data.get("server_url", ""))
 
     return data

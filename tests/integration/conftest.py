@@ -282,14 +282,14 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
         time.sleep(1.0)
 
     if not healthy:
-        subprocess.run(
-            [nexus_bin, "down", "--volumes"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=str(project_dir),
+        # `nexus up` reported success but the hub never became healthy —
+        # a real post-boot product failure under NEXUS_E2E=1, not an
+        # unmet precondition. FAIL (with teardown) so the gated E2E has
+        # blocking value.
+        _teardown_stack(nexus_bin, project_dir)
+        pytest.fail(
+            f"FULL stack booted but failed /health on {url} within 60s (project_dir={project_dir})"
         )
-        pytest.skip(f"nexus stack failed health check on {url}/health")
 
     handle = FullStack(
         url=url,

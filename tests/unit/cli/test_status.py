@@ -281,6 +281,50 @@ class TestStatusCommand:
     @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features")
     @patch("nexus.cli.commands.status._load_project_config_optional")
     @patch("nexus.cli.commands.status._collect_status")
+    def test_features_probe_uses_connection_api_key(
+        self,
+        mock_collect: MagicMock,
+        mock_project_cfg: MagicMock,
+        mock_fetch: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """The connection's API key must be threaded into the features
+        probe so an authenticated hub's /api/v2/features isn't silently
+        401'd into the env/unknown fallback."""
+        mock_collect.return_value = {
+            "server_url": "http://localhost:2026",
+            "server_reachable": True,
+            "server_health": None,
+            "docker_services": [],
+        }
+        mock_project_cfg.return_value = {"auth": "static", "data_dir": "./nx"}
+        mock_fetch.return_value = "full"
+
+        with (
+            patch("nexus.cli.state.load_runtime_state", return_value={}),
+            patch(
+                "nexus.cli.state.resolve_connection_env",
+                return_value={
+                    "NEXUS_URL": "http://localhost:2026",
+                    "NEXUS_API_KEY": "sk-secret",
+                },
+            ),
+            patch(
+                "nexus.cli.commands.stack._resolve_image_ref_from_config",
+                return_value="nexus:latest",
+            ),
+        ):
+            result = cli_runner.invoke(status, ["--json"], env={"NEXUS_PROFILE": ""})
+        assert result.exit_code == 0
+        # api key from the resolved connection env is forwarded to the probe
+        assert mock_fetch.call_args.args[1] == "sk-secret" or mock_fetch.call_args == (
+            ("http://localhost:2026", "sk-secret"),
+            {},
+        )
+
+    @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features")
+    @patch("nexus.cli.commands.status._load_project_config_optional")
+    @patch("nexus.cli.commands.status._collect_status")
     def test_explicit_remote_url_does_not_leak_local_auth_or_profile(
         self,
         mock_collect: MagicMock,
@@ -384,4 +428,7 @@ class TestStatusCommand:
         parsed = json.loads(result.output)
         data = parsed.get("data", parsed)
         assert data["deployment_profile"] == "unknown"
-        assert data["auth_mode"] == "none"
+        # No project config ⇒ no locally-managed stack to attest auth;
+        # report "unknown" rather than fabricating "none" for what could
+        # be an authenticated remote hub.
+        assert data["auth_mode"] == "unknown"

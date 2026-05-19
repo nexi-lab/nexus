@@ -291,8 +291,13 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
     )
     url = resolved.url or "http://localhost:2026"
 
+    # resolve_connection only preserves remote_api_key when a remote_url
+    # is set, so an explicit `--api-key`/NEXUS_API_KEY against the default
+    # localhost hub would otherwise be dropped → 401 on a static-auth
+    # hub. Keep the explicitly-provided key in that case.
+    effective_api_key = api_key or resolved.api_key
     try:
-        features: dict[str, Any] = NexusApiClient(url=url, api_key=resolved.api_key).get(
+        features: dict[str, Any] = NexusApiClient(url=url, api_key=effective_api_key).get(
             "/api/v2/features"
         )
     except Exception as exc:

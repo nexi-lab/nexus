@@ -27,8 +27,20 @@ if TYPE_CHECKING:
 
 
 def _grpc_port(default: int = 2028) -> int:
+    """Resolve the gRPC port.
+
+    NEXUS_GRPC_PORT env > nexus.yaml ``ports.grpc`` > *default*.
+
+    A *present-but-invalid* value (non-integer) is a configuration error:
+    fail fast with a clear message rather than silently dialing 2028 —
+    both the SDK and ``nexus doctor remote`` rely on this resolver, so a
+    silent fallback would produce false preflight results or connect to
+    an unrelated local service.
+    """
     grpc_port_str = os.getenv("NEXUS_GRPC_PORT")
+    source = "NEXUS_GRPC_PORT"
     if not grpc_port_str:
+        source = "nexus.yaml ports.grpc"
         with contextlib.suppress(Exception):
             pf = Path("nexus.yaml")
             if pf.exists():
@@ -37,12 +49,17 @@ def _grpc_port(default: int = 2028) -> int:
                 with open(pf) as f:
                     pc = yaml.safe_load(f) or {}
                 grpc_port_str = str(pc.get("ports", {}).get("grpc", ""))
-    if grpc_port_str:
-        try:
-            return int(grpc_port_str)
-        except ValueError:
-            return default
-    return default
+    if not grpc_port_str:
+        return default
+    try:
+        port = int(grpc_port_str)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"Invalid gRPC port {grpc_port_str!r} from {source}: must be an integer."
+        ) from None
+    if not (0 < port < 65536):
+        raise ValueError(f"Invalid gRPC port {port} from {source}: must be 1–65535.")
+    return port
 
 
 def resolve_grpc_target(

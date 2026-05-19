@@ -87,9 +87,22 @@ You can also verify a *running* hub's resolved contract directly:
 nexus profile contract
 ```
 
-It prints the live `deployment_profile`, enabled `bricks`, `drivers`,
-`grpc_required`, and `auth_mode` as JSON (sourced from the hub's
-`/api/v2/features`).
+It prints JSON with a `_sources` map marking each field's provenance:
+
+- **hub-authoritative** (from the hub's `/api/v2/features`):
+  `deployment_profile`, `bricks`, `disabled_bricks`, `mode`, `version`.
+- **client-inferred** (NOT hub-authoritative — derived from the hub's
+  profile name via this CLI's `DeploymentProfile`; may differ under
+  CLI/server version skew): `client_inferred_drivers`.
+- **local/contextual**: `auth_mode` reflects the local `nexus.yaml`
+  only for the locally-managed stack; for an explicit remote target
+  (`--url` / `NEXUS_URL` / global `--profile`) it is `"unknown"`.
+- **invariant**: `grpc_required` is always `true` (the remote SDK path
+  requires gRPC, not just HTTP).
+
+`nexus profile contract --url <hub> --api-key <key>` targets a remote
+hub; `nexus --profile <name> profile contract` uses a saved connection
+profile.
 
 ## Benchmark guidance
 

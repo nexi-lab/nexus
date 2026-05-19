@@ -1061,6 +1061,31 @@ class TestDoctorRemote:
         assert "503" in http_check["message"]
         assert "Traceback" not in result.output
 
+    @patch("httpx.Client")
+    def test_invalid_grpc_port_is_actionable_error(
+        self,
+        mock_http_cls: MagicMock,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An invalid NEXUS_GRPC_PORT must surface as an actionable ERROR
+        CheckResult (the SDK fails the same way) — not a silent wrong-port
+        dial and not a raw traceback."""
+        monkeypatch.setenv("NEXUS_GRPC_PORT", "notaport")
+        mock_http_cls.return_value = self._make_http_mock(200)
+
+        result = cli_runner.invoke(
+            doctor_remote,
+            ["--url", "http://hub.example.com:2026", "--api-key", "k", "--json"],
+        )
+        assert result.exit_code != 0
+        assert "Traceback" not in result.output
+        grpc_check = next(
+            c for c in json.loads(result.output)["data"] if c["name"] == "remote-grpc"
+        )
+        assert grpc_check["status"] == "error"
+        assert "port" in grpc_check["message"].lower()
+
     @patch("nexus.cli.commands.doctor.RPCTransport")
     @patch("httpx.Client")
     def test_grpc_port_from_env(

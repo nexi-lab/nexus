@@ -7,6 +7,7 @@ preflight reflects the exact connection behavior the SDK uses.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -22,6 +23,34 @@ def test_port_precedence_env_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     assert addr == "hub.example.com:9999"
     assert port == 9999
     assert tls is None  # no TLS signals → insecure
+
+
+def test_invalid_grpc_port_env_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A present-but-non-integer NEXUS_GRPC_PORT must raise (not silently
+    fall back to 2028 and dial the wrong port)."""
+    monkeypatch.setenv("NEXUS_GRPC_PORT", "notaport")
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    with pytest.raises(ValueError, match="NEXUS_GRPC_PORT"):
+        resolve_grpc_target("http://hub:2026")
+
+
+def test_out_of_range_grpc_port_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXUS_GRPC_PORT", "70000")
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    with pytest.raises(ValueError, match="1.65535"):
+        resolve_grpc_target("http://hub:2026")
+
+
+def test_invalid_nexus_yaml_port_fails_fast(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A present-but-invalid nexus.yaml ports.grpc must also fail fast."""
+    monkeypatch.delenv("NEXUS_GRPC_PORT", raising=False)
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "nexus.yaml").write_text("ports:\n  grpc: not-a-number\n")
+    with pytest.raises(ValueError, match="nexus.yaml ports.grpc"):
+        resolve_grpc_target("http://hub:2026")
 
 
 def test_default_port_no_tls(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -454,6 +454,29 @@ class TestContractRemoteTargeting:
         assert result.exit_code == 0, result.output
         mock_client_cls.assert_called_once_with(url=remote_url, api_key=remote_key)
 
+    def test_api_key_only_without_url_is_forwarded(self, cli_runner: CliRunner) -> None:
+        """`--api-key K` with NO --url (default localhost static-auth hub):
+        the explicit key must still reach NexusApiClient. resolve_connection
+        drops remote_api_key when no remote_url is set, so the command must
+        preserve `api_key or resolved.api_key`."""
+        config = make_config()
+        with (
+            patch("nexus.cli.commands.profile.load_cli_config", return_value=config),
+            patch("nexus.cli.commands.profile.NexusApiClient") as mock_client_cls,
+            patch(
+                "nexus.cli.commands.profile.load_project_config_optional",
+                return_value={},
+            ),
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get.return_value = FULL_FEATURES_PAYLOAD
+            mock_client_cls.return_value = mock_instance
+
+            result = cli_runner.invoke(profile_group, ["contract", "--api-key", "K"])
+
+        assert result.exit_code == 0, result.output
+        mock_client_cls.assert_called_once_with(url="http://localhost:2026", api_key="K")
+
     def test_envvar_nexus_url_forwarded_to_api_client(self, cli_runner: CliRunner) -> None:
         """NEXUS_URL env var must cause NexusApiClient to use the remote URL."""
         config = make_config()

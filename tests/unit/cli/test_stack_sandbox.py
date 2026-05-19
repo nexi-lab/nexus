@@ -735,6 +735,76 @@ class TestSandboxFailureRollback:
             # Our .state.json is still rolled back (we always wrote it).
             assert not (Path(ddir) / ".state.json").exists()
 
+    def test_rollback_on_launch_exception_run_created_artifacts(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Issue #4126 review r5, Finding C: if the LAUNCH itself RAISES
+        (e.g. a broken/missing nexusd exec → FileNotFoundError) the
+        prewritten run-created ``.state.json`` AND the minimal nexus.yaml
+        (created this run) must be rolled back, and the exception must
+        propagate.
+
+        Pre-fix this FAILS: rollback only ran on a non-zero RETURN, so a
+        raised launch left stale discovery artifacts behind."""
+        ws = str(tmp_path / "ws")
+        ddir = tmp_path / "fresh-ddir-exc"  # does NOT pre-exist
+        fake_nexusd = "/usr/local/bin/nexusd"
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            assert not Path("nexus.yaml").exists()  # no project cfg → minimal created
+            with (
+                patch("shutil.which", return_value=fake_nexusd),
+                patch("subprocess.run", side_effect=FileNotFoundError("nexusd missing")),
+                patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+                pytest.raises(FileNotFoundError),
+            ):
+                runner.invoke(
+                    up,
+                    ["--profile", "sandbox", "--workspace", ws, "--data-dir", str(ddir)],
+                    catch_exceptions=False,
+                )
+            assert not (ddir / ".state.json").exists(), (
+                "run-created .state.json left behind after a raised launch"
+            )
+            assert not Path("nexus.yaml").exists(), (
+                "minimal nexus.yaml left behind after a raised launch"
+            )
+
+    def test_rollback_on_launch_exception_restores_preexisting_state(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Finding C: a raised launch must RESTORE a pre-existing
+        ``.state.json`` (a previous/running sandbox's) byte-for-byte, not
+        leave the failed run's overwrite."""
+        ws = str(tmp_path / "ws")
+        ddir = tmp_path / "ddir-exc-restore"
+        ddir.mkdir(parents=True, exist_ok=True)
+        prior_state = ddir / ".state.json"
+        original_bytes = (
+            b'{"profile": "sandbox", "ports": {"http": 7777, "grpc": 7779}, '
+            b'"workspace": "/prev/ws", "version": 1, "started_at": "2020-01-01T00:00:00+00:00"}'
+        )
+        prior_state.write_bytes(original_bytes)
+        fake_nexusd = "/usr/local/bin/nexusd"
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Project config EXISTS → producer touches only state.
+            Path("nexus.yaml").write_text("profile: full\n")
+            with (
+                patch("shutil.which", return_value=fake_nexusd),
+                patch("subprocess.run", side_effect=OSError("exec format error")),
+                patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+                pytest.raises(OSError),
+            ):
+                runner.invoke(
+                    up,
+                    ["--profile", "sandbox", "--workspace", ws, "--data-dir", str(ddir)],
+                    catch_exceptions=False,
+                )
+            assert prior_state.exists(), "pre-existing .state.json deleted by exception rollback"
+            assert prior_state.read_bytes() == original_bytes, (
+                "pre-existing .state.json must be restored byte-identical after "
+                "a raised launch (not the failed run's overwrite)"
+            )
+
 
 class TestSandboxOptionalFlagValidation:
     """MINOR 5: --host/--port/--data-dir are sandbox-only; reject them
@@ -1122,6 +1192,77 @@ class TestPreExistingConfigDiscovery:
             iso_state = load_runtime_state(str(Path(explicit_dd).resolve()))
             assert iso_state and iso_state["ports"]["http"] == 5050
             assert iso_state["profile"] == "sandbox"
+
+    def test_ancestor_project_config_not_clobbered_from_subdir(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Issue #4126 review r5, Finding B: running ``nexus up --profile
+        sandbox`` from a SUBDIR of an existing Nexus project must NOT create
+        a nested ``nexus.yaml`` in the subdir (which would shadow the real
+        project for ``env``/``status``/``run`` from that subdir and dirty the
+        repo) and must not modify the ancestor config.
+
+        Pre-fix this FAILS: the producer only checked ``./nexus.yaml`` in CWD
+        and created a nested minimal config in the subdir.
+        """
+        ws = str(tmp_path / "ws")
+        explicit_dd = str(tmp_path / "iso-ddir")
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Ancestor project config at the repo root.
+            ancestor_text = yaml.safe_dump(
+                {"project_name": "real-project", "data_dir": "./proj-data"}
+            )
+            Path("nexus.yaml").write_text(ancestor_text)
+            # CWD is a nested subdir of the project.
+            subdir = Path("services") / "api"
+            subdir.mkdir(parents=True)
+            import os as _os
+
+            prev = _os.getcwd()
+            _os.chdir(subdir)
+            try:
+                result, mock_run = self._up(
+                    runner,
+                    tmp_path,
+                    ["--workspace", ws, "--port", "4040", "--data-dir", explicit_dd],
+                )
+                assert result.exit_code == 0, result.output
+
+                # No nested nexus.yaml created in the subdir.
+                assert not Path("nexus.yaml").exists(), (
+                    "nested nexus.yaml created in subdir — shadows the real "
+                    "ancestor project (Finding B)"
+                )
+                assert not Path("nexus.yml").exists()
+            finally:
+                _os.chdir(prev)
+
+            # Ancestor config byte-unchanged.
+            assert Path("nexus.yaml").read_text() == ancestor_text
+
+            # Daemon still ran on the ISOLATED dir; discovery via nexus ready.
+            argv = mock_run.call_args[0][0]
+            assert argv[argv.index("--data-dir") + 1] == str(Path(explicit_dd).resolve())
+            iso_state = load_runtime_state(str(Path(explicit_dd).resolve()))
+            assert iso_state and iso_state["profile"] == "sandbox"
+
+    def test_no_config_anywhere_still_creates_minimal_in_cwd(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Regression for Finding B: when NO config exists in CWD OR any
+        ancestor, the minimal nexus.yaml is still created in CWD so
+        ``nexus env``/``run`` keep working (unchanged contract)."""
+        ws = str(tmp_path / "ws")
+        explicit_dd = str(tmp_path / "iso-ddir2")
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            assert not Path("nexus.yaml").exists()
+            result, _mock_run = self._up(
+                runner,
+                tmp_path,
+                ["--workspace", ws, "--port", "4141", "--data-dir", explicit_dd],
+            )
+            assert result.exit_code == 0, result.output
+            assert Path("nexus.yaml").exists(), "minimal nexus.yaml not created when no config"
 
 
 class TestPreExistingProjectStatePreservedRegression:

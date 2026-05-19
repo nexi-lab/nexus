@@ -181,7 +181,7 @@ class TestManagePidFile:
     def test_manage_pid_file_creates_file(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
 
-        pid_path = _manage_pid_file()
+        _scoped, pid_path = _manage_pid_file(None)
 
         assert pid_path.exists()
         assert pid_path.read_text().strip() == str(os.getpid())
@@ -197,7 +197,7 @@ class TestManagePidFile:
         # Write a PID that definitely does not exist (kernel max + 1 is safe)
         pid_file.write_text("4194305")
 
-        pid_path = _manage_pid_file()
+        _scoped, pid_path = _manage_pid_file(None)
 
         assert pid_path.exists()
         assert pid_path.read_text().strip() == str(os.getpid())
@@ -219,7 +219,7 @@ class TestManagePidFile:
             patch("nexus.daemon.main._is_nexusd_process", return_value=True),
             pytest.raises(SystemExit) as exc_info,
         ):
-            _manage_pid_file()
+            _manage_pid_file(None)
 
         assert exc_info.value.code == 78  # CONFIG_ERROR
         # Cleanup
@@ -236,7 +236,7 @@ class TestManagePidFile:
         pid_file.write_text(str(os.getpid()))
 
         with patch("nexus.daemon.main._is_nexusd_process", return_value=False):
-            pid_path = _manage_pid_file()
+            _scoped, pid_path = _manage_pid_file(None)
 
         # Should have replaced the stale file with our own PID
         assert pid_path.exists()
@@ -252,7 +252,7 @@ class TestManagePidFile:
         pid_file = nexus_dir / "nexusd.pid"
         pid_file.write_text("not-a-number\n")
 
-        pid_path = _manage_pid_file()
+        _scoped, pid_path = _manage_pid_file(None)
 
         assert pid_path.exists()
         assert pid_path.read_text().strip() == str(os.getpid())
@@ -353,6 +353,160 @@ class TestReadinessFile:
 
         assert _scoped_readiness_path(None) is None
         assert _scoped_readiness_path("") is None
+
+
+# ---------------------------------------------------------------------------
+# Scoped PID file: concurrent same-HOME sandboxes (Issue #4126 r5, Finding A)
+# ---------------------------------------------------------------------------
+
+
+class TestScopedPidFile:
+    """``_scoped_pid_path`` / ``_manage_pid_file`` per-instance scoping.
+
+    Locks Finding A: two sandbox daemons under the SAME HOME with distinct
+    data dirs must BOTH pass the PID gate (the global ``~/.nexus/nexusd.pid``
+    must not block a different-data-dir start), while a genuine double-start
+    on the SAME data dir is still rejected, and the single-daemon default
+    (no data dir) keeps the legacy global double-start prevention.
+    """
+
+    def test_scoped_pid_path_mirrors_readiness_scoping(self, tmp_path: Path) -> None:
+        """Scoped PID path is ``<data_dir>/.nexusd.pid`` and distinct per
+        data dir; ``None`` when no data dir (legacy-only / back-compat)."""
+        from nexus.daemon.main import _scoped_pid_path
+
+        assert _scoped_pid_path(None) is None
+        assert _scoped_pid_path("") is None
+
+        dd_a = tmp_path / "data_a"
+        dd_b = tmp_path / "data_b"
+        pa = _scoped_pid_path(str(dd_a))
+        pb = _scoped_pid_path(str(dd_b))
+        assert pa is not None and pb is not None
+        assert pa != pb
+        assert pa == dd_a.resolve() / ".nexusd.pid"
+        assert pb == dd_b.resolve() / ".nexusd.pid"
+
+    def test_two_daemons_same_home_distinct_data_dirs_both_pass_gate(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Finding A (core): a second daemon under the same HOME with a
+        DIFFERENT data dir must pass the PID gate even though the first
+        daemon left a live global ``~/.nexus/nexusd.pid``.
+
+        Pre-fix this FAILS: ``_manage_pid_file`` gated only on the single
+        global path and ``sys.exit``ed the second daemon."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        dd_a = tmp_path / "data_a"
+        dd_b = tmp_path / "data_b"
+        dd_a.mkdir(parents=True, exist_ok=True)
+        dd_b.mkdir(parents=True, exist_ok=True)
+
+        # Daemon A is "running": it owns the legacy global pid AND its scoped
+        # pid (simulate a live nexusd by patching the liveness probe True).
+        legacy = tmp_path / ".nexus" / "nexusd.pid"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text(str(os.getpid()))
+        (dd_a / ".nexusd.pid").write_text(str(os.getpid()))
+
+        with patch("nexus.daemon.main._is_nexusd_process", return_value=True):
+            # Daemon B (different data dir) must NOT be rejected by the
+            # foreign global pid — its scoped instance is free.
+            scoped_pid_b, legacy_pid = _manage_pid_file(str(dd_b))
+
+        assert scoped_pid_b is not None
+        assert scoped_pid_b == (dd_b / ".nexusd.pid")
+        assert scoped_pid_b.read_text().strip() == str(os.getpid())
+        # Legacy global must NOT have been clobbered (A still owns it).
+        assert legacy.read_text().strip() == str(os.getpid())
+        for p in (scoped_pid_b, legacy_pid):
+            if p is not None and p != legacy:
+                p.unlink(missing_ok=True)
+
+    def test_same_data_dir_live_pid_still_rejected(self, tmp_path: Path, monkeypatch) -> None:
+        """Regression: a genuine double-start on the SAME data dir (a live
+        scoped pid) is still rejected — double-start prevention preserved."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        dd = tmp_path / "data"
+        dd.mkdir(parents=True, exist_ok=True)
+        (dd / ".nexusd.pid").write_text(str(os.getpid()))
+
+        with (
+            patch("nexus.daemon.main._is_nexusd_process", return_value=True),
+            pytest.raises(SystemExit) as exc,
+        ):
+            _manage_pid_file(str(dd))
+        assert exc.value.code == 78  # CONFIG_ERROR
+
+    def test_stale_global_pid_does_not_block_scoped_start(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A stale/foreign global pid must NOT block a different-data-dir
+        start: the scoped instance is what gates."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        dd = tmp_path / "data"
+        dd.mkdir(parents=True, exist_ok=True)
+        legacy = tmp_path / ".nexus" / "nexusd.pid"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        # A *live* foreign nexusd owns the global pid (different instance).
+        legacy.write_text(str(os.getpid()))
+
+        with patch("nexus.daemon.main._is_nexusd_process", return_value=True):
+            scoped_pid, _legacy = _manage_pid_file(str(dd))
+
+        assert scoped_pid is not None
+        assert scoped_pid.read_text().strip() == str(os.getpid())
+        scoped_pid.unlink(missing_ok=True)
+
+    def test_single_daemon_default_legacy_double_start_preserved(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Back-compat: with NO data dir (single-daemon default) a live
+        legacy global pid STILL rejects a second daemon exactly as before."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        legacy = tmp_path / ".nexus" / "nexusd.pid"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text(str(os.getpid()))
+
+        with (
+            patch("nexus.daemon.main._is_nexusd_process", return_value=True),
+            pytest.raises(SystemExit) as exc,
+        ):
+            _manage_pid_file(None)
+        assert exc.value.code == 78  # CONFIG_ERROR
+
+    def test_single_daemon_default_returns_legacy_path(self, tmp_path: Path, monkeypatch) -> None:
+        """No data dir → legacy global path written, scoped path is None
+        (single-daemon back-compat: identical observable artifact)."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        scoped_pid, legacy_pid = _manage_pid_file(None)
+
+        assert scoped_pid is None
+        assert legacy_pid == tmp_path / ".nexus" / "nexusd.pid"
+        assert legacy_pid.read_text().strip() == str(os.getpid())
+        legacy_pid.unlink(missing_ok=True)
+
+    def test_remove_pid_files_is_ownership_aware(self, tmp_path: Path) -> None:
+        """``_remove_pid_file`` only unlinks a pid file recording THIS
+        process (or a stale/dead pid) — never a live sibling's."""
+        from nexus.daemon.main import _remove_pid_file
+
+        own = tmp_path / "own.pid"
+        own.write_text(str(os.getpid()))
+        sibling = tmp_path / "sibling.pid"
+        sibling.write_text(str(os.getpid()))
+
+        # Our own pid file: removed.
+        _remove_pid_file(own)
+        assert not own.exists()
+
+        # A sibling's file recording a DIFFERENT live nexusd pid: spared.
+        sibling.write_text("424242")
+        with patch("nexus.daemon.main._is_nexusd_process", return_value=True):
+            _remove_pid_file(sibling)
+        assert sibling.exists(), "must not remove a live sibling's pid file"
+        sibling.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------

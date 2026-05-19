@@ -71,11 +71,41 @@ def _is_nexusd_process(pid: int) -> bool:
         return True
 
 
-def _manage_pid_file() -> Path:
-    """Check for stale PID file and write current PID. Returns PID file path."""
-    pid_path = Path.home() / ".nexus" / "nexusd.pid"
-    pid_path.parent.mkdir(parents=True, exist_ok=True)
+def _scoped_pid_path(effective_data_dir: str | None) -> Path | None:
+    """Per-instance PID path derived from the effective data dir.
 
+    Mirrors ``_scoped_readiness_path`` EXACTLY (Issue #4126 review r5,
+    Finding A): returns ``<effective_data_dir>/.nexusd.pid`` when a data dir
+    is known and creatable; falls back to a HOME-scoped hashed filename
+    (``~/.nexus/nexusd-<sha256[:12]>.pid``) if the data dir is unusable;
+    returns ``None`` when no data dir is given (single-daemon default — only
+    the legacy global ``~/.nexus/nexusd.pid`` is used, exactly as before, so
+    single-daemon double-start prevention is byte-for-byte unchanged).
+    """
+    if not effective_data_dir:
+        return None
+    try:
+        d = Path(effective_data_dir).resolve()
+        d.mkdir(parents=True, exist_ok=True)
+        return d / ".nexusd.pid"
+    except OSError:
+        import hashlib
+
+        digest = hashlib.sha256(str(effective_data_dir).encode()).hexdigest()[:12]
+        return Path.home() / ".nexus" / f"nexusd-{digest}.pid"
+
+
+def _pid_gate_check(pid_path: Path, *, blocking: bool) -> None:
+    """Stale/running check for a single PID file, then write our pid.
+
+    A live ``nexusd`` recorded in *pid_path* means a genuine double-start;
+    when *blocking* is ``True`` we reject (``sys.exit``). When *blocking* is
+    ``False`` (the legacy global path while an INSTANCE-scoped path is the
+    real gate) a foreign live pid is left intact and NOT overwritten so a
+    still-running sibling daemon's record survives — the scoped path alone
+    decides "already running" for that instance. A stale/dead/non-nexusd
+    pid is always cleared so we can take ownership.
+    """
     if pid_path.exists():
         try:
             old_pid = int(pid_path.read_text().strip())
@@ -83,19 +113,87 @@ def _manage_pid_file() -> Path:
             pid_path.unlink(missing_ok=True)
         else:
             if _is_nexusd_process(old_pid):
-                click.echo(f"Error: nexusd is already running (PID {old_pid}).", err=True)
-                click.echo(f"PID file: {pid_path}", err=True)
-                sys.exit(ExitCode.CONFIG_ERROR)
-            # PID doesn't exist or belongs to a different process — stale file
+                if blocking:
+                    click.echo(f"Error: nexusd is already running (PID {old_pid}).", err=True)
+                    click.echo(f"PID file: {pid_path}", err=True)
+                    sys.exit(ExitCode.CONFIG_ERROR)
+                # Non-blocking (legacy global) path: a different-data-dir
+                # sandbox is allowed to start. Do NOT clobber the live
+                # sibling's global pid record — leave it for its owner.
+                return
+            # PID doesn't exist or belongs to a different process — stale.
             pid_path.unlink(missing_ok=True)
 
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
     pid_path.write_text(str(os.getpid()))
-    return pid_path
+
+
+def _manage_pid_file(effective_data_dir: str | None) -> tuple[Path | None, Path]:
+    """Check for stale PID files and write current PID (Issue #4126 r5).
+
+    Returns ``(scoped_pid_path_or_None, legacy_pid_path)``.
+
+    The PID gate's *blocking* (already-running) decision is made PER
+    EFFECTIVE DATA DIR so two sandboxes under the SAME HOME with distinct
+    ``--data-dir`` values can BOTH start (the previous single global
+    ``~/.nexus/nexusd.pid`` gate exited the second sandbox before it ever
+    reached the r4 scoped-readiness write, defeating per-agent isolation).
+
+    Back-compat — single-daemon default (no data dir, scoped path ``None``):
+    the legacy global ``~/.nexus/nexusd.pid`` is the BLOCKING gate exactly as
+    before, so a genuine second ``nexusd`` is still rejected. When a scoped
+    data dir IS given, the SCOPED file is the blocking gate (a genuine
+    double-start on the SAME data dir is still rejected) and the legacy
+    global file is written best-effort but is NON-blocking — a stale/foreign
+    global pid must never block a different-data-dir sandbox.
+    """
+    legacy_path = Path.home() / ".nexus" / "nexusd.pid"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+
+    scoped_path = _scoped_pid_path(effective_data_dir)
+
+    if scoped_path is None:
+        # Single-daemon default: legacy global path IS the blocking gate
+        # (identical behavior + artifact to the pre-r5 implementation).
+        _pid_gate_check(legacy_path, blocking=True)
+        return None, legacy_path
+
+    # Instance-scoped: the SCOPED file gates this instance (genuine
+    # double-start on the same data dir still rejected); the legacy global
+    # file is kept for single-daemon back-compat readers but is NON-blocking
+    # so a foreign/stale global pid never blocks a different-data-dir start.
+    _pid_gate_check(scoped_path, blocking=True)
+    _pid_gate_check(legacy_path, blocking=False)
+    return scoped_path, legacy_path
 
 
 def _remove_pid_file(pid_path: Path) -> None:
-    """Remove PID file on shutdown."""
-    pid_path.unlink(missing_ok=True)
+    """Remove a PID file on shutdown — ownership-aware (Issue #4126 r5).
+
+    Only unlink a pid file that records THIS process, or whose recorded pid
+    is stale/dead/not-nexusd. A live sibling daemon's pid file (the shared
+    legacy global path that a still-running concurrent sandbox re-wrote with
+    ITS pid) must survive: removing it would erase that daemon's
+    double-start guard while it is still serving. Mirrors the readiness
+    ``_remove_readiness_if_owned`` ownership contract.
+    """
+    try:
+        recorded = pid_path.read_text().strip()
+    except (FileNotFoundError, OSError):
+        return
+    if recorded == str(os.getpid()):
+        pid_path.unlink(missing_ok=True)
+        return
+    try:
+        other = int(recorded)
+    except ValueError:
+        # Corrupt/garbage content we no longer recognize — safe to clear.
+        pid_path.unlink(missing_ok=True)
+        return
+    if not _is_nexusd_process(other):
+        # Stale/dead/non-nexusd: clear it.
+        pid_path.unlink(missing_ok=True)
+    # Else: a live sibling nexusd owns it — leave it intact.
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +653,14 @@ def main(
         )
 
     # --- PID file -----------------------------------------------------------
-    pid_path = _manage_pid_file()
+    # Scope the PID gate per EFFECTIVE data dir (Issue #4126 review r5,
+    # Finding A) using the SAME ``data_dir`` value the r4 scoped readiness
+    # uses below — so two sandboxes under one HOME with distinct data dirs
+    # BOTH pass the PID gate and reach the scoped readiness write (the old
+    # single global PID gate exited the second sandbox first, defeating r4).
+    # The legacy global ``~/.nexus/nexusd.pid`` is still written for
+    # single-daemon back-compat; the BLOCKING decision is instance-scoped.
+    scoped_pid_path, legacy_pid_path = _manage_pid_file(data_dir)
     # Legacy global readiness file (single-daemon default / back-compat) and
     # an ADDITIONAL data-dir-scoped one so two sandboxes under the same HOME
     # with distinct data dirs each get a deterministically-addressable,
@@ -566,7 +671,9 @@ def main(
     # Guard: daemon cannot run in remote profile (gate on the EFFECTIVE
     # profile so a ``--config remote.yaml`` boot is rejected too).
     if effective_profile == "remote":
-        _remove_pid_file(pid_path)
+        if scoped_pid_path is not None:
+            _remove_pid_file(scoped_pid_path)
+        _remove_pid_file(legacy_pid_path)
         click.echo(
             "Error: nexusd cannot run with profile='remote'. "
             "A daemon cannot be a thin client of another daemon.",
@@ -786,7 +893,14 @@ def main(
         logger.exception("nexusd failed")
         sys.exit(ExitCode.INTERNAL_ERROR)
     finally:
-        _remove_pid_file(pid_path)
+        # Ownership-aware PID cleanup mirrors the readiness contract: a
+        # still-running sibling sandbox under the same HOME that re-wrote the
+        # legacy global pid (last-writer-wins) keeps its double-start guard;
+        # we only remove a pid file that still records THIS process (or a
+        # stale/dead one) — Issue #4126 review r5, Finding A.
+        if scoped_pid_path is not None:
+            _remove_pid_file(scoped_pid_path)
+        _remove_pid_file(legacy_pid_path)
         # Ownership-checked unlink: only remove a readiness file that still
         # holds THIS process's token. A sibling sandbox daemon under the same
         # HOME that re-wrote the legacy global path (last-writer-wins) keeps

@@ -476,6 +476,66 @@ def _detect_container_state(
         return "absent"
 
 
+def _find_project_config_cwd_or_ancestor() -> Path | None:
+    """Locate a pre-existing project ``nexus.yaml``/``nexus.yml``.
+
+    Searches CWD first (``CONFIG_SEARCH_PATHS`` order), then walks ancestor
+    directories — the SAME discovery the non-sandbox ``nexus up`` auto-init
+    path uses ("if no nexus.yaml in CWD, search parent directories first to
+    avoid creating a nested project inside an existing workspace").
+
+    Issue #4126 review r5, Finding B: the sandbox producer must honor an
+    ANCESTOR project config too. Running ``nexus up --profile sandbox`` from
+    a SUBDIR of an existing Nexus project must NOT create a nested
+    ``nexus.yaml`` in the subdir (which would shadow the real project for
+    ``env``/``status``/``run`` from that subdir and dirty the repo). Returns
+    the discovered config path, or ``None`` when no config exists in CWD OR
+    any ancestor (only then is a minimal sandbox config created in CWD).
+    """
+    # CWD first (exact loader search order, decided by FILE EXISTENCE).
+    cwd_hit = next((Path(c) for c in CONFIG_SEARCH_PATHS if Path(c).exists()), None)
+    if cwd_hit is not None:
+        return cwd_hit
+    # Then ancestors — mirrors the non-sandbox ``up`` parent-dir search.
+    cwd = Path.cwd()
+    for parent in cwd.parents:
+        for name in CONFIG_SEARCH_PATHS:
+            candidate = parent / Path(name).name
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _rollback_sandbox_runtime_artifacts(
+    state_paths: list[Path],
+    state_snapshots: dict[Path, bytes | None],
+    yaml_created_path: Path | None,
+) -> None:
+    """Idempotent, ownership-aware rollback of the sandbox discovery
+    artifacts written by ``persist_sandbox_runtime_artifacts``.
+
+    Issue #4126 review r5, Finding C: factored into ONE helper so the
+    non-zero-RETURN path and the launch-EXCEPTION path roll back identically.
+    For each ``.state.json``: RESTORE its pre-write bytes if it pre-existed
+    (never erase a still-running / previous sandbox's discovery artifact);
+    only UNLINK state files THIS run actually created. The minimal
+    ``nexus.yaml`` is unlinked only when WE created it this run (never a
+    pre-existing user config — empty/comments-only included). Safe to call
+    more than once (idempotent).
+    """
+    for _sp in state_paths:
+        _original = state_snapshots.get(_sp)
+        if _original is not None:
+            with contextlib.suppress(OSError):
+                _sp.write_bytes(_original)
+        else:
+            with contextlib.suppress(OSError):
+                _sp.unlink()
+    if yaml_created_path is not None:
+        with contextlib.suppress(OSError):
+            yaml_created_path.unlink()
+
+
 def persist_sandbox_runtime_artifacts(
     *,
     workspace: str,
@@ -559,12 +619,14 @@ def persist_sandbox_runtime_artifacts(
     # truthiness (Issue #4126 review r4, Finding B). An empty or
     # comments-only nexus.yaml parses to ``{}`` but is a pre-existing USER
     # file: treating it as "no project config" and overwriting/unlinking it
-    # violated the r3 contract. Mirror the loader's search order
-    # (``CONFIG_SEARCH_PATHS``) and check the disk, not the parse.
-    existing_config_file = next(
-        (Path(c) for c in CONFIG_SEARCH_PATHS if Path(c).exists()),
-        None,
-    )
+    # violated the r3 contract. Check the disk, not the parse.
+    #
+    # Issue #4126 review r5, Finding B: discovery must also include ANCESTOR
+    # directories — running from a SUBDIR of an existing project must NOT
+    # create a nested nexus.yaml that shadows the real ancestor config for
+    # ``env``/``status``/``run`` (and dirties the repo). Reuse the SAME
+    # ancestor/parent discovery the non-sandbox ``nexus up`` path uses.
+    existing_config_file = _find_project_config_cwd_or_ancestor()
 
     state_paths: list[Path] = []
     yaml_created_path: Path | None = None
@@ -591,14 +653,24 @@ def persist_sandbox_runtime_artifacts(
         # hard-require a nexus.yaml, so write a minimal one (pointing at the
         # isolated dir) so the no-`--url` discovery path resolves the running
         # sandbox. Safe: there is no pre-existing user config to clobber.
+        #
+        # Transactional (Issue #4126 review r5, Finding C): if THIS write
+        # fails AFTER ``.state.json`` was already written, roll back the
+        # just-written state before propagating so we never leave a
+        # ``.state.json`` pointing at a project that has no config / no
+        # daemon (a stale discovery artifact — the exact hazard this closes).
         yaml_created_path = Path(CONFIG_SEARCH_PATHS[0])
-        _save_project_config(
-            {
-                "profile": "sandbox",
-                "data_dir": effective,
-                "ports": {"http": http_port, "grpc": grpc_port},
-            }
-        )
+        try:
+            _save_project_config(
+                {
+                    "profile": "sandbox",
+                    "data_dir": effective,
+                    "ports": {"http": http_port, "grpc": grpc_port},
+                }
+            )
+        except BaseException:
+            _rollback_sandbox_runtime_artifacts(state_paths, state_snapshots, None)
+            raise
     # Else: a project nexus.yaml FILE exists (even if empty / comments-only).
     # We deliberately do NOTHING to it or its data_dir — no rewrite, no
     # .state.json clobber, no file mixing. The operator discovers the running
@@ -900,25 +972,22 @@ def up(
         # only ours) on a non-zero exit: the single .state.json we wrote in
         # the ISOLATED dir, and the minimal nexus.yaml only if we created it
         # this run (never a pre-existing user config, which we never write).
-        _sandbox_result = subprocess.run(cmd)
+        # Rollback fires on EITHER a non-zero RETURN or a launch EXCEPTION
+        # (Issue #4126 review r5, Finding C). State/config are written BEFORE
+        # ``subprocess.run``; if the launch RAISES (broken/missing nexusd
+        # exec → FileNotFoundError/OSError, or KeyboardInterrupt/parent
+        # interrupt) the prewritten ``.state.json`` / minimal nexus.yaml
+        # would otherwise be left behind with no daemon running — a stale
+        # discovery artifact. ``except BaseException`` also covers
+        # KeyboardInterrupt; the SAME idempotent, ownership-aware rollback
+        # helper is used by both paths, then the exception is re-raised.
+        try:
+            _sandbox_result = subprocess.run(cmd)
+        except BaseException:
+            _rollback_sandbox_runtime_artifacts(_state_paths, _state_snapshots, _yaml_created_path)
+            raise
         if _sandbox_result.returncode != 0:
-            # Idempotent rollback (Issue #4126 review r4, Finding C): for each
-            # .state.json, RESTORE its pre-write bytes if it pre-existed
-            # (don't erase a still-running / previous sandbox's discovery
-            # artifact); only UNLINK state files THIS run actually created.
-            # The minimal nexus.yaml is unlinked only if WE created it (never
-            # a pre-existing user config — empty/comments-only included).
-            for _sp in _state_paths:
-                _original = _state_snapshots.get(_sp)
-                if _original is not None:
-                    with contextlib.suppress(OSError):
-                        _sp.write_bytes(_original)
-                else:
-                    with contextlib.suppress(OSError):
-                        _sp.unlink()
-            if _yaml_created_path is not None:
-                with contextlib.suppress(OSError):
-                    _yaml_created_path.unlink()
+            _rollback_sandbox_runtime_artifacts(_state_paths, _state_snapshots, _yaml_created_path)
         sys.exit(_sandbox_result.returncode)
 
     config = _load_project_config_optional()

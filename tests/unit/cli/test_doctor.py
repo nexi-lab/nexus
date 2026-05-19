@@ -1024,8 +1024,7 @@ class TestDoctorRemote:
                 doctor_remote, ["--url", "http://hub.example.com:2026", "--api-key", "testkey"]
             )
 
-        # Not a crash — should exit 0 (warning doesn't count as error) or 1 depending on impl.
-        # The key assertion is: no raw traceback and actionable message.
+        assert result.exit_code == 0  # WARNING does not set has_error
         assert "Traceback" not in result.output
         assert "NEXUS_GRPC_ALLOW_INSECURE" in result.output or "TLS" in result.output
 
@@ -1074,3 +1073,18 @@ class TestDoctorRemote:
 
         result = cli_runner.invoke(doctor_remote, [])
         assert result.exit_code == 0
+
+    def test_no_url_raises_usage_error(
+        self,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """doctor remote with no --url and no NEXUS_URL → non-zero exit, actionable message."""
+        monkeypatch.delenv("NEXUS_URL", raising=False)
+
+        result = cli_runner.invoke(doctor_remote, [], env={"NEXUS_URL": ""})
+
+        assert result.exit_code != 0
+        assert "Traceback" not in result.output
+        # The error message must tell the user what to provide
+        assert "NEXUS_URL" in result.output or "url" in result.output.lower()

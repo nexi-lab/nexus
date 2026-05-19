@@ -8,6 +8,7 @@ dependencies.  Each check is an independent function returning a structured
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import subprocess
@@ -16,8 +17,10 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import click
+import yaml
 
 from nexus.cli.output import OutputOptions, add_output_options, render_output
 from nexus.cli.theme import console
@@ -661,25 +664,24 @@ def _compute_grpc_address(url: str) -> tuple[str, int]:
       2. nexus.yaml ``ports.grpc``
       3. default 2028
     """
-    from urllib.parse import urlparse
-
     parsed = urlparse(url)
     host = parsed.hostname or "localhost"
 
     grpc_port_str = os.getenv("NEXUS_GRPC_PORT", "")
     if not grpc_port_str:
-        import contextlib
-        from pathlib import Path as _Path
-
         with contextlib.suppress(Exception):
-            import yaml as _yaml
-
-            _pf = _Path("nexus.yaml")
+            _pf = Path("nexus.yaml")
             if _pf.exists():
                 with open(_pf) as _f:
-                    _pc = _yaml.safe_load(_f) or {}
+                    _pc = yaml.safe_load(_f) or {}
                 grpc_port_str = str(_pc.get("ports", {}).get("grpc", ""))
-    grpc_port = int(grpc_port_str) if grpc_port_str else 2028
+    if grpc_port_str:
+        try:
+            grpc_port = int(grpc_port_str)
+        except ValueError:
+            grpc_port = 2028
+    else:
+        grpc_port = 2028
     return f"{host}:{grpc_port}", grpc_port
 
 
@@ -753,8 +755,6 @@ def _check_remote_grpc(url: str, api_key: str | None) -> CheckResult:
         )
     finally:
         if transport is not None:
-            import contextlib
-
             with contextlib.suppress(Exception):
                 transport.close()
 

@@ -19,7 +19,7 @@ Two severity classes:
 import logging
 import time
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
@@ -260,22 +260,10 @@ def _boot_pre_kernel_services(
     mount_manager: Any = None
 
     # --- Workspace Manager ---
+    # Deferred to post-kernel tier (factory/_wired.py) — workspace listing
+    # now goes through NexusFS.sys_readdir (§2.5 mediation), so the manager
+    # needs a live NexusFS handle which isn't constructed yet.
     workspace_manager: Any = None
-    try:
-        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-        from nexus.services.workspace.workspace_manager import WorkspaceManager
-
-        workspace_manager = WorkspaceManager(
-            metadata=ctx.metadata_store,
-            backend=ctx.backend,
-            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-            record_store=ctx.record_store,
-        )
-        logger.debug("[BOOT:SYSTEM] WorkspaceManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] WorkspaceManager unavailable: %s", exc)
 
     # =====================================================================
     # ORIGINAL SYSTEM SERVICES (all degradable)
@@ -356,21 +344,9 @@ def _boot_pre_kernel_services(
             logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
     # --- Context Branch Service (Issue #1315) ---
+    # Deferred to post-kernel tier (factory/_wired.py) — depends on the
+    # workspace_manager which is itself deferred to that tier.
     context_branch_service: Any = None
-    try:
-        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-        from nexus.services.workspace.context_branch import ContextBranchService
-
-        context_branch_service = ContextBranchService(
-            workspace_manager=workspace_manager,
-            record_store=ctx.record_store,
-            rebac_manager=cast(ReBACBrickProtocol, rebac_manager),
-            default_zone_id=ctx.zone_id,
-            default_agent_id=ctx.agent_id,
-        )
-        logger.debug("[BOOT:SYSTEM] ContextBranchService created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
 
     # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
     tiger_cache_manager: Any = None

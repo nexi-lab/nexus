@@ -3,7 +3,7 @@
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -370,6 +370,47 @@ def _boot_post_kernel_services(
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
     _nx_init_cred: Any = nx._init_cred
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
+
+    # --- Workspace Manager (moved from _system.py — needs sys_readdir §2.5) ---
+    workspace_manager: Any = None
+    try:
+        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
+        from nexus.services.workspace.workspace_manager import WorkspaceManager
+
+        _ws_zone_id = getattr(_nx_init_cred, "zone_id", None)
+        _ws_agent_id = getattr(_nx_init_cred, "agent_id", None)
+        workspace_manager = WorkspaceManager(
+            nexus_fs=nx,
+            backend=getattr(nx, "backend", None),
+            rebac_manager=cast(ReBACBrickProtocol, services.get("rebac_manager")),
+            zone_id=_ws_zone_id,
+            agent_id=_ws_agent_id,
+            record_store=getattr(nx, "_record_store", None),
+        )
+        services["workspace_manager"] = workspace_manager
+        logger.debug("[BOOT:WIRED] WorkspaceManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] WorkspaceManager unavailable: %s", exc)
+
+    # --- Context Branch Service (moved from _system.py — depends on
+    #     workspace_manager which is now wired here) ---
+    context_branch_service: Any = None
+    try:
+        from nexus.contracts.protocols.rebac import ReBACBrickProtocol
+        from nexus.services.workspace.context_branch import ContextBranchService
+
+        context_branch_service = ContextBranchService(
+            workspace_manager=workspace_manager,
+            record_store=getattr(nx, "_record_store", None),
+            rebac_manager=cast(ReBACBrickProtocol, services.get("rebac_manager")),
+            default_zone_id=getattr(_nx_init_cred, "zone_id", None),
+            default_agent_id=getattr(_nx_init_cred, "agent_id", None),
+        )
+        services["context_branch_service"] = context_branch_service
+        logger.debug("[BOOT:WIRED] ContextBranchService created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] ContextBranchService unavailable: %s", exc)
+
     workspace_rpc_service: Any = None
     try:
         from nexus.services.workspace.workspace_rpc_service import WorkspaceRPCService

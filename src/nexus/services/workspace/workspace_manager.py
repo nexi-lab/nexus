@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import desc, select
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.types import OperationContext
 from nexus.contracts.workspace_manifest import WorkspaceManifest
 from nexus.storage.models import WorkspaceSnapshotModel
 
@@ -17,6 +18,7 @@ from .workspace_permissions import check_workspace_permission
 
 if TYPE_CHECKING:
     from nexus.backends.base.backend import Backend
+    from nexus.contracts.filesystem import NexusFilesystem
     from nexus.contracts.protocols.rebac import ReBACBrickProtocol
     from nexus.storage.record_store import RecordStoreABC
 
@@ -40,7 +42,7 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        metadata: "Any",
+        nexus_fs: "NexusFilesystem",
         backend: "Backend",
         rebac_manager: "ReBACBrickProtocol | None" = None,
         zone_id: str | None = None,
@@ -50,16 +52,20 @@ class WorkspaceManager:
         """Initialize workspace manager.
 
         Args:
-            metadata: Metadata store for querying file information
+            nexus_fs: NexusFS handle — workspace listing reaches MetaStore
+                through the §2.2 syscall surface (sys_readdir), not the
+                kernel-internal MetaStore directly.
             backend: Backend for storing manifest in CAS
             rebac_manager: ReBAC manager for permission checks (optional)
             zone_id: Default zone ID for operations (optional)
             agent_id: Default agent ID for operations (optional)
             record_store: RecordStoreABC instance providing session_factory
         """
-        self.metadata = metadata
-        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
-        self._kernel: Any = metadata
+        self._nexus_fs = nexus_fs
+        # Direct kernel handle for the remaining sys_stat / sys_unlink /
+        # sys_setattr calls in restore() — these are existing syscall users,
+        # not the listing migration touched in this commit.
+        self._kernel: Any = getattr(nexus_fs, "_kernel", None)
         self.backend = backend
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id
@@ -282,20 +288,21 @@ class WorkspaceManager:
             if not workspace_prefix.endswith("/"):
                 workspace_prefix += "/"
 
-            # Get current workspace files
-            current_files = self._kernel.metastore_list_paginated(
-                workspace_prefix, True, 100000, None
-            )["items"]
+            # Get current workspace files via the §2.5 syscall surface.
+            _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+            current_entries = self._nexus_fs.sys_readdir(
+                workspace_prefix,
+                recursive=True,
+                details=True,
+                context=_sys_ctx,
+            )
             current_paths = {
-                f.path[len(workspace_prefix) :]
-                for f in current_files
-                if f.content_id  # Only files with content
+                str(e["path"])[len(workspace_prefix) :]
+                for e in current_entries
+                if isinstance(e, dict) and e.get("content_id") and e.get("path")
             }
 
             # Delete files not in snapshot
-            from nexus.contracts.types import OperationContext
-
-            _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
             manifest_paths = manifest.paths()
             files_deleted = 0
             for current_path in current_paths:

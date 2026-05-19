@@ -272,18 +272,20 @@ def _remove_readiness_if_owned(path: Path, host: str, port: int) -> None:
 def _scoped_readiness_path(effective_data_dir: str | None) -> Path | None:
     """Per-instance readiness path derived from the effective data dir.
 
-    Returns ``<effective_data_dir>/.nexusd.ready`` when a data dir is known
-    and creatable; falls back to a HOME-scoped hashed filename
-    (``~/.nexus/nexusd-<hash>.ready``) if the data dir is unusable. Returns
+    Uses the shared ``scoped_readiness_path`` SSOT from ``cli.state`` for
+    the filename convention. Creates the parent directory if absent and
+    falls back to a HOME-scoped hashed filename on OSError. Returns
     ``None`` when no data dir is given (single-daemon default — only the
     legacy global path is used, exactly as before).
     """
+    from nexus.cli.state import scoped_readiness_path
+
     if not effective_data_dir:
         return None
     try:
         d = Path(effective_data_dir).resolve()
         d.mkdir(parents=True, exist_ok=True)
-        return d / ".nexusd.ready"
+        return scoped_readiness_path(d)
     except OSError:
         import hashlib
 

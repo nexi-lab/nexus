@@ -89,6 +89,15 @@ def normalize_connect_host(host: str | None) -> str:
     return host
 
 
+def scoped_readiness_path(data_dir: str | Path) -> Path:
+    """Return ``<data_dir>/.nexusd.ready`` — the per-instance readiness file.
+
+    Single source of truth shared by ``nexusd`` (daemon write) and
+    ``nexus ready`` (CLI read). The data dir is created if absent.
+    """
+    return Path(data_dir).expanduser() / ".nexusd.ready"
+
+
 # ---------------------------------------------------------------------------
 # Project config (nexus.yaml) — declarative, version-controlled
 # ---------------------------------------------------------------------------

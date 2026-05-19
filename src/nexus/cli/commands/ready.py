@@ -23,7 +23,7 @@ import click
 
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.output import OutputOptions, add_output_options, render_output
-from nexus.cli.state import normalize_connect_host
+from nexus.cli.state import normalize_connect_host, scoped_readiness_path
 from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import handle_error
@@ -34,17 +34,6 @@ _HEALTH_POLL_INTERVAL = 0.5
 
 def _default_readiness_file() -> Path:
     return Path.home() / ".nexus" / "nexusd.ready"
-
-
-def _scoped_readiness_file(data_dir: Path) -> Path:
-    """The data-dir-scoped readiness path a daemon writes for that data dir.
-
-    Mirrors ``nexus.daemon.main._scoped_readiness_path`` so a caller that
-    knows a sandbox's isolated data dir can target THAT sandbox's readiness
-    deterministically — instead of racing on the shared legacy global path
-    when several sandboxes run under one HOME (Issue #4126 review r4).
-    """
-    return data_dir.expanduser() / ".nexusd.ready"
 
 
 def _wait_for_file(path: Path, deadline: float) -> bool:
@@ -200,7 +189,7 @@ def ready(
     if readiness_file is not None:
         path = readiness_file
     elif data_dir is not None:
-        path = _scoped_readiness_file(data_dir)
+        path = scoped_readiness_path(data_dir)
     else:
         path = _default_readiness_file()
 

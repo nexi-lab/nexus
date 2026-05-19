@@ -708,6 +708,32 @@ def main(
             )
             sys.exit(ExitCode.USAGE_ERROR)
 
+    # Conflict precedence (Issue #4126 review r7): an EXPLICIT command-line
+    # ``--data-dir`` together with ``--config`` is rejected with a usage
+    # error — same location, exit code and style as the r3 ``--profile``/
+    # ``--config`` conflict above. On the ``--config`` branch ``main`` calls
+    # ``load_config(Path(config_path))`` only; the Click ``--data-dir`` value
+    # is NEVER forwarded, so a ``nexusd --config sandbox.yaml --data-dir
+    # /tmp/agent-a`` invocation would SILENTLY ignore ``/tmp/agent-a`` and
+    # fall back to the config-file ``data_dir`` / ``$NEXUS_DATA_DIR`` /
+    # sandbox default — operators believe they launched isolated per-agent
+    # sandboxes but invocations share one data dir → PID/readiness collisions
+    # + state/data mixing (defeats the r4–r6 isolation hardening). Reject
+    # rather than silently ignore (the established, safe r3 precedent; an
+    # invasive load_config merge is deliberately avoided). Only a COMMANDLINE
+    # ``--data-dir`` triggers this: ``$NEXUS_DATA_DIR`` env + ``--config`` is
+    # DOCUMENTED ``load_config`` precedence (config file > env), not a user
+    # conflict — exactly analogous to env ``NEXUS_PROFILE`` + ``--config``
+    # being allowed while an explicit conflicting ``--profile`` is rejected.
+    _data_dir_src = ctx.get_parameter_source("data_dir")
+    if config_path and _data_dir_src == click.core.ParameterSource.COMMANDLINE:
+        click.echo(
+            "Error: --data-dir cannot be combined with --config; "
+            "set 'data_dir:' in the config file instead.",
+            err=True,
+        )
+        sys.exit(ExitCode.USAGE_ERROR)
+
     effective_profile = _resolve_effective_profile(deployment_profile, config_path)
 
     # --- Sandbox flag validation --------------------------------------------

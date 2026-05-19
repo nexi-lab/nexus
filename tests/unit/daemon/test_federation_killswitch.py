@@ -99,6 +99,7 @@ def _run_daemon(
     monkeypatch,
     workspace: Path | None = None,
     config_path: Path | None = None,
+    data_dir: Path | None = None,
 ):
     """Drive the real ``main`` boot path far enough to execute the gate.
 
@@ -124,6 +125,8 @@ def _run_daemon(
         args += ["--profile", profile]
     if config_path is not None:
         args += ["--config", str(config_path)]
+    if data_dir is not None:
+        args += ["--data-dir", str(data_dir)]
     if workspace is not None:
         args += ["--workspace", str(workspace)]
 
@@ -512,5 +515,152 @@ def test_config_sandbox_no_cli_profile_unchanged(tmp_path: Path, monkeypatch) ->
         f"exit {result.exit_code}: {result.output}"
     )
     assert "conflict" not in result.output.lower()
+    bootstrapper_cls.assert_called_once()
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1"
+
+
+# ---------------------------------------------------------------------------
+# Review r7 (Issue #4126 HIGH): an EXPLICIT command-line ``--data-dir``
+# combined with ``--config`` must be rejected as a usage error — never
+# silently ignored. On the ``--config`` branch ``main`` calls
+# ``load_config(Path(config_path))`` only; the Click ``--data-dir`` value is
+# never forwarded, so pre-r7 ``nexusd --config sandbox.yaml --data-dir DIR``
+# silently dropped DIR and shared the config/default data dir → PID +
+# readiness collisions and state/data mixing across "isolated" per-agent
+# sandboxes (defeating the r4–r6 isolation hardening). Mirrors exactly the
+# r3 ``--profile``/``--config`` conflict precedent (same exit code, style,
+# COMMANDLINE-only gating). ``$NEXUS_DATA_DIR`` env + ``--config`` is
+# documented load_config precedence (NOT a conflict) and must stay allowed.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_data_dir_conflicts_with_config_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    """``nexusd --config <sandbox.yaml> --data-dir <dir>`` → clean CONFLICT.
+
+    Locks the r7 HIGH: an explicit command-line ``--data-dir`` together with
+    ``--config`` is a clean usage error BEFORE any sandbox side effect — no
+    SandboxBootstrapper, no kill-switch — because the daemon would otherwise
+    SILENTLY ignore the ``--data-dir`` (it is never forwarded on the
+    ``--config`` branch) and share the config/default data dir.
+
+    Pre-r7 this FAILS: today the daemon silently proceeds (exit 0, the
+    bootstrapper runs against the config-file/default data dir) — the exact
+    silent-ignore bug this locks.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = tmp_path / "sandbox.yaml"
+    cfg.write_text("profile: sandbox\n")
+    agent_dir = tmp_path / "agent-a"
+
+    result, bootstrapper_cls = _run_daemon(
+        None, tmp_path, monkeypatch, workspace=workspace, config_path=cfg, data_dir=agent_dir
+    )
+
+    assert result.exit_code == 64, (  # ExitCode.USAGE_ERROR
+        f"--data-dir + --config must be a clean usage error (never silently "
+        f"ignored); got exit {result.exit_code}: {result.output}"
+    )
+    assert "--data-dir cannot be combined with --config" in result.output
+    bootstrapper_cls.assert_not_called()
+    assert "NEXUS_FEDERATION_DISABLED" not in os.environ, (
+        "A rejected conflicting invocation must not have set the kill-switch."
+    )
+
+
+def test_config_sandbox_no_data_dir_unchanged(tmp_path: Path, monkeypatch) -> None:
+    """``nexusd --config <sandbox.yaml>`` (NO --data-dir) → unchanged.
+
+    Zero-regression guard: with no command-line ``--data-dir`` the r7
+    conflict check never fires (gated on ParameterSource.COMMANDLINE), so a
+    ``--config sandbox.yaml`` boot still resolves normally and sets the
+    kill-switch exactly as before.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = tmp_path / "sandbox.yaml"
+    cfg.write_text("profile: sandbox\n")
+
+    result, bootstrapper_cls = _run_daemon(
+        None, tmp_path, monkeypatch, workspace=workspace, config_path=cfg
+    )
+
+    assert result.exit_code == 0, (
+        f"--config sandbox.yaml with no --data-dir must boot cleanly; got "
+        f"exit {result.exit_code}: {result.output}"
+    )
+    assert "cannot be combined" not in result.output
+    bootstrapper_cls.assert_called_once()
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1"
+
+
+def test_env_data_dir_with_config_is_allowed(tmp_path: Path, monkeypatch) -> None:
+    """``NEXUS_DATA_DIR=<dir>`` + ``--config <sandbox.yaml>`` → ALLOWED.
+
+    Locks the r7 non-regression edge: ``$NEXUS_DATA_DIR`` + ``--config`` is
+    DOCUMENTED ``load_config`` precedence (config file > env), NOT a user
+    conflict — only an EXPLICIT command-line ``--data-dir`` triggers the
+    rejection (ParameterSource.COMMANDLINE), exactly analogous to env
+    ``NEXUS_PROFILE`` + ``--config`` being allowed. The env value reaches
+    Click but its parameter source is ENVIRONMENT, not COMMANDLINE, so the
+    boot must proceed normally.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = tmp_path / "sandbox.yaml"
+    cfg.write_text("profile: sandbox\n")
+    env_dir = tmp_path / "env-data"
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(env_dir))
+
+    result, bootstrapper_cls = _run_daemon(
+        None, tmp_path, monkeypatch, workspace=workspace, config_path=cfg
+    )
+
+    assert result.exit_code == 0, (
+        f"$NEXUS_DATA_DIR + --config is documented precedence, not a "
+        f"conflict; got exit {result.exit_code}: {result.output}"
+    )
+    assert "cannot be combined" not in result.output
+    bootstrapper_cls.assert_called_once()
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1"
+
+
+def test_profile_sandbox_data_dir_no_config_unchanged(tmp_path: Path, monkeypatch) -> None:
+    """``nexusd --profile sandbox --data-dir <dir>`` (NO --config) → unchanged.
+
+    Zero-regression guard: with NO ``--config`` the explicit ``--data-dir``
+    is the legitimate isolated-data-dir override (r4–r6) and must keep
+    working exactly as before — the r7 conflict check is gated on
+    ``config_path`` being set, so it never fires here.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    agent_dir = tmp_path / "agent-a"
+
+    result, bootstrapper_cls = _run_daemon(
+        "sandbox", tmp_path, monkeypatch, workspace=workspace, data_dir=agent_dir
+    )
+
+    assert result.exit_code == 0, (
+        f"--profile sandbox --data-dir with no --config must remain the "
+        f"isolated-override (unchanged); got exit {result.exit_code}: "
+        f"{result.output}"
+    )
+    assert "cannot be combined" not in result.output
     bootstrapper_cls.assert_called_once()
     assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1"

@@ -36,6 +36,17 @@ def _default_readiness_file() -> Path:
     return Path.home() / ".nexus" / "nexusd.ready"
 
 
+def _scoped_readiness_file(data_dir: Path) -> Path:
+    """The data-dir-scoped readiness path a daemon writes for that data dir.
+
+    Mirrors ``nexus.daemon.main._scoped_readiness_path`` so a caller that
+    knows a sandbox's isolated data dir can target THAT sandbox's readiness
+    deterministically — instead of racing on the shared legacy global path
+    when several sandboxes run under one HOME (Issue #4126 review r4).
+    """
+    return data_dir.expanduser() / ".nexusd.ready"
+
+
 def _wait_for_file(path: Path, deadline: float) -> bool:
     """Poll until *path* exists or the *deadline* (monotonic) elapses."""
     while time.monotonic() < deadline:
@@ -46,8 +57,18 @@ def _wait_for_file(path: Path, deadline: float) -> bool:
 
 
 def _parse_endpoint(content: str) -> tuple[str, int] | None:
-    """Parse a ``host:port`` readiness line; None if malformed."""
-    content = content.strip()
+    """Parse the ``host:port`` from a readiness file; None if malformed.
+
+    The readiness file's FIRST line is ``host:port`` (unchanged wire format);
+    a post-r4 file additionally carries a ``pid=<pid>`` ownership token on a
+    second line (Issue #4126 review r4). Parse only the first non-empty line
+    so both pre-r4 single-line files and post-r4 tokenized files resolve.
+    """
+    first_line = next(
+        (ln for ln in content.splitlines() if ln.strip()),
+        "",
+    )
+    content = first_line.strip()
     if not content:
         return None
     host, sep, port_s = content.rpartition(":")
@@ -142,11 +163,24 @@ def _render_ready(data: dict[str, Any]) -> None:
     default=None,
     help="Path to the daemon readiness file (default: ~/.nexus/nexusd.ready).",
 )
+@click.option(
+    "--data-dir",
+    "data_dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "Target a specific sandbox's data-dir-scoped readiness file "
+        "(<data-dir>/.nexusd.ready). Use this to deterministically probe one "
+        "sandbox when several run under the same HOME. Ignored when "
+        "--readiness-file is given."
+    ),
+)
 @add_output_options
 def ready(
     output_opts: OutputOptions,
     timeout: float,
     readiness_file: Path | None,
+    data_dir: Path | None,
 ) -> None:
     """Probe daemon readiness for non-Docker (sandbox-profile) deployments.
 
@@ -159,7 +193,16 @@ def ready(
         nexus ready --json          # machine-readable
         nexus ready --timeout 30    # wait up to 30s
     """
-    path = readiness_file if readiness_file is not None else _default_readiness_file()
+    # Precedence: explicit --readiness-file wins (back-compat default →
+    # legacy global path); else --data-dir derives the scoped path; else the
+    # legacy global default. Existing callers that pass neither flag keep the
+    # exact pre-r4 single-daemon contract.
+    if readiness_file is not None:
+        path = readiness_file
+    elif data_dir is not None:
+        path = _scoped_readiness_file(data_dir)
+    else:
+        path = _default_readiness_file()
 
     try:
         timing = CommandTiming()

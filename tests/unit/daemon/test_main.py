@@ -260,6 +260,102 @@ class TestManagePidFile:
 
 
 # ---------------------------------------------------------------------------
+# Readiness file: atomic write + ownership-checked unlink (Issue #4126 r4)
+# ---------------------------------------------------------------------------
+
+
+class TestReadinessFile:
+    """``_write_readiness_atomic`` / ``_remove_readiness_if_owned`` / scoping.
+
+    Locks Finding A: two daemons under the SAME HOME with distinct data
+    dirs/ports must both stay discoverable, and a daemon exiting must NEVER
+    remove a readiness file that no longer carries its own token.
+    """
+
+    def test_atomic_write_first_line_is_host_port(self, tmp_path: Path) -> None:
+        """Back-compat: first line is ``host:port`` for pre-r4 readers."""
+        from nexus.daemon.main import _write_readiness_atomic
+
+        p = tmp_path / "nexusd.ready"
+        _write_readiness_atomic(p, "127.0.0.1", 2026)
+
+        lines = p.read_text().splitlines()
+        assert lines[0] == "127.0.0.1:2026"
+        assert any(ln.startswith("pid=") for ln in lines[1:])
+
+    def test_owned_unlink_removes_own_file(self, tmp_path: Path) -> None:
+        from nexus.daemon.main import (
+            _remove_readiness_if_owned,
+            _write_readiness_atomic,
+        )
+
+        p = tmp_path / "nexusd.ready"
+        _write_readiness_atomic(p, "127.0.0.1", 2026)
+        _remove_readiness_if_owned(p, "127.0.0.1", 2026)
+        assert not p.exists()
+
+    def test_owned_unlink_spares_foreign_token(self, tmp_path: Path) -> None:
+        """Finding A: a daemon exiting must NOT remove a readiness file whose
+        token (pid) differs from its own — that's a still-running sibling."""
+        from nexus.daemon.main import _remove_readiness_if_owned
+
+        p = tmp_path / "nexusd.ready"
+        # A sibling daemon (different pid) owns this file.
+        foreign_pid = os.getpid() + 1
+        p.write_text(f"127.0.0.1:2026\npid={foreign_pid}\n")
+
+        _remove_readiness_if_owned(p, "127.0.0.1", 2026)
+
+        assert p.exists(), "must not delete a sibling daemon's readiness file"
+        assert f"pid={foreign_pid}" in p.read_text()
+
+    def test_two_daemons_same_home_distinct_scoped_files(self, tmp_path: Path, monkeypatch) -> None:
+        """Finding A: two sandboxes under one HOME with distinct data dirs get
+        distinct scoped readiness records; one exiting leaves the other's
+        scoped record intact AND does not clobber the legacy global file the
+        other (last) wrote."""
+        from nexus.daemon.main import (
+            _remove_readiness_if_owned,
+            _scoped_readiness_path,
+            _write_readiness_atomic,
+        )
+
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        dd_a = tmp_path / "data_a"
+        dd_b = tmp_path / "data_b"
+        legacy = tmp_path / ".nexus" / "nexusd.ready"
+
+        scoped_a = _scoped_readiness_path(str(dd_a))
+        scoped_b = _scoped_readiness_path(str(dd_b))
+        assert scoped_a is not None and scoped_b is not None
+        assert scoped_a != scoped_b
+
+        # Daemon A boots, then daemon B boots (B is last writer of legacy).
+        _write_readiness_atomic(scoped_a, "127.0.0.1", 2026)
+        _write_readiness_atomic(legacy, "127.0.0.1", 2026)
+        # Simulate B owning the legacy file (different token).
+        legacy.write_text("127.0.0.1:2126\npid=999999\n")
+        _write_readiness_atomic(scoped_b, "127.0.0.1", 2126)
+
+        # Daemon A exits: ownership-checked unlink on legacy + scoped_a.
+        _remove_readiness_if_owned(legacy, "127.0.0.1", 2026)
+        _remove_readiness_if_owned(scoped_a, "127.0.0.1", 2026)
+
+        # B's scoped record + the legacy file B wrote must survive.
+        assert scoped_b.exists(), "sibling B scoped readiness must survive A exit"
+        assert legacy.exists(), "B's legacy readiness must not be clobbered by A"
+        assert "pid=999999" in legacy.read_text()
+        assert not scoped_a.exists()
+
+    def test_scoped_path_none_without_data_dir(self) -> None:
+        """No data dir → only the legacy global path is used (back-compat)."""
+        from nexus.daemon.main import _scoped_readiness_path
+
+        assert _scoped_readiness_path(None) is None
+        assert _scoped_readiness_path("") is None
+
+
+# ---------------------------------------------------------------------------
 # main() — Click CLI via CliRunner
 # ---------------------------------------------------------------------------
 

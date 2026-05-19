@@ -98,6 +98,101 @@ def _remove_pid_file(pid_path: Path) -> None:
     pid_path.unlink(missing_ok=True)
 
 
+# ---------------------------------------------------------------------------
+# Readiness file (atomic write + ownership-checked unlink) — Issue #4126 r4
+# ---------------------------------------------------------------------------
+#
+# All daemons under one HOME historically shared a single global
+# ``~/.nexus/nexusd.ready``. Two sandboxes under the same HOME (the real
+# per-agent production case) caused last-writer-wins + premature-unlink: the
+# first daemon to exit ``unlink``ed the readiness file out from under a
+# still-running sibling, breaking ``nexus ready`` discovery.
+#
+# Fix: (1) atomic write via temp + ``os.replace`` (no torn reads); (2) an
+# identifying token (host:port AND this process's pid) so a daemon only
+# removes a readiness file that still belongs to IT; (3) an ADDITIONAL
+# data-dir-scoped readiness file so two sandboxes with distinct data dirs get
+# distinct, deterministically-addressable readiness records. The legacy
+# global path is still written for single-daemon back-compat.
+#
+# File format (back-compat preserved): the FIRST line is ``host:port`` exactly
+# as before so old readers / ``nexus ready``'s ``_parse_endpoint`` keep
+# working; a second ``pid=<pid>`` line carries the ownership token.
+
+
+def _readiness_token(host: str, port: int) -> str:
+    """The full identifying content for THIS process's readiness file.
+
+    First line is ``host:port`` (unchanged wire format for back-compat with
+    pre-r4 single-line readiness files and ``nexus ready``); the second line
+    binds the record to this process so a sibling daemon's ``finally`` never
+    removes our file (and vice versa).
+    """
+    return f"{host}:{port}\npid={os.getpid()}\n"
+
+
+def _write_readiness_atomic(path: Path, host: str, port: int) -> None:
+    """Atomically write the readiness file (temp + ``os.replace``).
+
+    Prevents a concurrent ``nexus ready`` from observing a torn/half-written
+    file when two daemons race on the same path.
+    """
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = _readiness_token(host, port)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp_name, str(path))
+    except BaseException:
+        import contextlib
+
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+def _remove_readiness_if_owned(path: Path, host: str, port: int) -> None:
+    """Unlink *path* ONLY if its on-disk content is still THIS process's token.
+
+    A different daemon (different pid, or a different host:port that replaced
+    our record) must keep its readiness file: removing it would make
+    ``nexus ready`` falsely time out / resolve a dead endpoint for a daemon
+    that is still serving.
+    """
+    expected = _readiness_token(host, port)
+    try:
+        actual = path.read_text()
+    except (FileNotFoundError, OSError):
+        return
+    if actual == expected:
+        path.unlink(missing_ok=True)
+
+
+def _scoped_readiness_path(effective_data_dir: str | None) -> Path | None:
+    """Per-instance readiness path derived from the effective data dir.
+
+    Returns ``<effective_data_dir>/.nexusd.ready`` when a data dir is known
+    and creatable; falls back to a HOME-scoped hashed filename
+    (``~/.nexus/nexusd-<hash>.ready``) if the data dir is unusable. Returns
+    ``None`` when no data dir is given (single-daemon default — only the
+    legacy global path is used, exactly as before).
+    """
+    if not effective_data_dir:
+        return None
+    try:
+        d = Path(effective_data_dir).resolve()
+        d.mkdir(parents=True, exist_ok=True)
+        return d / ".nexusd.ready"
+    except OSError:
+        import hashlib
+
+        digest = hashlib.sha256(str(effective_data_dir).encode()).hexdigest()[:12]
+        return Path.home() / ".nexus" / f"nexusd-{digest}.ready"
+
+
 def _redact_url(url: str) -> str:
     """Redact password from database URL for safe logging."""
     try:
@@ -461,7 +556,12 @@ def main(
 
     # --- PID file -----------------------------------------------------------
     pid_path = _manage_pid_file()
+    # Legacy global readiness file (single-daemon default / back-compat) and
+    # an ADDITIONAL data-dir-scoped one so two sandboxes under the same HOME
+    # with distinct data dirs each get a deterministically-addressable,
+    # non-clobbering readiness record (Issue #4126 review r4, Finding A).
     ready_path = Path.home() / ".nexus" / "nexusd.ready"
+    scoped_ready_path = _scoped_readiness_path(data_dir)
 
     # Guard: daemon cannot run in remote profile (gate on the EFFECTIVE
     # profile so a ``--config remote.yaml`` boot is rejected too).
@@ -665,7 +765,13 @@ def main(
         )
 
         # --- Ready file -----------------------------------------------------
-        ready_path.write_text(f"{host}:{port}\n")
+        # Atomic write (temp + os.replace) so a concurrent ``nexus ready``
+        # under the same HOME never sees a torn file. Both the legacy global
+        # path and the data-dir-scoped path carry this process's ownership
+        # token (Issue #4126 review r4, Finding A).
+        _write_readiness_atomic(ready_path, host, port)
+        if scoped_ready_path is not None:
+            _write_readiness_atomic(scoped_ready_path, host, port)
 
         click.echo(f"Starting nexusd on {host}:{port}")
         click.echo("Press Ctrl+C to stop")
@@ -681,7 +787,14 @@ def main(
         sys.exit(ExitCode.INTERNAL_ERROR)
     finally:
         _remove_pid_file(pid_path)
-        ready_path.unlink(missing_ok=True)
+        # Ownership-checked unlink: only remove a readiness file that still
+        # holds THIS process's token. A sibling sandbox daemon under the same
+        # HOME that re-wrote the legacy global path (last-writer-wins) keeps
+        # its readiness record — we must never time out ``nexus ready`` for a
+        # daemon that is still serving (Issue #4126 review r4, Finding A).
+        _remove_readiness_if_owned(ready_path, host, port)
+        if scoped_ready_path is not None:
+            _remove_readiness_if_owned(scoped_ready_path, host, port)
 
 
 # ---------------------------------------------------------------------------

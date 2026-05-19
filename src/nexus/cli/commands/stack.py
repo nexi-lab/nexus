@@ -485,7 +485,7 @@ def persist_sandbox_runtime_artifacts(
     explicit_data_dir: str | None,
     sandbox_default_data_dir: str,
     hub_url: str | None,
-) -> tuple[str, list[Path], Path | None]:
+) -> tuple[str, list[Path], Path | None, dict[Path, bytes | None]]:
     """Write the production-shaped sandbox discovery artifacts (#4144).
 
     This is the ONE producer the ``nexus up --profile sandbox`` branch uses
@@ -525,11 +525,23 @@ def persist_sandbox_runtime_artifacts(
         THIS run created in the isolated sandbox dir; never anything in a
         pre-existing project dir.
 
-    Returns ``(effective_data_dir, state_paths, yaml_created_path_or_None)``.
-    ``state_paths`` is every ``.state.json`` we wrote (always exactly one,
-    in the isolated dir) so the caller rolls back exactly its own writes on
-    a failed launch; the yaml is rolled back only if we created it (never a
-    pre-existing user config, which we never write).
+    Returns ``(effective_data_dir, state_paths, yaml_created_path_or_None,
+    state_snapshots)``.
+
+      * ``state_paths`` — every ``.state.json`` we wrote (always exactly one,
+        in the isolated dir) so the caller rolls back exactly its own writes.
+      * ``yaml_created_path_or_None`` — set ONLY when no project config file
+        existed on disk at all and we therefore created a minimal
+        ``nexus.yaml``. Decided by FILE EXISTENCE, not parsed truthiness, so
+        an empty / comments-only user ``nexus.yaml`` is treated as a
+        pre-existing user file and never written/unlinked (Issue #4126
+        review r4, Finding B).
+      * ``state_snapshots`` — maps each state path to its pre-write bytes
+        (``None`` if the file did NOT pre-exist). On rollback the caller
+        RESTORES pre-existing state and only unlinks state files THIS run
+        created — so a failed second launch never erases a still-running /
+        previous sandbox's ``.state.json`` (Issue #4126 review r4,
+        Finding C).
     """
     grpc_port = derive_grpc_port(http_port, port_explicit)
     grpc_host = host or "localhost"
@@ -543,28 +555,43 @@ def persist_sandbox_runtime_artifacts(
     if hub_url:  # hub_url MAY be recorded; hub_token MUST NOT.
         sandbox_state["hub_url"] = hub_url
 
-    existing_config = _load_project_config_optional()
+    # Decide create/write/unlink of nexus.yaml on FILE EXISTENCE, NOT parsed
+    # truthiness (Issue #4126 review r4, Finding B). An empty or
+    # comments-only nexus.yaml parses to ``{}`` but is a pre-existing USER
+    # file: treating it as "no project config" and overwriting/unlinking it
+    # violated the r3 contract. Mirror the loader's search order
+    # (``CONFIG_SEARCH_PATHS``) and check the disk, not the parse.
+    existing_config_file = next(
+        (Path(c) for c in CONFIG_SEARCH_PATHS if Path(c).exists()),
+        None,
+    )
 
     state_paths: list[Path] = []
     yaml_created_path: Path | None = None
+    state_snapshots: dict[Path, bytes | None] = {}
 
     # The sandbox daemon ALWAYS runs on an ISOLATED data dir. This is the
     # ONLY ``.state.json`` we ever write — never the project's anchor.
     effective = str(Path(explicit_data_dir or sandbox_default_data_dir).resolve())
+    state_path = Path(effective) / STATE_FILENAME
+    # Snapshot pre-existing state BEFORE writing so a failed launch can
+    # restore (not erase) a still-running / previous sandbox's discovery
+    # artifact in the same isolated dir (Issue #4126 review r4, Finding C).
+    try:
+        state_snapshots[state_path] = state_path.read_bytes()
+    except (FileNotFoundError, OSError):
+        state_snapshots[state_path] = None
     # save_runtime_state mutates the dict (adds version/started_at); copy so
     # callers see a stable input dict.
     save_runtime_state(effective, dict(sandbox_state))
-    state_paths.append(Path(effective) / STATE_FILENAME)
+    state_paths.append(state_path)
 
-    if not existing_config:
-        # No project config: ``nexus env``/``run`` hard-require a nexus.yaml,
-        # so write a minimal one (pointing at the isolated dir) so the
-        # no-`--url` discovery path resolves the running sandbox. Safe: there
-        # is no pre-existing project config to clobber.
-        yaml_created_path = next(
-            (Path(c) for c in CONFIG_SEARCH_PATHS if Path(c).exists()),
-            Path(CONFIG_SEARCH_PATHS[0]),
-        )
+    if existing_config_file is None:
+        # No project config FILE exists at all: ``nexus env``/``run``
+        # hard-require a nexus.yaml, so write a minimal one (pointing at the
+        # isolated dir) so the no-`--url` discovery path resolves the running
+        # sandbox. Safe: there is no pre-existing user config to clobber.
+        yaml_created_path = Path(CONFIG_SEARCH_PATHS[0])
         _save_project_config(
             {
                 "profile": "sandbox",
@@ -572,13 +599,13 @@ def persist_sandbox_runtime_artifacts(
                 "ports": {"http": http_port, "grpc": grpc_port},
             }
         )
-    # Else: a project nexus.yaml exists. We deliberately do NOTHING to it or
-    # its data_dir — no rewrite, no .state.json clobber, no file mixing. The
-    # operator discovers the running sandbox via ``nexus ready`` and the
-    # daemon's readiness file (~/.nexus/nexusd.ready), keeping the project's
-    # own env/status resolution authoritative for its main stack.
+    # Else: a project nexus.yaml FILE exists (even if empty / comments-only).
+    # We deliberately do NOTHING to it or its data_dir — no rewrite, no
+    # .state.json clobber, no file mixing. The operator discovers the running
+    # sandbox via ``nexus ready`` and the daemon's readiness file, keeping
+    # the project's own env/status resolution authoritative for its stack.
 
-    return effective, state_paths, yaml_created_path
+    return effective, state_paths, yaml_created_path, state_snapshots
 
 
 # ---------------------------------------------------------------------------
@@ -834,6 +861,7 @@ def up(
             _resolved_data_dir,
             _state_paths,
             _yaml_created_path,
+            _state_snapshots,
         ) = persist_sandbox_runtime_artifacts(
             workspace=workspace,
             http_port=_http_port,
@@ -874,12 +902,20 @@ def up(
         # this run (never a pre-existing user config, which we never write).
         _sandbox_result = subprocess.run(cmd)
         if _sandbox_result.returncode != 0:
-            # Roll back the .state.json we wrote in the isolated sandbox dir
-            # and the minimal nexus.yaml only if WE created it (never a
-            # pre-existing project config or its data_dir).
+            # Idempotent rollback (Issue #4126 review r4, Finding C): for each
+            # .state.json, RESTORE its pre-write bytes if it pre-existed
+            # (don't erase a still-running / previous sandbox's discovery
+            # artifact); only UNLINK state files THIS run actually created.
+            # The minimal nexus.yaml is unlinked only if WE created it (never
+            # a pre-existing user config — empty/comments-only included).
             for _sp in _state_paths:
-                with contextlib.suppress(OSError):
-                    _sp.unlink()
+                _original = _state_snapshots.get(_sp)
+                if _original is not None:
+                    with contextlib.suppress(OSError):
+                        _sp.write_bytes(_original)
+                else:
+                    with contextlib.suppress(OSError):
+                        _sp.unlink()
             if _yaml_created_path is not None:
                 with contextlib.suppress(OSError):
                     _yaml_created_path.unlink()

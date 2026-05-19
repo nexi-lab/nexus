@@ -103,8 +103,16 @@ def _wait_ready(proc: subprocess.Popen[bytes], ready_file: Path, log_path: Path)
                 )
             raise AssertionError(f"nexusd exited early (code {proc.returncode}). Log:\n{log}")
         if ready_file.exists():
-            content = ready_file.read_text().strip()
-            host, _, port_s = content.partition(":")
+            # Post-r4 the readiness file is tokenized: line 1 is
+            # ``host:port`` (unchanged wire format), line 2 is ``pid=<pid>``
+            # (ownership token, Issue #4126 review r4 Finding A). Parse only
+            # the first non-empty line so this helper matches ``nexus
+            # ready``'s ``_parse_endpoint`` back-compat behavior.
+            first_line = next(
+                (ln for ln in ready_file.read_text().splitlines() if ln.strip()),
+                "",
+            ).strip()
+            host, _, port_s = first_line.partition(":")
             return host, int(port_s)
         time.sleep(0.25)
     log = log_path.read_text(errors="replace")
@@ -595,7 +603,7 @@ def test_sandbox_up_state_is_consumed_by_status(sandbox_daemon, tmp_path: Path) 
     cwd_before = os.getcwd()
     os.chdir(project_dir)
     try:
-        effective_dd, state_paths, yaml_path = stack.persist_sandbox_runtime_artifacts(
+        effective_dd, state_paths, yaml_path, _snaps = stack.persist_sandbox_runtime_artifacts(
             workspace=workspace,
             http_port=http_port,
             port_explicit=True,  # explicit port → grpc = http + 2 (= grpc_port)
@@ -725,7 +733,7 @@ def test_sandbox_up_with_preexisting_project_config_is_isolated(
     cwd_before = os.getcwd()
     os.chdir(project_dir)
     try:
-        effective_dd, state_paths, yaml_path = stack.persist_sandbox_runtime_artifacts(
+        effective_dd, state_paths, yaml_path, _snaps = stack.persist_sandbox_runtime_artifacts(
             workspace=workspace,
             http_port=http_port,
             port_explicit=True,
@@ -783,3 +791,114 @@ def test_sandbox_up_with_preexisting_project_config_is_isolated(
     assert data["ready"] is True, data
     assert data["profile"] == "sandbox", data
     assert data["endpoint"] == f"{host}:{http_port}", data
+
+
+def _spawn_under_shared_home(
+    home: Path, tmp_path: Path, tag: str, port: int
+) -> tuple[subprocess.Popen[bytes], Path, Path, Path]:
+    """Spawn a sandbox daemon under an EXPLICIT shared *home* + isolated
+    data dir. Returns (proc, legacy_ready, scoped_ready, log_path)."""
+    workspace = tmp_path / f"ws-{tag}"
+    data_dir = tmp_path / f"data-{tag}"
+    for d in (home, workspace, data_dir, home / ".nexus"):
+        d.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    for v in ("NEXUS_PROFILE", "NEXUS_HOSTNAME", "NEXUS_HUB_URL", "NEXUS_HUB_TOKEN"):
+        env.pop(v, None)
+
+    log_path = tmp_path / f"nexusd-{tag}.log"
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "nexus.daemon.main",
+            "--profile",
+            "sandbox",
+            "--workspace",
+            str(workspace),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--data-dir",
+            str(data_dir),
+        ],
+        env=env,
+        stdout=log_path.open("wb"),
+        stderr=subprocess.STDOUT,
+    )
+    return proc, home / ".nexus" / "nexusd.ready", data_dir / ".nexusd.ready", log_path
+
+
+def test_two_sandboxes_same_home_readiness_no_cross_clobber(tmp_path: Path) -> None:
+    """Issue #4126 review r4, Finding A: two sandbox daemons under the SAME
+    HOME with distinct data dirs/ports both become ready, each has a
+    deterministic data-dir-scoped readiness record, and when one exits its
+    ownership-checked unlink does NOT remove the other's readiness (legacy
+    OR scoped) — so ``nexus ready`` keeps resolving the survivor."""
+    shared_home = tmp_path / "shared-home"
+    port_a, port_b = _free_port(), _free_port()
+    while port_b == port_a:
+        port_b = _free_port()
+
+    proc_a, legacy_a, scoped_a, log_a = _spawn_under_shared_home(shared_home, tmp_path, "a", port_a)
+    proc_b, legacy_b, scoped_b, log_b = _spawn_under_shared_home(shared_home, tmp_path, "b", port_b)
+    assert legacy_a == legacy_b, "both daemons share the legacy global path"
+    assert scoped_a != scoped_b, "scoped readiness paths must be distinct"
+
+    try:
+        # Wait for BOTH daemons' scoped readiness files (skip cleanly if the
+        # Rust extension isn't built, matching _wait_ready's #4146 contract).
+        deadline = time.monotonic() + BOOT_TIMEOUT_S
+        for proc, scoped, log_path in (
+            (proc_a, scoped_a, log_a),
+            (proc_b, scoped_b, log_b),
+        ):
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:
+                    log = log_path.read_text(errors="replace")
+                    if "No module named 'nexus_runtime'" in log:
+                        pytest.skip("nexus_runtime extension not built — see #4146")
+                    raise AssertionError(
+                        f"daemon exited early (code {proc.returncode}). Log:\n{log}"
+                    )
+                if scoped.exists() and scoped.read_text().strip():
+                    break
+                time.sleep(0.25)
+            else:
+                raise AssertionError(f"scoped readiness {scoped} not written within budget")
+
+        # Each scoped file resolves to ITS daemon's port (deterministic).
+        def _endpoint_port(p: Path) -> int:
+            first = next((ln for ln in p.read_text().splitlines() if ln.strip()), "").strip()
+            return int(first.rpartition(":")[2])
+
+        assert _endpoint_port(scoped_a) == port_a
+        assert _endpoint_port(scoped_b) == port_b
+        assert legacy_a.exists(), "a legacy readiness record must exist"
+
+        # Terminate daemon A; its finally{} runs ownership-checked unlink.
+        proc_a.terminate()
+        proc_a.wait(timeout=30)
+
+        # B is still alive: its scoped readiness MUST survive, and the legacy
+        # global file (whichever daemon wrote it last) must NOT have been
+        # clobbered by A's exit if it no longer holds A's token.
+        assert proc_b.poll() is None, "daemon B should still be running"
+        assert scoped_b.exists(), "B's scoped readiness must survive A exit"
+        assert _endpoint_port(scoped_b) == port_b
+        assert legacy_b.exists(), (
+            "legacy readiness clobbered: A's exit removed a file it no "
+            "longer owned (cross-sandbox clobber regression)"
+        )
+    finally:
+        for proc in (proc_a, proc_b):
+            with contextlib.suppress(Exception):
+                proc.terminate()
+                proc.wait(timeout=15)
+            if proc.poll() is None:
+                with contextlib.suppress(Exception):
+                    proc.kill()
+                    proc.wait(timeout=10)

@@ -640,6 +640,74 @@ class TestSandboxFailureRollback:
             assert not (Path(ddir) / ".state.json").exists(), "stale .state.json left behind"
             assert not Path("nexus.yaml").exists(), "stale minimal nexus.yaml left behind"
 
+    def test_preexisting_state_json_restored_on_daemon_failure(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Issue #4126 review r4, Finding C: if the isolated data dir already
+        holds a previous/running sandbox's ``.state.json``, a failed second
+        launch must RESTORE the original bytes (not overwrite-then-delete).
+
+        Pre-fix this FAILS: rollback unconditionally ``unlink``ed every
+        state path, erasing the prior sandbox's discovery artifact."""
+        ws = str(tmp_path / "ws")
+        ddir = tmp_path / "ddir"
+        ddir.mkdir(parents=True, exist_ok=True)
+        # A previous/running sandbox's state already lives in the dir.
+        prior_state = ddir / ".state.json"
+        original_bytes = (
+            b'{"profile": "sandbox", "ports": {"http": 9999, "grpc": 10001}, '
+            b'"workspace": "/prev/ws", "version": 1, "started_at": "2020-01-01T00:00:00+00:00"}'
+        )
+        prior_state.write_bytes(original_bytes)
+
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1  # second launch FAILS
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # A project config EXISTS so the producer touches only state.
+            Path("nexus.yaml").write_text("profile: full\n")
+            with (
+                patch("shutil.which", return_value=fake_nexusd),
+                patch("subprocess.run", return_value=mock_proc),
+                patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            ):
+                result = runner.invoke(
+                    up,
+                    ["--profile", "sandbox", "--workspace", ws, "--data-dir", str(ddir)],
+                )
+            assert result.exit_code == 1, result.output
+            assert prior_state.exists(), "pre-existing sandbox .state.json was deleted by rollback"
+            assert prior_state.read_bytes() == original_bytes, (
+                "pre-existing .state.json must be byte-identical (restored, "
+                "not the failed run's overwrite) after rollback"
+            )
+
+    def test_run_created_state_json_still_removed_on_failure(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Unchanged behavior: a .state.json THIS run created (no
+        pre-existing file) is still unlinked on rollback."""
+        ws = str(tmp_path / "ws")
+        ddir = tmp_path / "fresh-ddir"  # does NOT pre-exist
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("nexus.yaml").write_text("profile: full\n")
+            with (
+                patch("shutil.which", return_value=fake_nexusd),
+                patch("subprocess.run", return_value=mock_proc),
+                patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            ):
+                result = runner.invoke(
+                    up,
+                    ["--profile", "sandbox", "--workspace", ws, "--data-dir", str(ddir)],
+                )
+            assert result.exit_code == 1, result.output
+            assert not (ddir / ".state.json").exists(), (
+                "a state file this run created must still be removed on rollback"
+            )
+
     def test_preexisting_yaml_not_removed_on_daemon_failure(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -691,19 +759,24 @@ class TestSandboxOptionalFlagValidation:
 
 
 class TestEmptyNexusYamlBehavior:
-    """MINOR 7(a): an empty nexus.yaml (parses to {}) is treated as ABSENT
-    — the minimal sandbox config is written. Lock this current behavior."""
+    """Issue #4126 review r4, Finding B: an empty / comments-only nexus.yaml
+    parses to ``{}`` but is a PRE-EXISTING USER FILE. The create/write/unlink
+    decision must be made on FILE EXISTENCE, not parsed truthiness — so the
+    user's file is NEVER overwritten on success NOR unlinked on rollback.
 
-    def test_empty_yaml_is_overwritten_with_minimal_config(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    Pre-fix this class FAILS: ``if not existing_config:`` treated ``{}`` as
+    "no project config" and clobbered/unlinked the user's nexus.yaml.
+    """
+
+    def test_empty_yaml_byte_identical_on_success(self, runner: CliRunner, tmp_path: Path) -> None:
         ws = str(tmp_path / "ws")
         ddir = str(tmp_path / "ddir")
         fake_nexusd = "/usr/local/bin/nexusd"
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            Path("nexus.yaml").write_text("")  # empty → parses to {}
+            original = ""  # empty → parses to {}
+            Path("nexus.yaml").write_text(original)
             with (
                 patch("shutil.which", return_value=fake_nexusd),
                 patch("subprocess.run", return_value=mock_proc),
@@ -713,10 +786,38 @@ class TestEmptyNexusYamlBehavior:
                     up, ["--profile", "sandbox", "--workspace", ws, "--data-dir", ddir]
                 )
             assert result.exit_code == 0, result.output
-            written = yaml.safe_load(Path("nexus.yaml").read_text())
-            assert written is not None, "empty yaml should be replaced by minimal config"
-            assert written["profile"] == "sandbox"
-            assert written["data_dir"] == ddir
+            assert Path("nexus.yaml").read_text() == original, (
+                "empty user nexus.yaml must be byte-identical (not clobbered "
+                "with a minimal sandbox config)"
+            )
+
+    def test_comments_only_yaml_byte_identical_after_rollback(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        ws = str(tmp_path / "ws")
+        ddir = str(tmp_path / "ddir")
+        fake_nexusd = "/usr/local/bin/nexusd"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1  # daemon FAILED → rollback path
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            original = "# my project config\n# (intentionally just comments)\n"
+            Path("nexus.yaml").write_text(original)
+            with (
+                patch("shutil.which", return_value=fake_nexusd),
+                patch("subprocess.run", return_value=mock_proc),
+                patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            ):
+                result = runner.invoke(
+                    up, ["--profile", "sandbox", "--workspace", ws, "--data-dir", ddir]
+                )
+            assert result.exit_code != 0
+            assert Path("nexus.yaml").exists(), (
+                "comments-only user nexus.yaml must NOT be unlinked on rollback"
+            )
+            assert Path("nexus.yaml").read_text() == original, (
+                "comments-only user nexus.yaml must be byte-identical after "
+                "a simulated daemon-failure rollback"
+            )
 
 
 class TestSandboxStateDictShape:

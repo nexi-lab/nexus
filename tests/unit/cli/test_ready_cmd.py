@@ -15,6 +15,7 @@ All tests use tiny timeouts and patched httpx (no real network/daemon).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -295,4 +296,66 @@ def test_ready_concrete_host_passed_through_unchanged(
     )
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert seen and all(u.startswith("http://127.0.0.1:2026") for u in seen)
+    assert json.loads(result.output)["data"]["endpoint"] == "127.0.0.1:2026"
+
+
+# ---------------------------------------------------------------------------
+# Issue #4126 review r4, Finding A: data-dir-scoped readiness + tokenized
+# (multi-line) readiness file back-compat.
+# ---------------------------------------------------------------------------
+
+
+def test_ready_data_dir_targets_scoped_file(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``nexus ready --data-dir D`` resolves ``D/.nexusd.ready`` so a
+    specific sandbox is probed deterministically even when several daemons
+    run under one HOME (the legacy global file is NOT consulted)."""
+    ddir = tmp_path / "sandbox-data"
+    ddir.mkdir()
+    (ddir / ".nexusd.ready").write_text(f"127.0.0.1:3030\npid={os.getpid()}\n")
+
+    def route(url: str) -> _FakeResponse:
+        if url.endswith("/health"):
+            return _FakeResponse(200, {"status": "healthy"})
+        if url.endswith("/api/v2/features"):
+            return _FakeResponse(200, {"profile": "sandbox", "enabled_bricks": []})
+        raise AssertionError(f"unexpected url {url}")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: _FakeClient(route, *a, **k))
+
+    result = runner.invoke(
+        _ready_cmd(),
+        ["--data-dir", str(ddir), "--json", "--timeout", "5"],
+    )
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert json.loads(result.output)["data"]["endpoint"] == "127.0.0.1:3030"
+
+
+def test_ready_parses_tokenized_multiline_file(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A post-r4 tokenized readiness file (``host:port`` + ``pid=`` line)
+    must still resolve — first line is the endpoint (back-compat)."""
+    f = tmp_path / "nexusd.ready"
+    f.write_text("127.0.0.1:2026\npid=4242\n")
+
+    def route(url: str) -> _FakeResponse:
+        if url.endswith("/health"):
+            return _FakeResponse(200, {"status": "healthy"})
+        if url.endswith("/api/v2/features"):
+            return _FakeResponse(200, {"profile": "sandbox", "enabled_bricks": []})
+        raise AssertionError(f"unexpected url {url}")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: _FakeClient(route, *a, **k))
+
+    result = runner.invoke(
+        _ready_cmd(),
+        ["--readiness-file", str(f), "--json", "--timeout", "5"],
+    )
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     assert json.loads(result.output)["data"]["endpoint"] == "127.0.0.1:2026"

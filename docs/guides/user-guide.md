@@ -224,22 +224,40 @@ nexus up --profile sandbox --workspace ~/app \
 nexusd --profile sandbox --workspace ~/app --host 127.0.0.1 --port 2026
 ```
 
-**Discover it afterwards (#4144 — works on non-default host/port):**
+**Discover it afterwards (#4144 / #4126 — works on non-default host/port):**
 
-`nexus up --profile sandbox` persists a runtime-state record
-(`<data-dir>/.state.json`) plus, if no project config exists, a minimal
-`nexus.yaml` in the current directory (an existing `nexus.yaml` is never
-clobbered). The follow-up workflow consumes it:
+The sandbox daemon **always runs on an isolated data dir** — your explicit
+`--data-dir` if given, else `~/.nexus/sandbox`. It is never silently
+pointed at an existing project's `data_dir`, and it never modifies a
+project's `nexus.yaml` or clobbers/mixes its `.state.json`. How you
+discover the running sandbox depends on whether a project `nexus.yaml`
+exists in the current directory:
 
-```bash
-# Connection vars resolved from persisted state (NEXUS_URL,
-# NEXUS_GRPC_HOST, NEXUS_GRPC_PORT, NEXUS_PROFILE=sandbox,
-# NEXUS_WORKSPACE) — the hub token is NEVER persisted:
-eval "$(nexus env)"
+- **No project `nexus.yaml`:** `nexus up --profile sandbox` writes a
+  minimal `nexus.yaml` *and* the runtime-state record
+  (`<isolated-data-dir>/.state.json`) so `nexus env`/`nexus status`
+  (no `--url`) discover the sandbox directly:
 
-# Health/status against the persisted sandbox endpoint:
-nexus status
-```
+  ```bash
+  # Connection vars resolved from persisted state (NEXUS_URL,
+  # NEXUS_GRPC_HOST, NEXUS_GRPC_PORT, NEXUS_PROFILE=sandbox,
+  # NEXUS_WORKSPACE) — the hub token is NEVER persisted:
+  eval "$(nexus env)"
+
+  # Health/status against the persisted sandbox endpoint:
+  nexus status
+  ```
+
+- **A project `nexus.yaml` already exists:** it stays authoritative for
+  your main stack — the sandbox does **not** touch it or its `.state.json`.
+  Discover the running sandbox via the purpose-built `nexus ready` command
+  and the daemon readiness file instead (it reports
+  `ready: true`, `profile: sandbox`, and the endpoint):
+
+  ```bash
+  # Default readiness file is ~/.nexus/nexusd.ready
+  nexus ready --json
+  ```
 
 **Verify what it started (RPC surface — HTTP only):**
 

@@ -410,3 +410,107 @@ def test_profile_full_with_workspace_no_config_still_rejected(tmp_path: Path, mo
     assert "only valid with --profile sandbox" in result.output
     bootstrapper_cls.assert_not_called()
     assert "NEXUS_FEDERATION_DISABLED" not in os.environ
+
+
+# ---------------------------------------------------------------------------
+# Review r3 (Issue #4126 HIGH A): an explicit CLI --profile that disagrees
+# with the config's EFFECTIVE profile must be rejected even when the config
+# file OMITS ``profile:``. Pre-r3 the conflict check only fired when the file
+# had a DIFFERENT explicit ``profile:``; an omitted ``profile:`` let
+# load_config silently fall back to the default ("full"), so
+# ``--profile sandbox --config <no-profile.yaml>`` ran a FULL kernel while
+# silently dropping the operator's explicit sandbox intent (and kill-switch).
+# ---------------------------------------------------------------------------
+
+
+def test_cli_profile_conflicts_with_config_default_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    """``nexusd --profile sandbox --config <yaml WITHOUT profile:>`` → REJECT.
+
+    Locks Finding A (r3): the config omits ``profile:`` so ``load_config``
+    resolves it to the ``NexusConfig`` default (``"full"``). An explicit CLI
+    ``--profile sandbox`` therefore conflicts with the config's EFFECTIVE
+    profile and must be a clean usage error BEFORE any sandbox side effect —
+    no SandboxBootstrapper, no kill-switch.
+
+    Pre-r3 this FAILS: the conflict check only compared against an EXPLICIT
+    ``profile:`` key, so an omitted key did not conflict and the daemon
+    silently ran ``full`` (exit 0, no bootstrapper) — the bug this locks.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = tmp_path / "noprofile.yaml"
+    cfg.write_text("backend: path_local\n")  # NO profile: key
+
+    result, bootstrapper_cls = _run_daemon(
+        "sandbox", tmp_path, monkeypatch, workspace=workspace, config_path=cfg
+    )
+
+    assert result.exit_code == 64, (  # ExitCode.USAGE_ERROR
+        f"--profile sandbox with a --config that omits profile: (effective "
+        f"'full') must be a clean usage error; got exit {result.exit_code}: "
+        f"{result.output}"
+    )
+    assert "conflict" in result.output.lower()
+    bootstrapper_cls.assert_not_called()
+    assert "NEXUS_FEDERATION_DISABLED" not in os.environ, (
+        "A rejected conflicting invocation must not have set the kill-switch."
+    )
+
+
+def test_cli_profile_matches_config_default_is_allowed(tmp_path: Path, monkeypatch) -> None:
+    """``nexusd --profile full --config <yaml WITHOUT profile:>`` → ALLOWED.
+
+    Locks Finding A (r3) the non-regression edge: when the explicit CLI
+    ``--profile`` equals the config's EFFECTIVE profile (here the default
+    ``"full"``, because the file omits ``profile:``) there is NO conflict —
+    the daemon boots normally and (full is non-sandbox) the kill-switch is
+    NEVER set.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+
+    cfg = tmp_path / "noprofile.yaml"
+    cfg.write_text("backend: path_local\n")  # NO profile: key
+
+    result, bootstrapper_cls = _run_daemon("full", tmp_path, monkeypatch, config_path=cfg)
+
+    assert result.exit_code == 0, (
+        f"--profile full matching the config's effective default must NOT "
+        f"conflict; got exit {result.exit_code}: {result.output}"
+    )
+    assert "conflict" not in result.output.lower()
+    bootstrapper_cls.assert_not_called()
+    assert "NEXUS_FEDERATION_DISABLED" not in os.environ
+
+
+def test_config_sandbox_no_cli_profile_unchanged(tmp_path: Path, monkeypatch) -> None:
+    """``nexusd --config <sandbox.yaml>`` (no --profile) → sandbox, unchanged.
+
+    Zero-regression guard for Finding A (r3): with NO command-line
+    ``--profile`` the conflict check never fires (it is gated on
+    ParameterSource.COMMANDLINE), so a ``--config sandbox.yaml`` boot still
+    resolves to the sandbox effective profile and sets the kill-switch
+    exactly as before.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = tmp_path / "sandbox.yaml"
+    cfg.write_text("profile: sandbox\n")
+
+    result, bootstrapper_cls = _run_daemon(
+        None, tmp_path, monkeypatch, workspace=workspace, config_path=cfg
+    )
+
+    assert result.exit_code == 0, (
+        f"--config sandbox.yaml with no --profile must boot cleanly; got "
+        f"exit {result.exit_code}: {result.output}"
+    )
+    assert "conflict" not in result.output.lower()
+    bootstrapper_cls.assert_called_once()
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1"

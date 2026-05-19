@@ -668,3 +668,118 @@ def test_sandbox_up_state_is_consumed_by_status(sandbox_daemon, tmp_path: Path) 
     status_data = status_payload.get("data", status_payload)
     assert status_data["server_reachable"] is True, status_data
     assert status_data["server_url"] == f"http://{host}:{http_port}", status_data
+
+
+def test_sandbox_up_with_preexisting_project_config_is_isolated(
+    sandbox_daemon, tmp_path: Path
+) -> None:
+    """Issue #4126 review r3, Finding B (REDESIGN): when a project
+    ``nexus.yaml`` ALREADY exists, the sandbox producer must NOT touch the
+    project's ``nexus.yaml`` or its ``.state.json`` (the r2 design clobbered
+    + unlink()'d the project's existing full/Docker state and mixed sandbox
+    files into the project's stack dir). Instead:
+
+      * the project ``nexus.yaml`` AND its pre-existing ``.state.json`` are
+        BYTE-UNCHANGED,
+      * the sandbox daemon's runtime state lives ONLY in the ISOLATED
+        sandbox data dir,
+      * the operator discovers the running sandbox via the purpose-built
+        ``nexus ready`` command + the daemon readiness file — NOT by
+        hijacking the project's ``env``/``status`` resolution.
+
+    Uses the real fixture daemon (already booted + readiness file written)
+    and the REAL ``persist_sandbox_runtime_artifacts`` producer.
+    """
+    import json as _json
+
+    from nexus.cli.commands import stack
+
+    host = sandbox_daemon["host"]
+    http_port = sandbox_daemon["http_port"]
+    ready_file = sandbox_daemon["ready_file"]
+
+    project_dir = tmp_path / "existing-project"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    proj_data = project_dir / "proj-data"
+    proj_data.mkdir(parents=True, exist_ok=True)
+    isolated = tmp_path / "isolated-sandbox"  # explicit, isolated data dir
+    workspace = str(project_dir / "ws")
+
+    # Pre-existing project config + a full/Docker-shaped .state.json.
+    project_yaml = project_dir / "nexus.yaml"
+    project_yaml_text = "project_name: real-stack\ndata_dir: ./proj-data\n"
+    project_yaml.write_text(project_yaml_text)
+    project_state = proj_data / ".state.json"
+    project_state_text = _json.dumps(
+        {
+            "profile": "full",
+            "ports": {"http": 8080, "grpc": 8082},
+            "image": "ghcr.io/nexi/nexus:latest",
+            "api_key": "sentinel-do-not-touch",
+            "version": 1,
+        },
+        indent=2,
+    )
+    project_state.write_text(project_state_text)
+
+    cwd_before = os.getcwd()
+    os.chdir(project_dir)
+    try:
+        effective_dd, state_paths, yaml_path = stack.persist_sandbox_runtime_artifacts(
+            workspace=workspace,
+            http_port=http_port,
+            port_explicit=True,
+            host=host,
+            explicit_data_dir=str(isolated),
+            sandbox_default_data_dir=str(isolated),
+            hub_url=None,
+        )
+    finally:
+        os.chdir(cwd_before)
+
+    # The sandbox daemon runs on the ISOLATED dir; exactly one state write,
+    # there; the project's nexus.yaml is never (re)written.
+    assert effective_dd == str(isolated.resolve())
+    assert len(state_paths) == 1, state_paths
+    assert state_paths[0] == isolated.resolve() / ".state.json"
+    assert yaml_path is None, "must not create/rewrite a project nexus.yaml"
+
+    # Project config AND its pre-existing .state.json are BYTE-identical.
+    assert project_yaml.read_text() == project_yaml_text
+    assert project_state.read_text() == project_state_text, (
+        "the project's pre-existing full/Docker .state.json was clobbered/mixed"
+    )
+
+    # Sandbox state is ONLY in the isolated dir, with sandbox profile.
+    sandbox_state = _json.loads((isolated / ".state.json").read_text())
+    assert sandbox_state["profile"] == "sandbox"
+    assert sandbox_state["ports"]["http"] == http_port
+
+    # Discovery for the operator is via `nexus ready` + the readiness file
+    # (NOT the project's env/status resolution). The fixture daemon already
+    # booted and wrote its isolated readiness file.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nexus.cli",
+            "ready",
+            "--readiness-file",
+            str(ready_file),
+            "--json",
+            "--timeout",
+            "30",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, (
+        f"nexus ready should exit 0; rc={result.returncode} "
+        f"stdout={result.stdout} stderr={result.stderr}"
+    )
+    payload = _json.loads(result.stdout)
+    data = payload.get("data", payload)
+    assert data["ready"] is True, data
+    assert data["profile"] == "sandbox", data
+    assert data["endpoint"] == f"{host}:{http_port}", data

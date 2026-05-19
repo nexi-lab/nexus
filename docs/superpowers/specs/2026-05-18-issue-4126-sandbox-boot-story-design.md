@@ -127,18 +127,36 @@ gRPC port the way `nexusd` does (`http_port + 2` unless overridden by env
 `NEXUS_GRPC_PORT`; an explicit `--port` wins over the env override — mirrors
 `src/nexus/daemon/main.py`), then **before** the blocking daemon runs it:
 
-- writes `<data_dir>/.state.json` via `save_runtime_state` recording
-  `profile=sandbox`, `workspace`, resolved `ports.http`/`ports.grpc`, and the
-  bind `grpc_host`;
-- writes a *minimal* `nexus.yaml` into the discovery location **only if one is
-  absent** (an existing project config is never clobbered).
+**Discovery contract (corrected — Issue #4126 review r3, Finding B
+REDESIGN).** The sandbox daemon **always runs on an isolated data dir**:
+the explicit `--data-dir` if given, else the sandbox default
+`~/.nexus/sandbox` (aligned with `config._apply_sandbox_defaults`). It is
+**never** silently pointed at an existing project's `data_dir`. The
+producer (`stack.persist_sandbox_runtime_artifacts`) then:
 
-Discovery-anchor rationale (smallest blast radius): `nexus env`/`run`
-hard-require `load_project_config()` (raises without `nexus.yaml`). Making
-those three consumers fall back to optional config would touch three call
-sites and risk regressing the Docker `up` resolution path. Writing a minimal
-`nexus.yaml` localizes the change entirely to the sandbox-only branch of
-`up`; the Docker `up` flow and existing env/status code are untouched.
+- **No project `nexus.yaml`:** writes a *minimal* `nexus.yaml` in the
+  current directory **and** `<isolated-data-dir>/.state.json` via
+  `save_runtime_state` (recording `profile=sandbox`, `workspace`, resolved
+  `ports.http`/`ports.grpc`, bind `grpc_host`), so `nexus env`/`status`
+  (no `--url`) discover the sandbox directly. Unchanged.
+- **A project `nexus.yaml` exists:** the project config stays authoritative
+  for the user's main stack. The producer does **not** modify the project's
+  `nexus.yaml`, does **not** write/overwrite `.state.json` in the project's
+  `data_dir`, and does **not** mix sandbox SQLite/local files into it. It
+  writes **only** the sandbox's own `.state.json` inside the *isolated*
+  data dir. The operator discovers the running sandbox via the
+  purpose-built `nexus ready` command + the daemon readiness file — **not**
+  by hijacking the project's `env`/`status` resolution.
+
+This supersedes the r2 design (point the daemon at the project `data_dir`
+when no explicit `--data-dir`, and dual-write `.state.json` to the existing
+config's anchor). That design overwrote a normal project's existing
+full/Docker `.state.json`, the failure-rollback `unlink`'d (did not
+restore) it, and it mixed sandbox files into the project's stack data dir —
+all dropped in r3. Failure rollback now unlinks **only** the files this run
+created in the isolated sandbox dir; never anything in a pre-existing
+project dir.
+
 `resolve_connection_env` gains `NEXUS_PROFILE`/`NEXUS_WORKSPACE` and a
 state-recorded `grpc_host`, all emitted **only when present in state** — the
 Docker path does not set those keys, so its env output is unchanged.
@@ -148,10 +166,17 @@ persistent state (proven by a grep assertion in the unit tests).
 Coverage: `tests/unit/cli/test_stack_sandbox.py::TestSandboxStatePersistence`
 (flag pass-through, state shape, gRPC-port derivation incl. env override and
 explicit-port precedence, hub-token-not-persisted grep, no-clobber, end-to-end
-`up`→`nexus env` discovery) and an additive integration test in
+`up`→`nexus env` discovery), `::TestPreExistingConfigDiscovery` and
+`::TestPreExistingProjectStatePreservedRegression` (existing project
+`nexus.yaml` + its `.state.json` byte-unchanged on success AND after a
+daemon-failure rollback; sandbox state isolated;
+`::TestSandboxOnlyFlagSourceAwareness` for the r3 Finding C env-source-aware
+flag gate), plus additive integration tests in
 `tests/integration/test_sandbox_boot_smoke.py`
-(`test_sandbox_up_state_is_consumed_by_status`) asserting `nexus env`/`nexus
-status` consume the persisted state against the real booted sandbox daemon.
+(`test_sandbox_up_state_is_consumed_by_status` for the no-config case, and
+`test_sandbox_up_with_preexisting_project_config_is_isolated` asserting the
+project config/state stay byte-unchanged while the sandbox is discovered via
+`nexus ready` against the real booted daemon).
 
 **`nexus ready` remains a complementary readiness probe** (not the gap
 closure). `nexus ready [--timeout SECONDS] [--readiness-file PATH] [--json]`

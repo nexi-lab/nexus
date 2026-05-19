@@ -383,21 +383,38 @@ def main(
     # non-sandbox kernel) and inconsistent (a ``--config sandbox.yaml`` boot
     # would be wrongly rejected). EVERY gate below uses ``effective_profile``.
     #
-    # Conflict precedence: an EXPLICIT CLI ``--profile X`` together with a
-    # ``--config`` whose ``profile:`` is ``Y`` (X != Y) is rejected with a
-    # usage error rather than silently letting the config win. Silent
-    # config-wins is the dangerous case the reviewer called out (a user who
-    # typed ``--profile sandbox`` could get full-kernel behavior, or vice
-    # versa). Rejecting is the safest, clearest contract. Only a COMMANDLINE
-    # ``--profile`` triggers this: ``NEXUS_PROFILE`` env losing to the config
+    # Conflict precedence (Issue #4126 review r3, Finding A): an EXPLICIT
+    # command-line ``--profile X`` together with ``--config`` is rejected with
+    # a usage error whenever ``X`` does not equal the profile ``load_config``
+    # will TRULY use for that config. ``load_config`` resolves the
+    # config-derived profile as: the file's ``profile:`` if present, else
+    # ``NEXUS_PROFILE`` env, else the ``NexusConfig`` default (``"full"`` —
+    # see ``src/nexus/config.py``); the raw CLI ``--profile`` is never passed
+    # to ``nexus.connect`` on the ``--config`` branch. So comparing only
+    # against an EXPLICIT ``profile:`` in the file (the pre-r3 rule) left a
+    # silent hole: ``nexusd --profile sandbox --config c.yaml`` where
+    # ``c.yaml`` OMITS ``profile:`` did NOT conflict, yet the kernel ran
+    # ``full`` (the config default) — the operator's explicit ``--profile
+    # sandbox`` (and its kill-switch) silently ignored. We now compare the
+    # explicit CLI value against the config's EFFECTIVE profile
+    # (``_resolve_effective_profile`` with ``config_path`` set already
+    # replicates exactly load_config's file→env→default precedence and
+    # deliberately ignores the CLI value), so the omitted-``profile:`` case
+    # is correctly rejected. Only a COMMANDLINE ``--profile`` triggers this:
+    # ``NEXUS_PROFILE`` env (or the ``"auto"`` default) losing to the config
     # file is documented ``load_config`` precedence, not a user conflict.
     _profile_src = ctx.get_parameter_source("deployment_profile")
     if config_path and _profile_src == click.core.ParameterSource.COMMANDLINE:
-        _file_profile = _read_config_file_profile(config_path)
-        if _file_profile is not None and _file_profile != deployment_profile:
+        _config_effective = _resolve_effective_profile(deployment_profile, config_path)
+        if _config_effective != deployment_profile:
+            _file_profile = _read_config_file_profile(config_path)
+            if _file_profile is not None:
+                _src_desc = f"sets profile: {_file_profile!r}"
+            else:
+                _src_desc = f"omits profile: (load_config resolves it to {_config_effective!r})"
             click.echo(
                 f"Error: conflicting profile — CLI --profile {deployment_profile!r} "
-                f"but --config {config_path} sets profile: {_file_profile!r}. "
+                f"but --config {config_path} {_src_desc}. "
                 "Remove one (the daemon will not silently pick a profile).",
                 err=True,
             )

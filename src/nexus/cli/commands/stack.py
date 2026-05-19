@@ -476,15 +476,6 @@ def _detect_container_state(
         return "absent"
 
 
-# Consumer default when a project config exists but omits ``data_dir:``.
-# ``nexus env``/``status``/``run`` (no ``--url``) all resolve the state file
-# via ``config.get("data_dir", "./nexus-data")`` then ``load_runtime_state``
-# (see env_cmd.py / status.py / state.resolve_connection_env). This MUST stay
-# byte-identical to that default so the discovery anchor we compute below is
-# exactly where consumers look.
-_CONSUMER_DEFAULT_DATA_DIR = "./nexus-data"
-
-
 def persist_sandbox_runtime_artifacts(
     *,
     workspace: str,
@@ -498,44 +489,47 @@ def persist_sandbox_runtime_artifacts(
     """Write the production-shaped sandbox discovery artifacts (#4144).
 
     This is the ONE producer the ``nexus up --profile sandbox`` branch uses
-    to persist what ``nexus env``/``run``/``status`` later discover, and it
-    OWNS the data_dir resolution so the daemon's ``--data-dir``, the
-    ``.state.json`` location, and what consumers read can never diverge
-    (Issue #4126 review r2, Finding B).
+    to persist what the sandbox-readiness workflow later discovers, and it
+    OWNS the data_dir resolution so the daemon's ``--data-dir`` and the
+    ``.state.json`` location can never diverge (Issue #4126 review r3,
+    Finding B — REDESIGN of the r2 dual-write approach).
 
     Inputs:
       * ``explicit_data_dir`` — the operator's explicit ``--data-dir`` /
         ``$NEXUS_DATA_DIR`` value, or ``None`` if neither was set.
       * ``sandbox_default_data_dir`` — the sandbox-profile default
-        (``~/.nexus/sandbox``) used only when there is NO project config and
-        no explicit value.
+        (``~/.nexus/sandbox``, aligned with ``_apply_sandbox_defaults``)
+        used when no explicit value is given.
 
-    data_dir / discovery resolution (precedence + rationale):
+    Contract (Issue #4126 review r3, Finding B):
 
-      1. **A project ``nexus.yaml`` exists** (the common case for existing
-         projects). Consumers discover the sandbox via THAT config:
-         ``existing.get("data_dir", "./nexus-data")``. So:
-           - No explicit ``--data-dir``: the EFFECTIVE data_dir IS that
-             discovery anchor. We write ``.state.json`` there and return it
-             so the caller runs ``nexusd --data-dir <anchor>``. daemon ⇄
-             state ⇄ consumers all agree. The user's ``nexus.yaml`` is NOT
-             rewritten (file no-clobber preserved).
-           - Explicit ``--data-dir`` that CONFLICTS with the anchor: genuine
-             ambiguity. Precedence: the explicit ``--data-dir`` wins for the
-             daemon (operator intent is authoritative), BUT discovery must
-             still work, so we ALSO write a ``.state.json`` at the existing
-             config's anchor pointing at the same runtime. ``nexus env``/
-             ``status`` (no ``--url``) therefore still find the running
-             sandbox. (Explicit == anchor: single write, no duplication.)
-      2. **No project config**: keep prior behavior — effective data_dir is
-         the explicit value if given else ``sandbox_default_data_dir``; we
-         additionally write a *minimal* ``nexus.yaml`` so ``nexus env``/
-         ``run`` (which hard-require ``load_project_config``) work.
+      * The sandbox daemon ALWAYS uses an **ISOLATED** sandbox data dir:
+        the explicit ``--data-dir`` if given, else
+        ``sandbox_default_data_dir`` (``~/.nexus/sandbox``). It is NEVER
+        silently pointed at an existing project's ``data_dir`` — that r2
+        behavior clobbered a project's full/Docker ``.state.json`` and
+        mixed sandbox SQLite/local files into the project's stack dir.
+      * **No project ``nexus.yaml``**: keep prior behavior — write a minimal
+        ``nexus.yaml`` (so ``nexus env``/``run`` work) **and** ``.state.json``
+        in the isolated sandbox data dir, so ``nexus env``/``status``
+        discover it.
+      * **A project ``nexus.yaml`` EXISTS**: do NOT modify it, do NOT
+        write/overwrite ``.state.json`` in the project's ``data_dir``, do
+        NOT touch the project's anchor at all. Only the sandbox's own
+        ``.state.json`` is written, inside the ISOLATED sandbox data dir.
+        The existing project config legitimately stays authoritative for
+        the user's main stack; sandbox discovery for the operator is via
+        the purpose-built ``nexus ready`` command (and the readiness file)
+        — NOT by hijacking the project's ``env``/``status`` resolution.
+      * Failure rollback (handled by the caller) unlinks ONLY the files
+        THIS run created in the isolated sandbox dir; never anything in a
+        pre-existing project dir.
 
     Returns ``(effective_data_dir, state_paths, yaml_created_path_or_None)``.
-    ``state_paths`` is every ``.state.json`` we wrote (1 or 2) so the caller
-    rolls back exactly its own writes on a failed launch; the yaml is rolled
-    back only if we created it (never a pre-existing user config).
+    ``state_paths`` is every ``.state.json`` we wrote (always exactly one,
+    in the isolated dir) so the caller rolls back exactly its own writes on
+    a failed launch; the yaml is rolled back only if we created it (never a
+    pre-existing user config, which we never write).
     """
     grpc_port = derive_grpc_port(http_port, port_explicit)
     grpc_host = host or "localhost"
@@ -554,33 +548,19 @@ def persist_sandbox_runtime_artifacts(
     state_paths: list[Path] = []
     yaml_created_path: Path | None = None
 
-    def _write_state(target: str) -> None:
-        # save_runtime_state mutates the dict (adds version/started_at); copy
-        # so a second write to a different dir gets a fresh dict.
-        save_runtime_state(target, dict(sandbox_state))
-        state_paths.append(Path(target) / STATE_FILENAME)
+    # The sandbox daemon ALWAYS runs on an ISOLATED data dir. This is the
+    # ONLY ``.state.json`` we ever write — never the project's anchor.
+    effective = str(Path(explicit_data_dir or sandbox_default_data_dir).resolve())
+    # save_runtime_state mutates the dict (adds version/started_at); copy so
+    # callers see a stable input dict.
+    save_runtime_state(effective, dict(sandbox_state))
+    state_paths.append(Path(effective) / STATE_FILENAME)
 
-    if existing_config:
-        # Discovery anchor consumers actually read (see module constant).
-        anchor = str(Path(existing_config.get("data_dir", _CONSUMER_DEFAULT_DATA_DIR)).resolve())
-        if explicit_data_dir is None:
-            # No explicit override → the anchor IS the effective data_dir.
-            effective = anchor
-            _write_state(effective)
-        else:
-            # Explicit --data-dir wins for the daemon; if it diverges from
-            # the anchor, ALSO seed state at the anchor so no-`--url`
-            # discovery still resolves the running sandbox.
-            effective = str(Path(explicit_data_dir).resolve())
-            _write_state(effective)
-            if effective != anchor:
-                _write_state(anchor)
-        # Never rewrite the user's nexus.yaml (file no-clobber preserved).
-    else:
-        # No project config: prior behavior. ``nexus env``/``run`` require a
-        # nexus.yaml, so write a minimal one in the discovery location.
-        effective = str(Path(explicit_data_dir or sandbox_default_data_dir).resolve())
-        _write_state(effective)
+    if not existing_config:
+        # No project config: ``nexus env``/``run`` hard-require a nexus.yaml,
+        # so write a minimal one (pointing at the isolated dir) so the
+        # no-`--url` discovery path resolves the running sandbox. Safe: there
+        # is no pre-existing project config to clobber.
         yaml_created_path = next(
             (Path(c) for c in CONFIG_SEARCH_PATHS if Path(c).exists()),
             Path(CONFIG_SEARCH_PATHS[0]),
@@ -592,6 +572,11 @@ def persist_sandbox_runtime_artifacts(
                 "ports": {"http": http_port, "grpc": grpc_port},
             }
         )
+    # Else: a project nexus.yaml exists. We deliberately do NOTHING to it or
+    # its data_dir — no rewrite, no .state.json clobber, no file mixing. The
+    # operator discovers the running sandbox via ``nexus ready`` and the
+    # daemon's readiness file (~/.nexus/nexusd.ready), keeping the project's
+    # own env/status resolution authoritative for its main stack.
 
     return effective, state_paths, yaml_created_path
 
@@ -668,28 +653,38 @@ def register_commands(cli: click.Group) -> None:
     default=None,
     help="Stack profile to activate. Use 'sandbox' to launch nexusd directly (no Docker).",
 )
+# NOTE (Issue #4126 review r3, Finding C): these used a
+# ``default=lambda: os.environ.get(...)`` which makes Click report the
+# parameter source as DEFAULT even when the value came from the env var, so
+# the sandbox-only-flag validation could not tell an env-sourced value from
+# a command-line one. We now use ``envvar=`` so Click reports ENVIRONMENT
+# vs COMMANDLINE vs DEFAULT, and the validation only fires on COMMANDLINE.
 @click.option(
     "--workspace",
     "workspace",
-    default=lambda: os.environ.get("NEXUS_WORKSPACE", ""),
+    default="",
+    envvar="NEXUS_WORKSPACE",
     help="Workspace path for sandbox profile (env: NEXUS_WORKSPACE).",
 )
 @click.option(
     "--hub-url",
     "hub_url",
-    default=lambda: os.environ.get("NEXUS_HUB_URL", ""),
+    default="",
+    envvar="NEXUS_HUB_URL",
     help="Hub gRPC URL for sandbox federation (env: NEXUS_HUB_URL).",
 )
 @click.option(
     "--hub-token",
     "hub_token",
-    default=lambda: os.environ.get("NEXUS_HUB_TOKEN", ""),
+    default="",
+    envvar="NEXUS_HUB_TOKEN",
     help="Hub authentication token for sandbox federation (env: NEXUS_HUB_TOKEN).",
 )
 @click.option(
     "--host",
     "host",
     default=None,
+    envvar="NEXUS_HOST",
     help="Bind address for sandbox profile (passed to nexusd; default 0.0.0.0).",
 )
 @click.option(
@@ -697,15 +692,19 @@ def register_commands(cli: click.Group) -> None:
     "port",
     type=int,
     default=None,
+    envvar="NEXUS_PORT",
     help="HTTP listen port for sandbox profile (passed to nexusd; default 2026).",
 )
 @click.option(
     "--data-dir",
     "data_dir",
     default=None,
+    envvar="NEXUS_DATA_DIR",
     help="Local data directory for sandbox profile (passed to nexusd).",
 )
+@click.pass_context
 def up(
+    ctx: click.Context,
     detach: bool,
     addons: tuple[str, ...],
     port_strategy: str,
@@ -750,28 +749,36 @@ def up(
     # Validate: sandbox-only flags must not be used without --profile
     # sandbox. host/port/data-dir are passed straight to nexusd and have
     # no effect on the Docker path, so silently ignoring them is a UX
-    # trap (#4144 MINOR 5) — reject them too, but only when the user
-    # explicitly set them (default None must not trip the gate).
-    _sandbox_flags: dict[str, str] = {
-        "workspace": workspace,
-        "hub-url": hub_url,
-        "hub-token": hub_token,
-    }
-    # host/port/data-dir default to None; only an explicit value (not the
-    # default) should trip the gate.
-    _sandbox_optional_flags: dict[str, object] = {
-        "host": host,
-        "port": port,
-        "data-dir": data_dir,
+    # trap (#4144 MINOR 5) — reject them too.
+    #
+    # Issue #4126 review r3, Finding C: the rule must only fire for flags
+    # actually set ON THE COMMAND LINE, NOT values sourced from env vars or
+    # the option default. ``resolve_connection_env`` now emits
+    # ``NEXUS_WORKSPACE`` (and friends), so after ``eval "$(nexus env)"`` a
+    # plain ``nexus up`` (no --profile, no CLI --workspace) would otherwise
+    # spuriously fail USAGE_ERROR because --workspace's value came from the
+    # env. Click's ``get_parameter_source`` distinguishes COMMANDLINE from
+    # ENVIRONMENT/DEFAULT, so we gate strictly on COMMANDLINE. An explicit
+    # command-line ``--workspace`` (etc.) without ``--profile sandbox``
+    # STILL errors.
+    _CMDLINE = click.core.ParameterSource.COMMANDLINE
+
+    def _on_cmdline(param: str) -> bool:
+        return ctx.get_parameter_source(param) == _CMDLINE
+
+    # Click parameter name (dest) → user-facing flag spelling.
+    _sandbox_flag_names = {
+        "workspace": "--workspace",
+        "hub_url": "--hub-url",
+        "hub_token": "--hub-token",
+        "host": "--host",
+        "port": "--port",
+        "data_dir": "--data-dir",
     }
     if profile != "sandbox":
-        for flag_name, flag_value in _sandbox_flags.items():
-            if flag_value:
-                click.echo(f"Error: --{flag_name} is only valid with --profile sandbox.")
-                raise SystemExit(ExitCode.USAGE_ERROR)
-        for flag_name, opt_value in _sandbox_optional_flags.items():
-            if opt_value is not None:
-                click.echo(f"Error: --{flag_name} is only valid with --profile sandbox.")
+        for _param, _flag in _sandbox_flag_names.items():
+            if _on_cmdline(_param):
+                click.echo(f"Error: {_flag} is only valid with --profile sandbox.")
                 raise SystemExit(ExitCode.USAGE_ERROR)
 
     if profile == "sandbox":
@@ -788,21 +795,23 @@ def up(
             cmd = [sys.executable, "-m", "nexus.daemon.main"]
 
         # ------------------------------------------------------------------
-        # #4144 BLOCKER 1 + review r2 Finding B: single source of truth for
-        # data_dir, computed by the ONE producer below.
+        # #4144 BLOCKER 1 + review r3 Finding B: single source of truth for
+        # the sandbox data_dir, computed by the ONE producer below. The
+        # sandbox daemon ALWAYS runs on an ISOLATED data dir; it is NEVER
+        # silently pointed at an existing project's data_dir (the r2 bug).
         #
         # When --data-dir is omitted nexusd's sandbox connect path resolves
         # data_dir via `nexus.config._apply_sandbox_defaults` to
         # ``~/.nexus/sandbox`` (NOT ``~/.nexus/data``, NOT ``./nexus-data``).
-        # We pass that explicit fallback to the producer, which ALSO honors
-        # an existing project nexus.yaml's data_dir (the anchor consumers
-        # read) so `nexus env`/`run`/`status` discover the running sandbox
-        # even when the project already has a config whose data_dir differs.
-        # The producer returns the EFFECTIVE data_dir; we pass exactly that
-        # to nexusd so CLI ⇄ state ⇄ daemon ⇄ consumers can never diverge.
+        # We pass that explicit fallback to the producer; the producer
+        # NEVER reuses an existing project nexus.yaml's data_dir. The
+        # producer returns the EFFECTIVE (isolated) data_dir; we pass
+        # exactly that to nexusd so CLI ⇄ state ⇄ daemon can never diverge.
         #   - --data-dir <X> / $NEXUS_DATA_DIR  → X (explicit wins)
-        #   - else existing nexus.yaml data_dir → discovery anchor
         #   - else ~/.nexus/sandbox             → sandbox profile default
+        # When a project nexus.yaml exists the operator discovers the
+        # running sandbox via ``nexus ready`` + the daemon readiness file,
+        # NOT by hijacking the project's env/status resolution.
         # (Sandbox default verified empirically against
         # config.load_config({'profile':'sandbox'}); see config.py
         # _apply_sandbox_defaults.)
@@ -812,10 +821,11 @@ def up(
 
         # --------------------------------------------------------------
         # #4144: persist runtime state BEFORE the (blocking) daemon runs.
-        # Single producer for the discovery artifacts (.state.json [+ a
-        # second state pointer at the existing config's anchor when an
-        # explicit --data-dir diverges] + minimal nexus.yaml only when no
-        # project config exists). Returns the EFFECTIVE data_dir and the
+        # Single producer for the discovery artifacts (exactly one
+        # .state.json in the ISOLATED sandbox dir + a minimal nexus.yaml
+        # ONLY when no project config exists). When a project nexus.yaml
+        # exists the producer touches NOTHING of the project's (review r3
+        # Finding B). Returns the EFFECTIVE (isolated) data_dir and the
         # paths of OUR writes so we roll back only ours (and the yaml only
         # if we created it) on a failed launch. Secrets policy: --hub-url
         # MAY be recorded; --hub-token is NEVER written to state.
@@ -853,19 +863,20 @@ def up(
             cmd.extend(["--hub-token", hub_token])
 
         # Blocking-foreground trade-off: we persist state/yaml BEFORE the
-        # daemon launches so concurrent shells (`nexus env`/`run`) can
-        # discover a healthy daemon while it runs in the foreground (the
-        # Docker path can write AFTER its health check; this path cannot —
-        # subprocess.run blocks until the daemon exits). To avoid leaving
-        # stale/misleading state when the daemon fails to start, we roll
-        # back OUR OWN writes (and only ours) on a non-zero exit: always
-        # the .state.json we wrote, and the minimal nexus.yaml only if we
-        # created it this run (never a pre-existing user config).
+        # daemon launches so a concurrent ``nexus ready`` (and, in the
+        # no-project-config case, `nexus env`/`run`) can discover a healthy
+        # daemon while it runs in the foreground (the Docker path can write
+        # AFTER its health check; this path cannot — subprocess.run blocks
+        # until the daemon exits). To avoid leaving stale/misleading state
+        # when the daemon fails to start, we roll back OUR OWN writes (and
+        # only ours) on a non-zero exit: the single .state.json we wrote in
+        # the ISOLATED dir, and the minimal nexus.yaml only if we created it
+        # this run (never a pre-existing user config, which we never write).
         _sandbox_result = subprocess.run(cmd)
         if _sandbox_result.returncode != 0:
-            # Roll back every .state.json we wrote (1, or 2 when an explicit
-            # --data-dir diverged from an existing config's anchor) and the
-            # minimal nexus.yaml only if WE created it (never a user config).
+            # Roll back the .state.json we wrote in the isolated sandbox dir
+            # and the minimal nexus.yaml only if WE created it (never a
+            # pre-existing project config or its data_dir).
             for _sp in _state_paths:
                 with contextlib.suppress(OSError):
                     _sp.unlink()

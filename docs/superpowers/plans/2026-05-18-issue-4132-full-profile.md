@@ -631,6 +631,8 @@ git commit -m "test(#4132): gated FULL real-boot E2E (health/features/Ping + rem
 
 ### Task 10: Draft gap issue bodies; file only on user approval
 
+> **SUPERSEDED — gaps implemented, not filed.** At the user's request, Gaps 1/2/3 were implemented directly on this branch (nexus profile contract / nexus status --json deployment_profile+auth_mode / nexus doctor remote) with tests. The "file on approval" workflow below was not executed; #4132's missing-surface gate is satisfied by implementation. Retained for history.
+
 **Files:**
 - Create: `docs/superpowers/gaps/4132-gap-1-profile-contract.md`
 - Create: `docs/superpowers/gaps/4132-gap-2-status-detail.md`

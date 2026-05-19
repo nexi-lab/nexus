@@ -81,6 +81,16 @@ The FULL contract is locked by
 pytest tests/unit/core/test_full_profile.py -v
 ```
 
+You can also verify a *running* hub's resolved contract directly:
+
+```bash
+nexus profile contract
+```
+
+It prints the live `deployment_profile`, enabled `bricks`, `drivers`,
+`grpc_required`, and `auth_mode` as JSON (sourced from the hub's
+`/api/v2/features`).
+
 ## Benchmark guidance
 
 Boot time and idle RSS are setup-path metrics, not CI gates; the FULL

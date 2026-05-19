@@ -34,14 +34,20 @@ Uses the active connection (no extra arguments required).
 
 ```json
 {
-  "deployment_profile": "full",
+  "auth_mode": "database",
   "bricks": ["search", "pay", "llm", "skills", "sandbox", "..."],
+  "deployment_profile": "full",
+  "disabled_bricks": ["federation", "..."],
   "drivers": ["s3", "gcs", "gdrive", "gmail", "slack", "x", "hn", "remote", "..."],
-  "http_surface": ["/api/v2/health", "/api/v2/features", "/api/v2/..."],
   "grpc_required": true,
-  "auth_mode": "database"
+  "mode": "full",
+  "version": "1.2.3"
 }
 ```
+
+(`http_surface` was intentionally not implemented — no authoritative server source; `disabled_bricks`/`mode`/`version` added instead from `/api/v2/features`)
+
+Note: `auth_mode` is `"unknown"` here (remote contract, local config may be absent) vs `"none"` in `nexus status --json` (local declared auth).
 
 On error (hub unreachable): non-zero exit + human-readable message.
 

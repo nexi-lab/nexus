@@ -38,6 +38,8 @@ This is a purely additive, backward-compatible change to the existing command.
 
 `auth_mode` values: `"static"` (API-key from env/file) or `"database"` (`--auth-type database` / `DatabaseAPIKeyAuth`).
 
+Note: `auth_mode` is `"none"` here (local declared auth — `"none"` is a real preset value) vs `"unknown"` in `nexus profile contract` (remote contract, local config may be absent).
+
 `deployment_profile` values: any valid `DeploymentProfile` name (`"sandbox"`, `"lite"`, `"full"`, etc.).
 
 ## Tests required before docs claim support

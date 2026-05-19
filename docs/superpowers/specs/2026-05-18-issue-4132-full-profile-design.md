@@ -142,8 +142,8 @@ The guide states, and tests prove:
 - **Proposed surface**: `nexus profile contract` (or
   `nexus status --profile-contract`).
 - **Request/response**: no args (uses active connection) →
-  JSON `{deployment_profile, bricks[], drivers[], http_surface[],
-  grpc_required: bool, auth_mode}`.
+  JSON `{auth_mode, bricks[], deployment_profile, disabled_bricks[], drivers[], grpc_required: true, mode, version}`.
+  (`http_surface` was intentionally not implemented — no authoritative server source; `disabled_bricks`/`mode`/`version` added instead from `/api/v2/features`)
 - **Tests required**: unit (serialization from `DeploymentProfile`),
   CLI snapshot, parity vs `/api/v2/features`.
 - **Benchmark**: not performance-sensitive (control plane).

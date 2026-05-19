@@ -21,6 +21,7 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
         "metadata",
         "exists",
         "read-bulk",
+        "rename-batch",
         "write",
         "append",
         "write-batch",

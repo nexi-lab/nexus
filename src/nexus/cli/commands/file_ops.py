@@ -34,6 +34,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(metadata_cmd)
     cli.add_command(exists_cmd)
     cli.add_command(read_bulk_cmd)
+    cli.add_command(rename_batch_cmd)
     cli.add_command(write)
     cli.add_command(append)
     cli.add_command(write_batch)
@@ -558,6 +559,53 @@ def read_bulk_cmd(
                     else:
                         raw = nx.read_bulk(list(paths))
                         data = {p: _b2s(v) for p, v in raw.items()}
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            render_error(e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+@click.command(name="rename-batch")
+@click.argument("pairs", nargs=-1, required=True, type=str)
+@add_output_options
+@add_backend_options
+@add_context_options
+def rename_batch_cmd(
+    pairs: tuple[str, ...],
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Rename/move multiple files. Each pair is SRC:DST.
+
+    Per-item independent (a failed rename does not abort the others).
+
+    Examples:
+        nexus rename-batch /a.txt:/b.txt /c.txt:/d.txt --json
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+    renames: list[tuple[str, str]] = []
+    for p in pairs:
+        if ":" not in p:
+            render_error(ValueError(f"Expected SRC:DST, got {p!r}"))
+            sys.exit(2)
+        src, dst = p.split(":", 1)
+        renames.append((src, dst))
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.rename_batch(renames)
             render_output(
                 data=data,
                 output_opts=output_opts,

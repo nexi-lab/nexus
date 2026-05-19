@@ -115,3 +115,25 @@ def test_read_bulk_atomic_raises_on_missing(patched_fs, cli_runner: CliRunner):
     res = cli_runner.invoke(read_bulk_cmd, ["/r1.txt", "/missing.txt", "--atomic", "--json"])
     # read_batch(partial=False) raises -> CLI catches and exits 1
     assert res.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 6: nexus rename-batch (rename_batch — per-item independent)
+# ---------------------------------------------------------------------------
+
+
+def test_rename_batch_per_item_independent(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import rename_batch_cmd
+
+    nx = patched_fs
+    nx.write("/old1.txt", b"1")  # /old2.txt deliberately absent
+    res = cli_runner.invoke(
+        rename_batch_cmd,
+        ["/old1.txt:/new1.txt", "/old2.txt:/new2.txt", "--json"],
+    )
+    assert res.exit_code == 0, res.output  # independent: one failure does not abort the rest
+    out = json.loads(res.output)["data"]
+    assert out["/old1.txt"]["success"] is True
+    assert out["/old1.txt"]["new_path"] == "/new1.txt"
+    assert out["/old2.txt"]["success"] is False
+    assert nx.read("/new1.txt") == b"1"

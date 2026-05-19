@@ -334,6 +334,55 @@ def test_sandbox_does_not_bind_typed_vfs_grpc(sandbox_daemon) -> None:
         channel.close()
 
 
+def test_sandbox_does_not_bootstrap_federation_or_raft(sandbox_daemon) -> None:
+    """Sandbox must NOT bootstrap Raft federation (Issue #4126 — the fix).
+
+    ROOT CAUSE: ``rust/raft/src/distributed_coordinator.rs::install()`` —
+    the single per-process chokepoint, called from the cdylib boot path —
+    unconditionally built the real ``RaftDistributedCoordinator``, set it on
+    the kernel, and ran ``init_from_env``. ``init_from_env`` derives a
+    hostname from ``NEXUS_HOSTNAME`` *or the system ``hostname`` fallback*,
+    then binds a Raft gRPC server on ``0.0.0.0:2126`` and logs "federation
+    bootstrap complete" — even with ``NEXUS_HOSTNAME`` unset (the
+    ``_spawn_sandbox_daemon`` fixture explicitly unsets it). That violates
+    the sandbox profile contract (lightweight / no federation / no external
+    services).
+
+    THE FIX: the sandbox daemon boot path sets ``NEXUS_FEDERATION_DISABLED=1``
+    before ``nexus.connect(...)``, and ``install()`` early-returns on that
+    var, keeping the kernel's default ``NoopDistributedCoordinator``. So no
+    ZoneManager, no Raft gRPC :2126, no federation bootstrap — while the
+    daemon is otherwise fully healthy.
+
+    PRE-FIX this test FAILS (the boot log contained these markers).
+    POST-FIX it PASSES. Deterministic: pure log-substring assertions, plus
+    a positive health check that sandbox still works without federation.
+    """
+    log = Path(sandbox_daemon["log_path"]).read_text(errors="replace")
+
+    forbidden_markers = (
+        "federation bootstrap complete",
+        "Starting Raft gRPC server",
+        "ZoneManager node",
+        ":2126",
+    )
+    present = [m for m in forbidden_markers if m in log]
+    assert not present, (
+        f"sandbox bootstrapped Raft/federation (markers {present} present in "
+        f"boot log) — the #4126 kill-switch did not take effect. Log:\n{log}"
+    )
+
+    # Positive: sandbox boots fully WITHOUT federation. Process alive and
+    # /health 200 (readiness already gated by the fixture).
+    assert sandbox_daemon["proc"].poll() is None, (
+        "daemon must remain healthy after booting without federation"
+    )
+    base = f"http://{sandbox_daemon['host']}:{sandbox_daemon['http_port']}"
+    with httpx.Client(base_url=base, timeout=10.0) as client:
+        r = _http_get_with_retry(client, "/health")
+        assert r.status_code == 200, r.text
+
+
 RSS_CEILING_MB = 800  # loose gross-regression guard, not a tuned baseline
 # Boot-to-readiness varies widely across cold Rust-kernel init and CI
 # load (empirically ~7-105s in this suite). This ceiling only guards

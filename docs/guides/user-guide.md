@@ -270,8 +270,12 @@ curl -s http://127.0.0.1:2026/api/v2/features
   server spawn call site, `rust/profiles/cluster/src/main.rs`). The sandbox
   profile is **HTTP-only for the VFS surface by architecture** — it never
   binds the typed VFS gRPC server (verified: connection-refused on
-  `http_port + 2`; the only gRPC sandbox starts is the Raft federation gRPC
-  on the fixed port `:2126`, a different surface). [#4148](https://github.com/nexi-lab/nexus/issues/4148)
+  `http_port + 2`). The sandbox profile also does **not** start Raft
+  federation: the boot path sets `NEXUS_FEDERATION_DISABLED` so the kernel
+  keeps its no-op distributed coordinator — no `ZoneManager`, no Raft gRPC
+  listener on `:2126`, no "federation bootstrap" ([#4126](https://github.com/nexi-lab/nexus/issues/4126);
+  `--hub-url` hub federation is a separate `SandboxBootstrapper` path,
+  unaffected). [#4148](https://github.com/nexi-lab/nexus/issues/4148)
   (the issue that reported an UNAUTHENTICATED `Ping`) does not reproduce in
   sandbox because no VFS gRPC server exists there; it is the **triage
   issue** for this surface (close-recommended / reclassify as a cluster-only

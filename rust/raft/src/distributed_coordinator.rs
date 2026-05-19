@@ -1954,6 +1954,23 @@ fn wire_mount_impl(
 /// Mirrors `transport::blob::peer_client::install` — called once per
 /// process from the cdylib boot path. Idempotent for re-imports.
 pub fn install(kernel: &Arc<Kernel>) -> Result<(), String> {
+    // Kill-switch: when explicitly disabled (e.g. the sandbox profile sets
+    // NEXUS_FEDERATION_DISABLED=1 in the daemon boot path), the real Raft
+    // coordinator is NEVER installed and `init_from_env` never runs — so no
+    // ZoneManager, no Raft gRPC server on 0.0.0.0:2126, no "federation
+    // bootstrap complete". The kernel keeps its default
+    // NoopDistributedCoordinator. When the var is UNSET (cluster/full/default)
+    // this branch is skipped and behavior is byte-identical to before.
+    if std::env::var("NEXUS_FEDERATION_DISABLED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        tracing::info!(
+            "federation wiring skipped (NEXUS_FEDERATION_DISABLED set) — \
+             kernel keeps NoopDistributedCoordinator; no Raft gRPC server"
+        );
+        return Ok(());
+    }
     let coordinator = Arc::new(RaftDistributedCoordinator::new());
     kernel.set_distributed_coordinator(coordinator.clone() as Arc<dyn DistributedCoordinator>);
     coordinator.init_from_env(kernel.as_ref())?;

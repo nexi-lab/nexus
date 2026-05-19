@@ -6723,9 +6723,9 @@ operations:
   module: nexus_fs
   summary: 'gRPC liveness ping on NexusVFSService. Unavailable in sandbox by architecture: the typed VFS gRPC server is
     bound only by the cluster profile (single spawn call site rust/profiles/cluster/src/main.rs:422); the sandbox path
-    never binds it (reproduced connection-refused on http_port+2; only the Raft federation gRPC binds, on :2126). #4148
-    (which reported an UNAUTHENTICATED Ping) does not reproduce in sandbox — close-recommended / reclassify as
-    cluster-only.'
+    never binds it (reproduced connection-refused on http_port+2). As of #4126 the sandbox path also no longer starts
+    the Raft federation gRPC on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 (which reported an
+    UNAUTHENTICATED Ping) does not reproduce in sandbox — close-recommended / reclassify as cluster-only.'
   transports:
     grpc_typed:
       name: NexusVFSService.Ping
@@ -6740,8 +6740,9 @@ operations:
   correctness_test: tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
   perf_link: 'N/A in sandbox — the typed VFS gRPC server is cluster-profile-only and is never bound in the sandbox path
-    (reproduced connection-refused on http_port+2; only the Raft federation gRPC binds, on :2126). #4148 tracked for
-    triage (close-recommended / reclassify as cluster-only).'
+    (reproduced connection-refused on http_port+2). As of #4126 sandbox also no longer starts the Raft federation gRPC
+    on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 tracked for triage (close-recommended / reclassify as
+    cluster-only).'
   gap_issue: 4148
   owning_issue: 4126
 - id: nexus_v_f_s_service.read

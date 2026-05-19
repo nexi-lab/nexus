@@ -395,6 +395,31 @@ def main(
                 connect_config["enforce_permissions"] = True
             if connect_config.get("enforce_permissions"):
                 click.echo("  Perms:   enforce=True")
+            # Profile-gate Raft federation for sandbox (Issue #4126).
+            #
+            # The sandbox profile is a per-agent lightweight runtime whose
+            # contract excludes federation / external services. The Rust
+            # cdylib boot path unconditionally installs the real Raft
+            # distributed coordinator, which derives a hostname (NEXUS_HOSTNAME
+            # or the system `hostname` fallback) and binds a Raft gRPC server
+            # on 0.0.0.0:2126 — violating that contract even with
+            # NEXUS_HOSTNAME unset. Set the kill-switch so `install()` keeps
+            # the kernel's default NoopDistributedCoordinator instead.
+            #
+            # `--hub-url` hub federation uses a SEPARATE path
+            # (SandboxBootstrapper, below) — NOT this Raft coordinator — so
+            # disabling the local Raft coordinator does not affect it.
+            #
+            # `setdefault` + the NEXUS_PEERS/HOSTNAME/BOOTSTRAP_NEW guard
+            # preserve any deliberate operator override (someone explicitly
+            # wanting zone federation in sandbox). Scoped STRICTLY to the
+            # sandbox profile — cluster/full/lite/embedded never set this var,
+            # so their boot path is byte-identical to before.
+            if deployment_profile == "sandbox" and not any(
+                os.environ.get(v) for v in ("NEXUS_PEERS", "NEXUS_HOSTNAME", "NEXUS_BOOTSTRAP_NEW")
+            ):
+                os.environ.setdefault("NEXUS_FEDERATION_DISABLED", "1")
+
             if config_path:
                 from nexus.config import load_config
 

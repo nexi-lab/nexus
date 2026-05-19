@@ -31,9 +31,11 @@ grpcurl -plaintext 127.0.0.1:$((P+2)) nexus.grpc.vfs.NexusVFSService/Ping
 - The typed VFS gRPC port (`http_port + 2`, e.g. 43102 for HTTP 43100) is
   **connection-refused for the daemon's entire lifetime** (~20 s observed and
   beyond) while the daemon stays healthy.
-- The boot log shows the only gRPC the sandbox starts is the
-  **Raft/federation gRPC on the fixed port `:2126`** — a different surface,
-  not VFS, not at `http_port + 2`, and with no `Ping`.
+- Historically the boot log showed a **Raft/federation gRPC on the fixed
+  port `:2126`** — a different surface, not VFS, not at `http_port + 2`, and
+  with no `Ping`. As of #4126 the sandbox profile no longer starts that
+  Raft listener at all (profile-gated via `NEXUS_FEDERATION_DISABLED`; see
+  `sandbox-federation-fix.md`). Either way, no VFS gRPC is bound.
 - No VFS gRPC server is ever bound, so there is no servicer to return
   `UNAUTHENTICATED`.
 
@@ -47,8 +49,10 @@ grpcurl -plaintext 127.0.0.1:$((P+2)) nexus.grpc.vfs.NexusVFSService/Ping
 - The only Python gRPC server is the env-gated approvals brick
   (`src/nexus/server/lifespan/approvals.py:317`), which is **not part of the
   sandbox profile** and has **no `Ping`**.
-- What the sandbox profile starts instead is the Raft/federation gRPC
-  (`rust/raft/src/transport/server.rs`) on the fixed port `:2126`.
+- The sandbox profile formerly started a Raft/federation gRPC
+  (`rust/raft/src/transport/server.rs`) on the fixed port `:2126`; this is
+  removed by #4126 (kill-switch in `distributed_coordinator.rs::install()`).
+  Neither before nor after #4126 is any VFS gRPC bound in sandbox.
 
 Conclusion: the typed VFS gRPC `Ping` is **unavailable in the sandbox
 profile by architecture (cluster-profile-only)**. #4148's UNAUTHENTICATED

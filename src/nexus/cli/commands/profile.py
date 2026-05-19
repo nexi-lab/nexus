@@ -22,6 +22,7 @@ from nexus.cli.config import (
     get_config_path,
     load_cli_config,
     resolve_connection,
+    same_endpoint,
     save_cli_config,
 )
 from nexus.cli.state import load_project_config_optional
@@ -239,19 +240,6 @@ def rename_cmd(old_name: str, new_name: str) -> None:
     console.print(f"Renamed profile [bold]'{old_name}'[/bold] to [bold]'{new_name}'[/bold]")
 
 
-def _same_endpoint(a: str | None, b: str | None) -> bool:
-    """True if two URLs point at the same scheme://host:port (path /
-    trailing slash ignored). Used to decide whether the resolved contract
-    target is the locally-managed stack (so local nexus.yaml auth applies)
-    or a different/remote hub."""
-    if not a or not b:
-        return False
-    from urllib.parse import urlparse
-
-    pa, pb = urlparse(a.rstrip("/")), urlparse(b.rstrip("/"))
-    return (pa.scheme, pa.hostname, pa.port) == (pb.scheme, pb.hostname, pb.port)
-
-
 @profile_group.command(name="contract")
 @click.option(
     "--url",
@@ -333,7 +321,7 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
     # the locally-managed stack (endpoint match). A saved current-profile
     # pointing at a remote hub must NOT inherit the local project's auth.
     is_local_managed = bool(
-        project_cfg and local_managed_url and _same_endpoint(target_url, local_managed_url)
+        project_cfg and local_managed_url and same_endpoint(target_url, local_managed_url)
     )
 
     url = target_url

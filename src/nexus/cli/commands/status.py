@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import click
 
+from nexus.cli.config import same_endpoint
 from nexus.cli.output import OutputOptions, add_output_options, render_output
 from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
@@ -90,18 +91,6 @@ def _resolve_deployment_profile(
     return "unknown"
 
 
-def _same_endpoint(a: str, b: str) -> bool:
-    """True if two URLs point at the same scheme://host:port (path/trailing
-    slash ignored). Used to decide whether a status target is the local
-    stack (so local nexus.yaml auth applies) or a different remote hub."""
-    if not a or not b:
-        return False
-    from urllib.parse import urlparse
-
-    pa, pb = urlparse(a.rstrip("/")), urlparse(b.rstrip("/"))
-    return (pa.scheme, pa.hostname, pa.port) == (pb.scheme, pb.hostname, pb.port)
-
-
 def _enrich_with_image_info(
     data: dict[str, Any], status_api_key: str | None = None
 ) -> dict[str, Any]:
@@ -133,7 +122,7 @@ def _enrich_with_image_info(
         # nexus.yaml describes only the locally-managed stack.
         target_url = data.get("server_url", "")
         local_stack_url = conn_env.get("NEXUS_URL", "")
-        is_local_stack = (not target_url) or _same_endpoint(target_url, local_stack_url)
+        is_local_stack = (not target_url) or same_endpoint(target_url, local_stack_url)
 
         if is_local_stack:
             # Safe: the target IS the local stack — attach its image +
@@ -180,7 +169,7 @@ def _enrich_with_image_info(
         # fallback — an explicit remote --url must report "unknown" when
         # its features probe fails (no evidence about that hub).
         _target = data.get("server_url", "")
-        _is_local_default = (not _target) or _same_endpoint(_target, "http://localhost:2026")
+        _is_local_default = (not _target) or same_endpoint(_target, "http://localhost:2026")
         data["deployment_profile"] = _resolve_deployment_profile(
             _target, status_api_key, allow_env_fallback=_is_local_default
         )

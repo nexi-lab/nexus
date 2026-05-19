@@ -284,6 +284,25 @@ def resolve_connection(
 
 
 # ---------------------------------------------------------------------------
+# URL comparison
+# ---------------------------------------------------------------------------
+
+
+def same_endpoint(a: str | None, b: str | None) -> bool:
+    """True if two URLs point at the same scheme://host:port.
+
+    Path and trailing slash are ignored. Returns False when either
+    argument is None or empty — there is no evidence to compare.
+    """
+    if not a or not b:
+        return False
+    from urllib.parse import urlparse
+
+    pa, pb = urlparse(a.rstrip("/")), urlparse(b.rstrip("/"))
+    return (pa.scheme, pa.hostname, pa.port) == (pb.scheme, pb.hostname, pb.port)
+
+
+# ---------------------------------------------------------------------------
 # Settings helpers
 # ---------------------------------------------------------------------------
 

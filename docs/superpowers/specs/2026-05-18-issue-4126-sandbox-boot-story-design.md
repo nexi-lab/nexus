@@ -98,15 +98,41 @@ slow/integration:
 `tests/unit/cli/test_stack_sandbox.py` is already comprehensive. Add only a
 CLI/RPC parity assertion if a gap exists. No rewrite.
 
-### 6. Missing-surface gate
-Verdict: all core surfaces for the boot story exist → docs/tests are **not
-blocked**. File one **non-blocking enhancement** build issue: a sandbox
-readiness CLI (`nexus status` is Docker/HTTP oriented; the sandbox profile
-exposes only the bare readiness file — an ergonomic gap for "know it's up").
-The build issue states the proposed CLI syntax, request/response shape, test
-requirements, docs location, benchmark expectation; links #4126 and epic #4120;
-is classified as an enhancement and explicitly marked non-blocking so #4126 can
-close. Record the gate verdict in the guide.
+### 6. Missing-surface gate — gap CLOSED in this PR (revised 2026-05-18)
+Verdict: all core surfaces for the boot story exist. The one ergonomic gap —
+no first-class readiness probe for the non-Docker sandbox profile (`nexus
+status` is Docker/HTTP-compose oriented; the sandbox profile exposed only the
+bare `~/.nexus/nexusd.ready` file) — was originally going to be filed as a
+non-blocking build issue. Per user direction, the gap is instead **closed in
+this PR** by implementing a focused standalone CLI command:
+
+**`nexus ready [--timeout SECONDS] [--readiness-file PATH] [--json]`** —
+single responsibility: probe daemon readiness for non-Docker (sandbox-profile)
+deployments. It waits for the readiness file, parses `host:port`, polls
+`GET /health` and `GET /api/v2/features`, prints profile / endpoint / health /
+enabled-bricks (human table or `--json`), and uses sysexits exit codes:
+`0` ready; `TEMPFAIL` (75) on timeout/not-ready; `DATA_ERROR` (65) on a
+malformed readiness file.
+
+Rationale for a standalone command (not `nexus status --profile sandbox`):
+`nexus status` is Docker/compose-oriented and its `--profile` option already
+means *compose profiles* (multiple) — overloading it would conflict. A new
+`nexus ready` command (`src/nexus/cli/commands/ready.py`, registered via
+`_REGISTER_COMMANDS` in `src/nexus/cli/commands/__init__.py`) is
+single-purpose, small blast radius, and complements `status`.
+
+Coverage: unit tests (`tests/unit/cli/test_ready_cmd.py`) for readiness-file
+parse (valid / malformed / missing-with-timeout exit codes) and the
+health-OK happy path with httpx mocked; one integration test reusing the
+`sandbox_daemon` fixture in `tests/integration/test_sandbox_boot_smoke.py`
+asserting `nexus ready` reports ready + `profile=sandbox` + the correct
+endpoint against the real booted daemon. Benchmark class: control plane /
+setup path — not performance-sensitive.
+
+No build issue is filed (gap closed). The user guide's missing-surface gate
+verdict and coverage table are updated accordingly (the
+`<!-- BUILD-ISSUE-LINK -->` placeholder and its parenthetical are removed and
+replaced with the `nexus ready` documentation).
 
 ## Out of scope
 - Building the #4139 shared matrix generator.

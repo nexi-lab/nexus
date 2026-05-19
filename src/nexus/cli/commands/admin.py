@@ -949,6 +949,71 @@ def gc_versions_stats(
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# admin fs — admin-only FS maintenance ops (Issue #4133)
+# ---------------------------------------------------------------------------
+
+
+@admin.group("fs")
+def admin_fs() -> None:
+    """Admin-only filesystem maintenance (admin_only RPCs)."""
+
+
+@admin_fs.command("backfill-index")
+@click.argument("prefix", default="/", type=str)
+@add_output_options
+def admin_fs_backfill_index(prefix: str, output_opts: OutputOptions) -> None:
+    """Backfill the sparse directory index (admin_only)."""
+    import asyncio
+
+    from nexus.cli.utils import open_filesystem
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(None, None, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.backfill_directory_index(prefix)
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+@admin_fs.command("flush-write-observer")
+@add_output_options
+def admin_fs_flush_write_observer(output_opts: OutputOptions) -> None:
+    """Flush pending write-observer events to the DB (admin_only)."""
+    import asyncio
+
+    from nexus.cli.utils import open_filesystem
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(None, None, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.flush_write_observer()
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
 def register_commands(cli: click.Group) -> None:
     """Register admin command group to the main CLI.
 

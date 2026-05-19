@@ -208,3 +208,28 @@ def test_write_stream_from_stdin(patched_fs, cli_runner: CliRunner):
     res = cli_runner.invoke(write, ["/ws.txt", "--stream"], input="streamed-bytes")
     assert res.exit_code == 0, res.output
     assert nx.read("/ws.txt") == b"streamed-bytes"
+
+
+# ---------------------------------------------------------------------------
+# Task 10: nexus admin fs (backfill-index / flush-write-observer)
+# ---------------------------------------------------------------------------
+
+
+def test_admin_fs_flush_and_backfill(inproc_nexus, cli_runner: CliRunner, monkeypatch):
+    """admin fs * runs the admin-only RPCs against the in-process FS."""
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def _open(*a, **k):
+        yield inproc_nexus
+
+    monkeypatch.setattr("nexus.cli.utils.open_filesystem", _open, raising=False)
+    from nexus.cli.commands.admin import admin
+
+    r1 = cli_runner.invoke(admin, ["fs", "flush-write-observer", "--json"])
+    assert r1.exit_code == 0, r1.output
+    assert "flushed" in json.loads(r1.output)["data"]
+
+    r2 = cli_runner.invoke(admin, ["fs", "backfill-index", "/", "--json"])
+    assert r2.exit_code == 0, r2.output
+    assert "entries_created" in json.loads(r2.output)["data"]

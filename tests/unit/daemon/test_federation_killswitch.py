@@ -189,29 +189,41 @@ def test_non_sandbox_profiles_never_set_killswitch(
 
 
 # ---------------------------------------------------------------------------
-# Test 3: sandbox + explicit federation env → operator opt-in preserved
+# Test 3: sandbox + ambient NEXUS_PEERS/HOSTNAME/BOOTSTRAP_NEW → kill-switch
+# STILL forced (Issue #4126 review r9 HIGH supersedes the r2/r3 opt-in).
+#
+# Pre-r9 this asserted the OPPOSITE (ambient federation env was treated as an
+# implicit sandbox-federation opt-in and suppressed the kill-switch). r9
+# removed that source-blind exclusion: a STALE / inherited NEXUS_HOSTNAME or
+# NEXUS_PEERS must NOT re-open the no-federation/no-:2126 sandbox invariant.
+# The ONLY supported sandbox-federation opt-out is now an EXPLICIT
+# NEXUS_FEDERATION_DISABLED (covered by Test 4 +
+# test_sandbox_explicit_optout_preserved_even_with_ambient_env below).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("opt_in_var", "opt_in_value"),
+    ("ambient_var", "ambient_value"),
     [
         ("NEXUS_PEERS", "peer-a:2126,peer-b:2126"),
         ("NEXUS_HOSTNAME", "node-7.cluster.internal"),
         ("NEXUS_BOOTSTRAP_NEW", "1"),
     ],
 )
-def test_sandbox_with_explicit_federation_env_is_respected(
-    opt_in_var: str, opt_in_value: str, tmp_path: Path, monkeypatch
+def test_sandbox_with_ambient_federation_env_still_forces_killswitch(
+    ambient_var: str, ambient_value: str, tmp_path: Path, monkeypatch
 ) -> None:
-    """sandbox + operator-set peers/hostname/bootstrap → gate must NOT force.
+    """sandbox + ambient peers/hostname/bootstrap → kill-switch STILL forced.
 
-    If an operator deliberately opts into zone federation in sandbox (by
-    setting any of NEXUS_PEERS / NEXUS_HOSTNAME / NEXUS_BOOTSTRAP_NEW), the
-    gate must NOT set the kill-switch — their intent is preserved.
+    Issue #4126 review r9 (HIGH): ambient NEXUS_PEERS / NEXUS_HOSTNAME /
+    NEXUS_BOOTSTRAP_NEW is NOT a supported sandbox-federation opt-in. A
+    stale/inherited value must NOT leave NEXUS_FEDERATION_DISABLED unset (that
+    re-opened the :2126 Raft bind this branch closes). The kill-switch is
+    UNCONDITIONAL for effective sandbox; the sole opt-out is an explicit
+    NEXUS_FEDERATION_DISABLED.
     """
     _clean_federation_env(monkeypatch)
-    monkeypatch.setenv(opt_in_var, opt_in_value)
+    monkeypatch.setenv(ambient_var, ambient_value)
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -219,9 +231,10 @@ def test_sandbox_with_explicit_federation_env_is_respected(
     result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
 
     assert result.exit_code == 0, f"Unexpected exit: {result.output}"
-    assert "NEXUS_FEDERATION_DISABLED" not in os.environ, (
-        f"{opt_in_var} set → operator opted into federation; the gate must "
-        f"NOT force NEXUS_FEDERATION_DISABLED."
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1", (
+        f"ambient {ambient_var} must NOT implicitly re-enable sandbox "
+        f"federation — the kill-switch is set UNCONDITIONALLY for effective "
+        f"sandbox (only an explicit NEXUS_FEDERATION_DISABLED opts out)."
     )
 
 
@@ -664,3 +677,103 @@ def test_profile_sandbox_data_dir_no_config_unchanged(tmp_path: Path, monkeypatc
     assert "cannot be combined" not in result.output
     bootstrapper_cls.assert_called_once()
     assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1"
+
+
+# ---------------------------------------------------------------------------
+# Review r9 (Issue #4126 HIGH): the sandbox federation kill-switch must be
+# set UNCONDITIONALLY for the effective-sandbox profile. The earlier r2/r3
+# exclusion (skip the kill-switch when any of NEXUS_PEERS / NEXUS_HOSTNAME /
+# NEXUS_BOOTSTRAP_NEW was present) was SOURCE-BLIND: a STALE / inherited
+# NEXUS_HOSTNAME (commonly exported by other tooling/shells) left the
+# kill-switch UNSET → the Rust install()/init_from_env path ran and
+# ZoneManager bound the Raft gRPC server on 0.0.0.0:2126 — re-opening the
+# exact no-federation/no-:2126 sandbox invariant this branch closes. The ONLY
+# supported opt-out is an EXPLICIT operator-set NEXUS_FEDERATION_DISABLED
+# (setdefault preserves it). Ambient NEXUS_HOSTNAME/PEERS/BOOTSTRAP_NEW must
+# NOT implicitly re-enable federation. Cases (a)/(b) FAIL pre-r9.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ambient_var", "ambient_value"),
+    [
+        ("NEXUS_HOSTNAME", "somehost"),
+        ("NEXUS_PEERS", "peer-a:2126,peer-b:2126"),
+        ("NEXUS_BOOTSTRAP_NEW", "1"),
+    ],
+)
+def test_sandbox_ambient_federation_env_does_not_bypass_killswitch(
+    ambient_var: str, ambient_value: str, tmp_path: Path, monkeypatch
+) -> None:
+    """sandbox + ambient NEXUS_HOSTNAME/PEERS/BOOTSTRAP_NEW (no explicit
+    NEXUS_FEDERATION_DISABLED) → kill-switch STILL forced to "1".
+
+    Pre-r9 this FAILS: the source-blind exclusion left
+    NEXUS_FEDERATION_DISABLED unset whenever any of these ambient vars was
+    present, so a sandbox daemon installed the real Raft coordinator (bound
+    :2126) purely from a stale/inherited env var. Post-r9 the kill-switch is
+    unconditional for effective sandbox.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.setenv(ambient_var, ambient_value)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
+
+    assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1", (
+        f"Ambient {ambient_var} must NOT implicitly re-enable sandbox "
+        f"federation — the kill-switch is set UNCONDITIONALLY for effective "
+        f"sandbox (only an explicit NEXUS_FEDERATION_DISABLED opts out)."
+    )
+
+
+def test_sandbox_explicit_optout_preserved_even_with_ambient_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """sandbox + explicit NEXUS_FEDERATION_DISABLED="0" (plus ambient
+    NEXUS_HOSTNAME) → setdefault leaves it "0".
+
+    The sole supported sandbox-federation opt-out is the EXPLICIT
+    NEXUS_FEDERATION_DISABLED env var; ``setdefault`` must not stomp it even
+    though the kill-switch is otherwise unconditional and an ambient
+    NEXUS_HOSTNAME is also present.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.setenv("NEXUS_FEDERATION_DISABLED", "0")
+    monkeypatch.setenv("NEXUS_HOSTNAME", "somehost")
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    result, _ = _run_daemon("sandbox", tmp_path, monkeypatch, workspace=workspace)
+
+    assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "0", (
+        'An explicit NEXUS_FEDERATION_DISABLED="0" is the sole supported '
+        "sandbox opt-out and must survive setdefault."
+    )
+
+
+@pytest.mark.parametrize("profile", _NON_SANDBOX_PROFILES)
+def test_non_sandbox_with_ambient_federation_env_unchanged(
+    profile: str, tmp_path: Path, monkeypatch
+) -> None:
+    """Regression: non-sandbox effective profile + ambient NEXUS_HOSTNAME →
+    NEXUS_FEDERATION_DISABLED still NOT set (byte-identical boot path).
+
+    The r9 unconditional kill-switch is scoped STRICTLY to effective sandbox;
+    non-sandbox profiles never enter the branch regardless of ambient env.
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.setenv("NEXUS_HOSTNAME", "somehost")
+
+    result, _ = _run_daemon(profile, tmp_path, monkeypatch)
+
+    assert result.exit_code == 0, f"Unexpected exit for {profile!r}: {result.output}"
+    assert "NEXUS_FEDERATION_DISABLED" not in os.environ, (
+        f"profile={profile!r} must NOT touch NEXUS_FEDERATION_DISABLED even "
+        f"with ambient NEXUS_HOSTNAME — kill-switch is sandbox-only."
+    )

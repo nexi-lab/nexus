@@ -779,20 +779,24 @@ def main(
         )
         sys.exit(ExitCode.USAGE_ERROR)
 
-    # --hub-url without any token is an error. Gate this so it only applies
-    # when the sandbox flags are actually in play on the command line for an
-    # effective-sandbox boot — do NOT enforce the pairing off a stale
-    # ``NEXUS_HUB_URL`` env on a non-sandbox boot (Issue #4126 review r8).
-    # Preserve: an explicit command-line ``--hub-url`` without ``--hub-token``
-    # under sandbox STILL errors (env ``NEXUS_HUB_TOKEN`` still satisfies it,
-    # unchanged). The token value itself may legitimately come from env, so
-    # only the ``--hub-url`` SOURCE is gated on COMMANDLINE here.
-    if (
-        effective_profile == "sandbox"
-        and ctx.get_parameter_source("hub_url") == _CMDLINE
-        and hub_url is not None
-        and not hub_token
-    ):
+    # --hub-url without any token is an error. Issue #4126 review r9
+    # (MEDIUM): the pairing requirement holds for EVERY effective-SANDBOX boot
+    # whenever the RESOLVED ``hub_url`` is non-empty (from EITHER source —
+    # command line OR env ``NEXUS_HUB_URL``) and ``hub_token`` is absent. The
+    # r8 fix gated this on a COMMANDLINE-sourced ``hub_url`` only, which was
+    # too loose: an effective-sandbox boot with ``NEXUS_HUB_URL`` from env and
+    # no token bypassed pairing → ``SandboxBootstrapper`` got ``hub_url`` with
+    # ``hub_token=None`` (silent local-only degrade, or anonymous hub
+    # federation if the hub accepts) — diverging from ``nexus up``, which
+    # still rejects hub-url-without-token. For SANDBOX the rule is now
+    # SOURCE-INDEPENDENT: ``hub_url`` present + no token → reject. The token
+    # value itself may legitimately come from env (``NEXUS_HUB_TOKEN``
+    # satisfies the pairing, unchanged). For NON-sandbox effective profiles
+    # the pairing check stays fully disabled so a stale env ``NEXUS_HUB_URL``
+    # never poisons a non-sandbox boot (r8 regression preserved); only this
+    # sandbox sub-check changed — the r8 source-aware sandbox-only-FLAG
+    # rejection above is unchanged.
+    if effective_profile == "sandbox" and hub_url and not hub_token:
         click.echo(
             "Error: --hub-url requires a token. Pass --hub-token or set NEXUS_HUB_TOKEN.",
             err=True,
@@ -912,22 +916,39 @@ def main(
             # (SandboxBootstrapper, below) — NOT this Raft coordinator — so
             # disabling the local Raft coordinator does not affect it.
             #
-            # `setdefault` + the NEXUS_PEERS/HOSTNAME/BOOTSTRAP_NEW guard
-            # preserve any deliberate operator override (someone explicitly
-            # wanting zone federation in sandbox). Scoped STRICTLY to the
-            # sandbox profile — cluster/full/lite/embedded never set this var,
-            # so their boot path is byte-identical to before.
+            # CONTRACT (Issue #4126 review r9, HIGH): sandbox → federation is
+            # DISABLED BY DEFAULT, UNCONDITIONALLY. The ONLY supported opt-out
+            # is an EXPLICIT operator-set ``NEXUS_FEDERATION_DISABLED`` env var
+            # (e.g. value ``0`` to re-enable zone federation in sandbox);
+            # ``os.environ.setdefault`` preserves that explicit value because
+            # it never overrides an already-present key.
             #
-            # Gate on the EFFECTIVE profile (Issue #4126 HIGH): when an
-            # operator runs ``nexusd --config sandbox.yaml`` with no
-            # ``--profile``, ``deployment_profile`` is still ``"auto"`` but the
-            # kernel will run ``profile: sandbox`` from the file. This uses the
-            # SAME ``effective_profile`` computed once at the top so the
+            # The earlier r2/r3 exclusion (skip the kill-switch when any of
+            # ``NEXUS_PEERS`` / ``NEXUS_HOSTNAME`` / ``NEXUS_BOOTSTRAP_NEW`` was
+            # present) was SOURCE-BLIND and is REMOVED: a STALE / inherited
+            # ``NEXUS_HOSTNAME`` (commonly exported by other tooling/shells) or
+            # ``NEXUS_PEERS`` must NOT implicitly re-enable federation, because
+            # that left the kill-switch unset → the Rust ``install()`` /
+            # ``init_from_env`` path ran and ZoneManager bound the Raft gRPC
+            # server on ``0.0.0.0:2126`` — re-opening the exact
+            # no-federation/no-:2126 sandbox invariant this branch closes.
+            # Ambient ``NEXUS_HOSTNAME`` / ``NEXUS_PEERS`` are NOT a supported
+            # sandbox-federation opt-in; only the explicit
+            # ``NEXUS_FEDERATION_DISABLED`` env var is.
+            #
+            # `--hub-url` hub federation uses a SEPARATE path
+            # (SandboxBootstrapper, below) — NOT this Raft coordinator — so
+            # disabling the local Raft coordinator does not affect it.
+            #
+            # Scoped STRICTLY to the EFFECTIVE sandbox profile (Issue #4126
+            # HIGH; review r2): cluster/full/lite/embedded never enter this
+            # branch, so their boot path is byte-identical to before. Using the
+            # SAME ``effective_profile`` computed once at the top means the
             # kill-switch, sandbox flag-validation, remote rejection and the
-            # SandboxBootstrapper gate can never disagree (review r2).
-            if effective_profile == "sandbox" and not any(
-                os.environ.get(v) for v in ("NEXUS_PEERS", "NEXUS_HOSTNAME", "NEXUS_BOOTSTRAP_NEW")
-            ):
+            # SandboxBootstrapper gate can never disagree (review r2); a
+            # ``nexusd --config sandbox.yaml`` boot (raw ``deployment_profile``
+            # still ``"auto"``) is correctly gated as sandbox.
+            if effective_profile == "sandbox":
                 os.environ.setdefault("NEXUS_FEDERATION_DISABLED", "1")
 
             if config_path:

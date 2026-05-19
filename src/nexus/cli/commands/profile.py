@@ -11,6 +11,7 @@ Commands:
 """
 
 import json
+from typing import Any
 
 import click
 from rich.table import Table
@@ -25,6 +26,7 @@ from nexus.cli.config import (
 )
 from nexus.cli.state import load_project_config_optional
 from nexus.cli.theme import console
+from nexus.contracts.deployment_profile import DeploymentProfile
 
 
 @click.group(name="profile")
@@ -252,14 +254,14 @@ def contract_cmd() -> None:
         nexus profile contract
         nexus --profile staging profile contract
     """
-    from nexus.contracts.deployment_profile import DeploymentProfile
-
     config = load_cli_config()
     resolved = resolve_connection(config=config)
     url = resolved.url or "http://localhost:2026"
 
     try:
-        features: dict = NexusApiClient(url=url, api_key=resolved.api_key).get("/api/v2/features")
+        features: dict[str, Any] = NexusApiClient(url=url, api_key=resolved.api_key).get(
+            "/api/v2/features"
+        )
     except Exception as exc:
         console.print(
             f"[nexus.error]Error:[/nexus.error] could not reach {url}/api/v2/features: {exc}. "
@@ -274,7 +276,7 @@ def contract_cmd() -> None:
         drivers = []
 
     project_cfg = load_project_config_optional()
-    auth_mode: str = project_cfg.get("auth", "unknown") if project_cfg else "unknown"
+    auth_mode: str = project_cfg.get("auth", "unknown")
 
     contract = {
         "auth_mode": auth_mode,

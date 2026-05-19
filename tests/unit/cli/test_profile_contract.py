@@ -186,7 +186,7 @@ class TestContractFullProfile:
         data = json.loads(result.output)
         assert data["auth_mode"] == "database"
 
-    def test_auth_mode_unknown_when_no_project_config(self, cli_runner: CliRunner) -> None:
+    def test_auth_mode_unknown_when_no_auth_key(self, cli_runner: CliRunner) -> None:
         config = make_config()
         with (
             patch("nexus.cli.commands.profile.load_cli_config", return_value=config),

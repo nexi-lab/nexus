@@ -77,10 +77,21 @@ class TimeTravelService:
     def _read_snapshot(self, virtual_path: str, operation_id: str) -> bytes:
         """Read a versioning snapshot through the §2.5 syscall surface.
 
-        Returns the pre-write bytes recorded for ``virtual_path`` at the
-        given operation. Raises NexusFileNotFoundError when the snapshot
-        is unreachable — including the case of legacy snapshots that were
-        only ever recorded by content hash (clean-break migration).
+        Architectural gap (FOLLOW-UP — kernel-side snapshot syscall):
+            The service-tier write observer (storage/record_store_write_observer.py)
+            only records ``snapshot_hash = old_metadata.content_id`` — the
+            hash of the pre-write CAS bytes. It does **not** write a
+            path-addressed copy of those bytes anywhere. The kernel-internal
+            ObjectStore retains the bytes by hash, but service-tier code
+            cannot reach them by hash (§2.5). So this path
+              /__sys__/versioning/{path_hash}/{operation_id}.bin
+            is currently never populated by anyone, and every call to
+            _read_snapshot raises NexusFileNotFoundError. ``get_file_at_operation``
+            still works for the "live current bytes" branch (it uses
+            sys_read(path) for current_path); only historical snapshot reads
+            fail. The systematic fix is a kernel-side snapshot-on-write that
+            also publishes the pre-write bytes to this path namespace —
+            that change belongs in rust/kernel, not here.
         """
         if self._nexus_fs is None:
             raise NexusFileNotFoundError(
@@ -93,8 +104,11 @@ class TimeTravelService:
             return self._nexus_fs.sys_read(path, context=sys_ctx)
         except (FileNotFoundError, NexusFileNotFoundError) as exc:
             raise NexusFileNotFoundError(
-                f"Snapshot for {virtual_path} at operation {operation_id} not found at {path} "
-                "(legacy hash-addressed snapshots are not service-reachable)"
+                f"Snapshot for {virtual_path} at operation {operation_id} not found at {path}. "
+                "Historical snapshot bytes are not yet service-reachable: the kernel "
+                "write observer records the hash but does not publish a path-addressed "
+                "copy. Live current-file reads still work; historical reads require a "
+                "kernel-side snapshot syscall (architectural follow-up — see §2.5)."
             ) from exc
 
     # ------------------------------------------------------------------

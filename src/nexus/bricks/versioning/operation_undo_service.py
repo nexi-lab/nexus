@@ -172,10 +172,19 @@ class OperationUndoService:
     def _read_content_from_cas(self, path: str, content_id: str) -> bytes:  # noqa: ARG002
         """Read content via the kernel syscall path (§2.5 mediation).
 
-        The legacy hash-addressed backend.read_content(content_id) fallback
-        was removed — services do not have a hash-addressed kernel surface
-        (KERNEL-ARCHITECTURE.md §2.3). content_id is kept in the signature
-        for caller convenience but is no longer consulted.
+        Architectural gap (FOLLOW-UP — same as TimeTravelService._read_snapshot):
+            ``content_id`` is the hash of the OLD bytes recorded by the write
+            observer at log time. The bytes are in CAS keyed by that hash,
+            but service tier cannot reach them by hash (§2.5). This method
+            currently returns ``sys_read_raw(path)`` which is the CURRENT
+            bytes at the path — wrong for any undo-after-write where the
+            current content already differs. The systematic fix is a
+            kernel-side snapshot-on-write that publishes pre-write bytes to
+            a path-addressed namespace; that change belongs in rust/kernel,
+            not here.
+
+            ``content_id`` is kept in the signature for the future migration
+            but is unused today.
         """
         _kernel = getattr(self._dlc, "_kernel", None) if self._dlc else None
         if _kernel is None:

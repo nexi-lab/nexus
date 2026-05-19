@@ -1,5 +1,7 @@
 # build(cli): `nexus profile contract` — print resolved deployment-profile contract
 
+> **STATUS: RESOLVED BY IMPLEMENTATION (issue #4132 branch).** Shipped as `nexus profile contract`; source: `src/nexus/cli/commands/profile.py`; tests: `tests/unit/cli/test_profile_contract.py`. This draft was never filed as a separate GitHub issue — the surface was built directly. Retained for historical context.
+
 **Parent / Epic**: Parent: #4132 · Epic: #4121 · gaps.yaml id: `profile.contract_cli`
 
 **Priority**: REQUIRED — issue #4132 cannot close while this gap is untracked.
@@ -65,4 +67,4 @@ The FULL profile user-guide correctness assertion (spec §Profile-contract asser
 
 ---
 
-> Drafted by issue #4132 work; not yet filed. Filing requires maintainer approval.
+~~superseded:~~ Drafted by issue #4132 work; not yet filed. Filing requires maintainer approval. (Superseded — surface was implemented directly; see STATUS block at top.)

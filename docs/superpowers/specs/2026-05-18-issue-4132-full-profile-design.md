@@ -124,6 +124,12 @@ The guide states, and tests prove:
 
 ## Missing-surface gate (draft build issues — file only on approval)
 
+> **RESOLUTION NOTE (issue #4132 branch, 2026-05-18):** All 3 gaps below were RESOLVED BY DIRECT IMPLEMENTATION on this branch — not filed as separate GitHub issues. The "file only on approval" plan was superseded by the user's request to implement directly.
+> - Gap 1 (`profile.contract_cli`) → shipped as `nexus profile contract`; source: `src/nexus/cli/commands/profile.py`; tests: `tests/unit/cli/test_profile_contract.py`.
+> - Gap 2 (`status.auth_profile_detail`) → shipped as `nexus status --json` (`deployment_profile` + `auth_mode` keys); source: `src/nexus/cli/commands/status.py`; tests: `tests/unit/cli/test_status.py`.
+> - Gap 3 (`remote.connect_preflight`) → shipped as `nexus doctor remote`; source: `src/nexus/cli/commands/doctor.py`; tests: `tests/unit/cli/test_doctor.py`.
+> The missing-surface gate is satisfied. #4132 is closeable on this axis.
+
 ### Gap 1 — No CLI prints the resolved deployment-profile contract
 
 - **Missing user workflow**: operator wants to verify, without reading
@@ -197,7 +203,7 @@ The guide states, and tests prove:
 | Guide gives start-to-remote-client workflow | `user-guide.md` narrative section + `full-profile.md` |
 | Tests cover full feature reporting + remote connection requirements | `test_full_profile.py` + gated E2E |
 | Stale `serve`/`minimal`/no-`nexus up` docs reconciled | `docs/paths/daemon-and-remote.md` fix |
-| Missing auth/env/status CLI gaps filed as build issues | Missing-surface gate §; filed on approval |
+| Missing auth/env/status CLI gaps filed as build issues | ~~Filed on approval~~ → **Implemented directly on this branch**: `nexus profile contract` (`profile.py`, `test_profile_contract.py`), `nexus status --json` deployment_profile/auth_mode (`status.py`, `test_status.py`), `nexus doctor remote` (`doctor.py`, `test_doctor.py`). Missing-surface gate satisfied; #4132 closeable on this axis. |
 | Matrix links startup/status/auth surface for full | `api-rpc-surface-coverage.yaml` rows |
 
 ## Risks

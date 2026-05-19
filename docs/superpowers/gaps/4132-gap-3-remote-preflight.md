@@ -1,5 +1,7 @@
 # build(remote): remote-connect preflight (`nexus doctor remote` / SDK preflight)
 
+> **STATUS: RESOLVED BY IMPLEMENTATION (issue #4132 branch).** Shipped as `nexus doctor remote`; source: `src/nexus/cli/commands/doctor.py`; tests: `tests/unit/cli/test_doctor.py`. This draft was never filed as a separate GitHub issue — the surface was built directly. Retained for historical context.
+
 **Parent / Epic**: Parent: #4132 · Epic: #4121 · gaps.yaml id: `remote.connect_preflight`
 
 **Priority**: REQUIRED — issue #4132 cannot close while this gap is untracked.
@@ -84,4 +86,4 @@ The documented remote workflow for FULL (spec §Profile-contract assertions, poi
 
 ---
 
-> Drafted by issue #4132 work; not yet filed. Filing requires maintainer approval.
+~~superseded:~~ Drafted by issue #4132 work; not yet filed. Filing requires maintainer approval. (Superseded — surface was implemented directly; see STATUS block at top.)

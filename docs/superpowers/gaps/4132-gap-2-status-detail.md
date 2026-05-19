@@ -1,5 +1,7 @@
 # build(cli): add `deployment_profile` + `auth_mode` to `nexus status --json`
 
+> **STATUS: RESOLVED BY IMPLEMENTATION (issue #4132 branch).** Shipped as `nexus status --json` with `deployment_profile` and `auth_mode` keys; source: `src/nexus/cli/commands/status.py`; tests: `tests/unit/cli/test_status.py`. This draft was never filed as a separate GitHub issue — the surface was built directly. Retained for historical context.
+
 **Parent / Epic**: Parent: #4132 · Epic: #4121 · gaps.yaml id: `status.auth_profile_detail`
 
 **Priority**: RECOMMENDED — not a hard blocker for #4132 closure, but improves operator experience.
@@ -56,4 +58,4 @@ Not performance-sensitive (control plane, status check). No latency gate require
 
 ---
 
-> Drafted by issue #4132 work; not yet filed. Filing requires maintainer approval.
+~~superseded:~~ Drafted by issue #4132 work; not yet filed. Filing requires maintainer approval. (Superseded — surface was implemented directly; see STATUS block at top.)

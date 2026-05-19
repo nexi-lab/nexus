@@ -86,25 +86,40 @@ def stat_cmd(paths, output_opts, remote_url, remote_api_key, operation_context):
 - `CommandTiming` from `nexus.cli.timing`. `open_filesystem`, `add_backend_options`, `add_context_options`, `console`, `get_filesystem` from `nexus.cli.utils`.
 - Register: append the click function to `register_commands(cli)` in `file_ops.py` **and** add the command name string to `_REGISTER_COMMANDS["file_ops"]` in `commands/__init__.py`.
 
-Parity-test fixture pattern (in-process real FS, mirrors `tests/benchmarks/conftest.py`):
+**ENV PREREQUISITE (provisioned 2026-05-19 — already in place, do not redo):**
+The Rust kernel is the out-of-process `nexusd-cluster` binary. It was built
+(`cargo build --release -p nexus-cluster`) and symlinked
+`~/.cargo/bin/nexus-cluster -> target/release/nexusd-cluster` (name mismatch:
+KernelClient spawns `nexus-cluster`, binary is `nexusd-cluster`). `~/.cargo/bin`
+is on PATH. `tests/conftest.py` already inserts worktree `src` on `sys.path`,
+so pytest uses worktree source (no PYTHONPATH needed under pytest). See memory
+`project_issue_4133_env_blocker.md`.
+
+Parity-test fixture pattern (in-process real FS — PROVEN working; use this
+EXACT form — `make_test_nexus`/`_build_kernel_metastore` hand an UNOPENED
+KernelClient and fail, so open it explicitly):
 
 ```python
 # tests/unit/cli/conftest.py additions
 @pytest.fixture()
 def inproc_nexus(tmp_path):
-    from nexus.backends.cas_local import CASLocalBackend
-    from nexus.core.factory import create_nexus_fs
-    from nexus.contracts.config import PermissionConfig, ParseConfig, CacheConfig
-    from tests.benchmarks.conftest import _build_kernel_metastore
-    from nexus.records.sqlalchemy_store import SQLAlchemyRecordStore
-    backend = CASLocalBackend(str(tmp_path / "stor")); (tmp_path / "stor").mkdir(exist_ok=True)
-    _, meta = _build_kernel_metastore(str(tmp_path / "k.db"))
-    nx = create_nexus_fs(backend=backend, metadata_store=meta,
-                         record_store=SQLAlchemyRecordStore(), is_admin=True,
-                         permissions=PermissionConfig(enforce=False),
-                         parsing=ParseConfig(auto_parse=False), cache=CacheConfig())
+    from nexus.remote.kernel_client import KernelClient
+    from nexus.factory import create_nexus_fs
+    from nexus.core.config import PermissionConfig, ParseConfig
+    from nexus.backends.storage.path_local import PathLocalBackend
+    (tmp_path / "data").mkdir(exist_ok=True)
+    k = KernelClient()
+    k.set_metastore_path(str(tmp_path / "metastore.redb"))
+    k.open()
+    nx = create_nexus_fs(
+        backend=PathLocalBackend(root_path=str(tmp_path / "data")),
+        metadata_store=k, record_store=None,
+        permissions=PermissionConfig(enforce=False),
+        parsing=ParseConfig(auto_parse=False),
+    )
     yield nx
     nx.close()
+    k.close()
 
 @pytest.fixture()
 def patched_fs(inproc_nexus, monkeypatch):
@@ -119,7 +134,11 @@ def patched_fs(inproc_nexus, monkeypatch):
     return inproc_nexus
 ```
 
-> **Plan-time check (Task 1):** confirm the exact import paths for `create_nexus_fs`, `_build_kernel_metastore`, `CASLocalBackend`, `SQLAlchemyRecordStore`, `PermissionConfig/ParseConfig/CacheConfig` by reading `tests/benchmarks/conftest.py` top imports; adjust the fixture to match. Do not invent module paths.
+> This fixture form is verified end-to-end (write/read/stat/stat_bulk/read_range/read_bulk).
+> Do NOT substitute `_build_kernel_metastore` or `make_test_nexus` (they yield
+> an unopened kernel → `AssertionError: self._transport is not None`).
+> `InMemoryNexusFS` (tests/testkit/metadata.py) is a pure-Python double — not
+> real RPC behavior — do not use it for parity.
 
 ---
 
@@ -129,14 +148,14 @@ def patched_fs(inproc_nexus, monkeypatch):
 - Modify: `tests/unit/cli/conftest.py`
 - Test: `tests/unit/cli/test_fs_parity.py` (create, smoke only this task)
 
-- [ ] **Step 1: Read the real imports**
+- [ ] **Step 1: Confirm env prerequisite is in place**
 
-Run: `sed -n '1,40p' tests/benchmarks/conftest.py`
-Expected: see exact import lines for `create_nexus_fs`, `_build_kernel_metastore`, `CASLocalBackend`, `SQLAlchemyRecordStore`, `PermissionConfig`, `ParseConfig`, `CacheConfig`. Note them.
+Run: `command -v nexus-cluster && python -c "import sys; print([p for p in sys.path if 'worktrees/calm-strolling-reef/src' in p] or 'pytest-adds-src')"`
+Expected: `nexus-cluster` resolves (symlink already created). The ENV PREREQUISITE block above is already provisioned — do NOT rebuild.
 
 - [ ] **Step 2: Add `inproc_nexus` + `patched_fs` fixtures to `tests/unit/cli/conftest.py`**
 
-Use the "Parity-test fixture pattern" code above, with import paths corrected to match Step 1's findings.
+Use the "Parity-test fixture pattern" code above **verbatim** (it is proven working — do not alter import paths or substitute fixtures).
 
 - [ ] **Step 3: Write the smoke test** (`tests/unit/cli/test_fs_parity.py`)
 

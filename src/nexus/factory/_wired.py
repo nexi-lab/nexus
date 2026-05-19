@@ -615,7 +615,7 @@ def _boot_post_kernel_services(
 
             time_travel_service = TimeTravelService(
                 session_factory=_nx_session_factory,
-                backend=_root_backend,
+                nexus_fs=nx,
                 default_zone_id=getattr(_nx_init_cred, "zone_id", None),
             )
             logger.debug("[BOOT:WIRED] TimeTravelService created")
@@ -635,7 +635,6 @@ def _boot_post_kernel_services(
                 delete_fn=nx.sys_unlink,
                 rename_fn=nx.sys_rename,
                 exists_fn=nx.access,
-                fallback_backend=getattr(nx, "backend", None),
             )
             operations_service = OperationsService(
                 session_factory=_nx_session_factory,

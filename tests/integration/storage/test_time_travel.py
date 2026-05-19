@@ -69,11 +69,11 @@ class TestTimeTravelDebug:
         nx.close()
 
     @pytest.fixture
-    def time_travel(self, record_store, backend):
+    def time_travel(self, record_store, nx):
         """Create TimeTravelService for testing."""
         return TimeTravelService(
             session_factory=record_store.session_factory,
-            backend=backend,
+            nexus_fs=nx,
         )
 
     @pytest.mark.asyncio

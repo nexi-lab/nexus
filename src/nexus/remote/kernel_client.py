@@ -347,13 +347,28 @@ class KernelClient:
 
         Uses the existing typed Read RPC per item (same as sys_read).
         Returns list of _SysReadResult in same order as items.
+        On per-item failure, surfaces error_kind so the caller
+        (nexus_fs_content.read_batch) can distinguish not_found from
+        other errors and implement partial/strict mode correctly.
         """
+        from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError
+
         results: list[Any] = []
         for path, offset, _count in items:
             try:
                 results.append(self.sys_read(path, offset=offset))
-            except Exception:
-                results.append(_SysReadResult(data=b""))
+            except NexusFileNotFoundError:
+                results.append(
+                    _SysReadResult(data=None, error_kind="not_found", error_message=path)
+                )
+            except NexusPermissionError as e:
+                results.append(
+                    _SysReadResult(data=None, error_kind="permission_denied", error_message=str(e))
+                )
+            except Exception as e:
+                results.append(
+                    _SysReadResult(data=None, error_kind="io_error", error_message=str(e))
+                )
         return results
 
     def stat_batch(self, paths: list[str], zone_id: str = ROOT_ZONE_ID) -> list[Any]:
@@ -693,7 +708,7 @@ class _SysReadResult:
     """Matches Rust SysReadResult field names (SSOT).
 
     Fields: data, content_id, gen, entry_type, stream_next_offset,
-    post_hook_needed — all from rust/kernel/src/kernel/mod.rs.
+    post_hook_needed, error_kind, error_message — from rust/kernel/src/kernel/mod.rs.
     """
 
     __slots__ = (
@@ -703,15 +718,19 @@ class _SysReadResult:
         "entry_type",
         "stream_next_offset",
         "post_hook_needed",
+        "error_kind",
+        "error_message",
     )
 
     def __init__(
         self,
-        data: bytes = b"",
+        data: bytes | None = b"",
         content_id: str | None = None,
         gen: int = 0,
         entry_type: int = 1,
         stream_next_offset: int | None = None,
+        error_kind: str = "",
+        error_message: str = "",
     ) -> None:
         self.data = data
         self.content_id = content_id
@@ -719,6 +738,8 @@ class _SysReadResult:
         self.entry_type = entry_type
         self.stream_next_offset = stream_next_offset
         self.post_hook_needed = False  # hooks fire inside Rust kernel
+        self.error_kind = error_kind
+        self.error_message = error_message
 
 
 class _SysWriteResult:

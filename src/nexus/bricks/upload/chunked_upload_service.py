@@ -19,12 +19,14 @@ from typing import TYPE_CHECKING, Any, cast
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
+    NexusFileNotFoundError,
     UploadChecksumMismatchError,
     UploadExpiredError,
     UploadNotFoundError,
     UploadOffsetMismatchError,
     ValidationError,
 )
+from nexus.contracts.types import OperationContext
 from nexus.storage.models.upload_session import UploadSessionModel
 
 from .upload_session import UploadSession, UploadStatus
@@ -35,6 +37,24 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
+# §2.5 syscall surface for resumable upload chunk staging. Pattern C
+# migration: chunks no longer flow through backend.write_content directly
+# (ObjectStore is a kernel-internal HAL pillar — KERNEL-ARCHITECTURE.md
+# §2.5). Each chunk lands at
+#   /__sys__/chunked-uploads/{upload_id}/part-{part_number}.bin
+# and is read back from the same path during assembly. On abort/finalize
+# the directory is unlinked.
+_CHUNKED_UPLOAD_PATH_PREFIX = "/__sys__/chunked-uploads"
+
+
+def _chunk_path(upload_id: str, part_number: int) -> str:
+    return f"{_CHUNKED_UPLOAD_PATH_PREFIX}/{upload_id}/part-{part_number:08d}.bin"
+
+
+def _upload_dir(upload_id: str) -> str:
+    return f"{_CHUNKED_UPLOAD_PATH_PREFIX}/{upload_id}"
+
 
 # tus protocol constants
 TUS_VERSION = "1.0.0"
@@ -386,6 +406,10 @@ class ChunkedUploadService:
             except Exception as e:
                 logger.warning("Failed to abort backend multipart for %s: %s", upload_id, e)
 
+        # Drop any chunks that may have been staged under §2.5 namespace.
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        await self._unlink_chunk_dir(upload_id, sys_ctx)
+
         # Mark as terminated
         terminated = UploadSession(
             upload_id=session.upload_id,
@@ -594,6 +618,26 @@ class ChunkedUploadService:
 
         await asyncio.to_thread(_delete, upload_id)
 
+    async def _unlink_chunk_dir(
+        self,
+        upload_id: str,
+        sys_ctx: OperationContext,
+    ) -> None:
+        """Remove the staging directory for ``upload_id`` (best-effort)."""
+        if self._nexus_fs is None:
+            return
+        try:
+            await asyncio.to_thread(
+                self._nexus_fs.sys_unlink,
+                _upload_dir(upload_id),
+                recursive=True,
+                context=sys_ctx,
+            )
+        except (FileNotFoundError, NexusFileNotFoundError):
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to clean up chunk dir for upload %s: %s", upload_id, exc)
+
     async def _store_chunk(
         self,
         session: UploadSession,
@@ -615,13 +659,21 @@ class ChunkedUploadService:
                 data,
             )
 
-        # Fallback: write chunk directly to CAS and track
+        # §2.5 syscall path — stage chunk under /__sys__/chunked-uploads/.
         chunk_hash = hashlib.sha256(data).hexdigest()
-        result = await asyncio.to_thread(self._backend.write_content, data)
+        if self._nexus_fs is None:
+            raise RuntimeError(
+                "ChunkedUploadService requires nexus_fs to stage chunks under "
+                "/__sys__/chunked-uploads/ — the legacy backend.write_content "
+                "path is no longer supported (§2.5 mediation)."
+            )
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        chunk_path = _chunk_path(session.upload_id, part_number)
+        await asyncio.to_thread(self._nexus_fs.sys_write, chunk_path, data, context=sys_ctx)
         return {
             "etag": chunk_hash,
             "part_number": part_number,
-            "content_id": result.content_id,
+            "chunk_path": chunk_path,
         }
 
     async def _assemble_and_write(
@@ -651,29 +703,35 @@ class ChunkedUploadService:
                 parts,
             )
         else:
-            # Read all chunks and concatenate
+            # Read chunks back from the §2.5 staging namespace and concatenate.
+            if self._nexus_fs is None:
+                raise RuntimeError(
+                    "ChunkedUploadService requires nexus_fs to assemble chunks "
+                    "from /__sys__/chunked-uploads/ — the legacy backend-only "
+                    "path is no longer supported (§2.5 mediation)."
+                )
             sorted_parts = sorted(parts, key=lambda p: p["part_number"])
             assembled = bytearray()
+            sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
             for part_info in sorted_parts:
-                part_hash = part_info.get("content_id")
-                if part_hash:
-                    content = await asyncio.to_thread(self._backend.read_content, part_hash)
-                    assembled.extend(content)
-
-            # Write assembled content to CAS
-            content = bytes(assembled)
-            if self._nexus_fs is not None:
-                result = await asyncio.to_thread(
-                    self._nexus_fs.write,
-                    session.target_path,
-                    content,
-                    context=context,
+                chunk_path = part_info.get("chunk_path")
+                if not chunk_path:
+                    continue
+                chunk_bytes = await asyncio.to_thread(
+                    self._nexus_fs.sys_read, chunk_path, context=sys_ctx
                 )
-                content_id = result["content_id"]
-            else:
-                _write = self._backend.write_content
-                result = await asyncio.to_thread(_write, content)
-                content_id = result.content_id
+                assembled.extend(chunk_bytes)
+
+            # Write assembled content via the syscall pipeline.
+            content = bytes(assembled)
+            result = await asyncio.to_thread(
+                self._nexus_fs.write,
+                session.target_path,
+                content,
+                context=context,
+            )
+            content_id = result["content_id"]
+            await self._unlink_chunk_dir(session.upload_id, sys_ctx)
 
         # Update session to completed
         completed = UploadSession(

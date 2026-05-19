@@ -197,8 +197,7 @@ class KernelClient:
         """Read file content via typed Read RPC."""
         assert self._transport is not None
         content = self._transport.read_file(path, content_id="", read_timeout=self._timeout)
-        # Return a result object matching the old PySysReadResult shape.
-        return _SysReadResult(content=content)
+        return _SysReadResult(data=content)
 
     def sys_write(
         self,
@@ -353,7 +352,7 @@ class KernelClient:
             try:
                 results.append(self.sys_read(path, offset=offset))
             except Exception:
-                results.append(_SysReadResult(content=b""))
+                results.append(_SysReadResult(data=b""))
         return results
 
     def stat_batch(self, paths: list[str], zone_id: str = ROOT_ZONE_ID) -> list[Any]:
@@ -677,26 +676,35 @@ class KernelClient:
 
 
 class _SysReadResult:
-    """Mimics PySysReadResult from the old PyO3 binding."""
+    """Matches Rust SysReadResult field names (SSOT).
 
-    __slots__ = ("content", "content_id", "size", "gen", "hit", "entry_type", "stream_next_offset")
+    Fields: data, content_id, gen, entry_type, stream_next_offset,
+    post_hook_needed — all from rust/kernel/src/kernel/mod.rs.
+    """
+
+    __slots__ = (
+        "data",
+        "content_id",
+        "gen",
+        "entry_type",
+        "stream_next_offset",
+        "post_hook_needed",
+    )
 
     def __init__(
         self,
-        content: bytes = b"",
+        data: bytes = b"",
         content_id: str | None = None,
-        size: int = 0,
         gen: int = 0,
         entry_type: int = 1,
         stream_next_offset: int | None = None,
     ) -> None:
-        self.content = content
+        self.data = data
         self.content_id = content_id
-        self.size = size
         self.gen = gen
-        self.hit = content is not None
         self.entry_type = entry_type
         self.stream_next_offset = stream_next_offset
+        self.post_hook_needed = False  # hooks fire inside Rust kernel
 
 
 class _SysWriteResult:

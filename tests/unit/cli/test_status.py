@@ -219,15 +219,22 @@ class TestStatusCommand:
     # deployment_profile + auth_mode enrichment (Gap 2 of #4132)
     # -----------------------------------------------------------------------
 
+    @patch(
+        "nexus.cli.commands.status._fetch_deployment_profile_from_features",
+        return_value=None,
+    )
     @patch("nexus.cli.commands.status._load_project_config_optional")
     @patch("nexus.cli.commands.status._collect_status")
-    def test_deployment_profile_from_env(
+    def test_deployment_profile_env_is_offline_fallback(
         self,
         mock_collect: MagicMock,
         mock_project_cfg: MagicMock,
+        mock_fetch: MagicMock,
         cli_runner: CliRunner,
     ) -> None:
-        """NEXUS_PROFILE env var is surfaced as deployment_profile."""
+        """NEXUS_PROFILE is used only as the OFFLINE fallback — when the live
+        hub features endpoint is unreachable (mocked → None), the env value
+        surfaces as deployment_profile."""
         mock_collect.return_value = {
             "server_url": "http://localhost:2026",
             "server_reachable": False,
@@ -241,6 +248,35 @@ class TestStatusCommand:
         parsed = json.loads(result.output)
         data = parsed.get("data", parsed)
         assert data["deployment_profile"] == "full"
+
+    @patch("nexus.cli.commands.status._fetch_deployment_profile_from_features")
+    @patch("nexus.cli.commands.status._load_project_config_optional")
+    @patch("nexus.cli.commands.status._collect_status")
+    def test_live_features_wins_over_env_profile(
+        self,
+        mock_collect: MagicMock,
+        mock_project_cfg: MagicMock,
+        mock_fetch: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """`nexus status` reports the *running hub*. The live
+        /api/v2/features value MUST override a local NEXUS_PROFILE env var
+        (otherwise `NEXUS_PROFILE=full nexus status --url <other-hub>`
+        would mislabel a different hub)."""
+        mock_collect.return_value = {
+            "server_url": "http://otherhub:2026",
+            "server_reachable": True,
+            "server_health": None,
+            "docker_services": [],
+        }
+        mock_project_cfg.return_value = {}
+        mock_fetch.return_value = "lite"  # the live hub actually runs `lite`
+
+        result = cli_runner.invoke(status, ["--json"], env={"NEXUS_PROFILE": "full"})
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        data = parsed.get("data", parsed)
+        assert data["deployment_profile"] == "lite"  # live hub wins, not env
 
     @patch("nexus.cli.commands.status._load_project_config_optional")
     @patch("nexus.cli.commands.status._collect_status")

@@ -503,3 +503,57 @@ class TestContractRemoteTargeting:
 
         assert result.exit_code == 0, result.output
         mock_client_cls.assert_called_once_with(url="http://localhost:2026", api_key=None)
+
+    def test_global_profile_forwarded_to_resolve_connection(self, cli_runner: CliRunner) -> None:
+        """`nexus --profile staging profile contract` must pass the global
+        profile through to resolve_connection (regression: it used to be
+        silently dropped, so a requested profile got localhost instead)."""
+        config = make_config()
+        with (
+            patch("nexus.cli.commands.profile.load_cli_config", return_value=config),
+            patch("nexus.cli.commands.profile.NexusApiClient") as mock_client_cls,
+            patch(
+                "nexus.cli.commands.profile.load_project_config_optional",
+                return_value={},
+            ),
+            patch(
+                "nexus.cli.commands.profile.resolve_connection",
+                return_value=_make_resolved(url="http://staging:1234", api_key="sk"),
+            ) as mock_resolve,
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get.return_value = FULL_FEATURES_PAYLOAD
+            mock_client_cls.return_value = mock_instance
+
+            result = cli_runner.invoke(profile_group, ["contract"], obj={"profile": "staging"})
+
+        assert result.exit_code == 0, result.output
+        assert mock_resolve.call_args.kwargs.get("profile_name") == "staging"
+
+    def test_remote_target_auth_mode_unknown_with_sources(self, cli_runner: CliRunner) -> None:
+        """For an explicit remote target, the local nexus.yaml auth does
+        NOT describe that hub: auth_mode must be 'unknown', and a
+        `_sources` provenance map must mark client-inferred fields."""
+        config = make_config()
+        with (
+            patch("nexus.cli.commands.profile.load_cli_config", return_value=config),
+            patch("nexus.cli.commands.profile.NexusApiClient") as mock_client_cls,
+            patch(
+                "nexus.cli.commands.profile.load_project_config_optional",
+                return_value={"auth": "database"},  # local config — must be ignored for remote
+            ),
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get.return_value = FULL_FEATURES_PAYLOAD
+            mock_client_cls.return_value = mock_instance
+
+            result = cli_runner.invoke(profile_group, ["contract", "--url", "http://hub:9999"])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["auth_mode"] == "unknown"  # NOT "database" (that's local-only)
+        assert "_sources" in data
+        assert "client-inferred" in data["_sources"]["drivers"]
+        assert "remote target" in data["_sources"]["auth_mode"]
+        # Hub-authoritative fields still come straight from /api/v2/features
+        assert data["deployment_profile"] == "full"

@@ -686,7 +686,12 @@ def _compute_grpc_address(url: str) -> tuple[str, int]:
 
 
 def _check_remote_http(url: str) -> CheckResult:
-    """GET {url}/health — OK on 200, WARNING/ERROR otherwise."""
+    """GET {url}/health — OK on 200, ERROR otherwise.
+
+    This is a *preflight*: a non-200 health response means the remote
+    path is not usable, so it is an ERROR (non-zero exit), not a
+    soft WARNING.
+    """
     health_url = url.rstrip("/") + "/health"
     try:
         import httpx
@@ -701,7 +706,7 @@ def _check_remote_http(url: str) -> CheckResult:
                 )
             return CheckResult(
                 name="remote-http",
-                status=CheckStatus.WARNING,
+                status=CheckStatus.ERROR,
                 message=f"HTTP health returned {resp.status_code} at {health_url}.",
                 fix_hint=f"Check the hub server is running and {health_url} is accessible.",
             )
@@ -732,10 +737,13 @@ def _check_remote_grpc(url: str, api_key: str | None) -> CheckResult:
             message=f"gRPC reachable at {grpc_address}.",
         )
     except ValueError as exc:
-        # RPCTransport refuses insecure non-loopback channels.
+        # RPCTransport refuses insecure non-loopback channels. The real
+        # remote SDK connection would be refused the same way *before*
+        # dialing — so for a preflight this is an ERROR (the remote path
+        # is not usable as-is), not a soft WARNING.
         return CheckResult(
             name="remote-grpc",
-            status=CheckStatus.WARNING,
+            status=CheckStatus.ERROR,
             message=f"gRPC channel refused (insecure non-loopback): {exc}",
             fix_hint=(
                 "Configure TLS for remote connections (NEXUS_GRPC_TLS=true + certs), "

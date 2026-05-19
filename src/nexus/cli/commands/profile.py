@@ -254,12 +254,19 @@ def rename_cmd(old_name: str, new_name: str) -> None:
     envvar="NEXUS_API_KEY",
     help="API key for authenticated requests.",
 )
-def contract_cmd(url: str | None, api_key: str | None) -> None:
+@click.pass_context
+def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> None:
     """Print the running hub's resolved deployment-profile contract as JSON.
 
-    Queries the active connection's /api/v2/features endpoint and enriches
-    the response with the DeploymentProfile's default driver set and the
-    local nexus.yaml auth mode (when a project config is present).
+    Hub-returned fields (``deployment_profile``, ``bricks``,
+    ``disabled_bricks``, ``mode``, ``version``) are authoritative.
+    ``drivers`` is *client-inferred* from the hub's profile name via this
+    client's DeploymentProfile enum (can diverge under CLI/server version
+    skew). ``auth_mode`` reflects the local nexus.yaml only for the
+    locally-managed stack — for an explicit remote target (``--url`` /
+    ``NEXUS_URL`` / global ``--profile``) it is ``"unknown"`` because
+    local config does not describe a remote hub. A ``_sources`` map in
+    the output records each field's provenance.
 
     The ``grpc_required`` field is always ``true`` — the remote SDK path
     requires gRPC, not just HTTP (documented invariant, Issue #4132).
@@ -270,7 +277,17 @@ def contract_cmd(url: str | None, api_key: str | None) -> None:
         nexus --profile staging profile contract
     """
     config = load_cli_config()
-    resolved = resolve_connection(remote_url=url, remote_api_key=api_key, config=config)
+    profile_name = (ctx.obj or {}).get("profile")
+    # Explicit remote target: a URL/api-key flag-or-env, or a named
+    # global --profile. Local nexus.yaml auth does not describe such a
+    # hub, so auth_mode must not be presented as its contract.
+    is_remote_target = bool(url) or bool(api_key) or bool(profile_name)
+    resolved = resolve_connection(
+        remote_url=url,
+        remote_api_key=api_key,
+        profile_name=profile_name,
+        config=config,
+    )
     url = resolved.url or "http://localhost:2026"
 
     try:
@@ -290,8 +307,16 @@ def contract_cmd(url: str | None, api_key: str | None) -> None:
     except ValueError:
         drivers = []
 
-    project_cfg = load_project_config_optional()
-    auth_mode: str = project_cfg.get("auth", "unknown")
+    # auth_mode: local nexus.yaml only describes the locally-managed
+    # stack. For an explicit remote target it is not evidence about that
+    # hub, so report "unknown" rather than a misleading local value.
+    if is_remote_target:
+        auth_mode = "unknown"
+        auth_mode_source = "unknown (remote target — local config does not describe it)"
+    else:
+        project_cfg = load_project_config_optional()
+        auth_mode = project_cfg.get("auth", "unknown")
+        auth_mode_source = "local nexus.yaml (locally-managed stack)"
 
     contract = {
         "auth_mode": auth_mode,
@@ -302,6 +327,16 @@ def contract_cmd(url: str | None, api_key: str | None) -> None:
         "grpc_required": True,
         "mode": features.get("mode", ""),
         "version": features.get("version"),
+        "_sources": {
+            "deployment_profile": "hub /api/v2/features (authoritative)",
+            "bricks": "hub /api/v2/features (authoritative)",
+            "disabled_bricks": "hub /api/v2/features (authoritative)",
+            "mode": "hub /api/v2/features (authoritative)",
+            "version": "hub /api/v2/features (authoritative)",
+            "drivers": "client-inferred from hub profile via DeploymentProfile enum (not hub-authoritative; may differ under version skew)",
+            "grpc_required": "documented invariant (Issue #4132)",
+            "auth_mode": auth_mode_source,
+        },
     }
     print(json.dumps(contract, indent=2, sort_keys=True))
 

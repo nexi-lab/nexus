@@ -56,18 +56,27 @@ def _fetch_deployment_profile_from_features(server_url: str) -> str | None:
 
 
 def _resolve_deployment_profile(server_url: str) -> str:
-    """Resolve deployment profile via env ``NEXUS_PROFILE`` → features endpoint → ``"unknown"``.
+    """Resolve the *running hub's* deployment profile.
+
+    `nexus status` reports the hub at *server_url*, so the live hub's
+    ``/api/v2/features`` value is authoritative and MUST win over a local
+    ``NEXUS_PROFILE`` env var (otherwise ``NEXUS_PROFILE=full nexus status
+    --url <other-hub>`` would mislabel a different hub).
 
     Hierarchy (single source of truth):
-    1. ``NEXUS_PROFILE`` env var (non-empty wins immediately).
-    2. Best-effort ``GET /api/v2/features`` for the resolved *server_url*.
+    1. Live ``GET /api/v2/features`` for *server_url* (authoritative when
+       a server URL is available and reachable).
+    2. ``NEXUS_PROFILE`` env var — offline/local fallback only (used when
+       there is no server URL or the hub is unreachable).
     3. ``"unknown"`` fallback.
     """
+    fetched = _fetch_deployment_profile_from_features(server_url) if server_url else None
+    if fetched:
+        return fetched
     profile_env = os.environ.get("NEXUS_PROFILE", "").strip()
     if profile_env:
         return profile_env
-    fetched = _fetch_deployment_profile_from_features(server_url) if server_url else None
-    return fetched if fetched else "unknown"
+    return "unknown"
 
 
 def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:

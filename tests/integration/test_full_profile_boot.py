@@ -33,8 +33,14 @@ def test_full_stack_boots_and_serves(full_stack):
 
 
 @requires_e2e
-def test_remote_sdk_connect(full_stack):
+def test_remote_sdk_connect(full_stack, monkeypatch):
     from nexus.sdk import connect
+
+    # Pin the SDK to the fixture's *actual* resolved gRPC port. Without
+    # this, connect() falls back to ambient/default (2028) and would
+    # fail on conflict-remapped ports — or, worse, silently pass against
+    # an unrelated service on 2028 instead of the booted fixture.
+    monkeypatch.setenv("NEXUS_GRPC_PORT", str(full_stack.grpc_port))
 
     nx = connect(
         config={

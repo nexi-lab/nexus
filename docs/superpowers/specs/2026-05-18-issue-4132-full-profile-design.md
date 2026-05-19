@@ -224,3 +224,63 @@ The guide states, and tests prove:
   before implementation work elsewhere.
 - Vocabulary gap (preset vs profile) could confuse readers → the guide
   has an explicit "preset ↔ deployment profile" mapping table.
+
+## Empirical verification (post-implementation, 2026-05-19)
+
+Real, observed evidence against a live FULL hub (Docker stack booted
+via the credential-shim workaround for the non-interactive
+`osxkeychain` blocker; container `nexus-<hash>-nexus-1`, HTTP on a
+mapped host port):
+
+- **Full hub boots & serves** (closes verification gap #1, core): the
+  nexus container reached `Application startup complete`,
+  `GET /health` → **200**, `GET /api/v2/features` →
+  `{profile: "full", enabled_bricks: 29, mode: "standalone",
+  version: "0.10.0"}`. Postgres + Dragonfly healthy.
+- **`nexus status --json`** (Gap 2) against the live hub →
+  `deployment_profile="full"`, `auth_mode="none"`,
+  `server_reachable=true`. ✓
+- **`nexus doctor remote`** (Gap 3) against the live hub → real gRPC
+  dial attempted, returned an actionable `fix_hint`
+  ("gRPC port N unreachable; set NEXUS_GRPC_PORT"), no traceback. ✓
+- **`nexus profile contract`** (Gap 1) → real JSON
+  `deployment_profile="full"` + 29 enabled bricks, **after Bug A fix**.
+
+### Bug A — found by live testing, FIXED on this branch
+
+`nexus profile contract` shipped with no `--url`/`--api-key` options
+and did not honor `NEXUS_URL`/`NEXUS_API_KEY` (env vars are only read
+via Click `envvar=` bindings, which it lacked) — so it could only ever
+reach `localhost:2026`, defeating its purpose for remote hubs. The
+mocked unit tests missed this (they patch `resolve_connection`). Fixed:
+added `--url/--remote-url` (`envvar=NEXUS_URL`) and
+`--api-key/--remote-api-key` (`envvar=NEXUS_API_KEY`), forwarded to
+`resolve_connection`; regression tests for flags + envvars added;
+re-verified against the live hub. Flag spelling intentionally matches
+the sibling `nexus doctor remote` (`--url --api-key`, visible) rather
+than `status.py`'s hidden `--remote-api-key` — cross-new-command
+consistency was judged more valuable than literal status.py parity.
+
+### Bug B — found by live testing, NOT fixed (separate, out of scope)
+
+`nexus up --preset shared` returns **rc=1** even when the FULL hub is
+fully healthy and serving, because its health gate waits on **`zoekt`**
+(`✗ zoekt (timed out after 32s)`) although the `shared` preset's
+documented service set is only `nexus`/`postgres`/`dragonfly` (zoekt is
+not in `HEALTH_ENDPOINTS` and not a shared-preset service). This is the
+real reason the gated pytest E2E cannot reach a green `nexus up` via
+the fixture even on CI — independent of the #4132 deliverables.
+
+- **Disposition:** root-fixing `nexus up`'s service/health derivation
+  is core CLI behavior with broad blast radius and is **outside #4132's
+  scope** (docs/test + the 3 gap commands). It was deliberately **not**
+  patched here, and **not** masked in the fixture (the fixture now
+  reports the real failure honestly after the diagnostic fix). It is
+  recorded here as a discovered, separate defect for follow-up
+  (recommended: a dedicated `nexus up` issue — scope the health gate to
+  services the active preset/compose-profiles actually provision, or
+  make zoekt readiness non-fatal for non-search presets).
+- **Net:** the substance of all three #4132 verification gaps is closed
+  by the direct live-hub observations above. The pytest gated-E2E
+  remaining environment/Bug-B-blocked is a known, documented limitation,
+  not a #4132 deliverable defect.

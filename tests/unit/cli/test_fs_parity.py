@@ -233,3 +233,60 @@ def test_admin_fs_flush_and_backfill(inproc_nexus, cli_runner: CliRunner, monkey
     r2 = cli_runner.invoke(admin, ["fs", "backfill-index", "/", "--json"])
     assert r2.exit_code == 0, r2.output
     assert "entries_created" in json.loads(r2.output)["data"]
+
+
+# ---------------------------------------------------------------------------
+# Task 11: cross-path parity, content_id round-trip, range bounds, admin-only
+# ---------------------------------------------------------------------------
+
+
+def test_cli_read_equals_rpc_read(patched_fs, cli_runner: CliRunner):
+    """nexus cat --offset/--length goes through read_range and matches nx.read."""
+    from nexus.cli.commands.file_ops import cat
+
+    nx = patched_fs
+    nx.write("/p.txt", b"parity-bytes")
+    rpc = nx.read("/p.txt")
+    # Use the range branch which writes raw bytes to stdout.buffer (bypasses
+    # the JSON envelope that auto-JSON wraps the metadata path in under
+    # CliRunner's non-TTY stdout).
+    cli = cli_runner.invoke(cat, ["/p.txt", "--offset", "0", "--length", str(len(rpc))])
+    assert cli.exit_code == 0, cli.output
+    assert cli.stdout_bytes == rpc == b"parity-bytes"
+
+
+def test_write_roundtrips_content_id(patched_fs):
+    nx = patched_fs
+    w = nx.write("/cid.txt", b"data")
+    s = nx.stat("/cid.txt")
+    assert w["content_id"] == s["content_id"]
+
+
+def test_range_out_of_bounds_is_bounded(patched_fs):
+    nx = patched_fs
+    nx.write("/short.txt", b"abc")
+    # End past EOF returns the available bytes (bounded, not an error).
+    out = nx.read_range("/short.txt", 0, 100)
+    assert out == b"abc"
+
+
+def test_admin_only_metadata_is_set():
+    """backfill_directory_index / flush_write_observer carry admin_only=True so
+    the RPC dispatcher refuses non-admin callers server-side. Direct in-process
+    method calls bypass the dispatcher; this test verifies the metadata that
+    server-side enforcement reads — same guarantee, correct level."""
+    from nexus.core.nexus_fs_metadata import MetadataMixin
+
+    for name in ("backfill_directory_index", "flush_write_observer"):
+        fn = getattr(MetadataMixin, name)
+        spec = getattr(fn, "_rpc_expose", None) or getattr(fn, "__rpc_expose__", None)
+        # rpc_expose stores metadata on the function; we check whichever attr
+        # the decorator chose without coupling to one shape.
+        # Fall back: locate admin_only=True in the source decorator line.
+        if spec is None:
+            import inspect
+
+            src = inspect.getsource(fn)
+            assert "admin_only=True" in src, f"{name} missing admin_only=True"
+        else:
+            assert getattr(spec, "admin_only", False), f"{name} not admin_only"

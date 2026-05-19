@@ -155,14 +155,31 @@ def resolve_connection_env(
     http_port = ports.get("http", 2026)
     grpc_port = ports.get("grpc", 2028)
 
+    # gRPC host: state-recorded bind host wins (sandbox `up` may bind a
+    # non-localhost address — #4144); otherwise localhost. "0.0.0.0" is a
+    # bind wildcard, not a connectable address, so map it to localhost.
+    grpc_host = state.get("grpc_host") or "localhost"
+    if grpc_host in ("0.0.0.0", ""):
+        grpc_host = "localhost"
+
     # NEXUS_URL is always http:// — the HTTP server does not serve TLS.
     # TLS is gRPC-only (mTLS for zone federation). The TLS env vars
     # (NEXUS_TLS_CERT/KEY/CA) are emitted separately for gRPC clients.
     env_vars: dict[str, str] = {
         "NEXUS_URL": f"http://localhost:{http_port}",
-        "NEXUS_GRPC_HOST": f"localhost:{grpc_port}",
+        "NEXUS_GRPC_HOST": f"{grpc_host}:{grpc_port}",
         "NEXUS_GRPC_PORT": str(grpc_port),
     }
+
+    # #4144: surface the active profile/workspace when the runtime state
+    # records them (the sandbox `up` path does). Additive — the Docker
+    # `up` path does not set these keys, so its env output is unchanged.
+    profile = state.get("profile", config.get("profile", ""))
+    if profile:
+        env_vars["NEXUS_PROFILE"] = profile
+    workspace = state.get("workspace", "")
+    if workspace:
+        env_vars["NEXUS_WORKSPACE"] = workspace
 
     if api_key:
         env_vars["NEXUS_API_KEY"] = api_key

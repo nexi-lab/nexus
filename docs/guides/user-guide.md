@@ -214,11 +214,31 @@ profile](../deployment/sandbox-profile.md).
 **Start it (from a source checkout or a package install):**
 
 ```bash
-# One command — `nexus up` shells out to nexusd directly (no Docker):
-nexus up --profile sandbox --workspace ~/app
+# One command — `nexus up` shells out to nexusd directly (no Docker).
+# --host/--port/--data-dir are passed through to nexusd and the
+# resolved connection is persisted so the follow-up workflow can find it:
+nexus up --profile sandbox --workspace ~/app \
+  --host 127.0.0.1 --port 2026 --data-dir ~/.nexus/sandbox
 
 # Equivalent direct daemon invocation:
 nexusd --profile sandbox --workspace ~/app --host 127.0.0.1 --port 2026
+```
+
+**Discover it afterwards (#4144 — works on non-default host/port):**
+
+`nexus up --profile sandbox` persists a runtime-state record
+(`<data-dir>/.state.json`) plus, if no project config exists, a minimal
+`nexus.yaml` in the current directory (an existing `nexus.yaml` is never
+clobbered). The follow-up workflow consumes it:
+
+```bash
+# Connection vars resolved from persisted state (NEXUS_URL,
+# NEXUS_GRPC_HOST, NEXUS_GRPC_PORT, NEXUS_PROFILE=sandbox,
+# NEXUS_WORKSPACE) — the hub token is NEVER persisted:
+eval "$(nexus env)"
+
+# Health/status against the persisted sandbox endpoint:
+nexus status
 ```
 
 **Verify what it started (RPC surface — HTTP only):**
@@ -280,17 +300,22 @@ matrix, [#4139](https://github.com/nexi-lab/nexus/issues/4139)):
 | HTTP `/health` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | HTTP `/api/v2/features` | HTTP | supported | `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 | gRPC `Ping` | typed gRPC | unavailable — not reachable; tracked by #4148 | `tests/integration/test_sandbox_boot_smoke.py` (documented skip) | n/a |
-| `nexus status` | CLI | supported (Docker/HTTP-oriented) | `tests/unit/cli/test_stack_sandbox.py` | control plane |
-| `nexus env` | CLI | supported | existing CLI tests | not performance-sensitive |
+| `nexus status` | CLI | supported (reads persisted sandbox state, #4144) | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
+| `nexus env` / `nexus run` | CLI | supported (reads persisted sandbox state, #4144) | `tests/unit/cli/test_stack_sandbox.py`, `tests/integration/test_sandbox_boot_smoke.py` | control plane |
 
 **Missing-surface gate verdict:** all core boot-story surfaces exist, so
 this story is **not blocked**. gRPC `Ping` under sandbox is unresolved and
-tracked by #4148 (open). The one ergonomic gap —
-no first-class readiness probe for the non-Docker sandbox profile — is
-**closed in this PR** by the `nexus ready` command: it waits for the
-readiness file (`~/.nexus/nexusd.ready`), polls `/health` +
-`/api/v2/features`, and exits `0` when the daemon is ready (`--json` for
-machine use). No build issue is required.
+tracked by #4148 (open). The readiness/discovery gap — a sandbox started
+on a non-default host/port could not be found by the follow-up
+`nexus env` / `nexus status` / `nexus run` workflow — is **genuinely
+closed in this PR** ([#4144](https://github.com/nexi-lab/nexus/issues/4144)):
+`nexus up --profile sandbox` now passes `--host`/`--port`/`--data-dir`
+through to `nexusd` and persists a runtime-state record (resolved HTTP
+and gRPC ports, profile, workspace, bind host) that `nexus env`,
+`nexus run`, and `nexus status` consume. The hub token is never written
+to persistent state. `nexus ready` remains a complementary readiness
+probe (waits for `~/.nexus/nexusd.ready`, polls `/health` +
+`/api/v2/features`, exits `0` when ready). No build issue is required.
 
 ## 2.1 Capability checklist for a serious demo
 

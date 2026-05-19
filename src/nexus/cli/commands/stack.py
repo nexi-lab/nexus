@@ -562,6 +562,25 @@ def register_commands(cli: click.Group) -> None:
     default=lambda: os.environ.get("NEXUS_HUB_TOKEN", ""),
     help="Hub authentication token for sandbox federation (env: NEXUS_HUB_TOKEN).",
 )
+@click.option(
+    "--host",
+    "host",
+    default=None,
+    help="Bind address for sandbox profile (passed to nexusd; default 0.0.0.0).",
+)
+@click.option(
+    "--port",
+    "port",
+    type=int,
+    default=None,
+    help="HTTP listen port for sandbox profile (passed to nexusd; default 2026).",
+)
+@click.option(
+    "--data-dir",
+    "data_dir",
+    default=None,
+    help="Local data directory for sandbox profile (passed to nexusd).",
+)
 def up(
     detach: bool,
     addons: tuple[str, ...],
@@ -575,6 +594,9 @@ def up(
     workspace: str,
     hub_url: str,
     hub_token: str,
+    host: str | None,
+    port: int | None,
+    data_dir: str | None,
 ) -> None:
     """Start the Nexus stack.
 
@@ -626,14 +648,71 @@ def up(
         else:
             cmd = [sys.executable, "-m", "nexus.daemon.main"]
 
-        # Build the command
+        # Build the command. --host/--port/--data-dir are passed through to
+        # nexusd so a sandbox started on a non-default host/port is
+        # discoverable by the follow-up env/status/run workflow (#4144).
         cmd.extend(["--profile", "sandbox"])
         if workspace:
             cmd.extend(["--workspace", workspace])
+        if host:
+            cmd.extend(["--host", host])
+        if port is not None:
+            cmd.extend(["--port", str(port)])
+        if data_dir:
+            cmd.extend(["--data-dir", data_dir])
         if hub_url:
             cmd.extend(["--hub-url", hub_url])
         if hub_token:
             cmd.extend(["--hub-token", hub_token])
+
+        # --------------------------------------------------------------
+        # #4144: persist runtime state BEFORE the (blocking) daemon runs.
+        #
+        # The direct sandbox path has no Docker and previously wrote no
+        # state, so `nexus env` / `nexus run` / `nexus status` could not
+        # discover a sandbox on a non-default host/port. We persist:
+        #   * a `.state.json` in the resolved data_dir (ports/profile/
+        #     workspace/grpc host), AND
+        #   * a *minimal* nexus.yaml in the discovery location IF AND
+        #     ONLY IF one is absent (never clobber an existing project
+        #     config).
+        # Rationale for this anchor: `nexus env`/`run` hard-require
+        # `load_project_config()` (raises without nexus.yaml). Writing a
+        # minimal yaml localizes the change to this sandbox-only branch;
+        # the Docker `up` path and existing env/status code are untouched
+        # (smallest blast radius). Secrets policy: --hub-url MAY be
+        # recorded; --hub-token is NEVER written to persistent state.
+        # --------------------------------------------------------------
+        _http_port = port if port is not None else 2026
+        # Mirror nexusd gRPC derivation (src/nexus/daemon/main.py ~294-306):
+        # explicit --port wins; otherwise honor NEXUS_GRPC_PORT; else +2.
+        if port is not None or "NEXUS_GRPC_PORT" not in os.environ:
+            _grpc_port = _http_port + 2
+        else:
+            _grpc_port = int(os.environ["NEXUS_GRPC_PORT"])
+        _grpc_host = host or "localhost"
+        _data_dir = data_dir or "./nexus-data"
+
+        _sandbox_state: dict[str, Any] = {
+            "profile": "sandbox",
+            "workspace": workspace,
+            "ports": {"http": _http_port, "grpc": _grpc_port},
+            "grpc_host": _grpc_host,
+        }
+        if hub_url:  # hub_url MAY be recorded; hub_token MUST NOT.
+            _sandbox_state["hub_url"] = hub_url
+        save_runtime_state(_data_dir, _sandbox_state)
+
+        # Write a minimal nexus.yaml only if absent — NEVER clobber an
+        # existing project config.
+        if not _load_project_config_optional():
+            _save_project_config(
+                {
+                    "profile": "sandbox",
+                    "data_dir": _data_dir,
+                    "ports": {"http": _http_port, "grpc": _grpc_port},
+                }
+            )
 
         _sandbox_result = subprocess.run(cmd)
         sys.exit(_sandbox_result.returncode)

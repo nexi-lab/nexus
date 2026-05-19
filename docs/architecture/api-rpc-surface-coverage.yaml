@@ -4326,7 +4326,8 @@ operations:
   owning_issue: null
 - id: filesystem.status
   module: filesystem
-  summary: ''
+  summary: Service health overview. Resolves the server URL from the runtime-state record persisted by `nexus up --profile sandbox`
+    (#4144), so a sandbox started on a non-default host/port is reported reachable.
   transports:
     cli:
       name: nexus status
@@ -4335,12 +4336,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus status
+  correctness_test: tests/unit/cli/test_stack_sandbox.py, tests/integration/test_sandbox_boot_smoke.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4126
 - id: filesystem.stream
   module: filesystem
   summary: ''
@@ -6413,7 +6414,8 @@ operations:
 - id: mount.up
   module: mount
   summary: Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated
-    workspace.
+    workspace, passing --host/--port/--data-dir through and persisting a runtime-state record (#4144) so nexus env/status/run can
+    discover a sandbox on a non-default host/port.
   transports:
     cli:
       name: nexus up
@@ -6422,7 +6424,7 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus up --profile sandbox --workspace ~/app
+  usage_example: nexus up --profile sandbox --workspace ~/app --host 127.0.0.1 --port 2026 --data-dir ~/.nexus/sandbox
   correctness_test: tests/integration/test_sandbox_boot_smoke.py, tests/unit/cli/test_stack_sandbox.py
   perf_class: setup
   perf_link: one-time boot per session; sandbox daemon start measured in test_sandbox_boot_smoke.py
@@ -8464,7 +8466,9 @@ operations:
   owning_issue: null
 - id: sandbox.run
   module: sandbox
-  summary: ''
+  summary: Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env`
+    (env_cmd.py load_project_config + load_runtime_state + resolve_connection_env), so it transitively benefits from the sandbox
+    runtime-state persisted by `nexus up --profile sandbox` (#4144). Covered via the shared resolver, not a run-specific sandbox test.
   transports:
     cli:
       name: nexus run
@@ -8473,9 +8477,9 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus run pytest tests/
+  correctness_test: tests/unit/cli/test_stack_sandbox.py
+  perf_class: control
   perf_link: null
   gap_issue: null
   owning_issue: null
@@ -10007,7 +10011,9 @@ operations:
   owning_issue: null
 - id: uncategorized.env
   module: uncategorized
-  summary: ''
+  summary: Print connection env vars for the running stack. Under the sandbox profile it consumes the runtime-state record persisted
+    by `nexus up --profile sandbox` (#4144), emitting NEXUS_URL/NEXUS_GRPC_HOST/NEXUS_GRPC_PORT/NEXUS_PROFILE/NEXUS_WORKSPACE; the
+    hub token is never persisted.
   transports:
     cli:
       name: nexus env
@@ -10016,12 +10022,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: eval "$(nexus env)"
+  correctness_test: tests/unit/cli/test_stack_sandbox.py, tests/integration/test_sandbox_boot_smoke.py
+  perf_class: control
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4126
 - id: uncategorized.extensions
   module: uncategorized
   summary: ''

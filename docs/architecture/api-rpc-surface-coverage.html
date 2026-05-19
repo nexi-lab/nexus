@@ -4721,10 +4721,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.status" data-op-text="filesystem.status  nexus status ">
+<div class="op" data-op-id="filesystem.status" data-op-text="filesystem.status Service health overview. Resolves the server URL from the runtime-state record persisted by `nexus up --profile sandbox` (#4144), so a sandbox started on a non-default host/port is reported reachable. nexus status ">
   <div class="op-header">
     <span class="op-id">filesystem.status</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Service health overview. Resolves the server URL from the runtime-state record persisted by `nexus up --profile sandbox` (#4144), so a sandbox started on a non-default host/port is reported reachable.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus status</span></span>
@@ -4735,10 +4735,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus status</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_stack_sandbox.py, tests/integration/test_sandbox_boot_smoke.py">tests/unit/cli/test_stack_sandbox.py, tests/integration/test_sandbox_boot_smoke.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6519,10 +6519,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mount.up" data-op-text="mount.up Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated workspace. nexus up ">
+<div class="op" data-op-id="mount.up" data-op-text="mount.up Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated workspace, passing --host/--port/--data-dir through and persisting a runtime-state record (#4144) so nexus env/status/run can discover a sandbox on a non-default host/port. nexus up ">
   <div class="op-header">
     <span class="op-id">mount.up</span>
-    <span class="op-summary">&mdash; Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated workspace.</span>
+    <span class="op-summary">&mdash; Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated workspace, passing --host/--port/--data-dir through and persisting a runtime-state record (#4144) so nexus env/status/run can discover a sandbox on a non-default host/port.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus up</span></span>
@@ -6533,7 +6533,7 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>nexus up --profile sandbox --workspace ~/app</code></span>
+    <span>usage: <code>nexus up --profile sandbox --workspace ~/app --host 127.0.0.1 --port 2026 --data-dir ~/.nexus/sandbox</code></span>
     <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py, tests/unit/cli/test_stack_sandbox.py">tests/integration/test_sandbox_boot_smoke.py, tests/unit/cli/test_stack_sandbox.py</a></span>
     <span>perf: setup</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>
@@ -9378,10 +9378,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="sandbox.run" data-op-text="sandbox.run  nexus run ">
+<div class="op" data-op-id="sandbox.run" data-op-text="sandbox.run Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env` (env_cmd.py load_project_config + load_runtime_state + resolve_connection_env), so it transitively benefits from the sandbox runtime-state persisted by `nexus up --profile sandbox` (#4144). Covered via the shared resolver, not a run-specific sandbox test. nexus run ">
   <div class="op-header">
     <span class="op-id">sandbox.run</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env` (env_cmd.py load_project_config + load_runtime_state + resolve_connection_env), so it transitively benefits from the sandbox runtime-state persisted by `nexus up --profile sandbox` (#4144). Covered via the shared resolver, not a run-specific sandbox test.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus run</span></span>
@@ -9392,9 +9392,9 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
+    <span>usage: <code>nexus run pytest tests/</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_stack_sandbox.py">tests/unit/cli/test_stack_sandbox.py</a></span>
+    <span>perf: control</span>
     <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
@@ -13665,10 +13665,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="uncategorized.env" data-op-text="uncategorized.env  nexus env ">
+<div class="op" data-op-id="uncategorized.env" data-op-text="uncategorized.env Print connection env vars for the running stack. Under the sandbox profile it consumes the runtime-state record persisted by `nexus up --profile sandbox` (#4144), emitting NEXUS_URL/NEXUS_GRPC_HOST/NEXUS_GRPC_PORT/NEXUS_PROFILE/NEXUS_WORKSPACE; the hub token is never persisted. nexus env ">
   <div class="op-header">
     <span class="op-id">uncategorized.env</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Print connection env vars for the running stack. Under the sandbox profile it consumes the runtime-state record persisted by `nexus up --profile sandbox` (#4144), emitting NEXUS_URL/NEXUS_GRPC_HOST/NEXUS_GRPC_PORT/NEXUS_PROFILE/NEXUS_WORKSPACE; the hub token is never persisted.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus env</span></span>
@@ -13679,10 +13679,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>eval &#34;$(nexus env)&#34;</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_stack_sandbox.py, tests/integration/test_sandbox_boot_smoke.py">tests/unit/cli/test_stack_sandbox.py, tests/integration/test_sandbox_boot_smoke.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>

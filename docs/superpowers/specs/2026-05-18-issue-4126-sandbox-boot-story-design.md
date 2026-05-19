@@ -98,41 +98,64 @@ slow/integration:
 `tests/unit/cli/test_stack_sandbox.py` is already comprehensive. Add only a
 CLI/RPC parity assertion if a gap exists. No rewrite.
 
-### 6. Missing-surface gate — gap CLOSED in this PR (revised 2026-05-18)
-Verdict: all core surfaces for the boot story exist. The one ergonomic gap —
-no first-class readiness probe for the non-Docker sandbox profile (`nexus
-status` is Docker/HTTP-compose oriented; the sandbox profile exposed only the
-bare `~/.nexus/nexusd.ready` file) — was originally going to be filed as a
-non-blocking build issue. Per user direction, the gap is instead **closed in
-this PR** by implementing a focused standalone CLI command:
+### 6. Missing-surface gate — readiness/discovery gap CLOSED in this PR (revised 2026-05-18)
+Verdict: all core surfaces for the boot story exist. The substantive gap was
+not merely a missing readiness *probe* — it was that `nexus up --profile
+sandbox` ran `nexusd` as a blocking subprocess and persisted **no runtime
+state**, so a sandbox started on a non-default host/port could not be
+discovered by the follow-up `nexus env` / `nexus run` / `nexus status`
+workflow (those hard-require a project config + `<data_dir>/.state.json`).
+That readiness/discovery gap is **closed in this PR by implementing
+[#4144](https://github.com/nexi-lab/nexus/issues/4144)** (state persistence),
+not by a standalone probe alone.
 
-**`nexus ready [--timeout SECONDS] [--readiness-file PATH] [--json]`** —
-single responsibility: probe daemon readiness for non-Docker (sandbox-profile)
-deployments. It waits for the readiness file, parses `host:port`, polls
-`GET /health` and `GET /api/v2/features`, prints profile / endpoint / health /
-enabled-bricks (human table or `--json`), and uses sysexits exit codes:
-`0` ready; `TEMPFAIL` (75) on timeout/not-ready; `DATA_ERROR` (65) on a
-malformed readiness file.
+**#4144 — sandbox `up` persists connection state.**
+`nexus up --profile sandbox` now accepts and passes `--host`/`--port`/
+`--data-dir` through to `nexusd --profile sandbox` (existing
+`--workspace`/`--hub-url`/`--hub-token` validation preserved). It derives the
+gRPC port the way `nexusd` does (`http_port + 2` unless overridden by env
+`NEXUS_GRPC_PORT`; an explicit `--port` wins over the env override — mirrors
+`src/nexus/daemon/main.py`), then **before** the blocking daemon runs it:
 
-Rationale for a standalone command (not `nexus status --profile sandbox`):
-`nexus status` is Docker/compose-oriented and its `--profile` option already
-means *compose profiles* (multiple) — overloading it would conflict. A new
-`nexus ready` command (`src/nexus/cli/commands/ready.py`, registered via
-`_REGISTER_COMMANDS` in `src/nexus/cli/commands/__init__.py`) is
-single-purpose, small blast radius, and complements `status`.
+- writes `<data_dir>/.state.json` via `save_runtime_state` recording
+  `profile=sandbox`, `workspace`, resolved `ports.http`/`ports.grpc`, and the
+  bind `grpc_host`;
+- writes a *minimal* `nexus.yaml` into the discovery location **only if one is
+  absent** (an existing project config is never clobbered).
 
-Coverage: unit tests (`tests/unit/cli/test_ready_cmd.py`) for readiness-file
-parse (valid / malformed / missing-with-timeout exit codes) and the
-health-OK happy path with httpx mocked; one integration test reusing the
-`sandbox_daemon` fixture in `tests/integration/test_sandbox_boot_smoke.py`
-asserting `nexus ready` reports ready + `profile=sandbox` + the correct
-endpoint against the real booted daemon. Benchmark class: control plane /
-setup path — not performance-sensitive.
+Discovery-anchor rationale (smallest blast radius): `nexus env`/`run`
+hard-require `load_project_config()` (raises without `nexus.yaml`). Making
+those three consumers fall back to optional config would touch three call
+sites and risk regressing the Docker `up` resolution path. Writing a minimal
+`nexus.yaml` localizes the change entirely to the sandbox-only branch of
+`up`; the Docker `up` flow and existing env/status code are untouched.
+`resolve_connection_env` gains `NEXUS_PROFILE`/`NEXUS_WORKSPACE` and a
+state-recorded `grpc_host`, all emitted **only when present in state** — the
+Docker path does not set those keys, so its env output is unchanged.
+Secrets: `--hub-url` MAY be recorded; `--hub-token` is **never** written to
+persistent state (proven by a grep assertion in the unit tests).
 
-No build issue is filed (gap closed). The user guide's missing-surface gate
-verdict and coverage table are updated accordingly (the
-`<!-- BUILD-ISSUE-LINK -->` placeholder and its parenthetical are removed and
-replaced with the `nexus ready` documentation).
+Coverage: `tests/unit/cli/test_stack_sandbox.py::TestSandboxStatePersistence`
+(flag pass-through, state shape, gRPC-port derivation incl. env override and
+explicit-port precedence, hub-token-not-persisted grep, no-clobber, end-to-end
+`up`→`nexus env` discovery) and an additive integration test in
+`tests/integration/test_sandbox_boot_smoke.py`
+(`test_sandbox_up_state_is_consumed_by_status`) asserting `nexus env`/`nexus
+status` consume the persisted state against the real booted sandbox daemon.
+
+**`nexus ready` remains a complementary readiness probe** (not the gap
+closure). `nexus ready [--timeout SECONDS] [--readiness-file PATH] [--json]`
+waits for `~/.nexus/nexusd.ready`, parses `host:port`, polls `GET /health`
+and `GET /api/v2/features`, prints profile / endpoint / health /
+enabled-bricks, and uses sysexits codes (`0` ready; `TEMPFAIL` 75 on
+timeout; `DATA_ERROR` 65 on a malformed readiness file). A standalone command
+(not `nexus status --profile sandbox`) because `status`'s `--profile` already
+means *compose profiles*. Covered by `tests/unit/cli/test_ready_cmd.py` and
+the `sandbox_daemon` integration test. Benchmark class: control plane / setup
+path — not performance-sensitive.
+
+No build issue is filed (gap closed in-PR via #4144). The user guide's
+missing-surface gate verdict and coverage table are updated accordingly.
 
 ## Out of scope
 - Building the #4139 shared matrix generator.

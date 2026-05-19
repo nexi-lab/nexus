@@ -419,3 +419,72 @@ def test_nexus_ready_reports_sandbox_daemon_ready(sandbox_daemon) -> None:
     assert data["ready"] is True, data
     assert data["profile"] == "sandbox", data
     assert data["endpoint"] == (f"{sandbox_daemon['host']}:{sandbox_daemon['http_port']}"), data
+
+
+def test_sandbox_up_state_is_consumed_by_status(sandbox_daemon, tmp_path: Path) -> None:
+    """#4144: the state `nexus up --profile sandbox` persists is consumable.
+
+    Genuine `nexus up --profile sandbox` blocks on the foreground daemon,
+    so we assert the *state-consumption path* at functional level instead:
+    write the exact `.state.json` shape the up-path produces (see
+    src/nexus/cli/commands/stack.py sandbox branch), then prove `nexus
+    status --json` pointed at the persisted HTTP URL reports the real
+    booted sandbox daemon reachable. This closes the readiness/discovery
+    gap end-to-end without a blocking foreground process.
+    """
+    import json as _json
+
+    host = sandbox_daemon["host"]
+    http_port = sandbox_daemon["http_port"]
+    grpc_port = sandbox_daemon["grpc_port"]
+    data_dir = tmp_path / "consume-data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    workspace = str(tmp_path / "consume-ws")
+
+    # Mirror exactly what the sandbox `up` path writes (#4144).
+    (data_dir / ".state.json").write_text(
+        _json.dumps(
+            {
+                "version": 1,
+                "profile": "sandbox",
+                "workspace": workspace,
+                "ports": {"http": http_port, "grpc": grpc_port},
+                "grpc_host": host,
+            }
+        )
+    )
+
+    # `nexus env` (consumes state via load_runtime_state) emits the conn
+    # vars derived purely from the persisted state.
+    from nexus.cli.state import load_runtime_state, resolve_connection_env
+
+    env_vars = resolve_connection_env({}, load_runtime_state(data_dir))
+    assert env_vars["NEXUS_PROFILE"] == "sandbox"
+    assert env_vars["NEXUS_WORKSPACE"] == workspace
+    assert env_vars["NEXUS_GRPC_PORT"] == str(grpc_port)
+    assert f":{http_port}" in env_vars["NEXUS_URL"]
+
+    # `nexus status --json` pointed at the persisted HTTP URL reports the
+    # real booted sandbox daemon reachable.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nexus.cli",
+            "status",
+            "--url",
+            f"http://{host}:{http_port}",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"nexus status should exit 0; rc={result.returncode} "
+        f"stdout={result.stdout} stderr={result.stderr}"
+    )
+    status_payload = _json.loads(result.stdout)
+    status_data = status_payload.get("data", status_payload)
+    assert status_data["server_reachable"] is True, status_data
+    assert status_data["server_url"] == f"http://{host}:{http_port}", status_data

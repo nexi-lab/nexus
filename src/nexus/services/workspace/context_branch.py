@@ -16,6 +16,7 @@ Architecture decisions (from plan review):
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -1139,10 +1140,15 @@ class ContextBranchService:
         # Build merged manifest
         merged_manifest = WorkspaceManifest(entries=merged_entries)
         merged_bytes = merged_manifest.to_json()
-        merged_hash = self._wm.backend.write_content(merged_bytes, context=None).content_id
+        # Pre-generate snapshot_id so the §2.5 manifest path is populated
+        # before the SQL row is inserted (failure here keeps the row out of
+        # the table — no orphan reference).
+        merge_snap_id_new = str(uuid.uuid4())
+        merged_hash = self._wm._write_manifest(workspace_path, merge_snap_id_new, merged_bytes)
 
         # C3: Create merge snapshot with retry on IntegrityError (duplicate snapshot_number)
         merge_snap_id = self._create_merge_snapshot(
+            snapshot_id=merge_snap_id_new,
             workspace_path=workspace_path,
             manifest_hash=merged_hash,
             file_count=merged_manifest.file_count,
@@ -1192,6 +1198,7 @@ class ContextBranchService:
 
     def _create_merge_snapshot(
         self,
+        snapshot_id: str,
         workspace_path: str,
         manifest_hash: str,
         file_count: int,
@@ -1223,6 +1230,7 @@ class ContextBranchService:
                 ) + 1
 
                 merge_snap = WorkspaceSnapshotModel(
+                    snapshot_id=snapshot_id,
                     workspace_path=workspace_path,
                     snapshot_number=next_number,
                     manifest_hash=manifest_hash,
@@ -1250,13 +1258,13 @@ class ContextBranchService:
         raise RuntimeError("Unreachable: merge snapshot creation exhausted retries")
 
     def _load_manifest(self, session: Any, snapshot_id: str) -> WorkspaceManifest:
-        """Load a workspace manifest from CAS via snapshot ID."""
+        """Load a workspace manifest via the §2.5 syscall surface (dual-read)."""
         snap = session.get(WorkspaceSnapshotModel, snapshot_id)
         if not snap:
             raise NexusFileNotFoundError(
                 path=f"snapshot:{snapshot_id}", message="Snapshot not found"
             )
-        manifest_bytes = self._wm.backend.read_content(snap.manifest_hash, context=None)
+        manifest_bytes = self._wm._read_manifest(snap)
         return WorkspaceManifest.from_json(manifest_bytes)
 
     @staticmethod

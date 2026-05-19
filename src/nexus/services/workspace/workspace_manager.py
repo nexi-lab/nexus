@@ -3,8 +3,10 @@
 Provides workspace-level version control for time-travel debugging and rollback.
 """
 
+import hashlib
 import json
 import logging
+import uuid as _uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import desc, select
@@ -23,6 +25,20 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
+# §2.5 syscall surface for workspace manifest storage. Path namespace
+# replaces the previous backend.write_content / read_content hash-addressed
+# access (a kernel-internal HAL pillar — see KERNEL-ARCHITECTURE.md §2.5).
+_MANIFEST_PATH_PREFIX = "/__sys__/workspace-history"
+
+
+def _workspace_id_from_path(workspace_path: str) -> str:
+    """Sanitize a workspace path into a single-segment identifier."""
+    return workspace_path.strip("/").replace("/", "__") or "root"
+
+
+def _manifest_path(workspace_path: str, snapshot_id: str) -> str:
+    return f"{_MANIFEST_PATH_PREFIX}/{_workspace_id_from_path(workspace_path)}/{snapshot_id}.json"
 
 
 class WorkspaceManager:
@@ -73,6 +89,43 @@ class WorkspaceManager:
         if record_store is None:
             raise ValueError("record_store is required — use factory.py for DI wiring")
         self.metadata_session_factory = record_store.session_factory
+
+    def _write_manifest(self, workspace_path: str, snapshot_id: str, manifest_bytes: bytes) -> str:
+        """Write a manifest blob to the syscall path namespace.
+
+        Returns the blake3-hex manifest hash kept in the SQL row for
+        integrity checking (and for the dual-read fallback during the
+        deprecation window).
+        """
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        self._nexus_fs.sys_write(
+            _manifest_path(workspace_path, snapshot_id),
+            manifest_bytes,
+            context=sys_ctx,
+        )
+        return hashlib.sha256(manifest_bytes).hexdigest()
+
+    def _read_manifest(self, snapshot: WorkspaceSnapshotModel) -> bytes:
+        """Read a manifest blob from the syscall path namespace.
+
+        Dual-read window (Issue #4218 follow-up): try the §2.5 path first,
+        fall back to the legacy hash-addressed backend.read_content for
+        snapshots written before the migration. Removal of the fallback
+        is tracked alongside the workspace-history cleanup follow-up.
+        """
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        path = _manifest_path(snapshot.workspace_path, snapshot.snapshot_id)
+        try:
+            return self._nexus_fs.sys_read(path, context=sys_ctx)
+        except (FileNotFoundError, NexusFileNotFoundError):
+            logger.warning(
+                "workspace manifest missing at %s — falling back to legacy "
+                "hash-addressed read for snapshot %s; remove once the "
+                "deprecation window closes",
+                path,
+                snapshot.snapshot_id,
+            )
+            return self.backend.read_content(snapshot.manifest_hash, context=None)
 
     def _check_workspace_permission(
         self,
@@ -178,8 +231,11 @@ class WorkspaceManager:
             manifest = WorkspaceManifest.from_file_list(file_entries)
             manifest_bytes = manifest.to_json()
 
-            # Store manifest in CAS
-            manifest_hash = self.backend.write_content(manifest_bytes, context=None).content_id
+            # Generate snapshot_id up front so the manifest path namespace is
+            # populated before the SQL row is inserted (failure here keeps the
+            # row out of the table — no orphan reference).
+            new_snapshot_id = str(_uuid.uuid4())
+            manifest_hash = self._write_manifest(workspace_path, new_snapshot_id, manifest_bytes)
 
             # Get next snapshot number for this workspace
             stmt = (
@@ -195,6 +251,7 @@ class WorkspaceManager:
 
             # Create snapshot record
             snapshot = WorkspaceSnapshotModel(
+                snapshot_id=new_snapshot_id,
                 workspace_path=workspace_path,
                 snapshot_number=next_snapshot_number,
                 manifest_hash=manifest_hash,
@@ -279,8 +336,8 @@ class WorkspaceManager:
                 zone_id=zone_id,
             )
 
-            # Read manifest from CAS
-            manifest_bytes = self.backend.read_content(snapshot.manifest_hash, context=None)
+            # Read manifest via the §2.5 syscall surface (dual-read window).
+            manifest_bytes = self._read_manifest(snapshot)
             manifest = WorkspaceManifest.from_json(manifest_bytes)
 
             # Get workspace path and ensure it ends with /
@@ -474,13 +531,9 @@ class WorkspaceManager:
                     zone_id=zone_id,
                 )
 
-            # Read manifests
-            manifest1 = WorkspaceManifest.from_json(
-                self.backend.read_content(snap1.manifest_hash, context=None)
-            )
-            manifest2 = WorkspaceManifest.from_json(
-                self.backend.read_content(snap2.manifest_hash, context=None)
-            )
+            # Read manifests via the §2.5 syscall surface (dual-read window).
+            manifest1 = WorkspaceManifest.from_json(self._read_manifest(snap1))
+            manifest2 = WorkspaceManifest.from_json(self._read_manifest(snap2))
 
             # Compute diff
             paths1 = manifest1.paths()

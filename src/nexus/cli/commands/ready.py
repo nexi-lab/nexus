@@ -23,6 +23,7 @@ import click
 
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.state import normalize_connect_host
 from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import handle_error
@@ -195,6 +196,12 @@ def ready(
             sys.exit(ExitCode.DATA_ERROR)
 
         host, port = endpoint
+        # The readiness file records the daemon's *bind* host, whose default
+        # is the wildcard ``0.0.0.0`` — not connectable. Normalize to a
+        # loopback address before polling, using the same SSOT helper as
+        # ``resolve_connection_env`` so ``ready`` and ``eval $(nexus env)``
+        # agree on the host (Issue #4126 review r1 / #4144).
+        host = normalize_connect_host(host)
         endpoint_str = f"{host}:{port}"
         base_url = f"http://{host}:{port}"
 

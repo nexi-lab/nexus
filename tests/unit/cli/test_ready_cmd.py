@@ -215,3 +215,84 @@ def test_ready_timeout_zero_usage_error(runner: CliRunner, tmp_path: Path) -> No
         ["--readiness-file", str(f), "--timeout", "0"],
     )
     assert result.exit_code == 2, result.output
+
+
+# ---------------------------------------------------------------------------
+# 7. Wildcard bind host in the readiness file is normalized before polling
+#    (Issue #4126 review r1 / #4144). The daemon's default bind host is
+#    ``0.0.0.0`` — not connectable — so ``ready`` must dial loopback.
+# ---------------------------------------------------------------------------
+
+
+def test_ready_normalizes_wildcard_bind_host(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Readiness file records ``0.0.0.0:2026`` → ``ready`` polls
+    ``localhost:2026`` (asserted on the URLs the httpx client actually
+    GETs) and exits SUCCESS. ``localhost`` matches the SSOT
+    ``normalize_connect_host`` / ``resolve_connection_env`` mapping.
+    Without normalization the URL host is the un-connectable wildcard
+    ``0.0.0.0`` and this regresses (the daemon's default bind host)."""
+    f = tmp_path / "nexusd.ready"
+    f.write_text("0.0.0.0:2026\n")
+
+    seen: list[str] = []
+
+    def route(url: str) -> _FakeResponse:
+        seen.append(url)
+        if url.endswith("/health"):
+            return _FakeResponse(200, {"status": "healthy"})
+        if url.endswith("/api/v2/features"):
+            return _FakeResponse(200, {"profile": "sandbox", "enabled_bricks": []})
+        raise AssertionError(f"unexpected url {url}")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: _FakeClient(route, *a, **k))
+
+    result = runner.invoke(
+        _ready_cmd(),
+        ["--readiness-file", str(f), "--json", "--timeout", "5"],
+    )
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+
+    # Every URL the client dialed must target loopback, never the wildcard.
+    assert seen, "client never issued a request"
+    for url in seen:
+        assert url.startswith("http://localhost:2026"), url
+        assert "0.0.0.0" not in url, url
+
+    envelope = json.loads(result.output)
+    assert envelope["data"]["ready"] is True
+    assert envelope["data"]["endpoint"] == "localhost:2026"
+
+
+def test_ready_concrete_host_passed_through_unchanged(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concrete ``127.0.0.1`` host is polled verbatim — normalization
+    must not rewrite already-connectable hosts."""
+    f = tmp_path / "nexusd.ready"
+    f.write_text("127.0.0.1:2026\n")
+
+    seen: list[str] = []
+
+    def route(url: str) -> _FakeResponse:
+        seen.append(url)
+        if url.endswith("/health"):
+            return _FakeResponse(200, {"status": "healthy"})
+        if url.endswith("/api/v2/features"):
+            return _FakeResponse(200, {"profile": "sandbox", "enabled_bricks": []})
+        raise AssertionError(f"unexpected url {url}")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: _FakeClient(route, *a, **k))
+
+    result = runner.invoke(
+        _ready_cmd(),
+        ["--readiness-file", str(f), "--json", "--timeout", "5"],
+    )
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert seen and all(u.startswith("http://127.0.0.1:2026") for u in seen)
+    assert json.loads(result.output)["data"]["endpoint"] == "127.0.0.1:2026"

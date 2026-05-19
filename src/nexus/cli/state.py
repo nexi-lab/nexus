@@ -64,6 +64,31 @@ def derive_grpc_port(http_port: int, port_explicit: bool) -> int:
     return int(os.environ["NEXUS_GRPC_PORT"])
 
 
+# Bind wildcards that are NOT connectable addresses. A daemon may *bind*
+# these (the default bind host is ``0.0.0.0``), but a client must dial a
+# concrete loopback address instead. This is the ONE place that mapping is
+# defined — ``resolve_connection_env`` and ``nexus ready`` both call it so
+# the readiness poll and ``eval $(nexus env)`` agree on the host.
+_WILDCARD_BIND_HOSTS = frozenset({"0.0.0.0", "", "::", "[::]"})
+
+
+def normalize_connect_host(host: str | None) -> str:
+    """Map a bind wildcard to a connectable loopback host.
+
+    ``0.0.0.0`` / ``""`` / ``::`` / ``[::]`` → ``localhost``; any other
+    value (e.g. ``127.0.0.1`` or a concrete sandbox bind address) is
+    returned unchanged. ``localhost`` (not ``127.0.0.1``) preserves the
+    long-established ``resolve_connection_env`` mapping locked by
+    ``TestNexusUrlHostConsistency`` in ``tests/unit/cli/test_stack_sandbox``
+    — both are connectable loopback; the point is only that a wildcard is
+    NOT. Single source of truth shared by ``resolve_connection_env``
+    (#4144) and ``nexus ready`` (#4126 review r1).
+    """
+    if host is None or host in _WILDCARD_BIND_HOSTS:
+        return "localhost"
+    return host
+
+
 # ---------------------------------------------------------------------------
 # Project config (nexus.yaml) — declarative, version-controlled
 # ---------------------------------------------------------------------------
@@ -183,11 +208,11 @@ def resolve_connection_env(
     grpc_port = ports.get("grpc", 2028)
 
     # gRPC host: state-recorded bind host wins (sandbox `up` may bind a
-    # non-localhost address — #4144); otherwise localhost. "0.0.0.0" is a
-    # bind wildcard, not a connectable address, so map it to localhost.
+    # non-localhost address — #4144); otherwise localhost. A bind wildcard
+    # ("0.0.0.0"/""/"::"/"[::]") is not a connectable address, so map it to
+    # loopback via the shared SSOT helper (also used by `nexus ready`).
     grpc_host = state.get("grpc_host") or "localhost"
-    if grpc_host in ("0.0.0.0", ""):
-        grpc_host = "localhost"
+    grpc_host = normalize_connect_host(grpc_host)
 
     # NEXUS_URL host: when state records a connectable bind host (sandbox
     # `up` may bind a non-localhost address — #4144 MINOR 4), point HTTP

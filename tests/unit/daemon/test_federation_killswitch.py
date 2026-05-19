@@ -93,12 +93,22 @@ def _clean_federation_env(monkeypatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
 
-def _run_daemon(profile: str, tmp_path: Path, monkeypatch, workspace: Path | None = None):
+def _run_daemon(
+    profile: str | None,
+    tmp_path: Path,
+    monkeypatch,
+    workspace: Path | None = None,
+    config_path: Path | None = None,
+):
     """Drive the real ``main`` boot path far enough to execute the gate.
 
     Stubs the heavy bits exactly like ``test_sandbox_flags.py``:
     ``nexus.connect`` and ``nexus.daemon.main.SandboxBootstrapper`` are
     patched and the FastAPI server module is faked, so no daemon boots.
+
+    ``profile=None`` omits ``--profile`` entirely (config-sourced boots).
+    ``config_path`` passes ``--config <file>`` so the daemon resolves the
+    profile from the YAML, exercising the effective-profile path.
     """
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
 
@@ -106,7 +116,14 @@ def _run_daemon(profile: str, tmp_path: Path, monkeypatch, workspace: Path | Non
     bootstrapper_mock = MagicMock()
     mock_bootstrapper_cls = MagicMock(return_value=bootstrapper_mock)
 
-    args = ["--profile", profile]
+    # ``load_config`` is real here so the daemon's config-file branch
+    # genuinely parses the YAML (the effective-profile resolver reads the
+    # same file). ``nexus.connect`` is still stubbed so no kernel boots.
+    args: list[str] = []
+    if profile is not None:
+        args += ["--profile", profile]
+    if config_path is not None:
+        args += ["--config", str(config_path)]
     if workspace is not None:
         args += ["--workspace", str(workspace)]
 
@@ -228,4 +245,56 @@ def test_explicit_killswitch_value_not_overridden(tmp_path: Path, monkeypatch) -
     assert result.exit_code == 0, f"Unexpected exit: {result.output}"
     assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "0", (
         'setdefault must not override an operator-supplied NEXUS_FEDERATION_DISABLED="0".'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: config-sourced sandbox boot (no --profile) still gated (Issue #4126)
+# ---------------------------------------------------------------------------
+
+
+def test_config_file_sandbox_profile_sets_killswitch(tmp_path: Path, monkeypatch) -> None:
+    """``nexusd --config <yaml with profile: sandbox>`` + no --profile → gated.
+
+    THE regression for the HIGH finding: with ``--config`` the CLI
+    ``--profile`` value is never passed to ``nexus.connect`` — the kernel
+    runs the file's ``profile: sandbox``. The kill-switch must gate on that
+    EFFECTIVE profile, not the raw ``--profile`` (which is the ``"auto"``
+    default here). Before the fix the env var stayed unset and the sandbox
+    daemon installed the real Raft coordinator (bound :2126).
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+
+    cfg = tmp_path / "sandbox.yaml"
+    cfg.write_text("profile: sandbox\n")
+
+    result = _run_daemon(None, tmp_path, monkeypatch, config_path=cfg)
+
+    assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+    assert os.environ.get("NEXUS_FEDERATION_DISABLED") == "1", (
+        "A config-file sandbox boot (no --profile) must still set the Raft "
+        "kill-switch — the gate must use the EFFECTIVE profile."
+    )
+
+
+def test_config_file_non_sandbox_profile_does_not_set_killswitch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``nexusd --config <yaml with profile: full>`` → kill-switch NOT set.
+
+    The effective-profile resolver must not over-gate: a non-sandbox config
+    profile keeps the byte-identical boot path (no env var).
+    """
+    _clean_federation_env(monkeypatch)
+    monkeypatch.delenv("NEXUS_PROFILE", raising=False)
+
+    cfg = tmp_path / "prod.yaml"
+    cfg.write_text("profile: full\n")
+
+    result = _run_daemon(None, tmp_path, monkeypatch, config_path=cfg)
+
+    assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+    assert "NEXUS_FEDERATION_DISABLED" not in os.environ, (
+        "A non-sandbox config profile must NOT touch NEXUS_FEDERATION_DISABLED."
     )

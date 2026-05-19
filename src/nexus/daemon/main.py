@@ -145,6 +145,68 @@ def _print_lifecycle_summary(nx: Any) -> None:
         pass  # best-effort — never block startup
 
 
+def _resolve_effective_profile(
+    deployment_profile: str,
+    config_path: str | None,
+) -> str:
+    """Resolve the profile the kernel will ACTUALLY run (Issue #4126 HIGH).
+
+    The federation kill-switch must gate on the *effective* profile, not the
+    raw CLI ``--profile`` value. The daemon honors three profile sources, and
+    when ``--config`` is given the CLI ``--profile`` value is NOT passed to
+    ``nexus.connect`` at all (see the ``config_path`` branch in ``main``):
+    ``nexus.connect(config=load_config(Path(config_path)))``.
+
+    ``nexus.config.load_config`` resolves the profile with this precedence
+    (see ``_load_from_dict``: ``merged = _build_env_overrides(); merged.update
+    (config_dict)``):
+
+      1. the config file's ``profile:`` key (highest — overrides env)
+      2. the ``NEXUS_PROFILE`` env var
+      3. the ``NexusConfig`` default (``"full"``)
+
+    When NO ``--config`` is given the daemon passes ``{"profile":
+    deployment_profile}`` directly, so the CLI value (or its ``"auto"``
+    default / ``NEXUS_PROFILE`` envvar wired by Click) is authoritative.
+
+    This mirrors that resolution so the kill-switch sees the same profile the
+    kernel will. Best-effort: any failure reading the config file falls back
+    to ``deployment_profile`` (``load_config`` itself will raise later with a
+    clearer error, preserving prior behavior).
+    """
+    if not config_path:
+        # No --config: nexus.connect gets {"profile": deployment_profile}
+        # verbatim. Click already folds NEXUS_PROFILE into this value.
+        return deployment_profile
+
+    # --config given: replicate load_config's profile precedence.
+    try:
+        import yaml
+
+        path = Path(config_path)
+        file_profile: str | None = None
+        if path.exists() and path.suffix in (".yaml", ".yml"):
+            with open(path) as fh:
+                loaded = yaml.safe_load(fh)
+            if isinstance(loaded, dict):
+                raw = loaded.get("profile")
+                if isinstance(raw, str) and raw:
+                    file_profile = raw
+
+        # 1. config file profile wins (config_dict.update over env overrides).
+        if file_profile is not None:
+            return file_profile
+        # 2. then NEXUS_PROFILE env.
+        env_profile = os.environ.get("NEXUS_PROFILE")
+        if env_profile:
+            return env_profile
+        # 3. then the NexusConfig default.
+        return "full"
+    except Exception:
+        # Defer the real failure to load_config() for a clearer error.
+        return deployment_profile
+
+
 # ---------------------------------------------------------------------------
 # CLI group — bare ``nexusd`` starts the daemon, subcommands are node-local ops
 # ---------------------------------------------------------------------------
@@ -415,7 +477,15 @@ def main(
             # wanting zone federation in sandbox). Scoped STRICTLY to the
             # sandbox profile — cluster/full/lite/embedded never set this var,
             # so their boot path is byte-identical to before.
-            if deployment_profile == "sandbox" and not any(
+            #
+            # Gate on the EFFECTIVE profile (Issue #4126 HIGH): when an
+            # operator runs ``nexusd --config sandbox.yaml`` with no
+            # ``--profile``, ``deployment_profile`` is still ``"auto"`` but the
+            # kernel will run ``profile: sandbox`` from the file. Resolving the
+            # profile the same way ``nexus.connect``/``load_config`` will
+            # ensures config-sourced sandbox boots are still gated.
+            _effective_profile = _resolve_effective_profile(deployment_profile, config_path)
+            if _effective_profile == "sandbox" and not any(
                 os.environ.get(v) for v in ("NEXUS_PEERS", "NEXUS_HOSTNAME", "NEXUS_BOOTSTRAP_NEW")
             ):
                 os.environ.setdefault("NEXUS_FEDERATION_DISABLED", "1")

@@ -548,74 +548,116 @@ def test_nexus_ready_reports_sandbox_daemon_ready(sandbox_daemon) -> None:
 
 
 def test_sandbox_up_state_is_consumed_by_status(sandbox_daemon, tmp_path: Path) -> None:
-    """#4144: the state `nexus up --profile sandbox` persists is consumable.
+    """#4144 (strengthened, #4126 review r1): the artifacts the REAL
+    ``nexus up --profile sandbox`` producer writes are discovered by the
+    REAL ``nexus env`` / ``nexus status`` consumers with NO ``--url``.
 
-    Genuine `nexus up --profile sandbox` blocks on the foreground daemon,
-    so we assert the *state-consumption path* at functional level instead:
-    write the exact `.state.json` shape the up-path produces (see
-    src/nexus/cli/commands/stack.py sandbox branch), then prove `nexus
-    status --json` pointed at the persisted HTTP URL reports the real
-    booted sandbox daemon reachable. This closes the readiness/discovery
-    gap end-to-end without a blocking foreground process.
+    Genuine ``nexus up --profile sandbox`` blocks on the foreground
+    daemon, so we cannot run it directly. Instead this test:
+
+      1. PRODUCER (real, not hand-rolled): calls
+         ``stack.persist_sandbox_runtime_artifacts`` — the exact helper the
+         ``nexus up --profile sandbox`` branch calls — with the booted
+         daemon's host/port, run with ``cwd`` = an isolated project dir so
+         it writes a production-shaped ``.state.json`` (via
+         ``save_runtime_state``: adds ``version``/``started_at``) AND a
+         minimal ``nexus.yaml`` (via ``save_project_config``) into the
+         discovery location, exactly as production does.
+      2. CONSUMER (real, no ``--url``): from that same project dir runs
+         ``python -m nexus.cli env`` and ``python -m nexus.cli status
+         --json``. Neither is passed ``--url``/``NEXUS_URL`` — resolution
+         must flow through ``load_project_config()`` →
+         ``load_runtime_state(cfg.data_dir)`` →
+         ``resolve_connection_env()`` INTERNALLY, proving the persisted
+         artifacts alone are sufficient for end-to-end discovery.
+
+    No mocking: the fixture daemon is a real healthy sandbox bound on
+    ``127.0.0.1:http_port``, so ``status`` reaches it deterministically and
+    fast over the real socket (bounded subprocess timeouts).
     """
     import json as _json
+
+    from nexus.cli.commands import stack
 
     host = sandbox_daemon["host"]
     http_port = sandbox_daemon["http_port"]
     grpc_port = sandbox_daemon["grpc_port"]
-    data_dir = tmp_path / "consume-data"
+
+    project_dir = tmp_path / "consume-project"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = project_dir / "consume-data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    workspace = str(tmp_path / "consume-ws")
+    workspace = str(project_dir / "consume-ws")
 
-    # Mirror exactly what the sandbox `up` path writes (#4144). This test
-    # validates the *consumer* contract only (state → env/status); the
-    # *producer* side — that stack.py emits exactly these keys
-    # (profile/workspace/ports.{http,grpc}/grpc_host, hub_token absent) —
-    # is locked by TestSandboxStateDictShape in
-    # tests/unit/cli/test_stack_sandbox.py. Keep the two in sync.
-    (data_dir / ".state.json").write_text(
-        _json.dumps(
-            {
-                "version": 1,
-                "profile": "sandbox",
-                "workspace": workspace,
-                "ports": {"http": http_port, "grpc": grpc_port},
-                "grpc_host": host,
-            }
+    # (1) PRODUCER — run the ACTUAL up-path writer from the project dir so
+    # the minimal nexus.yaml lands where the consumers will discover it
+    # (CONFIG_SEARCH_PATHS = ./nexus.yaml, CWD-relative).
+    cwd_before = os.getcwd()
+    os.chdir(project_dir)
+    try:
+        state_path, yaml_path = stack.persist_sandbox_runtime_artifacts(
+            workspace=workspace,
+            http_port=http_port,
+            port_explicit=True,  # explicit port → grpc = http + 2 (= grpc_port)
+            host=host,
+            data_dir=str(data_dir),
+            hub_url=None,
         )
-    )
+    finally:
+        os.chdir(cwd_before)
 
-    # `nexus env` (consumes state via load_runtime_state) emits the conn
-    # vars derived purely from the persisted state.
-    from nexus.cli.state import load_runtime_state, resolve_connection_env
+    # Production-shaped artifacts exist (state has version/started_at
+    # injected by save_runtime_state; yaml created since none pre-existed).
+    assert state_path.exists(), state_path
+    persisted = _json.loads(state_path.read_text())
+    assert persisted["profile"] == "sandbox"
+    assert persisted["ports"] == {"http": http_port, "grpc": grpc_port}
+    assert persisted["grpc_host"] == host
+    assert "version" in persisted and "started_at" in persisted
+    assert "hub_token" not in persisted  # secrets policy
+    assert yaml_path is not None and yaml_path.exists(), yaml_path
 
-    env_vars = resolve_connection_env({}, load_runtime_state(data_dir))
-    assert env_vars["NEXUS_PROFILE"] == "sandbox"
-    assert env_vars["NEXUS_WORKSPACE"] == workspace
-    assert env_vars["NEXUS_GRPC_PORT"] == str(grpc_port)
-    assert f":{http_port}" in env_vars["NEXUS_URL"]
+    common = {"capture_output": True, "text": True, "cwd": str(project_dir)}
+    # Ensure no ambient NEXUS_URL leaks resolution past the persisted state.
+    child_env = {k: v for k, v in os.environ.items() if k != "NEXUS_URL"}
 
-    # `nexus status --json` pointed at the persisted HTTP URL reports the
-    # real booted sandbox daemon reachable.
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "nexus.cli",
-            "status",
-            "--url",
-            f"http://{host}:{http_port}",
-            "--json",
-        ],
-        capture_output=True,
-        text=True,
+    # (2a) CONSUMER `nexus env --json` — NO --url. Resolution is internal
+    # (load_project_config + load_runtime_state + resolve_connection_env).
+    # JSON form parsed so shell-quoting of the export format does not make
+    # the assertion brittle.
+    env_res = subprocess.run(
+        [sys.executable, "-m", "nexus.cli", "env", "--json"],
         timeout=60,
+        env=child_env,
+        **common,
     )
-    assert result.returncode == 0, (
-        f"nexus status should exit 0; rc={result.returncode} "
-        f"stdout={result.stdout} stderr={result.stderr}"
+    assert env_res.returncode == 0, (
+        f"nexus env should exit 0; rc={env_res.returncode} "
+        f"stdout={env_res.stdout} stderr={env_res.stderr}"
     )
-    status_payload = _json.loads(result.stdout)
+    env_payload = _json.loads(env_res.stdout)
+    env_vars = env_payload.get("data", env_payload)
+    # NEXUS_GRPC_HOST is "host:port" (see resolve_connection_env); host is
+    # 127.0.0.1 here so normalize_connect_host passes it through unchanged.
+    assert env_vars["NEXUS_URL"] == f"http://{host}:{http_port}", env_vars
+    assert env_vars["NEXUS_GRPC_HOST"] == f"{host}:{grpc_port}", env_vars
+    assert env_vars["NEXUS_GRPC_PORT"] == str(grpc_port), env_vars
+    assert env_vars["NEXUS_PROFILE"] == "sandbox", env_vars
+    assert env_vars["NEXUS_WORKSPACE"] == workspace, env_vars
+
+    # (2b) CONSUMER `nexus status --json` — NO --url. Must resolve the
+    # sandbox endpoint from the persisted state and reach the real daemon.
+    status_res = subprocess.run(
+        [sys.executable, "-m", "nexus.cli", "status", "--json"],
+        timeout=60,
+        env=child_env,
+        **common,
+    )
+    assert status_res.returncode == 0, (
+        f"nexus status should exit 0; rc={status_res.returncode} "
+        f"stdout={status_res.stdout} stderr={status_res.stderr}"
+    )
+    status_payload = _json.loads(status_res.stdout)
     status_data = status_payload.get("data", status_payload)
     assert status_data["server_reachable"] is True, status_data
     assert status_data["server_url"] == f"http://{host}:{http_port}", status_data

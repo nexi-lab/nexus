@@ -476,6 +476,63 @@ def _detect_container_state(
         return "absent"
 
 
+def persist_sandbox_runtime_artifacts(
+    *,
+    workspace: str,
+    http_port: int,
+    port_explicit: bool,
+    host: str | None,
+    data_dir: str,
+    hub_url: str | None,
+) -> tuple[Path, Path | None]:
+    """Write the production-shaped sandbox discovery artifacts (#4144).
+
+    This is the ONE producer the ``nexus up --profile sandbox`` branch uses
+    to persist what ``nexus env``/``run``/``status`` later discover:
+
+      * a ``.state.json`` in ``data_dir`` (profile/workspace/ports/grpc_host;
+        ``hub_url`` only if given — ``hub_token`` is NEVER persisted), via
+        the shared ``save_runtime_state``; the gRPC port comes from the ONE
+        ``derive_grpc_port`` helper so it matches what nexusd binds.
+      * a *minimal* ``nexus.yaml`` in the discovery location IFF one is
+        absent (never clobber an existing project config), via the shared
+        ``save_project_config``.
+
+    Returns ``(state_path, yaml_created_path_or_None)`` so the caller can
+    roll back exactly its own writes on a failed daemon launch. Extracted
+    so the integration test exercises the real producer instead of
+    hand-rolling the dict (Issue #4126 review r1).
+    """
+    grpc_port = derive_grpc_port(http_port, port_explicit)
+    grpc_host = host or "localhost"
+
+    sandbox_state: dict[str, Any] = {
+        "profile": "sandbox",
+        "workspace": workspace,
+        "ports": {"http": http_port, "grpc": grpc_port},
+        "grpc_host": grpc_host,
+    }
+    if hub_url:  # hub_url MAY be recorded; hub_token MUST NOT.
+        sandbox_state["hub_url"] = hub_url
+    save_runtime_state(data_dir, sandbox_state)
+    state_path = Path(data_dir) / STATE_FILENAME
+
+    yaml_created_path: Path | None = None
+    if not _load_project_config_optional():
+        yaml_created_path = next(
+            (Path(c) for c in CONFIG_SEARCH_PATHS if Path(c).exists()),
+            Path(CONFIG_SEARCH_PATHS[0]),
+        )
+        _save_project_config(
+            {
+                "profile": "sandbox",
+                "data_dir": data_dir,
+                "ports": {"http": http_port, "grpc": grpc_port},
+            }
+        )
+    return state_path, yaml_created_path
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -729,41 +786,19 @@ def up(
         # recorded; --hub-token is NEVER written to persistent state.
         # --------------------------------------------------------------
         _http_port = port if port is not None else 2026
-        # gRPC port: use the ONE shared derivation helper so the value we
-        # persist is exactly what nexusd will bind (#4144 MINOR 6).
-        _grpc_port = derive_grpc_port(_http_port, port is not None)
-        _grpc_host = host or "localhost"
         _data_dir = _resolved_data_dir
 
-        _sandbox_state: dict[str, Any] = {
-            "profile": "sandbox",
-            "workspace": workspace,
-            "ports": {"http": _http_port, "grpc": _grpc_port},
-            "grpc_host": _grpc_host,
-        }
-        if hub_url:  # hub_url MAY be recorded; hub_token MUST NOT.
-            _sandbox_state["hub_url"] = hub_url
-        save_runtime_state(_data_dir, _sandbox_state)
-        _state_path = Path(_data_dir) / STATE_FILENAME
-
-        # Write a minimal nexus.yaml only if absent — NEVER clobber an
-        # existing project config. Track whether THIS invocation created
-        # it so we only roll back our own write (see below).
-        _yaml_created_path: Path | None = None
-        if not _load_project_config_optional():
-            # Resolve the same target save_project_config will write to,
-            # so the failure rollback removes exactly that file.
-            _yaml_created_path = next(
-                (Path(c) for c in CONFIG_SEARCH_PATHS if Path(c).exists()),
-                Path(CONFIG_SEARCH_PATHS[0]),
-            )
-            _save_project_config(
-                {
-                    "profile": "sandbox",
-                    "data_dir": _data_dir,
-                    "ports": {"http": _http_port, "grpc": _grpc_port},
-                }
-            )
+        # Single producer for the discovery artifacts (.state.json + minimal
+        # nexus.yaml). Returns the paths of OUR writes so we roll back only
+        # ours (and the yaml only if we created it) on a failed launch.
+        _state_path, _yaml_created_path = persist_sandbox_runtime_artifacts(
+            workspace=workspace,
+            http_port=_http_port,
+            port_explicit=port is not None,
+            host=host,
+            data_dir=_data_dir,
+            hub_url=hub_url,
+        )
 
         # Blocking-foreground trade-off: we persist state/yaml BEFORE the
         # daemon launches so concurrent shells (`nexus env`/`run`) can

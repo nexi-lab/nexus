@@ -133,3 +133,45 @@ data-plane hot path in the startup story.
   `NEXUS_GRPC_PORT`, confirm `nexus status` shows gRPC healthy.
 - 401 from every call: static auth with no `NEXUS_API_KEY`, or
   database auth with no issued key.
+
+## Filesystem surface
+
+FULL exposes the complete file API over four equivalent paths: kernel
+syscalls, typed gRPC (`Read`/`Write`/`Delete`/`Ping`/`BatchRead`), generic
+gRPC `Call`, and the CLI (a thin wrapper). The deprecated HTTP
+`POST /api/nfs/{method}` is migration-only (sunset 2026-06-25, Issue #1133).
+
+| Group    | RPC                                                  | CLI                                                   |
+|----------|------------------------------------------------------|-------------------------------------------------------|
+| Read     | `read`, `read_range`, `read_bulk`, `read_batch`      | `cat` (+`--offset/--length/--stream`), `read-bulk`    |
+| Write    | `write`, `write_stream`, `write_batch`, `append`, `edit` | `write` (+`--stream`), `write-batch`, `append`, `edit` |
+| Metadata | `stat`, `stat_bulk`, `metadata_batch`, `exists_batch` | `stat`, `metadata`, `exists`                          |
+| Mutate   | `rename_batch`, `delete_batch`, `rename`, `delete`   | `rename-batch`, `rm-batch`, `move`, `rm`              |
+| Stream   | `stream`, `stream_range`                             | `cat --stream`                                        |
+| Locks    | `sys_lock`, `sys_unlock`, `lock_acquire`, `release_lock` | `lock list/info/release`                           |
+| Admin    | `backfill_directory_index`, `flush_write_observer`   | `admin fs backfill-index`, `admin fs flush-write-observer` |
+
+**Semantics that matter:**
+
+- `read_range(start, end)` is start-inclusive, end-exclusive. End past EOF
+  returns the available bytes (bounded, not an error).
+- `rename_batch` / `delete_batch` / `write_batch` are **per-item
+  independent** (not atomic) — the result maps each literal path to
+  `{success, ...}` or `{success, error}`.
+- `content_id` is stable across `write`/`stat`/`read` for identical bytes;
+  use the CAS helpers in `nexus.lib.occ` to compose If-Match writes (a
+  stale `content_id` is rejected).
+- Admin ops (`backfill_directory_index`, `flush_write_observer`) require
+  admin; non-admin callers are refused server-side.
+
+**Benchmark guidance** (dev-laptop medians, not CI gates; from
+`tests/benchmarks/bench_read_write_overhead.py`):
+
+| Operation                       | Median   | Class                  |
+|---------------------------------|----------|------------------------|
+| Typed `nx.read` (1 KiB file)    | ~165 µs  | hot path               |
+| `read_range(64 KiB)` of 1 MiB   | ~2.9 ms  | hot path               |
+| `stat_bulk` of 100 files        | ~1.7 ms  | hot path (≈17 µs/path) |
+| `sys_lock` + `sys_unlock` cycle | ~1.0 ms  | control plane          |
+| `backfill_directory_index`      | —        | not perf-sensitive     |
+| `flush_write_observer`          | —        | not perf-sensitive     |

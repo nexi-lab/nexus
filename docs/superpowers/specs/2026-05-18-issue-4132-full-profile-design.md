@@ -109,7 +109,7 @@ no user-runnable command prints the resolved profile contract.
 The guide states, and tests prove:
 
 1. `DeploymentProfile.FULL.default_bricks()` ⊇ `LITE.default_bricks()`,
-   includes the 18 feature bricks listed above, and **excludes**
+   includes the feature bricks listed above, and **excludes**
    `federation`.
 2. `DeploymentProfile.FULL.default_drivers()` includes
    {s3, gcs, gdrive, remote} and the sandbox connector set.

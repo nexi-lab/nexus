@@ -41,8 +41,8 @@ use contracts::{OperationContext, RustService};
 
 use crate::core::dispatch::{FileEvent, NativeInterceptHook};
 use crate::kernel::{
-    KernelError, StatResult, SysCopyResult, SysMkdirResult, SysReadResult, SysRenameResult,
-    SysSetAttrResult, SysUnlinkResult, SysWriteResult,
+    KernelError, StatResult, SysCopyResult, SysReadResult, SysRenameResult, SysSetAttrResult,
+    SysUnlinkResult, SysWriteResult,
 };
 use crate::lock_manager::KernelLockMode;
 
@@ -126,14 +126,6 @@ pub trait KernelAbi: Send + Sync + 'static {
         dst_path: &str,
         ctx: &OperationContext,
     ) -> Result<SysCopyResult, KernelError>;
-
-    fn sys_mkdir(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        parents: bool,
-        exist_ok: bool,
-    ) -> Result<SysMkdirResult, KernelError>;
 
     // ── Locks ────────────────────────────────────────────────────────
 
@@ -319,16 +311,6 @@ impl KernelAbi for crate::kernel::Kernel {
         ctx: &OperationContext,
     ) -> Result<SysCopyResult, KernelError> {
         Self::sys_copy(self, src_path, dst_path, ctx)
-    }
-
-    fn sys_mkdir(
-        &self,
-        path: &str,
-        ctx: &OperationContext,
-        parents: bool,
-        exist_ok: bool,
-    ) -> Result<SysMkdirResult, KernelError> {
-        Self::sys_mkdir(self, path, ctx, parents, exist_ok)
     }
 
     fn sys_lock(

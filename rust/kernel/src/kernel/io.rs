@@ -2,7 +2,11 @@
 //! `convenience.rs` for Tier 2.
 //!
 //! File I/O syscalls: `sys_read`, `sys_write`, `sys_stat`,
-//! `sys_unlink`, `sys_rename`, `sys_copy`, `sys_mkdir`.
+//! `sys_unlink`, `sys_rename`, `sys_copy`.
+//!
+//! Also hosts the optimized inherent bodies for the Tier 2 `access`
+//! and `mkdir` overrides — reached by Rust callers via
+//! `KernelConvenience`.
 //!
 //! `sys_rmdir` is kernel-internal (`pub(crate)`) — only called from
 //! `sys_unlink` DT_DIR branch. Removed from PyO3 surface in C21.
@@ -2025,14 +2029,16 @@ impl Kernel {
         Ok((wr.content_id, wr.size))
     }
 
-    // ── sys_mkdir ──────────────────────────────────────────────────────
+    // ── mkdir (Tier 2 override) ────────────────────────────────────────
 
-    /// Rust syscall: full mkdir (validate → route → backend → metastore → dcache).
+    /// Tier 2 `mkdir` — optimized inherent body behind
+    /// `KernelConvenience::mkdir` (validate → route → backend →
+    /// metastore → observer dispatch).
     ///
-    /// Returns `hit=true` when Rust completed the full operation.
-    /// Python only dispatches event notify + POST hooks when hit=true.
-    /// `parents=true` creates parent directories. `exist_ok=true` ignores existing.
-    pub fn sys_mkdir(
+    /// Returns `hit=true` when the kernel completed the full operation.
+    /// `parents=true` creates parent directories; `exist_ok=true`
+    /// treats an existing directory as success.
+    pub(crate) fn mkdir(
         &self,
         path: &str,
         ctx: &OperationContext,

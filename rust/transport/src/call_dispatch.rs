@@ -723,7 +723,7 @@ fn do_sys_mkdir(
     let path = s(params, "path");
     let parents = bool_or(params, "parents", false);
     let exist_ok = bool_or(params, "exist_ok", true);
-    match KernelAbi::sys_mkdir(kernel, &path, ctx, parents, exist_ok) {
+    match KernelConvenience::mkdir(kernel, &path, ctx, parents, exist_ok) {
         Ok(r) => ok_json(serde_json::json!({
             "hit": r.hit,
             "post_hook_needed": r.post_hook_needed,

@@ -1058,7 +1058,7 @@ impl Kernel {
     /// every other field supplied by the caller.
     ///
     /// DRY helper for the ~10 write paths that persist inode
-    /// records (sys_write, sys_mkdir, rename destination, pipe/stream
+    /// records (sys_write, mkdir, rename destination, pipe/stream
     /// registration, batch write, …). `zone_id` is the destination zone —
     /// callers pass `&route.zone_id` or an explicit zone (e.g.
     /// `contracts::ROOT_ZONE_ID` for kernel-internal IPC inodes). The
@@ -2861,7 +2861,7 @@ mod tests {
         setattr(&k, "/src.txt", DT_REG as i32).unwrap();
         k.sys_write_with_link_depth("/src.txt", &ctx, b"body", 0, 1)
             .unwrap();
-        k.sys_mkdir("/dst", &ctx, true, true).unwrap();
+        k.mkdir("/dst", &ctx, true, true).unwrap();
 
         match k.sys_copy("/src.txt", "/dst", &ctx) {
             Err(KernelError::InvalidPath(msg)) => {
@@ -3748,7 +3748,7 @@ mod tests {
         use std::time::Duration;
 
         #[test]
-        fn sys_mkdir_invalidates_parent_listing_index_cache() {
+        fn mkdir_invalidates_parent_listing_index_cache() {
             let k = Kernel::new();
             let _td = tempfile::tempdir().unwrap();
             let ms: Arc<dyn MetaStore> =
@@ -3768,7 +3768,7 @@ mod tests {
             );
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            k.sys_mkdir("/data/fresh", &ctx, false, false).unwrap();
+            k.mkdir("/data/fresh", &ctx, false, false).unwrap();
 
             let entries = k.sys_readdir("/data", "root", false);
             assert!(entries.contains(&("/data/fresh".to_string(), DT_DIR)));

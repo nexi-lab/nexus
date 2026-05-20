@@ -10,7 +10,7 @@
 
 use super::{
     Kernel, KernelError, OperationContext, StatResult, SysMkdirResult, SysReadResult,
-    SysUnlinkResult, SysWriteResult,
+    SysRmdirResult, SysUnlinkResult, SysWriteResult,
 };
 use crate::abi::KernelAbi;
 use crate::meta_store::{DT_EXTERNAL_STORAGE, DT_MOUNT};
@@ -106,6 +106,19 @@ pub trait KernelConvenience: KernelAbi {
         exist_ok: bool,
     ) -> Result<SysMkdirResult, KernelError>;
 
+    /// Tier 2 `rmdir` — remove a directory.
+    ///
+    /// Conceptually `sys_unlink(recursive=…)` narrowed to directories.
+    /// No default body — `Kernel` supplies the optimized inherent
+    /// override (`io.rs`), which the `sys_unlink` DT_DIR branch also
+    /// calls directly.
+    fn rmdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        recursive: bool,
+    ) -> Result<SysRmdirResult, KernelError>;
+
     /// `sys_stat(path).content_id` — single-field convenience.
     fn get_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
         self.sys_stat(path, zone_id).and_then(|s| s.content_id)
@@ -182,6 +195,16 @@ impl KernelConvenience for Kernel {
     ) -> Result<SysMkdirResult, KernelError> {
         // Delegate to the optimized inherent method on Kernel (io.rs).
         Kernel::mkdir(self, path, ctx, parents, exist_ok)
+    }
+
+    fn rmdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        recursive: bool,
+    ) -> Result<SysRmdirResult, KernelError> {
+        // Delegate to the optimized inherent method on Kernel (io.rs).
+        Kernel::rmdir(self, path, ctx, recursive)
     }
 
     fn stat_batch(&self, paths: &[String], zone_id: &str) -> Vec<Option<StatResult>> {

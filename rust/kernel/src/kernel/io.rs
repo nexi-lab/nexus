@@ -4,12 +4,10 @@
 //! File I/O syscalls: `sys_read`, `sys_write`, `sys_stat`,
 //! `sys_unlink`, `sys_rename`, `sys_copy`.
 //!
-//! Also hosts the optimized inherent bodies for the Tier 2 `access`
-//! and `mkdir` overrides — reached by Rust callers via
-//! `KernelConvenience`.
-//!
-//! `sys_rmdir` is kernel-internal (`pub(crate)`) — only called from
-//! `sys_unlink` DT_DIR branch. Removed from PyO3 surface in C21.
+//! Also hosts the optimized inherent bodies for the Tier 2 `access`,
+//! `mkdir`, and `rmdir` overrides — reached by Rust callers via
+//! `KernelConvenience`. `rmdir` is additionally invoked in-kernel by
+//! the `sys_unlink` DT_DIR branch.
 
 use std::sync::atomic::Ordering;
 
@@ -1214,9 +1212,10 @@ impl Kernel {
             }
             DT_DIR => {
                 // §12e: handle DT_DIR inline instead of returning miss.
-                // Delegates to sys_rmdir which handles recursive delete,
-                // backend rmdir, dcache evict, and observer dispatch.
-                let rmdir_result = self.sys_rmdir(path, ctx, recursive)?;
+                // Delegates to the Tier 2 `rmdir` override, which handles
+                // recursive delete, backend rmdir, dcache evict, and
+                // observer dispatch.
+                let rmdir_result = self.rmdir(path, ctx, recursive)?;
                 return Ok(SysUnlinkResult {
                     hit: rmdir_result.hit,
                     entry_type: DT_DIR,
@@ -2211,13 +2210,16 @@ impl Kernel {
         Ok(())
     }
 
-    // ── sys_rmdir ──────────────────────────────────────────────────────
+    // ── rmdir (Tier 2 override) ────────────────────────────────────────
 
-    /// Rust syscall: full rmdir (validate → route → children check → delete → dcache).
+    /// Tier 2 `rmdir` — optimized inherent body behind
+    /// `KernelConvenience::rmdir` (validate → route → children check →
+    /// delete → observer dispatch).
     ///
-    /// Returns `hit=true` when Rust completed the full operation.
-    /// Returns `hit=false` for DT_MOUNT/DT_EXTERNAL_STORAGE → Python handles unmount.
-    pub fn sys_rmdir(
+    /// Returns `hit=true` when the kernel completed the full operation.
+    /// Returns `hit=false` for DT_MOUNT/DT_EXTERNAL_STORAGE — unmount is
+    /// handled by the mount-lifecycle path, not `rmdir`.
+    pub(crate) fn rmdir(
         &self,
         path: &str,
         ctx: &OperationContext,
@@ -2314,7 +2316,7 @@ impl Kernel {
         self.lock_manager.do_release(lock_handle);
 
         // 9. OBSERVE-phase dispatch (§11 OBSERVE): queue DirDelete.
-        // Like sys_mkdir, only the top-level rmdir event fires —
+        // Like mkdir, only the top-level rmdir event fires —
         // recursively-deleted children don't generate individual events
         // (observers needing per-child notifications can list the
         // directory before unlink themselves; the top-level event is

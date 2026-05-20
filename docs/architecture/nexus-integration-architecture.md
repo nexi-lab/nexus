@@ -27,7 +27,7 @@ Cross-references:
 │              nexusd + sudo-code  (single process, always-on)         │
 │                                                                      │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  Rust Kernel cdylib  (nexus_runtime)                        │    │
+│  │  Rust Kernel  (nexus-cluster binary)                       │    │
 │  │  VFSRouter · DCache · Metastore(redb) · LockManager         │    │
 │  │  PipeManager(DT_PIPE) · StreamManager(DT_STREAM)            │    │
 │  │  FileWatchRegistry(sys_watch) · KernelDispatch(hooks)       │    │
@@ -47,9 +47,9 @@ Cross-references:
 │  │  ManagedAgentService │   └─────────────────────────────┘         │
 │  │  AcpService          │                                           │
 │  │   (claude/codex/…)   │   FastAPI bricks (mount, rebac, …)        │
-│  │  + AgentRegistry     │   AgentRegistry is a Rust SSOT reachable  │
-│  │    (Rust SSOT;       │   from Python via `kernel.agent_registry`;│
-│  │     PyAgentRegistry) │   ACP / managed_agent reach it directly.  │
+│  │  + AgentRegistry     │   AgentRegistry is a Rust SSOT; ACP and   │
+│  │    (Rust SSOT)       │   managed_agent reach it in-process,      │
+│  │                      │   other callers over the gRPC surface.    │
 │  └──────────────────────┘                                           │
 │                                                                      │
 │  AcpService spawns external ACP backends as subprocesses with        │
@@ -64,8 +64,8 @@ Cross-references:
 ### Constraints
 
 - **One nexusd per sudowork instance.** sudowork starts nexusd at launch and tears it down on quit.
-- **Single Python-facing cdylib.** `nexus_runtime` is the only PyO3 extension module. Service-tier rlibs (`services`, `raft`, `library`, `contracts`) link into it.
-- **State SSOT.** Agent runtime state (`pid → AgentState`, condvar wakeup, signal semantics, parent/child links, transition validation) lives in `kernel::core::agents::registry::AgentRegistry`. Python callers reach it through `kernel.agent_registry` — a thin PyO3 wrapper handing back `nexus_runtime.AgentDescriptor` instances with attribute getters mirroring `contracts/process_types.py`. There is no Python-side state mirror or dual-write step. Profile config lives on disk under `/agents/{name}/`.
+- **Pure-Rust kernel.** The kernel and the service-tier crates (`services`, `raft`, `lib`, `contracts`) compile into the `nexus-cluster` binary; out-of-process components reach nexus through gRPC.
+- **State SSOT.** Agent runtime state (`pid → AgentState`, condvar wakeup, signal semantics, parent/child links, transition validation) lives in `kernel::core::agents::registry::AgentRegistry`. In-process Rust callers (ACP, managed_agent) reach it directly; out-of-process callers reach it through the gRPC surface. There is no second state mirror or dual-write step. Profile config lives on disk under `/agents/{name}/`.
 - **gRPC is the integration surface.** sudowork (Node/TS) reaches nexusd through tonic-served gRPC at port 2028; HTTP is reserved for human-facing dashboards.
 - **Cluster profile.** sudowork uses Nexus's cluster profile — bricks: IPC, FEDERATION.
 - **Zone = VFS path mount point.** A zone's visibility boundary is its mount path. ReBAC governs sub-path access within a zone.
@@ -220,7 +220,7 @@ observer reaps the procfs subtree.
 After the procfs entries are in place, ManagedAgentService hands off
 to the runtime crate through the `SpawnTask<K: KernelAbi>` DI seam.
 The seam is one indirect call per session start — the binary edge
-(cluster binary, or `nexus-cdylib` for the Python wheel) constructs
+(the `nexus-cluster` binary) constructs
 a concrete `SpawnTask<Kernel>` adapter wrapping
 `sudocode_runtime::spawn_task` and registers it via
 `install_managed_agent_with_spawn(kernel, Arc::new(adapter))`.
@@ -280,9 +280,9 @@ There is no `SendPrompt` or `SubscribeEvents` gRPC — those would
 duplicate the A2A surface the rest of the system uses.
 
 `AgentState` lifecycle: `REGISTERED → WARMING_UP → READY ↔ BUSY → SUSPENDED → TERMINATED`.
-`kernel.agent_wait(pid, target_state, timeout_ms)` releases the GIL and
-parks on the per-pid condvar — Python supervisors get a blocking wait
-without pinning the interpreter.
+`kernel.agent_wait(pid, target_state, timeout_ms)` parks the calling
+thread on the per-pid condvar — supervisors get an event-driven
+blocking wait instead of polling.
 
 `AgentRegistry` is the SSOT for `AgentState`.
 `AgentRegistry::update_state(&pid, new_state)` at
@@ -299,7 +299,7 @@ crate's `AgentLoopState` (`WarmingUp` / `Ready` / `Busy`) onto
 `AgentError::InvalidTransition` is logged so a runtime FSM bug is
 visible without aborting the worker. The `SpawnTask<K>::spawn` DI
 seam takes this observer as a parameter; the binary-edge adapter
-(e.g. `nexus-cdylib`'s `SudoCodeSpawnAdapter`) forwards it through to
+forwards it through to
 the runtime crate's `state_callback` parameter and never touches
 `AgentRegistry` itself. The adapter is a pure runtime-wrapper; the
 service owns the SSOT writes.

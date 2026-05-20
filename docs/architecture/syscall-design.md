@@ -186,8 +186,8 @@ Available on all kernel surfaces:
 - **Rust in-process**: `KernelAbi::sys_watch(pattern, timeout_ms)` — managed-agent
   runtimes use this to replace polling with event-driven blocking on
   `/proc/{pid}/chat-with-me` mailboxes
-- **Python**: `PyKernel.sys_watch(pattern, timeout_ms)` — releases GIL via
-  `py.detach()` during the blocking wait
+- **Python**: `KernelClient.sys_watch(pattern, timeout_ms)` — gRPC Call RPC
+  to kernel subprocess
 - **gRPC/RPC**: `WatchMixin.sys_watch` → `sys_watch` Call RPC
 
 ### 4.7 Hash-addressed ops: Driver level, not kernel
@@ -239,41 +239,17 @@ uv run ruff check src/
 PYTHONPATH=src uv run lint-imports
 ```
 
-### 6.1 Rust/Python Boundary Status (2026-04-26)
+### 6.1 Rust/Python Boundary Status (2026-05-19)
 
-Syscall execution crosses Rust→Python at two points:
+**Post gRPC migration (PR #4163):** The kernel runs as a separate Rust subprocess
+(`nexus-cluster`). Python communicates exclusively via gRPC `KernelClient`. All
+in-process PyO3 crossings documented in the previous version of this section
+have been eliminated:
 
-1. **Hook dispatch** (read/write/unlink/rename/copy/mkdir):
-   - `rust_ctx_to_python()`: OperationContext → Python dataclass (1 call/syscall)
-   - Hook context constructor: e.g. `ReadHookContext(path, ctx)` (1 call/syscall)
-   - Per-hook `on_pre_*()` via `PyInterceptHookAdapter` (N calls/syscall)
-   - Budget: 2+N calls, ~1μs each, all GIL-held before `py.detach()`
-
-2. **Service lifecycle** (enlist auto-start, start_all, stop_all):
-   - isinstance check against BackgroundService class (1 import, cached by Python)
-   - `start()/stop()`: call_method0 + `asyncio.run(asyncio.wait_for(coro, timeout))` — stdlib only
-   - Per-service: 4 crossings, 0 nexus imports. Not on syscall hot path.
-
-Zero-crossing syscalls: sys_lock, sys_unlock, sys_watch, sys_stat, sys_setattr, sys_readdir.
-Pillar access (Metastore, ObjectStore, DCache): pure Rust trait dispatch.
-
-**Eliminated crossings (2026-04-26 audit):**
-
-- **sys_write IPC pre-check**: Previously `metadata.get(path)` in Python detected DT_PIPE/DT_STREAM
-  before calling Rust sys_write. Redundant — Rust dcache already checks entry type inline (~100ns)
-  and dispatches to PipeManager/StreamManager. Deleted: 1 FFI round-trip per IPC write.
-- **sys_stat datetime formatting**: Previously `py.import("datetime")` + `.fromtimestamp()` +
-  `.isoformat()` produced ISO-8601 strings via Python. Replaced with `chrono::DateTime::to_rfc3339_opts()`
-  in pure Rust. Deleted: 1 Rust→Python crossing per stat call.
-
-**Architecturally correct crossings (no change):**
-
-- **Python observer dual path**: OBSERVE phase is service-layer (Python hooks registered by services).
-  Kernel fires the notification; service code runs in Python. This is not a kernel crossing — it's
-  the intended kernel→service boundary.
-- **sys_unlink DT_MOUNT fallback**: Mount lifecycle (federation cleanup, zone membership) is
-  Python-managed service-layer logic. The kernel delegates to Python for DT_MOUNT unlink because
-  the cleanup spans multiple services (federation, auth, event bus).
+- **Hook dispatch**: Pure Rust — hooks are Rust middleware/interceptors, no Python callbacks.
+- **Service lifecycle**: Python orchestrator manages services independently; no PyO3 crossings.
+- **All syscalls**: Zero in-process crossings. Boundary is gRPC (~1ms), not FFI (~1μs).
+- **Pillar access** (Metastore, ObjectStore, DCache): Pure Rust trait dispatch within kernel subprocess.
 
 ---
 
@@ -329,15 +305,15 @@ Transport adapters (thin, many):
 │ gRPC    (tonic / grpcio) │──┐
 │ HTTP    (axum / FastAPI)  │──┤       ┌───────────────────────────┐
 │ FUSE    (fuse3)           │──┼──────→│  Rust kernel (pub fn)      │
-│ PyO3    (in-process)      │──┤       │  sys_read(ctx, path, ...)  │
-│ Driver  (OS syscall hook) │──┤       │  sys_write(ctx, path, ...) │
-│ MCP                       │──┘       │  sys_stat(ctx, path, ...)  │
-└─────────────────────────┘       └───────────────────────────┘
+│ Driver  (OS syscall hook) │──┤       │  sys_read(ctx, path, ...)  │
+│ MCP                       │──┘       │  sys_write(ctx, path, ...) │
+└─────────────────────────┘       │  sys_stat(ctx, path, ...)  │
+                                      └───────────────────────────┘
                                            │
                                       ┌────┴────┐
                                       │Backends │
                                       │ CAS: pure Rust              │
-                                      │ S3/GCS: PyO3 → Python       │
+                                      │ S3/GCS: gRPC adapter         │
                                       └─────────┘
 ```
 
@@ -347,13 +323,12 @@ Key design decisions:
    an interface-with-one-impl pattern.
 2. **Transport adapters are thin**: gRPC adapter deserializes → calls
    `kernel::sys_read` → serializes response. ~20 lines per RPC.
-3. **In-process calls use PyO3** (for `nexus-fs` Python package, FUSE
-   mount, unit tests). ~100ns FFI overhead, no network, no serialization.
-4. **Hooks/observers** become Rust middleware/interceptors on the kernel
-   functions, not a cross-language callback dance.
-5. **Python backends** continue to exist, called via PyO3 embedded
-   interpreter (same pattern as Phase F's backend callback — already
-   proven to work).
+3. **Python calls use gRPC** (for `nexus-fs` Python package, unit tests).
+   Kernel runs as subprocess; Python communicates via `KernelClient` gRPC.
+4. **Hooks/observers** are Rust middleware/interceptors on the kernel
+   functions — no cross-language callback dance.
+5. **Python backends** are eliminated — all backends are pure Rust or
+   route through the Rust gRPC adapter (connectors via gRPC, PR #3843).
 
 ### 7.3 What this eliminates
 
@@ -365,7 +340,7 @@ Key design decisions:
 | Dispatch (KernelDispatch → DispatchMixin) | **Done** — Rust Kernel owns registries, DispatchMixin provides Python API (PR 7c) |
 | Overlay feature | **Deleted** — CAS dedup makes it unnecessary (PR 7, -1354 lines) |
 | CDC reassembly | **Done** — chunked_manifest detection + reassembly in Rust CAS engine |
-| `stubs/nexus_runtime/__init__.pyi` | **Auto-generated** — `codegen_kernel_abi.py` reads Rust source |
+| `stubs/nexus_runtime/__init__.pyi` | **Deleted** — PyO3 stubs removed after gRPC migration (PR #4163) |
 | Module rename | **Done** — `nexus_fast` → `nexus_runtime` (PR 8) |
 | `_backend_read` elimination | **Done** — all sys_read paths go through Rust kernel; Python `_backend_read` deleted (#1817 PR #3848) |
 | `sys_write` metadata in Rust | **Done** — Rust kernel builds metadata after CAS write; Python `_write_internal`/`_build_write_metadata` deleted (#1817 PR #3848) |
@@ -394,15 +369,12 @@ async fn read(&self, req: Request<ReadRequest>) -> Result<Response<ReadResponse>
     Ok(Response::new(results[0].clone()?.into()))
 }
 
-// python/mod.rs — thin PyO3 adapter (for nexus-fs embed, FUSE, tests)
-// sys_read single-path wrapper via sys_read_single.
-#[pyfunction]
-fn sys_read(kernel: &PyKernel, path: &str, offset: u64, timeout_ms: u64) -> PyResult<...> {
-    kernel.sys_read_single(path, &ctx, 1, timeout_ms, offset)
-}
+// Python: KernelClient (gRPC) — nexus-fs package, tests
+// Python calls kernel subprocess via gRPC Call RPC.
+// See src/nexus/remote/kernel_client.py
 ```
 
-One implementation. Two thin bindings (gRPC + PyO3). Zero ABCs.
+One implementation. One thin gRPC binding. Zero ABCs.
 
 ### 7.5 Migration path from current state
 
@@ -415,20 +387,19 @@ All work done in Phases A-G is directly reusable:
 | `RustDCacheInner` | `kernel::DCache` (struct field, no Arc) |
 | `VFSLockManagerInner` | `kernel::VfsLock` (struct field, no Arc) |
 | `CASEngine` | `kernel::CasEngine` (unchanged) |
-| `read_backend` PyO3 callback | `kernel::call_python_backend()` (unchanged) |
+| `read_backend` dispatch | `kernel::backend_dispatch()` (pure Rust) |
 
 Migration phases (incremental, each a PR):
 
 1. **Rust kernel crate**: Extract `kernel/mod.rs` with `pub fn sys_read/write`
    from current `Kernel` logic. Kernel struct becomes the single
    kernel entry point.
-2. **PyO3 binding adapter**: Replace `Kernel` pyclass with thin
-   `#[pyfunction]` bindings to `kernel::sys_*`. NexusFS calls these
-   directly instead of through Kernel.
+2. **gRPC transport adapter**: Kernel subprocess exposes `sys_*` via
+   tonic gRPC. Python `KernelClient` calls via gRPC (PR #4163).
 3. **Delete NexusFilesystem**: Move Tier 2 methods to a standalone
-   Python module that calls the PyO3 `sys_*` functions.
-4. **tonic adapter** (optional, parallel): Add gRPC serving via tonic,
-   calling the same `kernel::sys_*` functions.
+   Python module that calls kernel via gRPC `KernelClient`.
+4. **Delete PyO3 kernel bindings**: Remove cdylib crate, codegen,
+   stubs — all kernel access goes through gRPC (PR #4163).
 
 ### 7.6 Relationship to current plan phases
 
@@ -441,10 +412,10 @@ Migration phases (incremental, each a PR):
 | §7 PR 7b (Metastore adapter) | Done | `PyMetastoreAdapter` in Rust, `set_metastore()`, dcache-miss fallback |
 | §7 PR 7c (Dispatch collapse) | Done | `_resolve_and_read` deleted, `_read_via_dlc` → `_backend_read`, `KernelDispatch` → `DispatchMixin` |
 | §7 PR 7d (Crate rename) | Done | `rust/nexus_pyo3` → `rust/nexus_runtime` |
-| §7 PR 7e (Dispatch traits) | Done | `InterceptHook`/`PathResolver`/`MutationObserver` Rust traits + PyO3 adapters |
+| §7 PR 7e (Dispatch traits) | Done | `InterceptHook`/`PathResolver`/`MutationObserver` Rust traits (pure Rust) |
 | §7 PR 7f (CDC Rust) | Done | CDC chunked_manifest detection + reassembly in Rust CAS engine |
 | §7 PR 7g (Overlay deleted) | Done | Overlay feature deleted (-1354 lines), CAS dedup replaces it |
-| §7 PR 8 (Codegen) | Done | `codegen_kernel_abi.py` generates stubs, protocols, exports from Rust source |
+| §7 PR 8 (Codegen) | Done | Codegen deleted — kernel access via gRPC, no stubs needed (PR #4163) |
 | §7 PR 8 (Module rename) | Done | `nexus_fast` → `nexus_runtime` (Python module name, 90+ files) |
 | **§7 remaining** | **Done** | `_backend_read` deleted, sys_write metadata moved to Rust, PIPE/STREAM dispatched in Rust, advisory locks in Rust, connectors via gRPC — all completed in #1817/#1960 |
 

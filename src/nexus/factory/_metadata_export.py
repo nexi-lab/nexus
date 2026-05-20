@@ -39,6 +39,7 @@ def create_metadata_export_service(nx: Any) -> Any:
         svc = MetadataExportService(
             metadata=metadata,
             created_by=created_by,
+            nexus_fs=nx,
         )
         logger.info("[FACTORY] MetadataExportService created for server-layer RPC")
         return svc

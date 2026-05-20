@@ -43,7 +43,6 @@ class OperationUndoService:
         delete_fn: Any = None,
         rename_fn: Any = None,
         exists_fn: Any = None,
-        fallback_backend: Any | None = None,
     ) -> None:
         """Initialise the undo service.
 
@@ -53,14 +52,12 @@ class OperationUndoService:
             delete_fn: ``(path) -> None`` kernel delete primitive.
             rename_fn: ``(old, new) -> None`` kernel rename primitive.
             exists_fn: ``(path) -> bool`` kernel existence check.
-            fallback_backend: Optional legacy backend for CAS reads.
         """
         self._dlc = dlc
         self._write = write_fn
         self._delete = delete_fn
         self._rename = rename_fn
         self._exists = exists_fn
-        self._fallback_backend = fallback_backend
 
     # ------------------------------------------------------------------
     # Public API
@@ -172,17 +169,25 @@ class OperationUndoService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _read_content_from_cas(self, path: str, content_id: str) -> bytes:
-        """Read content from CAS via DLC, with optional fallback."""
-        try:
-            # Read via kernel syscall — sys_read_raw raises on missing path.
-            _kernel = getattr(self._dlc, "_kernel", None) if self._dlc else None
-            if _kernel is None:
-                raise RuntimeError(f"No kernel available for CAS read: {path}")
-            result: bytes = _kernel.sys_read_raw(path, "root")
-            return result
-        except Exception:
-            if self._fallback_backend is not None:
-                fallback_result: bytes = self._fallback_backend.read_content(content_id)
-                return fallback_result
-            raise
+    def _read_content_from_cas(self, path: str, content_id: str) -> bytes:  # noqa: ARG002
+        """Read content via the kernel syscall path (§2.5 mediation).
+
+        Architectural gap (FOLLOW-UP — same as TimeTravelService._read_snapshot):
+            ``content_id`` is the hash of the OLD bytes recorded by the write
+            observer at log time. The bytes are in CAS keyed by that hash,
+            but service tier cannot reach them by hash (§2.5). This method
+            currently returns ``sys_read_raw(path)`` which is the CURRENT
+            bytes at the path — wrong for any undo-after-write where the
+            current content already differs. The systematic fix is a
+            kernel-side snapshot-on-write that publishes pre-write bytes to
+            a path-addressed namespace; that change belongs in rust/kernel,
+            not here.
+
+            ``content_id`` is kept in the signature for the future migration
+            but is unused today.
+        """
+        _kernel = getattr(self._dlc, "_kernel", None) if self._dlc else None
+        if _kernel is None:
+            raise RuntimeError(f"No kernel available for CAS read: {path}")
+        result: bytes = _kernel.sys_read_raw(path, "root")
+        return result

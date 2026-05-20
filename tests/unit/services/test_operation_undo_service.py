@@ -24,7 +24,6 @@ def _make_dlc(content: bytes) -> MagicMock:
 
 def _make_service(
     content: bytes = b"old-content",
-    fallback_backend: MagicMock | None = None,
 ) -> tuple[OperationUndoService, MagicMock, MagicMock, MagicMock, MagicMock]:
     """Create a service with mocked kernel primitives.
 
@@ -41,7 +40,6 @@ def _make_service(
         delete_fn=delete_fn,
         rename_fn=rename_fn,
         exists_fn=exists_fn,
-        fallback_backend=fallback_backend,
     )
     return svc, write_fn, delete_fn, rename_fn, exists_fn
 
@@ -174,35 +172,12 @@ class TestUndoUnknown:
 
 
 # ---------------------------------------------------------------------------
-# Fallback backend
+# Kernel read failure propagates (no legacy fallback — §2.5 mediation)
 # ---------------------------------------------------------------------------
 
 
-class TestFallbackBackend:
-    def test_uses_fallback_when_kernel_read_fails(self) -> None:
-        fallback = MagicMock()
-        fallback.read_content.return_value = b"fallback-data"
-
-        dlc = MagicMock()
-        dlc._kernel.sys_read_raw.side_effect = RuntimeError("read failed")
-
-        svc = OperationUndoService(
-            dlc=dlc,
-            write_fn=MagicMock(),
-            delete_fn=MagicMock(),
-            rename_fn=MagicMock(),
-            exists_fn=MagicMock(),
-            fallback_backend=fallback,
-        )
-        op = _op("write", snapshot_hash="hash789")
-
-        result = svc.undo_operation(op)
-
-        assert result.success is True
-        fallback.read_content.assert_called_once_with("hash789")
-        svc._write.assert_called_once_with("/workspace/test.txt", b"fallback-data")
-
-    def test_raises_when_no_fallback_and_kernel_read_fails(self) -> None:
+class TestKernelReadFailure:
+    def test_raises_when_kernel_read_fails(self) -> None:
         dlc = MagicMock()
         dlc._kernel.sys_read_raw.side_effect = RuntimeError("read failed")
 

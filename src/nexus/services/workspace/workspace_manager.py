@@ -3,21 +3,24 @@
 Provides workspace-level version control for time-travel debugging and rollback.
 """
 
+import hashlib
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+import uuid as _uuid
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import desc, select
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
-from nexus.contracts.workspace_manifest import WorkspaceManifest
+from nexus.contracts.types import OperationContext
+from nexus.contracts.workspace_manifest import WorkspaceManifest, manifest_storage_path
 from nexus.storage.models import WorkspaceSnapshotModel
 
 from .workspace_permissions import check_workspace_permission
 
 if TYPE_CHECKING:
-    from nexus.backends.base.backend import Backend
     from nexus.contracts.protocols.rebac import ReBACBrickProtocol
+    from nexus.core.nexus_fs import NexusFS
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -40,8 +43,7 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        metadata: "Any",
-        backend: "Backend",
+        nexus_fs: "NexusFS",
         rebac_manager: "ReBACBrickProtocol | None" = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
@@ -50,23 +52,87 @@ class WorkspaceManager:
         """Initialize workspace manager.
 
         Args:
-            metadata: Metadata store for querying file information
-            backend: Backend for storing manifest in CAS
+            nexus_fs: NexusFS handle — manifest I/O and workspace listing
+                go through the §2.2 syscall surface (sys_read / sys_write /
+                sys_readdir / sys_stat / sys_setattr / sys_unlink). The
+                kernel-internal ObjectStore + MetaStore pillars are not
+                directly accessible from this service.
             rebac_manager: ReBAC manager for permission checks (optional)
             zone_id: Default zone ID for operations (optional)
             agent_id: Default agent ID for operations (optional)
             record_store: RecordStoreABC instance providing session_factory
         """
-        self.metadata = metadata
-        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
-        self._kernel: Any = metadata
-        self.backend = backend
+        self._nexus_fs = nexus_fs
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id
         self.agent_id = agent_id
         if record_store is None:
             raise ValueError("record_store is required — use factory.py for DI wiring")
         self.metadata_session_factory = record_store.session_factory
+
+    def _write_manifest(self, workspace_path: str, snapshot_id: str, manifest_bytes: bytes) -> str:
+        """Write a manifest blob to the syscall path namespace.
+
+        Returns the sha256-hex manifest hash kept in the SQL row as an
+        integrity check on the bytes stored at the canonical path.
+        """
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        self._nexus_fs.sys_write(
+            manifest_storage_path(workspace_path, snapshot_id),
+            manifest_bytes,
+            context=sys_ctx,
+        )
+        return hashlib.sha256(manifest_bytes).hexdigest()
+
+    def scan_workspace_files(self, workspace_path: str) -> list[tuple[str, str, int, str | None]]:
+        """Scan a workspace via sys_readdir → (rel_path, content_id, size, mime) tuples.
+
+        Single source for the workspace-content scan used by both
+        create_snapshot and ContextBranchService's change detection. Goes
+        through the §2.5 syscall surface (sys_readdir, is_system=True);
+        directories and content-less entries are skipped.
+        """
+        workspace_prefix = workspace_path if workspace_path.endswith("/") else workspace_path + "/"
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        entries = self._nexus_fs.sys_readdir(
+            workspace_prefix,
+            recursive=True,
+            details=True,
+            context=sys_ctx,
+        )
+        file_entries: list[tuple[str, str, int, str | None]] = []
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            # Skip directories (entry_type=1) and files without content_id
+            if e.get("entry_type") == 1 or not e.get("content_id"):
+                continue
+            entry_path = e.get("path") or ""
+            if not entry_path:
+                continue
+            file_entries.append(
+                (
+                    entry_path[len(workspace_prefix) :],
+                    e["content_id"],
+                    int(e.get("size") or 0),
+                    e.get("mime_type"),
+                )
+            )
+        return file_entries
+
+    def _read_manifest(self, snapshot: WorkspaceSnapshotModel) -> bytes:
+        """Read a manifest blob from the syscall path namespace.
+
+        Single-source contract: manifests live at the §2.5 path; the
+        ``manifest_hash`` SQL column is an integrity check, not a separate
+        storage key. Snapshots written before this migration were keyed
+        only by hash and are unreachable from the service tier — by design
+        (KERNEL-ARCHITECTURE.md §2.5).
+        """
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        path = manifest_storage_path(snapshot.workspace_path, snapshot.snapshot_id)
+        # sys_read returns bytes when return_metadata is not set.
+        return cast(bytes, self._nexus_fs.sys_read(path, context=sys_ctx))
 
     def _check_workspace_permission(
         self,
@@ -145,35 +211,19 @@ class WorkspaceManager:
             zone_id=zone_id,
         )
 
-        # Ensure workspace_path ends with / for prefix matching
-        workspace_prefix = workspace_path if workspace_path.endswith("/") else workspace_path + "/"
-
-        # Get all files in workspace
+        # Get all files in workspace via the §2.5 syscall surface.
         with self.metadata_session_factory() as session:
-            from nexus.kernel_helpers import metastore_list_iter
-
-            files = metastore_list_iter(self._kernel, prefix=workspace_prefix)
-
-            # Collect file metadata for manifest
-            file_entries: list[tuple[str, str, int, str | None]] = []
-
-            for file_meta in files:
-                # Skip directories (no content) and files without content_id
-                if file_meta.mime_type == "directory" or not file_meta.content_id:
-                    continue
-
-                # Relative path within workspace
-                rel_path = file_meta.path[len(workspace_prefix) :]
-                file_entries.append(
-                    (rel_path, file_meta.content_id, file_meta.size, file_meta.mime_type)
-                )
+            file_entries = self.scan_workspace_files(workspace_path)
 
             # Build manifest (handles sorting and deterministic JSON)
             manifest = WorkspaceManifest.from_file_list(file_entries)
             manifest_bytes = manifest.to_json()
 
-            # Store manifest in CAS
-            manifest_hash = self.backend.write_content(manifest_bytes, context=None).content_id
+            # Generate snapshot_id up front so the manifest path namespace is
+            # populated before the SQL row is inserted (failure here keeps the
+            # row out of the table — no orphan reference).
+            new_snapshot_id = str(_uuid.uuid4())
+            manifest_hash = self._write_manifest(workspace_path, new_snapshot_id, manifest_bytes)
 
             # Get next snapshot number for this workspace
             stmt = (
@@ -189,6 +239,7 @@ class WorkspaceManager:
 
             # Create snapshot record
             snapshot = WorkspaceSnapshotModel(
+                snapshot_id=new_snapshot_id,
                 workspace_path=workspace_path,
                 snapshot_number=next_snapshot_number,
                 manifest_hash=manifest_hash,
@@ -273,8 +324,8 @@ class WorkspaceManager:
                 zone_id=zone_id,
             )
 
-            # Read manifest from CAS
-            manifest_bytes = self.backend.read_content(snapshot.manifest_hash, context=None)
+            # Read manifest via the §2.5 syscall surface (dual-read window).
+            manifest_bytes = self._read_manifest(snapshot)
             manifest = WorkspaceManifest.from_json(manifest_bytes)
 
             # Get workspace path and ensure it ends with /
@@ -282,26 +333,27 @@ class WorkspaceManager:
             if not workspace_prefix.endswith("/"):
                 workspace_prefix += "/"
 
-            # Get current workspace files
-            current_files = self._kernel.metastore_list_paginated(
-                workspace_prefix, True, 100000, None
-            )["items"]
+            # Get current workspace files via the §2.5 syscall surface.
+            _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+            current_entries = self._nexus_fs.sys_readdir(
+                workspace_prefix,
+                recursive=True,
+                details=True,
+                context=_sys_ctx,
+            )
             current_paths = {
-                f.path[len(workspace_prefix) :]
-                for f in current_files
-                if f.content_id  # Only files with content
+                str(e["path"])[len(workspace_prefix) :]
+                for e in current_entries
+                if isinstance(e, dict) and e.get("content_id") and e.get("path")
             }
 
-            # Delete files not in snapshot
-            from nexus.contracts.types import OperationContext
-
-            _sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+            # Delete files not in snapshot — via the §2.5 syscall surface.
             manifest_paths = manifest.paths()
             files_deleted = 0
             for current_path in current_paths:
                 if current_path not in manifest_paths and not current_path.endswith("/"):
                     full_path = workspace_prefix + current_path
-                    self._kernel.sys_unlink(full_path, context=_sys_ctx)
+                    self._nexus_fs.sys_unlink(full_path, context=_sys_ctx)
                     files_deleted += 1
 
             # Restore files from snapshot
@@ -316,15 +368,16 @@ class WorkspaceManager:
                 full_path = workspace_prefix + rel_path
 
                 # Check if file exists with same content
-                existing = self._kernel.sys_stat(full_path, "root")
+                existing = self._nexus_fs.sys_stat(full_path, context=_sys_ctx)
                 if existing and existing.get("content_id") == entry.content_id:
                     continue  # Already up to date
 
                 # Create metadata entry pointing to existing CAS content
                 # No need to read/write content - it's already in CAS!
                 now_ms = int(datetime.now(UTC).timestamp() * 1000)
-                self._kernel.sys_setattr(
+                self._nexus_fs.sys_setattr(
                     full_path,
+                    context=_sys_ctx,
                     entry_type=0,  # DT_REG upsert
                     content_id=entry.content_id,
                     size=entry.size,
@@ -467,13 +520,9 @@ class WorkspaceManager:
                     zone_id=zone_id,
                 )
 
-            # Read manifests
-            manifest1 = WorkspaceManifest.from_json(
-                self.backend.read_content(snap1.manifest_hash, context=None)
-            )
-            manifest2 = WorkspaceManifest.from_json(
-                self.backend.read_content(snap2.manifest_hash, context=None)
-            )
+            # Read manifests via the §2.5 syscall surface (dual-read window).
+            manifest1 = WorkspaceManifest.from_json(self._read_manifest(snap1))
+            manifest2 = WorkspaceManifest.from_json(self._read_manifest(snap2))
 
             # Compute diff
             paths1 = manifest1.paths()

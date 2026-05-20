@@ -28,11 +28,11 @@ def _mock_nexus_fs(*, permission_ok: bool = True) -> MagicMock:
     rebac_svc.rebac_check_sync.return_value = permission_ok
     rebac_svc.rebac_delete_object_tuples_sync.return_value = 0
     nx.service.return_value = rebac_svc
-    # Public API mocks (post-C10a/C11: mount_service routes through
-    # NexusFS public API instead of _kernel internals)
+    # §2.5: mount_service routes through the NexusFS public API —
+    # sys_readdir for the mount-removal subtree list, access for existence.
     nx.sys_readdir.return_value = []
-    nx.access.return_value = True
     nx.sys_unlink.return_value = {}
+    nx.access.return_value = True
     nx._record_store = None
     return nx
 
@@ -242,7 +242,7 @@ class TestRemoveMountErrorCollection:
     def test_all_cleanup_errors_collected(self) -> None:
         """Multiple cleanup failures are all reported in result["errors"]."""
         service, nx = _build_service()
-        # Metadata list_paginated failure
+        # Metadata list (sys_readdir) failure
         nx.sys_readdir.side_effect = RuntimeError("metadata failure")
         # Directory-index cleanup is now a no-op (W1.5: kernel doesn't expose
         # ``delete_directory_entries_recursive``); the side-effect is no

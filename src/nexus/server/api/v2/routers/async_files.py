@@ -110,22 +110,29 @@ def _apply_zone_override(
 async def _read_connector_by_physical_path(
     fs: Any,
     display_path: str,
-    physical_path: str,  # noqa: ARG001 — kept for signature compat
+    physical_path: str,  # noqa: ARG001 — kept for caller signature; see below
     context: Any,
 ) -> bytes | None:
-    """Read connector file via kernel sys_read.
+    """Read a connector file through the §2.5 syscall surface.
 
-    The kernel's mount LPM handles connector routing internally —
-    service tier should not resolve router/backend/physical_path manually.
-    Returns None if the read fails so the caller can fall back.
+    The kernel resolves a connector display path (``/mnt/...``) to its
+    physical backend location internally at read time via the mount/route
+    layer — so the service tier reads the display path through sys_read,
+    never poking ``route.backend.read_content`` on the kernel-internal
+    ObjectStore (KERNEL-ARCHITECTURE.md §2.5). Returns None on any failure
+    so the caller can fall back to the standard fs.read() path.
+
+    physical_path stays in the signature only because the caller still
+    resolves it as a "is this a real connector file" guard; the kernel no
+    longer needs it handed in.
     """
     try:
         content = fs.sys_read(display_path, context=context)
-        if isinstance(content, bytes):
-            return content
-        return bytes(content) if content else None
     except Exception:
         return None
+    if isinstance(content, bytes):
+        return content
+    return bytes(content) if content else None
 
 
 def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":

@@ -285,15 +285,15 @@ def test_has_access_tiger_fallback_uses_get_accessible_paths():
     ctx.subject_type = "user"
     ctx.zone_id = "z1"
 
-    metadata_store = MagicMock()
-    metadata_store.list.return_value = []
+    nexus_fs = MagicMock()
+    nexus_fs.sys_readdir.return_value = []
 
     checker = DescendantAccessChecker(
         rebac_manager=rebac_manager,
         rebac_service=rebac_service,
         dir_visibility_cache=None,
         permission_enforcer=MagicMock(),
-        metadata_store=metadata_store,
+        nexus_fs=nexus_fs,
     )
 
     from nexus.contracts.types import Permission

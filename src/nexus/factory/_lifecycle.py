@@ -137,6 +137,13 @@ def _wire_services(
     if _upload_svc is not None and hasattr(_upload_svc, "attach_filesystem"):
         _upload_svc.attach_filesystem(nx)
 
+    # ManifestResolver executors that resolve sources via the §2.5 syscall
+    # surface (WorkspaceSnapshotExecutor reads manifests through sys_read)
+    # receive the NexusFS handle now that the kernel tier exists.
+    _manifest_resolver = _svc.get("manifest_resolver")
+    if _manifest_resolver is not None and hasattr(_manifest_resolver, "attach_filesystem"):
+        _manifest_resolver.attach_filesystem(nx)
+
     # R20.18.5: federation is kernel-internal now. The federation
     # parameter is vestigial (always None post-cutover). Kernel::new()
     # reads env vars and bootstraps raft::ZoneManager in Rust. DLC

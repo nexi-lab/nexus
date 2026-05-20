@@ -1661,6 +1661,8 @@ class MetadataMixin:
             "entry_type": et,
             "zone_id": entry.zone_id,
             "owner_id": entry.owner_id,
+            "mime_type": entry.mime_type,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
             "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,
             "version": entry.version,
             "gen": entry.gen,

@@ -139,6 +139,20 @@ class ManifestResolver:
         self._max_resolve_seconds = max_resolve_seconds
         self._metrics = metrics_observer
 
+    def attach_filesystem(self, nexus_fs: Any) -> None:
+        """Forward the post-boot NexusFS handle to executors that need it.
+
+        Bricks are constructed before NexusFS exists; executors that resolve
+        sources through the §2.5 syscall surface (e.g. WorkspaceSnapshotExecutor
+        reading manifests via sys_read) receive the handle here once the
+        kernel tier is up. Generic — any executor exposing attach_filesystem
+        is wired.
+        """
+        for executor in self._executors.values():
+            attach = getattr(executor, "attach_filesystem", None)
+            if callable(attach):
+                attach(nexus_fs)
+
     def with_executors(self, extra: dict[str, SourceExecutor]) -> "ManifestResolver":
         """Return a new resolver with additional executors merged in.
 

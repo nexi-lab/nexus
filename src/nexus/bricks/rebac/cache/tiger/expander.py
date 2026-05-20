@@ -7,14 +7,17 @@ grant operations, progress tracking, and failure recovery.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select, update
+
+from nexus.contracts.types import OperationContext
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +36,7 @@ class DirectoryGrantExpander:
 
     Usage:
         # Start worker in background thread/process
-        expander = DirectoryGrantExpander(engine, tiger_cache, metadata_store)
+        expander = DirectoryGrantExpander(engine, tiger_cache, nexus_fs)
         asyncio.create_task(expander.run_worker())
 
         # Or run single expansion cycle
@@ -50,7 +53,7 @@ class DirectoryGrantExpander:
         self,
         engine: "Engine",
         tiger_cache: "TigerCache",
-        metadata_store: Any = None,
+        nexus_fs: "NexusFS | None" = None,
         *,
         is_postgresql: bool = False,
     ):
@@ -59,22 +62,21 @@ class DirectoryGrantExpander:
         Args:
             engine: SQLAlchemy database engine
             tiger_cache: Tiger Cache instance
-            metadata_store: Metadata store for listing files (optional)
+            nexus_fs: NexusFS instance for syscall-based directory listing.
+                Reaches MetaStore via the §2.2 syscall surface (sys_readdir)
+                per the §2.5 mediation principle. None disables descendant
+                listing — expansions over an empty file set still complete.
         """
         self._engine = engine
         self._tiger_cache = tiger_cache
-        self._metadata_store = metadata_store
-        # Pull the kernel out of the proxy so listing / existence calls
-        # land on ``kernel.metastore_*`` directly (survives W3).
-        self._kernel: Any = metadata_store
+        self._nexus_fs = nexus_fs
         self._is_postgresql = is_postgresql
         self._running = False
         self._stop_event: asyncio.Event | None = None
 
-    def set_metadata_store(self, store: Any) -> None:
-        """Set the metadata store for file listing."""
-        self._metadata_store = store
-        self._kernel = store
+    def set_nexus_fs(self, nexus_fs: "NexusFS | None") -> None:
+        """Set the NexusFS instance for file listing."""
+        self._nexus_fs = nexus_fs
 
     def get_pending_grants(self, limit: int = 10) -> list[dict]:
         """Get pending directory grants to expand.
@@ -248,7 +250,11 @@ class DirectoryGrantExpander:
         directory_path: str,
         zone_id: str,
     ) -> list[str]:
-        """Get all files under a directory.
+        """Get all files under a directory via sys_readdir.
+
+        Background ReBAC expansion sees every descendant regardless of any
+        caller's zone gate, so it runs under is_system=True (mirrors the
+        ``mount_store`` / ``version_store`` pattern under ``/__sys__/``).
 
         Args:
             directory_path: Directory path (ending with /)
@@ -257,18 +263,24 @@ class DirectoryGrantExpander:
         Returns:
             List of file paths
         """
-        if self._kernel is None:
-            logger.warning("[LEOPARD-WORKER] No metadata store, cannot list files")
+        if self._nexus_fs is None:
+            logger.warning("[LEOPARD-WORKER] No nexus_fs, cannot list files")
             return []
 
         try:
-            # ``kernel.metastore_list`` is single-zone — ``zone_id`` is the
-            # public-API contract but the underlying call ignores it (matches
-            # the pre-W1.5 proxy ``list(prefix=, zone_id=)`` behavior).
-            del zone_id
-            _page = self._kernel.metastore_list_paginated(directory_path, True, 100000, None)
-            files = _page["items"]
-            return [f.path for f in files if f.path]
+            ctx = OperationContext(
+                user_id="system",
+                groups=[],
+                zone_id=zone_id,
+                is_system=True,
+            )
+            entries = self._nexus_fs.sys_readdir(
+                directory_path,
+                recursive=True,
+                details=False,
+                context=ctx,
+            )
+            return [str(p) for p in entries if p]
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to list directory: {e}")
             return []

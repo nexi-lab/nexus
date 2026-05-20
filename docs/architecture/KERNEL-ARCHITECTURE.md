@@ -258,14 +258,10 @@ detail. Like HDFS separates ClientProtocol (NameNode, path-based) from
 DataTransferProtocol (DataNode, block-based). The metadata layer above ensures
 etag ownership and zone isolation.
 
-**Boundary note (§2.5 Mediation Principle):** Hash-addressed access is
-kernel-internal Tier 2 — used by federation cross-node fetch
-(`KernelBlobFetcher` in `rust/raft/`) reaching `Arc<dyn ObjectStore>::read_content`
-directly. **Services do NOT have a hash-addressed kernel surface.** A service
-caller that needs historical-version bytes must go through `sys_read(path)` and
-verify the served content_hash matches the requested version. If the path no
-longer maps to the requested version, the bytes are not reachable through this
-endpoint — the snapshot service owns historical restore.
+The HDFS half is kernel-internal — see §2.5 for the contract. Service-tier
+callers go through `sys_read(path)` with optional content_hash verification;
+features that need stable historical bytes express them as paths (workspace
+snapshots, version history) and read those paths through the syscall surface.
 
 **Kernel-managed metadata side effects** (POSIX ``generic_write_end`` pattern):
 kernel updates mtime, size, version, etag in VFS lock after
@@ -374,13 +370,28 @@ and service lifecycle are all pure Rust with zero FFI crossings.
 
 ### 2.5 Mediation Principle
 
-Users access HAL only through syscalls. For mutating syscalls the pipeline is:
+Services access HAL only through syscalls. For mutating syscalls the pipeline is:
 PRE-DISPATCH → route → permission gate → INTERCEPT pre → lock → HAL I/O
 → unlock → INTERCEPT post → OBSERVE. See `syscall-design.md` for the full
 per-syscall flow.
 
-**Exception:** Tier 2 hash-addressed operations (see §2.3 HDFS half) access
-ObjectStoreABC directly by etag, bypassing path resolution and metadata lookup.
+The MetaStore pillar (§3.A.1) and the ObjectStore pillar (§3.A.2) are HAL
+contracts the kernel implements over. Reaching them directly — `MetaStore.list`,
+`MetaStore.put`, `Arc<dyn ObjectStore>::read_content` etc. — is a kernel-internal
+capability. Service-tier callers (Rust peer crates in `rust/services/`,
+`rust/raft/`, `rust/transport/`, `rust/backends/`; Python bricks in
+`src/nexus/bricks/`, `src/nexus/services/`, `src/nexus/server/`) reach the same
+state through the §2.2 syscall surface (paths) or the §4 dispatch hook ABI
+(observers, resolvers, hooks).
+
+The §2.3 Tier 2 HDFS half (hash-addressed `read_content` / `write_content` /
+streaming) is one such kernel-internal surface — used by federation cross-node
+fetch (`KernelBlobFetcher` in `rust/raft/`) and by other Rust kernel-internal
+modules that need content-hash addressing for replication, dedup, or storage
+GC. Service-tier features that want hash-addressed semantics (workspace
+versioning, transactional snapshots, etc.) express them as paths and read
+through `sys_read(path)`, optionally verifying the served content_hash matches
+an expected value.
 
 ---
 

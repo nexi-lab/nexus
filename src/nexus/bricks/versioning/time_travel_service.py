@@ -16,17 +16,35 @@ References:
     - services/protocols/time_travel.py          (TimeTravelProtocol)
 """
 
+import hashlib
 import json
 from collections.abc import Callable
 from contextlib import suppress
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.types import OperationContext
 from nexus.storage.models import FilePathModel, OperationLogModel
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
+
+# §2.5 syscall surface for versioning snapshots. Pattern C migration: each
+# snapshot of a file's pre-write bytes lives at
+#   /__sys__/versioning/{path_hash}/{operation_id}.bin
+# path_hash is sha256 of the original virtual path (hex) to keep the
+# directory shape flat. New writes populate this namespace; legacy
+# hash-addressed snapshots (recorded before this migration) are
+# unreachable from the service tier — KERNEL-ARCHITECTURE.md §2.5.
+_VERSIONING_PATH_PREFIX = "/__sys__/versioning"
+
+
+def _versioning_path(virtual_path: str, operation_id: str) -> str:
+    path_hash = hashlib.sha256(virtual_path.encode("utf-8")).hexdigest()
+    return f"{_VERSIONING_PATH_PREFIX}/{path_hash}/{operation_id}.bin"
 
 
 class TimeTravelService:
@@ -40,19 +58,59 @@ class TimeTravelService:
         self,
         *,
         session_factory: Callable[..., Any],
-        backend: Backend | None = None,
+        nexus_fs: "NexusFS | None" = None,
         default_zone_id: str | None = None,
     ) -> None:
         """Initialise the time-travel service.
 
         Args:
             session_factory: Callable returning a context-managed session.
-            backend: Backend for reading content from CAS.
+            nexus_fs: NexusFS handle for reading historical bytes through the
+                §2.5 syscall surface. Snapshots live under
+                ``/__sys__/versioning/{path_hash}/{operation_id}.bin``.
             default_zone_id: Zone ID to use when callers omit zone_id.
         """
         self._session_factory = session_factory
-        self._backend = backend
+        self._nexus_fs = nexus_fs
         self._default_zone_id = default_zone_id
+
+    def _read_snapshot(self, virtual_path: str, operation_id: str) -> bytes:
+        """Read a versioning snapshot through the §2.5 syscall surface.
+
+        Architectural gap (FOLLOW-UP — kernel-side snapshot syscall):
+            The service-tier write observer (storage/record_store_write_observer.py)
+            only records ``snapshot_hash = old_metadata.content_id`` — the
+            hash of the pre-write CAS bytes. It does **not** write a
+            path-addressed copy of those bytes anywhere. The kernel-internal
+            ObjectStore retains the bytes by hash, but service-tier code
+            cannot reach them by hash (§2.5). So this path
+              /__sys__/versioning/{path_hash}/{operation_id}.bin
+            is currently never populated by anyone, and every call to
+            _read_snapshot raises NexusFileNotFoundError. ``get_file_at_operation``
+            still works for the "live current bytes" branch (it uses
+            sys_read(path) for current_path); only historical snapshot reads
+            fail. The systematic fix is a kernel-side snapshot-on-write that
+            also publishes the pre-write bytes to this path namespace —
+            that change belongs in rust/kernel, not here.
+        """
+        if self._nexus_fs is None:
+            raise NexusFileNotFoundError(
+                f"Snapshot for {virtual_path} at operation {operation_id} unavailable: "
+                "no NexusFS handle"
+            )
+        path = _versioning_path(virtual_path, operation_id)
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        try:
+            # sys_read returns bytes when return_metadata is not set.
+            return cast(bytes, self._nexus_fs.sys_read(path, context=sys_ctx))
+        except (FileNotFoundError, NexusFileNotFoundError) as exc:
+            raise NexusFileNotFoundError(
+                f"Snapshot for {virtual_path} at operation {operation_id} not found at {path}. "
+                "Historical snapshot bytes are not yet service-reachable: the kernel "
+                "write observer records the hash but does not publish a path-addressed "
+                "copy. Live current-file reads still work; historical reads require a "
+                "kernel-side snapshot syscall (architectural follow-up — see §2.5)."
+            ) from exc
 
     # ------------------------------------------------------------------
     # Public API (matches TimeTravelProtocol)
@@ -257,9 +315,10 @@ class TimeTravelService:
 
         content = None
         metadata_dict: dict[str, Any] = {}
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
-        if next_write and next_write.snapshot_hash and self._backend is not None:
-            content = self._backend.read_content(next_write.snapshot_hash, context=None)
+        if next_write and next_write.snapshot_hash and self._nexus_fs is not None:
+            content = self._read_snapshot(path, next_write.operation_id)
             if next_write.metadata_snapshot:
                 metadata_dict = json.loads(next_write.metadata_snapshot)
         else:
@@ -273,8 +332,8 @@ class TimeTravelService:
                 content_id = current_path.content_id
                 if content_id is None:
                     raise NexusFileNotFoundError(f"File {path} has no content hash")
-                if self._backend is not None:
-                    content = self._backend.read_content(content_id, context=None)
+                if self._nexus_fs is not None:
+                    content = cast(bytes, self._nexus_fs.sys_read(path, context=sys_ctx))
                 metadata_dict = {
                     "size": current_path.size_bytes,
                     "version": current_path.current_version,
@@ -290,8 +349,8 @@ class TimeTravelService:
                         next_delete = op
                         break
 
-                if next_delete and next_delete.snapshot_hash and self._backend is not None:
-                    content = self._backend.read_content(next_delete.snapshot_hash, context=None)
+                if next_delete and next_delete.snapshot_hash and self._nexus_fs is not None:
+                    content = self._read_snapshot(path, next_delete.operation_id)
                     if next_delete.metadata_snapshot:
                         metadata_dict = json.loads(next_delete.metadata_snapshot)
                 else:

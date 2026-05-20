@@ -304,21 +304,16 @@ class DirectoryExpander:
     ) -> list[str]:
         """Get all file paths under a directory.
 
+        Lists descendants from the file_paths record-store table (ORM) —
+        a service-tier-allowed storage source. The former
+        kernel.metastore_list_paginated fast path was removed: MetaStore is
+        a kernel-internal HAL pillar (§2.5), and the ORM query is in fact
+        more correct here — it honours zone_id, which the single-zone
+        metastore call ignored.
+
         Returns:
             List of descendant file paths.
         """
-        # Try using the kernel metastore if available. ``kernel.metastore_list``
-        # is single-zone (the proxy ignored ``zone_id`` too); the SQL fallback
-        # below honours the parameter for federated installs.
-        if self._kernel is not None:
-            try:
-                _page = self._kernel.metastore_list_paginated(directory_path, True, 100000, None)
-                files = _page["items"]
-                return [f.path for f in files]
-            except (RuntimeError, OperationalError) as e:
-                logger.warning("[LEOPARD] Metadata store query failed: %s", e)
-
-        # Fallback: query file_paths table via ORM
         from sqlalchemy import or_, select
 
         from nexus.storage.models.file_path import FilePathModel

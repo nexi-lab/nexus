@@ -501,9 +501,17 @@ def _register_vfs_hooks(
             recursive: bool = True,
             zone_id: str = ROOT_ZONE_ID,  # noqa: ARG001
         ) -> Any:
-            from nexus.kernel_helpers import metastore_list
+            # §2.5: list through the syscall surface, not kernel.metastore_*.
+            # is_system=True — the rename hook updates Tiger bitmaps for the
+            # whole renamed subtree regardless of caller zone.
+            from nexus.contracts.types import OperationContext
 
-            return metastore_list(nx._kernel, prefix=prefix, recursive=recursive)
+            return nx.sys_readdir(
+                prefix or "/",
+                recursive=recursive,
+                details=False,
+                context=OperationContext(user_id="system", groups=[], is_system=True),
+            )
 
         _tiger_rename_hook = TigerCacheRenameHook(
             tiger_cache=tiger_cache,

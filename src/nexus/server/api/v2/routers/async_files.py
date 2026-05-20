@@ -690,16 +690,14 @@ def create_async_files_router(
                         _ss.validate_path_available(transaction_id, _norm_path)
                         # Capture original state for rollback
                         try:
-                            _orig_meta = fs._kernel.sys_stat(
-                                _norm_path, getattr(fs, "_zone_id", "root")
-                            )
+                            _orig_meta = fs.sys_stat(_norm_path, context=context)
                             if _orig_meta:
-                                _original_hash = _orig_meta.content_id
+                                _original_hash = _orig_meta.get("content_id")
                                 _original_metadata = {
-                                    "size": _orig_meta.size,
-                                    "version": _orig_meta.version,
-                                    "modified_at_ms": _orig_meta.modified_at_ms,
-                                    "backend_name": getattr(_orig_meta, "backend_name", None),
+                                    "size": _orig_meta.get("size"),
+                                    "version": _orig_meta.get("version"),
+                                    "modified_at_ms": _orig_meta.get("modified_at_ms"),
+                                    "backend_name": _orig_meta.get("backend_name"),
                                 }
                         except Exception:
                             _original_hash = None
@@ -1339,16 +1337,14 @@ def create_async_files_router(
                         _norm_path = _normalize_path(path)
                         _ss.validate_path_available(transaction_id, _norm_path)
                         try:
-                            _orig_meta = fs._kernel.sys_stat(
-                                _norm_path, getattr(fs, "_zone_id", "root")
-                            )
+                            _orig_meta = fs.sys_stat(_norm_path, context=context)
                             if _orig_meta:
-                                _original_hash = _orig_meta.content_id
+                                _original_hash = _orig_meta.get("content_id")
                                 _original_metadata = {
-                                    "size": _orig_meta.size,
-                                    "version": _orig_meta.version,
-                                    "modified_at_ms": _orig_meta.modified_at_ms,
-                                    "backend_name": getattr(_orig_meta, "backend_name", None),
+                                    "size": _orig_meta.get("size"),
+                                    "version": _orig_meta.get("version"),
+                                    "modified_at_ms": _orig_meta.get("modified_at_ms"),
+                                    "backend_name": _orig_meta.get("backend_name"),
                                 }
                         except Exception:
                             _original_hash = None

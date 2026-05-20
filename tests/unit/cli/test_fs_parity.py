@@ -270,6 +270,90 @@ def test_range_out_of_bounds_is_bounded(patched_fs):
     assert out == b"abc"
 
 
+def test_cat_stream_survives_broken_pipe(patched_fs):
+    """`nexus cat --stream` must exit cleanly when downstream pipe closes
+    (e.g. piped to ``head -c 100``). Without BrokenPipeError handling the
+    stream loop crashes with a Python traceback to stderr.
+
+    Drives a subprocess that invokes the Click command and writes to a
+    real pipe — closing the reader side after ~1 KB triggers EPIPE on
+    subsequent ``sys.stdout.buffer.write`` calls inside the stream loop.
+    """
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    nx = patched_fs
+    nx.write("/big.bin", b"x" * 200_000)
+
+    # Run a child Python that re-creates the in-process fixture, then invokes
+    # the cat --stream click command with stdout connected to a pipe that we
+    # close after a few KB so the writer hits EPIPE mid-stream.
+    driver = textwrap.dedent("""
+        import os, sys, contextlib, asyncio
+        import nexus.cli.main  # noqa: F401  installs SIGPIPE = SIG_DFL
+        from nexus.backends.storage.path_local import PathLocalBackend
+        from nexus.core.config import ParseConfig, PermissionConfig
+        from nexus.factory import create_nexus_fs
+        from nexus.remote.kernel_client import KernelClient
+        from click.testing import CliRunner
+
+        tmp = os.environ["TMPDIR_FX"]
+        os.makedirs(tmp + "/data", exist_ok=True)
+        k = KernelClient()
+        k.set_metastore_path(tmp + "/metastore.redb")
+        k.open()
+        nx = create_nexus_fs(
+            backend=PathLocalBackend(root_path=tmp + "/data"),
+            metadata_store=k,
+            record_store=None,
+            permissions=PermissionConfig(enforce=False),
+            parsing=ParseConfig(auto_parse=False),
+        )
+        nx.write("/big.bin", b"x" * 200_000)
+
+        @contextlib.asynccontextmanager
+        async def _open(*a, **k): yield nx
+        import nexus.cli.commands.file_ops as fo
+        fo.open_filesystem = _open
+        fo.get_filesystem = lambda *a, **k: nx
+
+        from nexus.cli.commands.file_ops import cat
+        # Direct call writes to real sys.stdout.buffer (the pipe).
+        ctx = cat.make_context("cat", ["/big.bin", "--stream", "--chunk-size", "4096"])
+        cat.invoke(ctx)
+        sys.exit(0)
+    """)
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ, TMPDIR_FX=tmp, PYTHONPATH=":".join(sys.path))
+        p1 = subprocess.Popen(
+            [sys.executable, "-c", driver],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        # Read first 1 KB then close — simulates ``| head -c 1024``.
+        assert p1.stdout is not None
+        first = p1.stdout.read(1024)
+        p1.stdout.close()
+        try:
+            _, stderr = p1.communicate(timeout=15)
+        except subprocess.TimeoutExpired as exc:
+            p1.kill()
+            raise AssertionError("cat --stream hung after pipe close") from exc
+
+    # Must not propagate raw Python traceback to stderr.
+    assert b"Traceback" not in stderr, stderr.decode(errors="replace")
+    assert b"BrokenPipeError" not in stderr, stderr.decode(errors="replace")
+    assert len(first) == 1024
+    # 0 = stream finished pre-close; -13 / 141 = killed by SIGPIPE (Unix default).
+    assert p1.returncode in (0, 141, -13), f"unexpected rc={p1.returncode}: {stderr!r}"
+
+
 def test_admin_only_metadata_is_set():
     """backfill_directory_index / flush_write_observer carry admin_only=True so
     the RPC dispatcher refuses non-admin callers server-side. Direct in-process

@@ -15,12 +15,12 @@
 - `RaftStorage` backed by redb (persistent log, hard state, snapshots, compaction)
 - `FullStateMachine` (metadata + locks) and `WitnessStateMachine` (vote-only)
 
-### PyO3 FFI Bindings
-`Metastore` class for same-box Python→Rust redb access (~5us/op):
+### gRPC Transport Bindings
+`KernelClient` class for Python→Rust kernel access via gRPC (~1ms/op):
 metadata ops, lock ops (mutex + semaphore), snapshot/restore.
 
 ### RaftMetadataStore (Python)
-Local mode (PyO3) and remote mode (gRPC). Same interface as SQLAlchemyMetadataStore.
+gRPC mode (kernel subprocess). Same interface as SQLAlchemyMetadataStore.
 
 ### Distributed Locks
 `RaftLockManager` — locks in Metastore (redb), replicated via Raft (SC). Cross-zone locks route via gRPC. RedisLockManager deprecated for Raft-enabled deployments.
@@ -107,7 +107,7 @@ Per-operation parameter (`consistency="sc"` or `"ec"`), not per-zone. SC uses Ra
 
 ```
 5.1 Single-Node:        Client → NexusFS.write() → SQLAlchemyMetadataStore → Backend.write()
-5.2 Raft Local:         Client → NexusFS.write() → RaftMetadataStore (PyO3 ~5us) → redb → Backend
+5.2 Raft Local:         Client → NexusFS.write() → RaftMetadataStore (gRPC ~1ms) → redb → Backend
 5.3 Raft Distributed:   Client → NexusFS.write() → ZoneConsensus.propose() → gRPC replicate
                                                   → Majority ACK → StateMachine.apply() on all → redb
                                                   → per-voter dcache.evict(key)  ← cache coherence
@@ -238,7 +238,7 @@ Federation is **NOT kernel**. NexusFS without federation degrades to remote mode
 NexusFS (kernel)           Federation (optional subsystem)
 NexusFilesystem (ABC)      — (inherently asymmetric)
 NexusFS                    NexusFederation (orchestration)
-MetastoreABC               ZoneManager (wraps PyO3)
+MetastoreABC               ZoneManager (wraps gRPC client)
 RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
 ```
 
@@ -423,7 +423,7 @@ This is consistent with HDFS/GFS where writes go to a local DataNode/ChunkServer
 | Raft node | `rust/nexus_raft/src/raft/node.rs` |
 | Raft storage | `rust/nexus_raft/src/raft/storage.rs` |
 | State machine | `rust/nexus_raft/src/raft/state_machine.rs` |
-| PyO3 bindings | `rust/nexus_raft/src/pyo3_bindings.rs` |
+| Raft PyO3 bindings | `rust/nexus_raft/src/pyo3_bindings.rs` |
 | Raft proto | `rust/nexus_raft/proto/raft.proto` |
 | RaftMetadataStore | `src/nexus/storage/raft_metadata_store.py` |
 | SQLAlchemyMetadataStore | `src/nexus/storage/sqlalchemy_metadata_store.py` |

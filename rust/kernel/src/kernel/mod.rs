@@ -735,7 +735,10 @@ pub struct Kernel {
     /// directly so kernel-internal callers keep the same shared runtime
     /// regardless of whether the cdylib has installed the real peer
     /// client yet.
-    pub(crate) runtime: Arc<tokio::runtime::Runtime>,
+    // `Option` so `Drop` can `take()` the Arc and hand it to an
+    // off-context thread — see the `Drop for Kernel` impl. `Some` for
+    // the entire observable lifetime of the kernel.
+    pub(crate) runtime: Option<Arc<tokio::runtime::Runtime>>,
     // Shared tokio runtime — constructed once at Kernel::new and used by
     // every peer RPC (scatter-gather chunk fetch + federation remote
     // reads). Replaces the one-shot `Builder::new_current_thread()` inside
@@ -861,7 +864,7 @@ impl Kernel {
             fdt: crate::fdt::FileDescriptorTable::new(),
             native_hooks: RwLock::new(NativeHookRegistry::new()),
             self_address: parking_lot::RwLock::new(None),
-            runtime,
+            runtime: Some(runtime),
             peer_client: parking_lot::RwLock::new(peer_client_dyn),
             distributed_coordinator: parking_lot::RwLock::new(
                 crate::hal::distributed_coordinator::NoopDistributedCoordinator::arc(),
@@ -2313,7 +2316,9 @@ impl Kernel {
     /// directly; peer crates (backends LLM connectors, transport gRPC
     /// server) clone it for their async work.
     pub fn runtime(&self) -> &Arc<tokio::runtime::Runtime> {
-        &self.runtime
+        self.runtime
+            .as_ref()
+            .expect("kernel runtime present for the Kernel's lifetime")
     }
 
     /// Replace the kernel's `peer_client` slot with a concrete
@@ -2621,19 +2626,21 @@ impl Drop for Kernel {
         // survive past Python process exit and keep xdist worker processes
         // alive indefinitely (~39 min hang on macOS CI).
         //
-        // We replace the Arc with a dummy single-threaded runtime, then
-        // drop the original. When the last Arc ref drops, tokio's own
-        // Drop impl shuts down the worker threads. The swap ensures this
-        // Kernel's drop triggers the shutdown even if other Arcs exist
-        // (they'd hold the dummy, which is cheap to drop).
-        let dummy = std::sync::Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .build()
-                .expect("dummy runtime for Kernel::drop"),
-        );
-        let old = std::mem::replace(&mut self.runtime, dummy);
-        // Explicitly drop — if this is the last Arc, tokio shuts down workers.
-        drop(old);
+        // Dropping a multi-thread `Runtime` joins its worker threads — a
+        // blocking operation tokio forbids from inside an async context
+        // (it panics: "Cannot drop a runtime in a context where blocking
+        // is not allowed"). A `Kernel` can legitimately be dropped from
+        // such a context — e.g. an `Arc<Kernel>` going out of scope at
+        // the end of a `#[tokio::test]` body. `runtime` is therefore an
+        // `Option`: `take()` it (leaving `None`, whose field-drop is a
+        // no-op) and drop the Arc on a dedicated OS thread, where the
+        // join is allowed. When it is the last ref, tokio shuts the
+        // workers down there.
+        if let Some(old) = self.runtime.take() {
+            let _ = std::thread::Builder::new()
+                .name("nexus-kernel-rt-drop".into())
+                .spawn(move || drop(old));
+        }
     }
 }
 

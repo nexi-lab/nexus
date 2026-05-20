@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.kernel_helpers import metastore_list_iter, metastore_set_file_metadata
+from nexus.kernel_helpers import metastore_set_file_metadata
 from nexus.lib.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -38,10 +38,14 @@ class MetadataExportService:
         self,
         metadata: Any,
         created_by: str | None = None,
+        nexus_fs: Any = None,
     ) -> None:
         self._metadata: Any = metadata
-        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
+        # Kernel handle kept for kernel-ABI methods with no syscall-surface
+        # equivalent (set_xattr via metastore_set_file_metadata). Listing and
+        # stat/setattr go through self._nexus_fs — the §2.2 syscall surface.
         self._kernel: Any = metadata
+        self._nexus_fs: Any = nexus_fs
         self._created_by = created_by
 
     @rpc_expose(description="Export metadata to JSONL file")
@@ -70,57 +74,67 @@ class MetadataExportService:
             filter.path_prefix = prefix
 
         from nexus.contracts.constants import SYSTEM_PATH_PREFIX
+        from nexus.contracts.types import OperationContext
 
+        # §2.5 mediation: list through the syscall surface, not
+        # kernel.metastore_*. is_system=True: export is a privileged backup
+        # operation that walks the whole prefix.
+        if self._nexus_fs is None:
+            raise RuntimeError("MetadataExportService requires a NexusFS handle for export")
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         all_files = [
-            m
-            for m in metastore_list_iter(self._kernel, filter.path_prefix)
-            if not m.path.startswith(SYSTEM_PATH_PREFIX)
+            e
+            for e in self._nexus_fs.sys_readdir(
+                filter.path_prefix or "/",
+                recursive=True,
+                details=True,
+                context=sys_ctx,
+            )
+            if isinstance(e, dict) and not str(e.get("path", "")).startswith(SYSTEM_PATH_PREFIX)
         ]
 
+        def _parse_iso(value: Any) -> datetime | None:
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(value)
+                except ValueError:
+                    return None
+            return None
+
         filtered_files = []
-        for file_meta in all_files:
-            if filter.after_time and file_meta.modified_at:
-                file_time = file_meta.modified_at
-                filter_time = filter.after_time
-                if file_time.tzinfo is None:
-                    file_time = file_time.replace(tzinfo=UTC)
-                if filter_time.tzinfo is None:
-                    filter_time = filter_time.replace(tzinfo=UTC)
+        for entry in all_files:
+            if filter.after_time:
+                file_time = _parse_iso(entry.get("modified_at"))
+                if file_time is not None:
+                    filter_time = filter.after_time
+                    if file_time.tzinfo is None:
+                        file_time = file_time.replace(tzinfo=UTC)
+                    if filter_time.tzinfo is None:
+                        filter_time = filter_time.replace(tzinfo=UTC)
+                    if file_time < filter_time:
+                        continue
+            filtered_files.append(entry)
 
-                if file_time < filter_time:
-                    continue
-
-            filtered_files.append(file_meta)
-
-        filtered_files.sort(key=lambda m: m.path)
+        filtered_files.sort(key=lambda e: str(e.get("path", "")))
 
         count = 0
         with output_file.open("w", encoding="utf-8") as f:
-            for file_meta in filtered_files:
+            for entry in filtered_files:
                 # ``backend_name``/``physical_path`` were removed from
                 # FileMetadata — the kernel resolves the physical
                 # location at read time via the mount/route layer, so
                 # exported metadata no longer surfaces them.
                 metadata_dict: dict[str, Any] = {
-                    "path": file_meta.path,
-                    "size": file_meta.size,
-                    "content_id": file_meta.content_id,
-                    "mime_type": file_meta.mime_type,
-                    "created_at": (
-                        file_meta.created_at.isoformat() if file_meta.created_at else None
-                    ),
-                    "modified_at": (
-                        file_meta.modified_at.isoformat() if file_meta.modified_at else None
-                    ),
-                    "version": file_meta.version,
+                    "path": entry.get("path"),
+                    "size": entry.get("size", 0),
+                    "content_id": entry.get("content_id"),
+                    "mime_type": entry.get("mime_type"),
+                    "created_at": entry.get("created_at"),
+                    "modified_at": entry.get("modified_at"),
+                    "version": entry.get("version", 1),
                 }
-
-                try:
-                    custom = getattr(file_meta, "custom_metadata", None)
-                    if custom:
-                        metadata_dict["custom_metadata"] = dict(custom)
-                except (AttributeError, TypeError):
-                    pass
 
                 f.write(json.dumps(metadata_dict) + "\n")
                 count += 1

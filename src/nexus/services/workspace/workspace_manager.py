@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 import uuid as _uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import desc, select
 
@@ -131,8 +131,8 @@ class WorkspaceManager:
         """
         sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         path = manifest_storage_path(snapshot.workspace_path, snapshot.snapshot_id)
-        data: bytes = self._nexus_fs.sys_read(path, context=sys_ctx)
-        return data
+        # sys_read returns bytes when return_metadata is not set.
+        return cast(bytes, self._nexus_fs.sys_read(path, context=sys_ctx))
 
     def _check_workspace_permission(
         self,

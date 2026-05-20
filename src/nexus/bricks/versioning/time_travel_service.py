@@ -20,7 +20,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
@@ -101,8 +101,8 @@ class TimeTravelService:
         path = _versioning_path(virtual_path, operation_id)
         sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         try:
-            data: bytes = self._nexus_fs.sys_read(path, context=sys_ctx)
-            return data
+            # sys_read returns bytes when return_metadata is not set.
+            return cast(bytes, self._nexus_fs.sys_read(path, context=sys_ctx))
         except (FileNotFoundError, NexusFileNotFoundError) as exc:
             raise NexusFileNotFoundError(
                 f"Snapshot for {virtual_path} at operation {operation_id} not found at {path}. "
@@ -333,7 +333,7 @@ class TimeTravelService:
                 if content_id is None:
                     raise NexusFileNotFoundError(f"File {path} has no content hash")
                 if self._nexus_fs is not None:
-                    content = self._nexus_fs.sys_read(path, context=sys_ctx)
+                    content = cast(bytes, self._nexus_fs.sys_read(path, context=sys_ctx))
                 metadata_dict = {
                     "size": current_path.size_bytes,
                     "version": current_path.current_version,

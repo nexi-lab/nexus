@@ -307,30 +307,21 @@ class KernelClient:
         )
 
     def sys_stat(self, path: str, zone_id: str = ROOT_ZONE_ID) -> Any:
-        """Stat a path — returns metadata dict or None on not-found.
+        """Stat a path via the typed Stat RPC.
 
-        Enriches the Rust JSON response with ISO-8601 string fields:
-        - modified_at / created_at: ISO strings from epoch-ms fields
+        Returns a metadata dict (the `stat_to_json` shape, enriched with
+        ISO-8601 `created_at` / `modified_at`), or None on not-found.
         """
+        assert self._transport is not None
         try:
-            result = self._call("sys_stat", {"path": path, "zone_id": zone_id})
+            resp = self._transport.stat(path, zone_id)
         except Exception:
-            # FileNotFound is raised as an RPC error — translate to None.
+            # Auth / transport errors translate to None — matching the
+            # prior Call-path behaviour (FileNotFound was an RPC error).
             return None
-        if result is None:
+        if resp is None:
             return None
-        # Enrich with ISO-string timestamps that Python callers expect.
-        # Callers that need datetime objects should parse via fromisoformat().
-        if isinstance(result, dict):
-            from datetime import UTC, datetime
-
-            ms = result.get("modified_at_ms")
-            if ms is not None and "modified_at" not in result:
-                result["modified_at"] = datetime.fromtimestamp(ms / 1000.0, UTC).isoformat()
-            ms = result.get("created_at_ms")
-            if ms is not None and "created_at" not in result:
-                result["created_at"] = datetime.fromtimestamp(ms / 1000.0, UTC).isoformat()
-        return result
+        return _stat_response_to_dict(resp)
 
     def sys_setattr(self, path: str, **kwargs: Any) -> Any:
         """Set attributes on a path."""
@@ -882,6 +873,45 @@ def _error_kind_from_payload(error_payload: bytes) -> tuple[str, str]:
     if code in (RPCErrorCode.PERMISSION_ERROR.value, RPCErrorCode.ACCESS_DENIED.value):
         return "permission_denied", message
     return "io_error", message
+
+
+def _stat_response_to_dict(resp: Any) -> dict[str, Any]:
+    """Build the sys_stat metadata dict from a typed StatResponse.
+
+    Mirrors the `stat_to_json` shape of the former Call path: optional
+    string fields collapse ``""`` -> ``None``, and epoch-ms timestamps
+    gain the enriched ISO-8601 ``created_at`` / ``modified_at`` companions
+    that Python callers expect.
+    """
+    from datetime import UTC, datetime
+
+    def _opt(v: str) -> str | None:
+        return v or None
+
+    created = resp.created_at_ms if resp.HasField("created_at_ms") else None
+    modified = resp.modified_at_ms if resp.HasField("modified_at_ms") else None
+    d: dict[str, Any] = {
+        "path": resp.path,
+        "size": resp.size,
+        "content_id": _opt(resp.content_id),
+        "mime_type": resp.mime_type,
+        "is_directory": resp.is_directory,
+        "entry_type": resp.entry_type,
+        "mode": resp.mode,
+        "version": resp.version,
+        "gen": resp.gen,
+        "zone_id": _opt(resp.zone_id),
+        "created_at_ms": created,
+        "modified_at_ms": modified,
+        "last_writer_address": _opt(resp.last_writer_address),
+        "link_target": _opt(resp.link_target),
+        "owner_id": _opt(resp.owner_id),
+    }
+    if modified is not None:
+        d["modified_at"] = datetime.fromtimestamp(modified / 1000.0, UTC).isoformat()
+    if created is not None:
+        d["created_at"] = datetime.fromtimestamp(created / 1000.0, UTC).isoformat()
+    return d
 
 
 class _SysReadResult:

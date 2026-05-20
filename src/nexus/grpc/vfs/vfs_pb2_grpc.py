@@ -69,6 +69,11 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteResponse.FromString,
                 _registered_method=True)
+        self.Stat = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/Stat',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -124,6 +129,13 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Stat(self, request, context):
+        """Typed metadata stat — the hottest metadata op.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -161,6 +173,11 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.BatchWrite,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteResponse.SerializeToString,
+            ),
+            'Stat': grpc.unary_unary_rpc_method_handler(
+                    servicer.Stat,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -352,6 +369,33 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/BatchWrite',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Stat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/Stat',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StatResponse.FromString,
             options,
             channel_credentials,
             insecure,

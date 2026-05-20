@@ -457,6 +457,29 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
+    def stat(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> Any | None:
+        """Stat a path via the typed Stat RPC.
+
+        Returns the ``StatResponse`` message, or ``None`` when the path
+        does not exist (``found == false`` — not an error). Raises on
+        auth / transport failure.
+        """
+        request = vfs_pb2.StatRequest(path=path, auth_token=self._auth_token, zone_id=zone_id)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.Stat(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "Stat")
+        if response.is_error:
+            self._handle_typed_error(response.error_payload)
+        return response if response.found else None
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._auth_token)

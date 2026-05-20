@@ -355,6 +355,37 @@ class TestRPCTransportTypedMethods:
         with pytest.raises(NexusFileNotFoundError):
             transport.batch_write([("/ok", b"x"), ("/bad", b"y")])
 
+    def test_stat_found(self, transport) -> None:
+        """stat returns the StatResponse message for an existing path."""
+        mock_response = MagicMock(is_error=False, found=True, path="/x.txt", size=10)
+        transport._mock_stub.Stat.return_value = mock_response
+
+        result = transport.stat("/x.txt")
+
+        assert result is mock_response
+        request = transport._mock_stub.Stat.call_args[0][0]
+        assert request.path == "/x.txt"
+        assert request.auth_token == "test-token"
+
+    def test_stat_not_found_returns_none(self, transport) -> None:
+        """stat returns None when the path does not exist (found=false)."""
+        mock_response = MagicMock(is_error=False, found=False)
+        transport._mock_stub.Stat.return_value = mock_response
+
+        assert transport.stat("/missing.txt") is None
+
+    def test_stat_error_raises(self, transport) -> None:
+        """stat raises on is_error rather than returning None."""
+        mock_response = MagicMock(
+            is_error=True,
+            found=False,
+            error_payload=encode_rpc_message({"code": -32007, "message": "nope"}),
+        )
+        transport._mock_stub.Stat.return_value = mock_response
+
+        with pytest.raises(NexusFileNotFoundError):
+            transport.stat("/x.txt")
+
     def test_ping_success(self, transport) -> None:
         """ping returns version/zone_id/uptime dict."""
         mock_response = MagicMock()

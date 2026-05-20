@@ -170,8 +170,13 @@ impl FileDescriptorTable {
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
+//
+// Unix-only: every test exercises the real libc-backed FileHandle path
+// (register / pread / rename). On Windows FileDescriptorTable is a
+// no-op stub, so these assertions would all fail against it — gate the
+// module to match the implementation it tests.
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::io::Write;

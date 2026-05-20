@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use kernel::abi::KernelAbi;
 use kernel::kernel::convenience::KernelConvenience;
+use kernel::kernel::vfs_proto::CallResponse;
 use kernel::kernel::{Kernel, KernelError, OperationContext, WriteRequest};
-use kernel::kernel::vfs_proto::{CallResponse};
 use tonic::{Response, Status};
 
 use crate::grpc::{encode_rpc_error, RpcErrorCode};
@@ -41,7 +41,9 @@ pub fn dispatch(
 
         // Service lifecycle — no-ops for subprocess mode (the Rust
         // binary manages its own service lifecycle).
-        "service_start_all" | "service_mark_bootstrapped" | "service_stop_all"
+        "service_start_all"
+        | "service_mark_bootstrapped"
+        | "service_stop_all"
         | "service_close_all" => ok_json(serde_json::json!(null)),
 
         // Service lookup/swap — not available via gRPC.
@@ -109,7 +111,10 @@ pub fn dispatch(
 // ── Helpers ──────────────────────────────────────────────────────────
 
 fn s(v: &serde_json::Value, key: &str) -> String {
-    v.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    v.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn i64_or(v: &serde_json::Value, key: &str, default: i64) -> i64 {
@@ -209,7 +214,7 @@ fn do_sys_stat(
 fn do_sys_setattr(
     kernel: &Kernel,
     params: &serde_json::Value,
-    _ctx: &OperationContext,
+    ctx: &OperationContext,
 ) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let entry_type = i64_or(params, "entry_type", 0) as i32;
@@ -239,6 +244,12 @@ fn do_sys_setattr(
         // NexusFS boot, because the cluster process already mounted its
         // own root filesystem at startup.
         if backend_type == "path_local" && !local_root.is_empty() {
+            if !ctx.is_admin && !ctx.is_system {
+                return Err(call_err(
+                    RpcErrorCode::PermissionError,
+                    "sys_setattr DT_MOUNT path_local requires admin or system context",
+                ));
+            }
             let backend = backends::storage::path_local::PathLocalBackend::new(
                 std::path::Path::new(&local_root),
                 fsync,
@@ -302,11 +313,22 @@ fn do_sys_setattr(
     let modified_at_ms = params.get("modified_at_ms").and_then(|v| v.as_i64());
     let created_at_ms = params.get("created_at_ms").and_then(|v| v.as_i64());
     let size = params.get("size").and_then(|v| v.as_u64());
-    let version = params.get("version").and_then(|v| v.as_u64()).map(|v| v as u32);
+    let version = params
+        .get("version")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
     let backend_name_str = s(params, "backend_name");
-    let backend_name = if backend_name_str.is_empty() { "" } else { &backend_name_str };
+    let backend_name = if backend_name_str.is_empty() {
+        ""
+    } else {
+        &backend_name_str
+    };
     let io_profile_str = s(params, "io_profile");
-    let io_profile = if io_profile_str.is_empty() { "" } else { &io_profile_str };
+    let io_profile = if io_profile_str.is_empty() {
+        ""
+    } else {
+        &io_profile_str
+    };
     let is_external = bool_or(params, "is_external", false);
     let capacity = u64_or(params, "capacity", 0) as usize;
 
@@ -314,15 +336,15 @@ fn do_sys_setattr(
         &path,
         entry_type,
         backend_name,
-        None,  // backend (non-mount entry types don't need one)
-        None,  // metastore
-        None,  // raft_backend
+        None, // backend (non-mount entry types don't need one)
+        None, // metastore
+        None, // raft_backend
         io_profile,
         zone_id,
         is_external,
         capacity,
-        None,  // read_fd
-        None,  // write_fd
+        None, // read_fd
+        None, // write_fd
         mime_type_str.as_deref(),
         modified_at_ms,
         content_id_str.as_deref(),
@@ -436,10 +458,7 @@ fn do_sys_readdir(
     ok_json(serde_json::json!(arr))
 }
 
-fn do_sys_lock(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_sys_lock(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let timeout_ms = u64_or(params, "timeout_ms", 5000);
     let lock_id_param = s(params, "lock_id");
@@ -465,10 +484,7 @@ fn do_sys_lock(
     }
 }
 
-fn do_sys_unlock(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_sys_unlock(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let lock_id = s(params, "lock_id");
     let force = bool_or(params, "force", false);
@@ -478,10 +494,7 @@ fn do_sys_unlock(
     }
 }
 
-fn do_sys_watch(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_sys_watch(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let timeout_ms = u64_or(params, "timeout_ms", 30000);
     match kernel.sys_watch(&path, timeout_ms) {
@@ -524,25 +537,38 @@ fn do_stat_batch(
 
 // ── IPC: Pipes ──────────────────────────────────────────────────────
 
-fn do_create_pipe(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_create_pipe(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let capacity = u64_or(params, "capacity", 64) as usize;
     match kernel.sys_setattr(
-        &path, 3, "", None, None, None, "", kernel::ROOT_ZONE_ID, false, capacity, None, None,
-        None, None, None, None, None, None, None, None, None,
+        &path,
+        3,
+        "",
+        None,
+        None,
+        None,
+        "",
+        kernel::ROOT_ZONE_ID,
+        false,
+        capacity,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     ) {
         Ok(_) => ok_json(serde_json::json!(null)),
         Err(e) => Err(kernel_err_to_payload(e)),
     }
 }
 
-fn do_destroy_pipe(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_destroy_pipe(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     match kernel.close_pipe(&path) {
         Ok(()) => ok_json(serde_json::json!(null)),
@@ -550,43 +576,50 @@ fn do_destroy_pipe(
     }
 }
 
-fn do_has_pipe(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_has_pipe(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     ok_json(serde_json::json!(kernel.has_pipe(&path)))
 }
 
 // ── IPC: Streams ────────────────────────────────────────────────────
 
-fn do_create_stream(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_create_stream(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let capacity = u64_or(params, "capacity", 1024) as usize;
     match kernel.sys_setattr(
-        &path, 4, "", None, None, None, "", kernel::ROOT_ZONE_ID, false, capacity, None, None,
-        None, None, None, None, None, None, None, None, None,
+        &path,
+        4,
+        "",
+        None,
+        None,
+        None,
+        "",
+        kernel::ROOT_ZONE_ID,
+        false,
+        capacity,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     ) {
         Ok(_) => ok_json(serde_json::json!(null)),
         Err(e) => Err(kernel_err_to_payload(e)),
     }
 }
 
-fn do_has_stream(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_has_stream(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     ok_json(serde_json::json!(kernel.has_stream(&path)))
 }
 
-fn do_close_stream(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_close_stream(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     match kernel.close_stream(&path) {
         Ok(()) => ok_json(serde_json::json!(null)),
@@ -594,10 +627,7 @@ fn do_close_stream(
     }
 }
 
-fn do_stream_write(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_stream_write(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let data = decode_bytes_field(params, "data");
     match kernel.stream_write_nowait(&path, &data) {
@@ -606,10 +636,7 @@ fn do_stream_write(
     }
 }
 
-fn do_stream_read_at(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_stream_read_at(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let offset = u64_or(params, "offset", 0) as usize;
     match kernel.stream_read_at(&path, offset) {
@@ -638,10 +665,7 @@ fn do_stream_read_at_blocking(
     }
 }
 
-fn do_stream_collect_all(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_stream_collect_all(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     match kernel.stream_collect_all(&path) {
         Ok(data) => ok_json(serde_json::json!(encode_bytes(&data))),
@@ -651,10 +675,7 @@ fn do_stream_collect_all(
 
 // ── Xattr (file metadata side-car) ──────────────────────────────
 
-fn do_set_xattr(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_set_xattr(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let key = s(params, "key");
     let value = s(params, "value");
@@ -664,10 +685,7 @@ fn do_set_xattr(
     }
 }
 
-fn do_get_xattr(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_get_xattr(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let path = s(params, "path");
     let key = s(params, "key");
     match kernel.get_xattr(&path, &key, kernel::ROOT_ZONE_ID) {
@@ -676,21 +694,27 @@ fn do_get_xattr(
     }
 }
 
-fn do_get_xattr_bulk(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-) -> Result<Vec<u8>, Vec<u8>> {
+fn do_get_xattr_bulk(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<u8>, Vec<u8>> {
     let paths: Vec<String> = params
         .get("paths")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default();
     let key = s(params, "key");
     match kernel.get_xattr_bulk(&paths, &key, kernel::ROOT_ZONE_ID) {
         Ok(results) => {
             let map: serde_json::Map<String, serde_json::Value> = results
                 .into_iter()
-                .map(|(p, v)| (p, v.map_or(serde_json::Value::Null, |s| serde_json::json!(s))))
+                .map(|(p, v)| {
+                    (
+                        p,
+                        v.map_or(serde_json::Value::Null, |s| serde_json::json!(s)),
+                    )
+                })
                 .collect();
             ok_json(serde_json::json!(map))
         }
@@ -748,10 +772,7 @@ fn do_write_batch(
 // Python rpc_codec sends bytes as {"__type__": "bytes", "data": "<base64>"}
 
 fn decode_bytes_field(params: &serde_json::Value, key: &str) -> Vec<u8> {
-    params
-        .get(key)
-        .map(decode_bytes_value)
-        .unwrap_or_default()
+    params.get(key).map(decode_bytes_value).unwrap_or_default()
 }
 
 fn decode_bytes_value(val: &serde_json::Value) -> Vec<u8> {
@@ -783,21 +804,51 @@ fn encode_bytes(data: &[u8]) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::core::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
+
+    fn path_local_mount_payload(root: &std::path::Path) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "path": "/zone/local",
+            "entry_type": 2,
+            "backend_type": "path_local",
+            "backend_name": "path_local",
+            "local_root": root.to_string_lossy(),
+            "zone_id": kernel::ROOT_ZONE_ID,
+        }))
+        .expect("payload")
+    }
+
+    fn write_batch_payload(paths: &[&str]) -> Vec<u8> {
+        let files: Vec<serde_json::Value> = paths
+            .iter()
+            .map(|path| serde_json::json!([path, encode_bytes(b"abc")]))
+            .collect();
+        serde_json::to_vec(&serde_json::json!({ "files": files })).expect("payload")
+    }
+
+    struct DenyBlockedWriteHook;
+
+    impl NativeInterceptHook for DenyBlockedWriteHook {
+        fn name(&self) -> &str {
+            "deny-blocked-write"
+        }
+
+        fn on_pre(&self, ctx: &HookContext) -> Result<HookOutcome, String> {
+            match ctx {
+                HookContext::Write(w) if w.path.ends_with("/blocked.txt") => {
+                    Err("blocked by test hook".to_string())
+                }
+                _ => Ok(HookOutcome::Pass),
+            }
+        }
+    }
 
     #[test]
     fn sys_setattr_path_local_mount_from_json_routes_io_to_local_root() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let kernel = Arc::new(Kernel::new());
         let ctx = OperationContext::new("test", kernel::ROOT_ZONE_ID, true, None, true);
-        let payload = serde_json::to_vec(&serde_json::json!({
-            "path": "/zone/local",
-            "entry_type": 2,
-            "backend_type": "path_local",
-            "backend_name": "path_local",
-            "local_root": tmp.path().to_string_lossy(),
-            "zone_id": kernel::ROOT_ZONE_ID,
-        }))
-        .expect("payload");
+        let payload = path_local_mount_payload(tmp.path());
 
         let response = dispatch(&kernel, &ctx, "sys_setattr", &payload)
             .expect("dispatch")
@@ -806,6 +857,84 @@ mod tests {
         assert!(!response.is_error, "mount returned error payload");
         KernelAbi::sys_write(&*kernel, "/zone/local/live/a.txt", &ctx, b"abc", 0)
             .expect("write through path-local mount");
-        assert_eq!(std::fs::read(tmp.path().join("live/a.txt")).unwrap(), b"abc");
+        assert_eq!(
+            std::fs::read(tmp.path().join("live/a.txt")).unwrap(),
+            b"abc"
+        );
+    }
+
+    #[test]
+    fn sys_setattr_path_local_mount_from_json_requires_admin_or_system() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let kernel = Arc::new(Kernel::new());
+        let ctx = OperationContext::new("user", kernel::ROOT_ZONE_ID, false, None, false);
+        let payload = path_local_mount_payload(tmp.path());
+
+        let response = dispatch(&kernel, &ctx, "sys_setattr", &payload)
+            .expect("dispatch")
+            .into_inner();
+
+        assert!(response.is_error, "non-admin path_local mount succeeded");
+    }
+
+    #[test]
+    fn write_batch_honors_write_permission_gate() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let kernel = Arc::new(Kernel::new());
+        let admin = OperationContext::new("admin", kernel::ROOT_ZONE_ID, true, None, true);
+        dispatch(
+            &kernel,
+            &admin,
+            "sys_setattr",
+            &path_local_mount_payload(tmp.path()),
+        )
+        .expect("dispatch")
+        .into_inner();
+        kernel.enable_permission_gate();
+
+        let mut ctx = OperationContext::new("reader", kernel::ROOT_ZONE_ID, false, None, false);
+        ctx.zone_perms = vec![("local".to_string(), "r".to_string())];
+        let payload = write_batch_payload(&[
+            "/zone/local/batch/denied-a.txt",
+            "/zone/local/batch/denied-b.txt",
+        ]);
+
+        let response = dispatch(&kernel, &ctx, "write_batch", &payload)
+            .expect("dispatch")
+            .into_inner();
+
+        assert!(response.is_error, "read-only context wrote a batch");
+        assert!(!tmp.path().join("batch/denied-a.txt").exists());
+        assert!(!tmp.path().join("batch/denied-b.txt").exists());
+    }
+
+    #[test]
+    fn write_batch_honors_native_pre_write_hooks() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let kernel = Arc::new(Kernel::new());
+        let ctx = OperationContext::new("test", kernel::ROOT_ZONE_ID, true, None, true);
+        dispatch(
+            &kernel,
+            &ctx,
+            "sys_setattr",
+            &path_local_mount_payload(tmp.path()),
+        )
+        .expect("dispatch")
+        .into_inner();
+        kernel.register_native_hook(Box::new(DenyBlockedWriteHook));
+        let payload = write_batch_payload(&[
+            "/zone/local/batch/blocked.txt",
+            "/zone/local/batch/other.txt",
+        ]);
+
+        let response = dispatch(&kernel, &ctx, "write_batch", &payload)
+            .expect("dispatch")
+            .into_inner();
+
+        assert!(
+            response.is_error,
+            "native pre-hook did not block write_batch"
+        );
+        assert!(!tmp.path().join("batch/blocked.txt").exists());
     }
 }

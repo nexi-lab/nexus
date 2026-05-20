@@ -2425,6 +2425,47 @@ impl Kernel {
             }
         }
 
+        // 1b. Permission gate + native pre-hooks per item. The previous
+        // Call-RPC write_batch path looped through KernelAbi::sys_write, so
+        // batch writes must preserve the same per-path authorization and
+        // hook replacement semantics while still using the grouped commit.
+        let mut pre_errors: Vec<Option<KernelError>> = vec![None; n];
+        let mut replacements: Vec<Option<Vec<u8>>> = Vec::with_capacity(n);
+        for (i, req) in reqs.iter().enumerate() {
+            if let Err(e) = self.check_permission(&req.path, Permission::Write, ctx) {
+                pre_errors[i] = Some(e);
+                replacements.push(None);
+                continue;
+            }
+
+            let needs_content_for_hook = self.has_mutating_hook_match(&req.path);
+            let hook_content = if needs_content_for_hook {
+                req.content.clone()
+            } else {
+                Vec::new()
+            };
+            match self.dispatch_native_pre_with_replacement(&HookContext::Write(WriteHookCtx {
+                path: req.path.clone(),
+                identity: HookIdentity {
+                    user_id: ctx.user_id.clone(),
+                    zone_id: ctx.zone_id.clone(),
+                    agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                    is_admin: ctx.is_admin,
+                },
+                content: hook_content,
+                is_new_file: false,
+                content_id: None,
+                new_version: 0,
+                size_bytes: None,
+            })) {
+                Ok(replacement) => replacements.push(replacement),
+                Err(e) => {
+                    pre_errors[i] = Some(e);
+                    replacements.push(None);
+                }
+            }
+        }
+
         // 2. Route all paths (single lock acquisition on mount table via read lock)
         let mut routes = Vec::with_capacity(n);
         for req in reqs {
@@ -2440,7 +2481,7 @@ impl Kernel {
             indices.sort_by(|a, b| reqs[*a].path.cmp(&reqs[*b].path));
 
             for idx in indices {
-                if routes[idx].is_some() {
+                if routes[idx].is_some() && pre_errors[idx].is_none() {
                     lock_handles[idx] = self.lock_manager.blocking_acquire(
                         &reqs[idx].path,
                         LockMode::Write,
@@ -2455,6 +2496,11 @@ impl Kernel {
         let mut batch_meta: Vec<(String, String, crate::meta_store::FileMetadata)> = Vec::new();
 
         for (i, (req, route_opt)) in reqs.iter().zip(routes.iter()).enumerate() {
+            if let Some(e) = pre_errors[i].take() {
+                results.push(Err(e));
+                continue;
+            }
+
             let route = match route_opt {
                 Some(r) => r,
                 None => {
@@ -2472,8 +2518,9 @@ impl Kernel {
             // Backend write. ``sys_write_batch`` keeps per-item error
             // semantics: a failure only taints that item's result, not the
             // whole batch.
+            let effective_content = replacements[i].as_deref().unwrap_or(&req.content);
             let write_result = route.backend.as_ref().and_then(|b| {
-                b.write_content(&req.content, &route.backend_path, ctx, 0)
+                b.write_content(effective_content, &route.backend_path, ctx, 0)
                     .ok()
             });
 
@@ -2597,6 +2644,20 @@ impl Kernel {
                         ev.is_new = r.is_new;
                         ev.old_content_id = r.old_content_id.clone();
                     });
+                    self.dispatch_native_post(&HookContext::Write(WriteHookCtx {
+                        path: req.path.clone(),
+                        identity: HookIdentity {
+                            user_id: ctx.user_id.clone(),
+                            zone_id: ctx.zone_id.clone(),
+                            agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                            is_admin: ctx.is_admin,
+                        },
+                        content: vec![],
+                        is_new_file: r.is_new,
+                        content_id: None,
+                        new_version: r.version.into(),
+                        size_bytes: Some(r.size),
+                    }));
                 }
             }
         }

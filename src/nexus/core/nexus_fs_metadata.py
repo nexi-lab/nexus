@@ -415,6 +415,12 @@ class MetadataMixin:
                 )
             exports = attrs.get("exports", ())
             allow_overwrite = attrs.get("allow_overwrite", False)
+            local_services = getattr(self, "_local_services", None)
+            if local_services is not None:
+                local_services[name] = service
+            local_exports = getattr(self, "_local_service_exports", None)
+            if local_exports is not None:
+                local_exports[name] = tuple(exports)
             self._kernel.service_enlist(name, service, list(exports), allow_overwrite)
             # Auto-capture hooks via duck-typed hook_spec()
             from nexus.core.nexus_fs import _declares_hook_spec, _register_hooks_for_spec

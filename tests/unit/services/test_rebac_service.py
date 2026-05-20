@@ -10,6 +10,7 @@ Covers the security-critical Relationship-Based Access Control service:
 """
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -894,3 +895,266 @@ class TestCheckSharePermission:
             resource=("group", "developers"),
             context=ctx,
         )
+
+
+# =========================================================================
+# List Objects / Dynamic Viewer RPC Tests (#4134)
+# =========================================================================
+
+
+class TestReBACListObjectsAndDynamicViewer:
+    """Test ReBAC RPC wrappers required by the full-profile sharing story."""
+
+    @pytest.mark.asyncio
+    async def test_list_tuples_forwards_filters(self, service, mock_rebac_manager):
+        """rebac_list_tuples should pass subject/relation/object filters to the manager."""
+        mock_rebac_manager.list_tuples.return_value = [
+            {
+                "tuple_id": "tuple-1",
+                "subject_type": "user",
+                "subject_id": "alice",
+                "relation": "direct_viewer",
+                "object_type": "file",
+                "object_id": "/docs/a.txt",
+            }
+        ]
+
+        result = await service.rebac_list_tuples(
+            subject=("user", "alice"),
+            relation="direct_viewer",
+            object=("file", "/docs/a.txt"),
+        )
+
+        assert result == mock_rebac_manager.list_tuples.return_value
+        mock_rebac_manager.list_tuples.assert_called_once_with(
+            subject=("user", "alice"),
+            relation="direct_viewer",
+            relation_in=None,
+            object=("file", "/docs/a.txt"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_objects_filters_zone_and_deduplicates(self, service, mock_rebac_manager):
+        """rebac_list_objects should return unique object pairs in the requested zone."""
+        mock_rebac_manager.list_tuples.return_value = [
+            {"object_type": "file", "object_id": "/docs/a.txt", "zone_id": "corp"},
+            {"object_type": "file", "object_id": "/docs/a.txt", "zone_id": "corp"},
+            {"object_type": "file", "object_id": "/docs/b.txt", "zone_id": "other"},
+            {"object_type": "file", "object_id": "/docs/c.txt", "zone_id": None},
+        ]
+
+        result = await service.rebac_list_objects(
+            relation="direct_viewer",
+            subject=("user", "alice"),
+            zone_id="corp",
+        )
+
+        assert result == [["file", "/docs/a.txt"]]
+        mock_rebac_manager.list_tuples.assert_called_once_with(
+            subject=("user", "alice"),
+            relation="direct_viewer",
+        )
+
+    @pytest.mark.asyncio
+    async def test_revoke_share_by_id_deletes_tuple(self, service, mock_rebac_manager):
+        """revoke_share_by_id should invoke rebac_delete for the tuple id."""
+        mock_rebac_manager.rebac_delete.return_value = True
+
+        result = await service.revoke_share_by_id("tuple-share-1")
+
+        assert result is True
+        mock_rebac_manager.rebac_delete.assert_called_once_with("tuple-share-1")
+
+    @pytest.mark.asyncio
+    async def test_revoke_share_accepts_user_alias_and_json_resource(self, service):
+        """revoke_share should support the user alias used by natural RPC payloads."""
+        service.rebac_list_tuples_sync = MagicMock(
+            return_value=[{"tuple_id": "tuple-bob", "zone_id": "corp"}]
+        )
+        service.rebac_delete_sync = MagicMock(return_value=True)
+
+        result = await service.revoke_share(
+            resource=["file", "/data/users.csv"],
+            target_user="bob",
+            permission="viewer",
+            zone_id="corp",
+        )
+
+        assert result is True
+        service.rebac_list_tuples_sync.assert_called_once_with(
+            subject=("user", "bob"),
+            relation="shared-viewer",
+            object=("file", "/data/users.csv"),
+        )
+        service.rebac_delete_sync.assert_called_once_with("tuple-bob")
+
+    @pytest.mark.asyncio
+    async def test_revoke_share_by_id_accepts_share_id_alias(self, service, mock_rebac_manager):
+        """revoke_share_by_id should accept share_id from share listing responses."""
+        mock_rebac_manager.rebac_delete.return_value = True
+
+        result = await service.revoke_share_by_id(share_id="tuple-share-2")
+
+        assert result is True
+        mock_rebac_manager.rebac_delete.assert_called_once_with("tuple-share-2")
+
+    @pytest.mark.asyncio
+    async def test_privacy_rpcs_accept_json_list_tuples(self, service, mock_rebac_manager):
+        """JSON-RPC array tuples should be normalized before sync ReBAC validation."""
+        consent = await service.grant_consent(
+            subject=["user", "alice"],
+            target=["user", "auditor"],
+            zone_id="corp",
+        )
+
+        assert consent["tuple_id"] == "tuple-123"
+        mock_rebac_manager.rebac_write.assert_called_with(
+            subject=("user", "auditor"),
+            relation="consent_granted",
+            object=("user", "alice"),
+            expires_at=None,
+            zone_id="corp",
+            conditions=None,
+        )
+
+        mock_rebac_manager.rebac_write.reset_mock()
+        expanded = await service.rebac_expand_with_privacy(
+            permission="read",
+            object=["file", "/data/users.csv"],
+            requester=["user", "auditor"],
+            zone_id="corp",
+            respect_consent=False,
+        )
+
+        assert expanded == [("user", "alice"), ("user", "bob")]
+        mock_rebac_manager.rebac_expand.assert_called_with(
+            permission="read",
+            object=("file", "/data/users.csv"),
+            zone_id="corp",
+        )
+
+    @pytest.mark.asyncio
+    async def test_read_with_dynamic_viewer_filters_hidden_columns(
+        self, service, mock_rebac_manager
+    ):
+        """read_with_dynamic_viewer should remove columns encoded by legacy hide viewers."""
+        mock_rebac_manager.list_tuples.return_value = [
+            {
+                "subject_type": "column",
+                "subject_id": "hide:ssn",
+                "relation": "dynamic_viewer",
+                "object_type": "file",
+                "object_id": "/data/users.csv",
+                "zone_id": "corp",
+            }
+        ]
+
+        result = await service.read_with_dynamic_viewer(
+            resource=("file", "/data/users.csv"),
+            content="name,ssn,email\nAlice,111,alice@example.com\nBob,222,bob@example.com",
+            zone_id="corp",
+        )
+
+        assert result == "name,email\nAlice,alice@example.com\nBob,bob@example.com"
+        mock_rebac_manager.list_tuples.assert_called_once_with(
+            relation="dynamic_viewer",
+            object=("file", "/data/users.csv"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_dynamic_viewer_read_accepts_json_list_tuples(self, service):
+        """JSON-RPC array tuples should resolve stored subject-specific column config."""
+        service.get_dynamic_viewer_config_sync = MagicMock(
+            return_value={
+                "hidden_columns": ["ssn"],
+                "visible_columns": ["name", "email"],
+                "aggregations": {},
+            }
+        )
+
+        result = await service.read_with_dynamic_viewer(
+            resource=["file", "/data/users.csv"],
+            content="name,ssn,email\nAlice,111,alice@example.com",
+            zone_id="corp",
+            subject=["user", "carol"],
+        )
+
+        assert result == "name,email\nAlice,alice@example.com"
+        service.get_dynamic_viewer_config_sync.assert_called_once_with(
+            ("user", "carol"),
+            "/data/users.csv",
+            zone_id="corp",
+        )
+
+
+class TestReBACNamespaceRPC:
+    """Test namespace RPC wrappers used by the #4134 coverage matrix."""
+
+    @pytest.mark.asyncio
+    async def test_get_namespace_returns_config(self, service, mock_rebac_manager):
+        mock_rebac_manager.get_namespace.return_value = SimpleNamespace(
+            namespace_id="ns-file",
+            object_type="file",
+            config={"relations": {"viewer": {}}, "permissions": {"read": ["viewer"]}},
+        )
+
+        result = await service.get_namespace("file")
+
+        assert result == {
+            "namespace_id": "ns-file",
+            "object_type": "file",
+            "config": {"relations": {"viewer": {}}, "permissions": {"read": ["viewer"]}},
+        }
+        mock_rebac_manager.get_namespace.assert_called_once_with("file")
+
+    @pytest.mark.asyncio
+    async def test_namespace_list_collects_known_types(self, service, mock_rebac_manager):
+        namespaces = {
+            "file": SimpleNamespace(
+                namespace_id="ns-file",
+                object_type="file",
+                config={"relations": {}, "permissions": {}},
+            ),
+            "group": SimpleNamespace(
+                namespace_id="ns-group",
+                object_type="group",
+                config={"relations": {}, "permissions": {}},
+            ),
+        }
+        mock_rebac_manager.get_namespace.side_effect = lambda object_type: namespaces.get(
+            object_type
+        )
+
+        result = await service.namespace_list()
+
+        assert result == [
+            {
+                "namespace_id": "ns-file",
+                "object_type": "file",
+                "config": {"relations": {}, "permissions": {}},
+            },
+            {
+                "namespace_id": "ns-group",
+                "object_type": "group",
+                "config": {"relations": {}, "permissions": {}},
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_namespace_delete_deletes_listed_objects(self, service, mock_rebac_manager):
+        mock_rebac_manager.rebac_list_objects.return_value = [
+            ("file", "tuple-a"),
+            ("file", "tuple-b"),
+        ]
+        mock_rebac_manager.rebac_delete.return_value = True
+
+        result = await service.namespace_delete("file", zone_id="corp")
+
+        assert result == 2
+        mock_rebac_manager.rebac_list_objects.assert_called_once_with(
+            ("*", "*"),
+            "viewer",
+            "file",
+            "corp",
+        )
+        assert mock_rebac_manager.rebac_delete.call_count == 2

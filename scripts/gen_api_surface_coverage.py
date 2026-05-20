@@ -214,6 +214,8 @@ def generate_coverage(
                 summary=gap.get("summary", ""),
                 transports={},  # no transport - intentionally missing
                 profiles={},  # set below to all missing_needed
+                gap_issue=gap.get("gap_issue"),
+                owning_issue=gap.get("owning_issue"),
             )
             # Mark all three profiles as missing_needed
             operations[op_id].profiles = dict.fromkeys(

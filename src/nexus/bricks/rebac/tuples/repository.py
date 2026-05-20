@@ -224,7 +224,7 @@ class TupleRepository:
     def get_zone_revision(
         self,
         zone_id: str | None,
-        conn: Any | None = None,  # noqa: ARG002
+        conn: Any | None = None,
     ) -> int:
         """Get current revision for a zone (read-only, no increment).
 
@@ -241,12 +241,15 @@ class TupleRepository:
         effective_zone = zone_id or ROOT_ZONE_ID
         if self._version_store is not None:
             return self._version_store.get_version(effective_zone)
-        return 0
+        if conn is not None:
+            return self._get_zone_revision_sql(conn, effective_zone)
+        with self.connection(readonly=True) as read_conn:
+            return self._get_zone_revision_sql(read_conn, effective_zone)
 
     def increment_zone_revision(
         self,
         zone_id: str | None,
-        conn: Any,  # noqa: ARG002
+        conn: Any,
     ) -> int:
         """Increment and return the new revision for a zone.
 
@@ -263,7 +266,52 @@ class TupleRepository:
         effective_zone = zone_id or ROOT_ZONE_ID
         if self._version_store is not None:
             return self._version_store.increment_version(effective_zone)
-        return 1
+        self._ensure_zone_revision_row(conn, effective_zone)
+        cursor = self.create_cursor(conn)
+        cursor.execute(
+            self.fix_sql_placeholders(
+                """
+                UPDATE rebac_version_sequences
+                SET current_version = current_version + 1,
+                    updated_at = ?
+                WHERE zone_id = ?
+                """
+            ),
+            (datetime.now(UTC), effective_zone),
+        )
+        return self._get_zone_revision_sql(conn, effective_zone)
+
+    def _get_zone_revision_sql(self, conn: Any, zone_id: str) -> int:
+        cursor = self.create_cursor(conn)
+        cursor.execute(
+            self.fix_sql_placeholders(
+                """
+                SELECT current_version
+                FROM rebac_version_sequences
+                WHERE zone_id = ?
+                """
+            ),
+            (zone_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return 0
+        if isinstance(row, dict):
+            return int(row.get("current_version") or 0)
+        return int(row[0] or 0)
+
+    def _ensure_zone_revision_row(self, conn: Any, zone_id: str) -> None:
+        cursor = self.create_cursor(conn)
+        cursor.execute(
+            self.fix_sql_placeholders(
+                """
+                INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
+                VALUES (?, 0, ?)
+                ON CONFLICT (zone_id) DO NOTHING
+                """
+            ),
+            (zone_id, datetime.now(UTC)),
+        )
 
     # ------------------------------------------------------------------
     # Cycle detection

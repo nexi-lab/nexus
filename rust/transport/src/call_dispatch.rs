@@ -26,6 +26,7 @@ pub fn dispatch(
         serde_json::from_slice(payload).unwrap_or(serde_json::Value::Object(Default::default()));
 
     let result = match method {
+        "sys_read" => do_sys_read(kernel, &params, ctx),
         "sys_stat" => do_sys_stat(kernel, &params, ctx),
         "sys_setattr" => do_sys_setattr(kernel, &params, ctx),
         "sys_mkdir" => do_sys_mkdir(kernel, &params, ctx),
@@ -163,6 +164,30 @@ fn stat_to_json(s: &kernel::kernel::StatResult) -> serde_json::Value {
 }
 
 // ── Syscall handlers ────────────────────────────────────────────────
+
+fn do_sys_read(
+    kernel: &Kernel,
+    params: &serde_json::Value,
+    ctx: &OperationContext,
+) -> Result<Vec<u8>, Vec<u8>> {
+    let path = s(params, "path");
+    let timeout_ms = u64_or(params, "timeout_ms", 5000);
+    let offset = u64_or(params, "offset", 0);
+    match KernelAbi::sys_read(kernel, &path, ctx, timeout_ms, offset) {
+        Ok(result) => {
+            let data = result.data.as_deref().map(encode_bytes);
+            ok_json(serde_json::json!({
+                "data": data,
+                "content_id": result.content_id,
+                "gen": result.gen,
+                "entry_type": result.entry_type,
+                "stream_next_offset": result.stream_next_offset,
+                "post_hook_needed": result.post_hook_needed,
+            }))
+        }
+        Err(e) => Err(kernel_err_to_payload(e)),
+    }
+}
 
 fn do_sys_stat(
     kernel: &Kernel,

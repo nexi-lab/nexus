@@ -828,7 +828,106 @@ nexus rebac create agent alice direct_owner file /workspace/secret.txt --zone-id
 nexus rebac check agent alice write file /workspace/secret.txt --zone-id org_acme
 ```
 
-### Step 5: Create and test access manifests
+### Step 5: Tell a multi-user sharing story
+
+The `full` profile includes the complete ReBAC brick and is the right profile
+when several users, agents, or apps need to share one Nexus node. Today the
+stable CLI path is tuple-level ReBAC: create the relationship, check it, and
+explain the graph path when access surprises you.
+
+```bash
+nexus rebac namespace-create file \
+  --relations direct_owner \
+  --relations direct_viewer \
+  --permission read:direct_viewer,direct_owner \
+  --permission write:direct_owner
+
+nexus write /workspace/team/report.csv "name,ssn,email\nAlice,111,alice@example.com"
+nexus rebac create agent alice direct_owner file /workspace/team/report.csv --zone-id org_acme
+nexus rebac create agent bob direct_viewer file /workspace/team/report.csv --zone-id org_acme
+
+nexus rebac check agent bob read file /workspace/team/report.csv --zone-id org_acme
+nexus rebac check agent charlie read file /workspace/team/report.csv --zone-id org_acme
+nexus rebac explain agent bob read file /workspace/team/report.csv --zone-id org_acme --verbose
+```
+
+Expected behavior:
+
+- Bob's read check is granted.
+- Charlie's read check is denied until a direct, group, or inherited relation
+  grants access.
+- If ReBAC is unavailable or disabled for a stripped-down runtime, the command
+  must fail with a service-unavailable style error rather than silently allowing
+  access.
+
+Equivalent RPC calls use the same service:
+
+```python
+rebac = nx.service("rebac")
+
+await rebac.rebac_create(
+    subject=("agent", "bob"),
+    relation="direct_viewer",
+    object=("file", "/workspace/team/report.csv"),
+    zone_id="org_acme",
+)
+assert await rebac.rebac_check(
+    subject=("agent", "bob"),
+    permission="read",
+    object=("file", "/workspace/team/report.csv"),
+    zone_id="org_acme",
+)
+```
+
+Dynamic viewer tuples can be created from the CLI when the object is a CSV:
+
+```bash
+nexus rebac create agent bob dynamic_viewer file /workspace/team/report.csv \
+  --zone-id org_acme \
+  --column-config '{"hidden_columns":["ssn"],"visible_columns":["name","email"]}'
+```
+
+The equivalent user/group sharing and dynamic-viewer CLI flows are direct
+`nexus rebac` commands:
+
+```bash
+nexus rebac share user file /workspace/team/report.csv bob \
+  --permission viewer --zone-id org_acme
+nexus rebac share incoming user bob --zone-id org_acme --format json
+nexus rebac list-objects shared-viewer user bob --zone-id org_acme --format json
+nexus rebac dynamic config user bob /workspace/team/report.csv \
+  --zone-id org_acme --format json
+nexus rebac dynamic read user bob /workspace/team/report.csv \
+  --content-file /workspace/team/report.csv --zone-id org_acme --format json
+nexus rebac share revoke file /workspace/team/report.csv user bob \
+  --permission viewer --zone-id org_acme
+```
+
+Public/private discovery and consent are control-plane operations:
+
+```bash
+nexus rebac public file /workspace/team/report.csv --zone-id org_acme
+nexus rebac private file /workspace/team/report.csv --zone-id org_acme
+nexus rebac consent grant user alice user bob --zone-id org_acme
+nexus rebac expand-with-privacy read file /workspace/team/report.csv \
+  --requester user:bob --zone-id org_acme --format json
+```
+
+Dedicated RPCs cover the same workflows for user/group sharing,
+public/private resources, consent, privacy-filtered expand, incoming/outgoing
+shares, list-objects, and dynamic-viewer reads. The surface coverage map tracks
+them under #4134.
+
+Correctness assertions live in `tests/unit/services/test_rebac_service.py`,
+`tests/unit/services/test_rebac_share_mixin.py`, and
+`tests/e2e/self_contained/test_rebac_full_story_e2e.py`. Performance-sensitive
+paths are permission check, batch check, tuple list, expand/list-objects, and
+dynamic-viewer read overhead; ReBAC latency and scale coverage is in
+`tests/benchmarks/test_rebac_latency.py` and
+`tests/benchmarks/bench_rebac_scale.py`. Sharing, namespace, consent, and
+public/private mutations are control-plane operations, not request hot paths.
+
+### Step 6: Create and test access manifests
 
 Access manifests let you say which tools and data surfaces an agent may use.
 
@@ -838,7 +937,7 @@ nexus manifest list
 nexus manifest evaluate <manifest-id> --tool-name read_file
 ```
 
-### Step 6: If you are running database auth, create real user keys
+### Step 7: If you are running database auth, create real user keys
 
 This is the operator path once a database-auth deployment is in place:
 

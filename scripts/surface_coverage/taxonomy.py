@@ -448,6 +448,18 @@ _EXPLICIT_ALIASES: dict[str, str] = {
     "is_directory": "filesystem",
     "close": "filesystem",
     "ops": "uncategorized",
+    # ReBACService @rpc_expose methods whose normalized names otherwise look
+    # like auth/share-link/filesystem operations.
+    "get.dynamic_viewer_config": "rebac",
+    "grant.consent": "rebac",
+    "list.incoming_shares": "rebac",
+    "list.outgoing_shares": "rebac",
+    "read.with_dynamic_viewer": "rebac",
+    "revoke.consent": "rebac",
+    "revoke.share": "rebac",
+    "revoke.share_by_id": "rebac",
+    "share.with_group": "rebac",
+    "share.with_user": "rebac",
 }
 
 

@@ -127,19 +127,25 @@ def _boot_post_kernel_services(
     # so this late binding is safe.
     rebac_manager = services.get("rebac_manager")
     if rebac_manager is not None:
-        try:
-            from nexus.bricks.rebac.consistency.metastore_namespace_store import (
-                MetastoreNamespaceStore,
+        if type(getattr(nx, "_kernel", None)).__name__ == "KernelClient":
+            logger.debug(
+                "[BOOT:WIRED] ReBAC namespace + version stores left SQL-backed "
+                "(subprocess kernel VFS misses are too expensive)"
             )
-            from nexus.bricks.rebac.consistency.metastore_version_store import (
-                MetastoreVersionStore,
-            )
+        else:
+            try:
+                from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+                    MetastoreNamespaceStore,
+                )
+                from nexus.bricks.rebac.consistency.metastore_version_store import (
+                    MetastoreVersionStore,
+                )
 
-            rebac_manager._namespace_store = MetastoreNamespaceStore(nx)
-            rebac_manager._version_store = MetastoreVersionStore(nx)
-            logger.debug("[BOOT:WIRED] ReBAC namespace + version stores wired (VFS-backed)")
-        except Exception as exc:
-            logger.warning("[BOOT:WIRED] ReBAC namespace/version stores wiring failed: %s", exc)
+                rebac_manager._namespace_store = MetastoreNamespaceStore(nx)
+                rebac_manager._version_store = MetastoreVersionStore(nx)
+                logger.debug("[BOOT:WIRED] ReBAC namespace + version stores wired (VFS-backed)")
+            except Exception as exc:
+                logger.warning("[BOOT:WIRED] ReBAC namespace/version stores wiring failed: %s", exc)
 
     # --- MountPersistService: Mount persistence ---
     # Created with mount_service=None initially; wired after MountService creation below.

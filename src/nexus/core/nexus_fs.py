@@ -298,6 +298,12 @@ class NexusFS(  # type: ignore[misc]
         # None = graceful degrade (like Linux LSM: no module loaded = no check).
 
         self._event_bus: Any = None
+        # Process-local mirror of Python service instances.  In subprocess
+        # kernel mode, KernelClient.service_enlist() is intentionally a no-op
+        # because Python objects cannot be stored inside the Rust process.
+        # Keep them visible to in-process callers and RPC discovery here.
+        self._local_services: dict[str, Any] = {}
+        self._local_service_exports: dict[str, tuple[str, ...]] = {}
         # Hook specs for enlisted services (duck-typed hook_spec() capture)
         self._hook_specs: dict[str, Any] = {}
         # Lifecycle state — set by link() / initialize() / bootstrap()
@@ -382,6 +388,9 @@ class NexusFS(  # type: ignore[misc]
         Returns the service instance, or ``None`` if not registered.
         Delegates to Rust kernel ServiceRegistry.
         """
+        local_services = getattr(self, "_local_services", {})
+        if name in local_services:
+            return local_services[name]
         if self._kernel is None:
             return None
         return self._kernel.service_lookup(name)
@@ -407,16 +416,24 @@ class NexusFS(  # type: ignore[misc]
         timeout_ms = int(timeout * 1000)
 
         # Unregister old hooks
+        local_services = getattr(self, "_local_services", {})
         old_spec = self._hook_specs.get(name)
         if old_spec is None:
-            old_instance = self._kernel.service_lookup(name)
+            old_instance = local_services.get(name)
+            if old_instance is None and self._kernel is not None:
+                old_instance = self._kernel.service_lookup(name)
             if old_instance is not None and _declares_hook_spec(old_instance):
                 old_spec = old_instance.hook_spec()
         if old_spec is not None:
             _unregister_hooks_for_spec(self, old_spec)
 
         # Rust side: drain + replace
-        self._kernel.service_swap(name, new_instance, list(exports), timeout_ms)
+        if self._kernel is not None:
+            self._kernel.service_swap(name, new_instance, list(exports), timeout_ms)
+        local_services[name] = new_instance
+        local_exports = getattr(self, "_local_service_exports", None)
+        if local_exports is not None:
+            local_exports[name] = tuple(exports)
 
         # Register new hooks
         new_spec = hook_spec

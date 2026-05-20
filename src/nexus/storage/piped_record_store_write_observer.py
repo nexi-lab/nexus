@@ -117,6 +117,18 @@ class RecordStoreWriteObserver:
         agent_id: str | None = None,
     ) -> None:
         """Accept a write event from SyncAuditWriteInterceptor."""
+        if isinstance(old_metadata, dict):
+            snapshot_hash = old_metadata.get("content_id")
+            metadata_snapshot = old_metadata
+        elif old_metadata is not None:
+            snapshot_hash = getattr(old_metadata, "content_id", None)
+            metadata_snapshot = (
+                old_metadata.to_dict() if hasattr(old_metadata, "to_dict") else old_metadata
+            )
+        else:
+            snapshot_hash = None
+            metadata_snapshot = None
+
         self._enqueue(
             {
                 "op": "write",
@@ -124,8 +136,8 @@ class RecordStoreWriteObserver:
                 "is_new": is_new,
                 "zone_id": zone_id,
                 "agent_id": agent_id,
-                "snapshot_hash": old_metadata.content_id if old_metadata else None,
-                "metadata_snapshot": old_metadata.to_dict() if old_metadata else None,
+                "snapshot_hash": snapshot_hash,
+                "metadata_snapshot": metadata_snapshot,
                 "metadata": metadata.to_dict() if hasattr(metadata, "to_dict") else metadata,
             }
         )

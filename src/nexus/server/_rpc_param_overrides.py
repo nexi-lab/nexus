@@ -1,7 +1,8 @@
 """Manual RPC Param overrides — classes that cannot be auto-generated.
 
-These classes are imported AFTER ``_rpc_params_generated.py`` by ``protocol.py``,
-so they **replace** any generated version with the same name.
+Methods listed in ``OVERRIDE_METHOD_PARAMS`` are skipped by
+``scripts/generate_rpc_params.py`` so ``protocol.py`` can re-export these
+hand-written Param classes and route parsing through them.
 
 Kernel syscalls (sys_*, mkdir, rmdir, access, is_directory, locks +
 aliases) DO NOT need overrides — they go through the thin dispatch in

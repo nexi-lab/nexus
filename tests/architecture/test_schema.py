@@ -26,6 +26,7 @@ def test_profile_status_enum_values():
 
 def test_perf_class_enum_values():
     assert PerfClass.HOT.value == "hot"
+    assert PerfClass.HOT_PATH.value == "hot_path"
     assert PerfClass.SETUP.value == "setup"
     assert PerfClass.CONTROL.value == "control"
     assert PerfClass.NOT_PERF_SENSITIVE.value == "not_perf_sensitive"

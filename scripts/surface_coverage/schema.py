@@ -25,6 +25,7 @@ class ProfileStatus(StrEnum):
 
 class PerfClass(StrEnum):
     HOT = "hot"
+    HOT_PATH = "hot_path"
     SETUP = "setup"
     CONTROL = "control"
     NOT_PERF_SENSITIVE = "not_perf_sensitive"

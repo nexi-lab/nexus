@@ -58,8 +58,9 @@ def main() -> int:
         if not guarded_dir.exists():
             continue
         for py_file in guarded_dir.rglob("*.py"):
-            # Skip test files inside bricks/
-            if "/tests/" in str(py_file):
+            # Skip test files inside bricks/ — use as_posix() so the
+            # "/tests/" match works on Windows (native paths use "\").
+            if "/tests/" in py_file.as_posix():
                 continue
             errors.extend(_check_file(py_file))
     if errors:

@@ -241,6 +241,7 @@ clients.
 |------------------------------------------|----------------------------------------------------|
 | ReBAC path-level deny (`enforce=True`)   | `tests/unit/bricks/rebac/` — needs `permission_hook` wired through the rebac brick |
 | Multi-zone / cross-zone isolation        | `tests/unit/server/test_zone_*` + federation suite — zones are a federation concern (Raft + ZoneManager), not part of the FS contract |
+| Typed gRPC `WriteRequest.content_id` (If-Match) | `rust/transport/src/grpc.rs` — the field is declared in the proto but the Rust ``VfsServiceImpl::write`` handler currently ignores it. A stale ``content_id`` over `nexusd-cluster` still overwrites; HTTP OCC is fully covered above. Followup tracked under the `rust/transport` issue queue. |
 
 **Benchmark guidance** (dev-laptop medians on Apple Silicon, in-process
 kernel; from `tests/benchmarks/bench_read_write_overhead.py`,

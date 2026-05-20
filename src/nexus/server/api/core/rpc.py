@@ -133,70 +133,19 @@ async def rpc_endpoint(
             context = context_for_target_zone(context, target_zone)
             state = request.app.state
 
-            # OCC header → param translation for write methods. RFC 9110
-            # If-Match / If-None-Match apply to the deprecated-but-
-            # canonical ``POST /api/nfs/{method}`` write surface too —
-            # without this a client sending ``If-Match: "stale"`` (or
-            # multi-tag / weak / concrete-If-None-Match forms) would
-            # silently perform a lost-update overwrite. Body params win;
-            # headers fill in when the body omits them. Matches the
-            # semantics in async_files._parse_etag_list.
+            # OCC header → param translation for write methods. Shared
+            # parser in ``nexus.lib.http_etag`` is the single source of
+            # truth for this route AND ``/api/v2/files/write``. Body
+            # params win; headers fill in when missing.
             if method in ("write", "sys_write"):
+                from nexus.lib.http_etag import parse_write_preconditions
 
-                def _parse_etag_list_rpc(raw: str | None, *, strong_only: bool) -> list[str]:
-                    if not raw:
-                        return []
-                    tags: list[str] = []
-                    for part in raw.split(","):
-                        p = part.strip()
-                        if not p:
-                            continue
-                        is_weak = p.startswith("W/")
-                        if is_weak:
-                            p = p[2:].strip()
-                        p = p.strip('"')
-                        if not p:
-                            continue
-                        if is_weak and strong_only:
-                            continue  # weak validators forbidden on If-Match
-                        tags.append(p)
-                    return tags
-
-                _hdr_if_match = request.headers.get("If-Match")
-                _hdr_if_match_star = _hdr_if_match is not None and _hdr_if_match.strip() == "*"
-                _if_match_list = (
-                    []
-                    if _hdr_if_match_star
-                    else _parse_etag_list_rpc(_hdr_if_match, strong_only=True)
+                _hdr_preconds = parse_write_preconditions(
+                    request.headers.get("If-Match"),
+                    request.headers.get("If-None-Match"),
                 )
-                # Weak-only If-Match: client meant a precondition the
-                # server cannot honor (strong comparison only). Reject
-                # by injecting an impossible match so occ_write fails
-                # instead of falling through to plain write.
-                _has_weak_only_if_match = (
-                    _hdr_if_match is not None and not _hdr_if_match_star and not _if_match_list
-                )
-
-                _hdr_if_none_match = request.headers.get("If-None-Match")
-                _hdr_if_none_match_star = (
-                    _hdr_if_none_match is not None and _hdr_if_none_match.strip() == "*"
-                )
-                _if_none_match_list = (
-                    []
-                    if _hdr_if_none_match_star
-                    else _parse_etag_list_rpc(_hdr_if_none_match, strong_only=False)
-                )
-
-                if _hdr_if_match_star and "if_match_star" not in raw_params:
-                    raw_params["if_match_star"] = True
-                if _if_match_list and "if_match_any" not in raw_params:
-                    raw_params["if_match_any"] = _if_match_list
-                if _has_weak_only_if_match and "if_match_any" not in raw_params:
-                    raw_params["if_match_any"] = ["__nx_weak_only_if_match__"]
-                if _hdr_if_none_match_star and "if_none_match" not in raw_params:
-                    raw_params["if_none_match"] = True
-                if _if_none_match_list and "if_none_match_any" not in raw_params:
-                    raw_params["if_none_match_any"] = _if_none_match_list
+                for _k, _v in _hdr_preconds.items():
+                    raw_params.setdefault(_k, _v)
 
             # #4005 round-5: NO early 304 in the kernel branch.
             # ``state.nexus_fs.get_content_id`` ignores OperationContext

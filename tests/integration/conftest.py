@@ -471,6 +471,49 @@ def _boot_full_stack(
         project_dir=project_dir,
     )
 
+    # Hermeticity check: the default `nexus up --no-build` path pulls
+    # ``ghcr.io/nexi-lab/nexus:<channel>`` — a published image that may
+    # lag the worktree by weeks. If the test changed server code,
+    # asserting against that image gives false confidence. Verify the
+    # running server's package version matches the worktree;
+    # mismatch → skip with a clear instruction to rebuild.
+    try:
+        import importlib.metadata as _ilm
+
+        from nexus import __version__ as _wt_version
+
+        _ver_resp = handle.http_get("/api/v2/features")
+        if _ver_resp.status_code == 200:
+            _feats = _ver_resp.json()
+            _server_version = (
+                _feats.get("version") or _feats.get("server_version") or _feats.get("nexus_version")
+            )
+            if (
+                _server_version
+                and _wt_version
+                and _server_version != _wt_version
+                and not os.environ.get("NEXUS_E2E_ALLOW_VERSION_DRIFT")
+            ):
+                _teardown_stack(nexus_bin, project_dir)
+                pytest.skip(
+                    f"E2E hermeticity gate: server image is "
+                    f"{_server_version!r} but worktree is {_wt_version!r}. "
+                    "Pulled image cannot exercise branch server code. "
+                    "Set NEXUS_E2E_BUILD=1 to build from the worktree, or "
+                    "NEXUS_E2E_ALLOW_VERSION_DRIFT=1 to accept the drift "
+                    "(release-image smoke test mode)."
+                )
+        # If /api/v2/features doesn't surface a version, fall through —
+        # we can't gate without a comparison point. The skip is opt-in
+        # strict, not blocking.
+        del _ilm
+    except Exception as _exc:  # noqa: BLE001
+        # Version gate is best-effort; don't fail the test if the probe
+        # itself trips.
+        import logging as _lg
+
+        _lg.getLogger(__name__).debug("version-gate probe failed: %s", _exc)
+
     try:
         yield handle
     finally:

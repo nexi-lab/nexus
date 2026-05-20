@@ -35,7 +35,19 @@ def inproc_nexus(tmp_path):
     (tmp_path / "data").mkdir(exist_ok=True)
     k = KernelClient()
     k.set_metastore_path(str(tmp_path / "metastore.redb"))
-    k.open()
+    try:
+        k.open()
+    except FileNotFoundError as exc:
+        # ``KernelClient.open`` spawns ``nexus-cluster``; CI matrices
+        # that don't install the Rust binary (Linux/macOS unit jobs)
+        # otherwise error every test setup with the same
+        # ``FileNotFoundError: 'nexus-cluster'``. Skip cleanly instead.
+        pytest.skip(
+            f"inproc_nexus requires the ``nexus-cluster`` binary on PATH "
+            f"(KernelClient spawns it). Build it with "
+            f"``cargo build -p nexus-profiles-cluster`` and symlink "
+            f"``nexusd-cluster`` -> ``nexus-cluster``. ({exc})"
+        )
     nx = create_nexus_fs(
         backend=PathLocalBackend(root_path=str(tmp_path / "data")),
         metadata_store=k,

@@ -193,7 +193,7 @@ def cat(
                 with timing.phase("server"):
                     if offset is not None:
                         if offset < 0 or (length is not None and length < 0):
-                            render_error(ValueError("--offset/--length must be non-negative"))
+                            render_error(error=ValueError("--offset/--length must be non-negative"))
                             sys.exit(2)
                         end = offset + length if length is not None else nx.stat(path)["size"]
                         if stream_mode:
@@ -486,7 +486,7 @@ def stat_cmd(
                 human_formatter=lambda d: console.print(d),
             )
         except Exception as e:  # noqa: BLE001
-            render_error(e)
+            render_error(error=e)
             sys.exit(1)
 
     asyncio.run(_impl())
@@ -527,7 +527,7 @@ def metadata_cmd(
                 human_formatter=lambda d: console.print(d),
             )
         except Exception as e:  # noqa: BLE001
-            render_error(e)
+            render_error(error=e)
             sys.exit(1)
 
     asyncio.run(_impl())
@@ -577,7 +577,7 @@ def exists_cmd(
         except SystemExit:
             raise
         except Exception as e:  # noqa: BLE001
-            render_error(e)
+            render_error(error=e)
             sys.exit(1)
 
     asyncio.run(_impl())
@@ -642,7 +642,7 @@ def read_bulk_cmd(
                 human_formatter=lambda d: console.print(d),
             )
         except Exception as e:  # noqa: BLE001
-            render_error(e)
+            render_error(error=e)
             sys.exit(1)
 
     asyncio.run(_impl())
@@ -671,7 +671,7 @@ def rename_batch_cmd(
     renames: list[tuple[str, str]] = []
     for p in pairs:
         if ":" not in p:
-            render_error(ValueError(f"Expected SRC:DST, got {p!r}"))
+            render_error(error=ValueError(f"Expected SRC:DST, got {p!r}"))
             sys.exit(2)
         src, dst = p.split(":", 1)
         renames.append((src, dst))
@@ -689,7 +689,7 @@ def rename_batch_cmd(
                 human_formatter=lambda d: console.print(d),
             )
         except Exception as e:  # noqa: BLE001
-            render_error(e)
+            render_error(error=e)
             sys.exit(1)
 
     asyncio.run(_impl())
@@ -732,7 +732,7 @@ def rm_batch_cmd(
                 human_formatter=lambda d: console.print(d),
             )
         except Exception as e:  # noqa: BLE001
-            render_error(e)
+            render_error(error=e)
             sys.exit(1)
 
     asyncio.run(_impl())
@@ -821,7 +821,7 @@ def write(
                 # path the advertised contract forbids).
                 if (if_match or if_none_match) and not force:
                     render_error(
-                        ValueError(
+                        error=ValueError(
                             "--stream is incompatible with --if-match / "
                             "--if-none-match (OCC requires the full payload "
                             "in one compare-and-write critical section). "

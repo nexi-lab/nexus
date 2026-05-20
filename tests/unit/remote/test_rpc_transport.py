@@ -322,6 +322,39 @@ class TestRPCTransportTypedMethods:
 
         assert results == [ok, bad]
 
+    def test_batch_write_success(self, transport) -> None:
+        """batch_write issues one BatchWrite RPC and returns success items."""
+        item_a = MagicMock(is_error=False, content_id="cid-a", size=5, gen=1, version=2)
+        item_b = MagicMock(is_error=False, content_id="cid-b", size=6, gen=1, version=1)
+        mock_response = MagicMock()
+        mock_response.results = [item_a, item_b]
+        transport._mock_stub.BatchWrite.return_value = mock_response
+
+        results = transport.batch_write([("/a.txt", b"alpha"), ("/b.txt", b"bravo!")])
+
+        assert results == [item_a, item_b]
+        transport._mock_stub.BatchWrite.assert_called_once()
+        request = transport._mock_stub.BatchWrite.call_args[0][0]
+        assert request.auth_token == "test-token"
+        assert len(request.items) == 2
+        assert request.items[0].path == "/a.txt"
+        assert request.items[0].content == b"alpha"
+        assert request.items[1].content == b"bravo!"
+
+    def test_batch_write_per_item_error_raises(self, transport) -> None:
+        """batch_write raises the first per-item failure (all-or-nothing)."""
+        ok = MagicMock(is_error=False, content_id="c", size=1, gen=0, version=1)
+        bad = MagicMock(
+            is_error=True,
+            error_payload=encode_rpc_message({"code": -32007, "message": "nope"}),
+        )
+        mock_response = MagicMock()
+        mock_response.results = [ok, bad]
+        transport._mock_stub.BatchWrite.return_value = mock_response
+
+        with pytest.raises(NexusFileNotFoundError):
+            transport.batch_write([("/ok", b"x"), ("/bad", b"y")])
+
     def test_ping_success(self, transport) -> None:
         """ping returns version/zone_id/uptime dict."""
         mock_response = MagicMock()

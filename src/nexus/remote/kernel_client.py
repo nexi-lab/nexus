@@ -832,18 +832,28 @@ class KernelClient:
         pass
 
     def write_batch(self, files: list[tuple[str, bytes]], context: Any = None) -> list[Any]:
-        """Batch write multiple files."""
-        import base64
+        """Batch write via the typed BatchWrite RPC — one round-trip.
 
-        encoded_files = []
-        for path, data in files:
-            encoded_files.append(
-                [path, {"__type__": "bytes", "data": base64.b64encode(data).decode()}]
+        Replaces the former generic ``write_batch`` Call, which
+        base64-encoded every file's bytes into a JSON blob inside the
+        protobuf envelope (double encoding). Returns one
+        ``_BatchWriteItemResult`` per file in input order; a per-item
+        failure raises (all-or-nothing, as before).
+        """
+        assert self._transport is not None
+        if not files:
+            return []
+        return [
+            _BatchWriteItemResult(
+                {
+                    "content_id": item.content_id or None,
+                    "size": item.size,
+                    "gen": item.gen,
+                    "version": item.version,
+                }
             )
-        result = self._call("write_batch", {"files": encoded_files})
-        if isinstance(result, list):
-            return [_BatchWriteItemResult(r) if isinstance(r, dict) else r for r in result]
-        return []
+            for item in self._transport.batch_write(files)
+        ]
 
     @property
     def agent_registry(self) -> Any:

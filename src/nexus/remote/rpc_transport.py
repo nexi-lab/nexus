@@ -422,6 +422,41 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
+    def batch_write(
+        self,
+        files: list[tuple[str, bytes]],
+        read_timeout: float | None = None,
+    ) -> list[Any]:
+        """Vectored batch write via the typed BatchWrite RPC — one round-trip.
+
+        Native bytes — no base64/JSON tax. The kernel attempts every item
+        (create-or-overwrite, per-item isolated); this raises the first
+        per-item failure, preserving the all-or-nothing contract of the
+        former generic ``write_batch`` Call. Returns the per-item success
+        responses in input order.
+        """
+        request = vfs_pb2.BatchWriteRequest(
+            auth_token=self._auth_token,
+            items=[
+                vfs_pb2.BatchWriteItemRequest(path=path, content=content) for path, content in files
+            ],
+        )
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.BatchWrite(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "BatchWrite")
+        for item in response.results:
+            if item.is_error:
+                self._handle_typed_error(item.error_payload)
+        return list(response.results)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._auth_token)

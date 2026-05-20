@@ -5,7 +5,7 @@ import warnings
 
 from nexus.grpc.vfs import vfs_pb2 as nexus_dot_grpc_dot_vfs_dot_vfs__pb2
 
-GRPC_GENERATED_VERSION = '1.78.0'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -64,6 +64,11 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadResponse.FromString,
                 _registered_method=True)
+        self.BatchWrite = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/BatchWrite',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteResponse.FromString,
+                _registered_method=True)
 
 
 class NexusVFSServiceServicer(object):
@@ -111,6 +116,14 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def BatchWrite(self, request, context):
+        """Vectored batch write — native bytes (no base64 tax) + per-item
+        error isolation. Replaces the generic `write_batch` Call.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NexusVFSServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -143,6 +156,11 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.BatchRead,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadResponse.SerializeToString,
+            ),
+            'BatchWrite': grpc.unary_unary_rpc_method_handler(
+                    servicer.BatchWrite,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -307,6 +325,33 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/BatchRead',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchReadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def BatchWrite(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/BatchWrite',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.BatchWriteResponse.FromString,
             options,
             channel_credentials,
             insecure,

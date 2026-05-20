@@ -20,6 +20,24 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+# §2.5 syscall-path namespace for workspace snapshot manifests. The manifest
+# bytes are stored at manifest_storage_path() and read/written through
+# sys_read / sys_write — ObjectStore is a kernel-internal HAL pillar and not
+# directly reachable from the service tier (KERNEL-ARCHITECTURE.md §2.5).
+# This is the SSOT for the path convention: WorkspaceManager (write/read) and
+# CASManifestReader (context_manifest brick, read) both derive paths here.
+WORKSPACE_HISTORY_PREFIX = "/__sys__/workspace-history"
+
+
+def workspace_id_from_path(workspace_path: str) -> str:
+    """Sanitize a workspace path into a single path segment."""
+    return workspace_path.strip("/").replace("/", "__") or "root"
+
+
+def manifest_storage_path(workspace_path: str, snapshot_id: str) -> str:
+    """Canonical syscall path for a workspace snapshot manifest blob."""
+    return f"{WORKSPACE_HISTORY_PREFIX}/{workspace_id_from_path(workspace_path)}/{snapshot_id}.json"
+
 
 @dataclass(slots=True)
 class ManifestEntry:

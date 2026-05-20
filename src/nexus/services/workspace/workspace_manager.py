@@ -13,7 +13,7 @@ from sqlalchemy import desc, select
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
-from nexus.contracts.workspace_manifest import WorkspaceManifest
+from nexus.contracts.workspace_manifest import WorkspaceManifest, manifest_storage_path
 from nexus.storage.models import WorkspaceSnapshotModel
 
 from .workspace_permissions import check_workspace_permission
@@ -24,20 +24,6 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
-
-# §2.5 syscall surface for workspace manifest storage. Path namespace
-# replaces the previous backend.write_content / read_content hash-addressed
-# access (a kernel-internal HAL pillar — see KERNEL-ARCHITECTURE.md §2.5).
-_MANIFEST_PATH_PREFIX = "/__sys__/workspace-history"
-
-
-def _workspace_id_from_path(workspace_path: str) -> str:
-    """Sanitize a workspace path into a single-segment identifier."""
-    return workspace_path.strip("/").replace("/", "__") or "root"
-
-
-def _manifest_path(workspace_path: str, snapshot_id: str) -> str:
-    return f"{_MANIFEST_PATH_PREFIX}/{_workspace_id_from_path(workspace_path)}/{snapshot_id}.json"
 
 
 class WorkspaceManager:
@@ -87,13 +73,12 @@ class WorkspaceManager:
     def _write_manifest(self, workspace_path: str, snapshot_id: str, manifest_bytes: bytes) -> str:
         """Write a manifest blob to the syscall path namespace.
 
-        Returns the blake3-hex manifest hash kept in the SQL row for
-        integrity checking (and for the dual-read fallback during the
-        deprecation window).
+        Returns the sha256-hex manifest hash kept in the SQL row as an
+        integrity check on the bytes stored at the canonical path.
         """
         sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         self._nexus_fs.sys_write(
-            _manifest_path(workspace_path, snapshot_id),
+            manifest_storage_path(workspace_path, snapshot_id),
             manifest_bytes,
             context=sys_ctx,
         )
@@ -109,7 +94,7 @@ class WorkspaceManager:
         (KERNEL-ARCHITECTURE.md §2.5).
         """
         sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
-        path = _manifest_path(snapshot.workspace_path, snapshot.snapshot_id)
+        path = manifest_storage_path(snapshot.workspace_path, snapshot.snapshot_id)
         return self._nexus_fs.sys_read(path, context=sys_ctx)
 
     def _check_workspace_permission(

@@ -1593,16 +1593,20 @@ def up(
         # at the compose layer too, not just the Nexus CLI layer.
         compose_args.append("--no-build")
 
-    # Pull logic:
-    # - --pull flag: always pull
-    # - Channel-following + not local build: pull to get latest mutable tag
-    # - Local build mode: skip pull (preserve local image)
-    if (
-        force_pull
-        or not build
+    # Pull logic (tri-state ``force_pull``: True=opt-in, False=opt-out,
+    # None=auto):
+    # - ``force_pull is True``  — caller explicitly asked to pull.
+    # - ``force_pull is None``  — auto-pull for channel-following remote
+    #                             images when not doing a local build.
+    # - ``force_pull is False`` — caller passed ``--no-pull``; never
+    #                             auto-pull (offline-friendly).
+    auto_pull = (
+        force_pull is None
+        and not build
         and effective_build_mode != "local"
         and _is_channel_following(config)
-    ):
+    )
+    if force_pull is True or auto_pull:
         compose_args.extend(["--pull", "always"])
 
     result = _run_compose(cf, profiles, *compose_args, extra_env=compose_env)

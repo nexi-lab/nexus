@@ -745,37 +745,51 @@ def create_async_files_router(
                             tags.append(p)
                     return tags
 
-                hdr_if_match_list = _parse_etag_list(http_request.headers.get("If-Match"))
+                hdr_if_match_raw = http_request.headers.get("If-Match")
+                hdr_if_match_star = hdr_if_match_raw is not None and hdr_if_match_raw.strip() == "*"
+                hdr_if_match_list = [] if hdr_if_match_star else _parse_etag_list(hdr_if_match_raw)
                 hdr_if_none_match_raw = http_request.headers.get("If-None-Match")
-                hdr_if_none_match_list = _parse_etag_list(hdr_if_none_match_raw)
                 hdr_none_match_star = (
                     hdr_if_none_match_raw is not None and hdr_if_none_match_raw.strip() == "*"
                 )
+                hdr_if_none_match_list = (
+                    [] if hdr_none_match_star else _parse_etag_list(hdr_if_none_match_raw)
+                )
 
-                # Body wins; otherwise first concrete header tag.
-                if_match = request.if_match or (hdr_if_match_list[0] if hdr_if_match_list else None)
+                # Body if_match collapses into the list form.
+                if_match_any: list[str] = list(hdr_if_match_list)
+                if request.if_match is not None:
+                    if_match_any.append(request.if_match)
+
                 if_none_match_create_only = request.if_none_match or hdr_none_match_star
 
-                # If-None-Match with concrete tags: pre-stat and reject
-                # before overwriting. occ_write only models the
-                # create-only form, not the entity-tag-list form.
-                if hdr_if_none_match_list and not hdr_none_match_star:
+                # ``If-Match: *`` per RFC 9110: proceed iff the resource
+                # exists. Stat first (still under OCC lock once we route
+                # through occ_write below); on existence, add the
+                # current content_id to the match list so the atomic
+                # compare-and-write keeps the precondition tight.
+                if hdr_if_match_star:
                     _cur = fs.sys_stat(request.path, context=context)
-                    _cur_id = (
-                        (_cur.get("content_id") if isinstance(_cur, dict) else None)
-                        if _cur
-                        else None
-                    )
-                    if _cur_id and _cur_id in hdr_if_none_match_list:
+                    if not _cur:
                         raise HTTPException(
                             status_code=412,
                             detail=(
-                                "If-None-Match precondition failed: current "
-                                f"content_id {_cur_id!r} matches a listed tag"
+                                f"If-Match: * precondition failed: {request.path} does not exist"
                             ),
                         )
+                    _cur_id = (
+                        _cur.get("content_id")
+                        if isinstance(_cur, dict)
+                        else getattr(_cur, "content_id", None)
+                    )
+                    if _cur_id:
+                        if_match_any.append(_cur_id)
 
-                if if_match is not None or if_none_match_create_only:
+                has_precondition = bool(
+                    if_match_any or hdr_if_none_match_list or if_none_match_create_only
+                )
+
+                if has_precondition:
                     from nexus.contracts.exceptions import ConflictError
                     from nexus.lib.occ import occ_write
 
@@ -785,11 +799,16 @@ def create_async_files_router(
                             request.path,
                             content,
                             context=context,
-                            if_match=if_match,
+                            if_match_any=if_match_any or None,
                             if_none_match=if_none_match_create_only,
+                            if_none_match_any=hdr_if_none_match_list or None,
                         )
                     except ConflictError as exc:
-                        raise HTTPException(status_code=409, detail=str(exc)) from exc
+                        # RFC 9110: failed If-None-Match precondition →
+                        # 412 Precondition Failed. Generic If-Match
+                        # conflict → 409 (existing contract).
+                        status_code = 412 if hdr_if_none_match_list else 409
+                        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
                     except FileExistsError as exc:
                         raise HTTPException(status_code=409, detail=str(exc)) from exc
                 else:

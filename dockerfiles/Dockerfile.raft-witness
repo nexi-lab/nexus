@@ -61,6 +61,7 @@ RUN for d in services backends; do \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \
     done && \
+    printf '\n[features]\ndefault = []\ndriver-path-local = []\n' >> rust/backends/Cargo.toml && \
     mkdir -p rust/profiles/cluster/src && \
     printf '[package]\nname = "nexus-cluster"\nversion = "0.1.0"\nedition = "2021"\n\n[[bin]]\nname = "nexusd-cluster"\npath = "src/main.rs"\n' > rust/profiles/cluster/Cargo.toml && \
     echo 'fn main() {}' > rust/profiles/cluster/src/main.rs

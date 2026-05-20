@@ -32,11 +32,10 @@ jobs:
           - os: ubuntu-latest
             artifact_name: nexusd-cluster-linux-x86_64
             binary: nexusd-cluster
-            # Real measured size on this PR: 10.65 MiB after kernel +
-            # slim backends were linked in (was 7.55 MiB before the
-            # data-plane work).  TODO: cut back via release-profile LTO
-            # + panic=abort + strip; sudowork target is 5 MiB.
-            max_size_bytes: 12582912  # 12 MiB
+            # Real measured size after kernel + slim backends + VFS Call
+            # file API surface: ~12.02 MiB. Keep a tight 128 KiB headroom
+            # rather than masking large regressions.
+            max_size_bytes: 12713984  # 12.125 MiB
           - os: macos-14
             artifact_name: nexusd-cluster-macos-arm64
             binary: nexusd-cluster

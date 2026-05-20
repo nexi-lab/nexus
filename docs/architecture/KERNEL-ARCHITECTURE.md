@@ -356,7 +356,7 @@ grants bypass INTERCEPT entirely.
 | `sys_unlink` | Write | DeleteHookCtx | DeleteHookCtx | FileDelete / DirDelete |
 | `sys_rename` | Write (both) | RenameHookCtx | RenameHookCtx | FileRename |
 | `sys_copy` | Read + Write | — | — | FileCopy |
-| `sys_mkdir` | Write | — | — | DirCreate |
+| `mkdir` (Tier 2) | Write | — | — | DirCreate |
 | `sys_setattr` | Write | — | — | MetadataChange |
 | `sys_stat` | — | — | — | — |
 
@@ -885,14 +885,14 @@ syscall implementations across per-family submodules:
 | File                | Owns                                                                           |
 |---------------------|--------------------------------------------------------------------------------|
 | `kernel/mod.rs`     | `Kernel` struct, constructor, wiring, MetaStore + Router proxies, syscall-shaped helpers (`lookup_content_id`, `with_metastore_route`, `commit_metadata`, `commit_delete`). |
-| `kernel/io.rs`      | `sys_read` / `sys_write` / `sys_stat` / `sys_unlink` / `sys_rename` / `sys_copy` / `sys_mkdir`. |
+| `kernel/io.rs`      | Tier 1 `sys_read` / `sys_write` / `sys_stat` / `sys_unlink` / `sys_rename` / `sys_copy`, plus the optimized inherent bodies for the Tier 2 `access` / `mkdir` / `rmdir` overrides. |
 | `kernel/ipc.rs`     | Pipe + stream registries (`create_pipe`, `pipe_write_nowait`, `stream_read_at`, …). |
 | `kernel/locks.rs`   | Advisory-lock syscalls (`sys_lock`, `sys_unlock`, `metastore_list_locks`, `install_federation_locks`). |
 | `kernel/dispatch.rs`| Native INTERCEPT hook dispatch (`dispatch_native_pre`, `dispatch_native_post`, `register_native_hook`). |
 | `kernel/observability.rs` | Observer registry, file-watch registry, `sys_watch`, `dispatch_mutation` shared helper. |
 | `kernel/mount.rs`   | Mount-table primitives (`add_mount`, `remove_mount`, `install_mount_metastore`, `route`, …). |
 | `kernel/federation.rs` | `DistributedCoordinator` slot accessors, `/__sys__/zones/` procfs synthesisers, blob-fetcher slot plumbing. |
-| `kernel/convenience.rs` | Tier 2 `KernelConvenience` trait composing Tier 1 syscalls — `access`, `stat_batch`, `exists_batch`, `get_content_id`, `is_directory`, `get_top_level_mounts`, `set_xattr` / `get_xattr` / `get_xattr_bulk`, Tier 2 `write` (create-or-overwrite) plus Tier 2 single-file `read` / `unlink` defaults. |
+| `kernel/convenience.rs` | Tier 2 `KernelConvenience` trait composing Tier 1 syscalls — `access`, `mkdir`, `rmdir`, `stat_batch`, `exists_batch`, `get_content_id`, `is_directory`, `get_top_level_mounts`, `set_xattr` / `get_xattr` / `get_xattr_bulk`, Tier 2 `write` (create-or-overwrite) plus Tier 2 single-file `read` / `unlink` defaults. |
 | `kernel/write_buffer.rs` | Kernel-owned write-back buffer for DT_REG writes (§2.2 Write Coalescing Buffer) — strict pass-through and latency-coalesced policies, flush triggers (idle TTL, 4 MiB threshold, explicit barriers). |
 
 Every submodule writes its methods as `impl Kernel { … }` blocks —

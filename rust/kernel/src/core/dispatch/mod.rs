@@ -388,67 +388,18 @@ pub struct RenameHookCtx {
     pub is_directory: bool,
 }
 
-/// MkdirHookContext — pre/post mkdir intercept.
-#[derive(Debug, Clone)]
-pub struct MkdirHookCtx {
-    pub path: String,
-    pub identity: HookIdentity,
-}
-
-/// RmdirHookContext — pre/post rmdir intercept.
-#[derive(Debug, Clone)]
-pub struct RmdirHookCtx {
-    pub path: String,
-    pub identity: HookIdentity,
-    pub recursive: bool,
-}
-
-/// CopyHookContext — pre/post copy intercept.
-#[derive(Debug, Clone)]
-pub struct CopyHookCtx {
-    pub src_path: String,
-    pub dst_path: String,
-    pub identity: HookIdentity,
-}
-
-/// StatHookContext — pre/post stat intercept.
-#[derive(Debug, Clone)]
-pub struct StatHookCtx {
-    pub path: String,
-    pub identity: HookIdentity,
-    /// "TRAVERSE" or "READ"
-    pub permission: String,
-}
-
-/// AccessHookContext — pre/post access intercept.
-#[derive(Debug, Clone)]
-pub struct AccessHookCtx {
-    pub path: String,
-    pub identity: HookIdentity,
-    /// "TRAVERSE" or "READ"
-    pub permission: String,
-}
-
-/// WriteBatchHookContext — pre/post write_batch intercept.
-#[derive(Debug, Clone)]
-pub struct WriteBatchHookCtx {
-    pub paths: Vec<String>,
-    pub identity: HookIdentity,
-}
-
 /// Enum dispatching all hook context types for the InterceptHook trait.
+///
+/// Only the syscalls that actually construct a `HookContext` carry a
+/// variant — `sys_read` / `sys_write` / `sys_unlink` / `sys_rename`.
+/// mkdir / rmdir / copy / stat / access / write_batch never dispatched
+/// native hooks, so their context variants were removed (YAGNI).
 #[derive(Debug, Clone)]
 pub enum HookContext {
     Read(ReadHookCtx),
     Write(WriteHookCtx),
     Delete(DeleteHookCtx),
     Rename(RenameHookCtx),
-    Mkdir(MkdirHookCtx),
-    Rmdir(RmdirHookCtx),
-    Copy(CopyHookCtx),
-    Stat(StatHookCtx),
-    Access(AccessHookCtx),
-    WriteBatch(WriteBatchHookCtx),
 }
 
 impl HookContext {
@@ -459,12 +410,6 @@ impl HookContext {
             Self::Write(c) => &c.path,
             Self::Delete(c) => &c.path,
             Self::Rename(c) => &c.old_path,
-            Self::Mkdir(c) => &c.path,
-            Self::Rmdir(c) => &c.path,
-            Self::Copy(c) => &c.src_path,
-            Self::Stat(c) => &c.path,
-            Self::Access(c) => &c.path,
-            Self::WriteBatch(c) => c.paths.first().map(|s| s.as_str()).unwrap_or(""),
         }
     }
 
@@ -475,12 +420,6 @@ impl HookContext {
             Self::Write(c) => &c.identity,
             Self::Delete(c) => &c.identity,
             Self::Rename(c) => &c.identity,
-            Self::Mkdir(c) => &c.identity,
-            Self::Rmdir(c) => &c.identity,
-            Self::Copy(c) => &c.identity,
-            Self::Stat(c) => &c.identity,
-            Self::Access(c) => &c.identity,
-            Self::WriteBatch(c) => &c.identity,
         }
     }
 }
@@ -490,9 +429,9 @@ impl HookContext {
 /// Outcome of a pre-intercept call. `Pass` lets the operation proceed
 /// unchanged; `Replace(bytes)` substitutes the bytes for the original
 /// write content before the backend sees it. Replacement is only
-/// meaningful for write contexts — read / delete / rename / mkdir /
-/// rmdir / copy / stat / access ignore the replacement bytes (the
-/// caller dispatching those ops drops the result).
+/// meaningful for write contexts — read / delete / rename ignore the
+/// replacement bytes (the caller dispatching those ops drops the
+/// result).
 #[derive(Debug, Clone)]
 pub enum HookOutcome {
     Pass,

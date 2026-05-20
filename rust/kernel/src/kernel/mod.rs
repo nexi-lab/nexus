@@ -674,14 +674,8 @@ pub struct Kernel {
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
-    stat_hook_count: AtomicU64,
     delete_hook_count: AtomicU64,
     rename_hook_count: AtomicU64,
-    mkdir_hook_count: AtomicU64,
-    rmdir_hook_count: AtomicU64,
-    copy_hook_count: AtomicU64,
-    access_hook_count: AtomicU64,
-    write_batch_hook_count: AtomicU64,
     // Observer registry (owned by kernel — bitmask matching lock-free).
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
@@ -854,14 +848,8 @@ impl Kernel {
             read_batch_max_aggregate_bytes: AtomicUsize::new(usize::MAX),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
-            stat_hook_count: AtomicU64::new(0),
             delete_hook_count: AtomicU64::new(0),
             rename_hook_count: AtomicU64::new(0),
-            mkdir_hook_count: AtomicU64::new(0),
-            rmdir_hook_count: AtomicU64::new(0),
-            copy_hook_count: AtomicU64::new(0),
-            access_hook_count: AtomicU64::new(0),
-            write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatchRegistry::new()),
@@ -2298,14 +2286,8 @@ impl Kernel {
         match op {
             "read" => self.read_hook_count.store(count, Ordering::Relaxed),
             "write" => self.write_hook_count.store(count, Ordering::Relaxed),
-            "stat" => self.stat_hook_count.store(count, Ordering::Relaxed),
             "delete" => self.delete_hook_count.store(count, Ordering::Relaxed),
             "rename" => self.rename_hook_count.store(count, Ordering::Relaxed),
-            "mkdir" => self.mkdir_hook_count.store(count, Ordering::Relaxed),
-            "rmdir" => self.rmdir_hook_count.store(count, Ordering::Relaxed),
-            "copy" => self.copy_hook_count.store(count, Ordering::Relaxed),
-            "access" => self.access_hook_count.store(count, Ordering::Relaxed),
-            "write_batch" => self.write_batch_hook_count.store(count, Ordering::Relaxed),
             _ => {}
         }
     }
@@ -2315,14 +2297,8 @@ impl Kernel {
         match op {
             "read" => self.read_hook_count.load(Ordering::Relaxed) > 0,
             "write" => self.write_hook_count.load(Ordering::Relaxed) > 0,
-            "stat" => self.stat_hook_count.load(Ordering::Relaxed) > 0,
             "delete" => self.delete_hook_count.load(Ordering::Relaxed) > 0,
             "rename" => self.rename_hook_count.load(Ordering::Relaxed) > 0,
-            "mkdir" => self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
-            "rmdir" => self.rmdir_hook_count.load(Ordering::Relaxed) > 0,
-            "copy" => self.copy_hook_count.load(Ordering::Relaxed) > 0,
-            "access" => self.access_hook_count.load(Ordering::Relaxed) > 0,
-            "write_batch" => self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
             _ => false,
         }
     }

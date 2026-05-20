@@ -1976,7 +1976,7 @@ impl Kernel {
 
         Ok(SysCopyResult {
             hit: true,
-            post_hook_needed: self.copy_hook_count.load(Ordering::Relaxed) > 0,
+            post_hook_needed: false,
             dst_path: dst_path.to_string(),
             content_id: Some(content_id),
             size,
@@ -2074,7 +2074,7 @@ impl Kernel {
             }
             return Ok(SysMkdirResult {
                 hit: true,
-                post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+                post_hook_needed: false,
             });
         }
 
@@ -2104,7 +2104,7 @@ impl Kernel {
                 }
                 return Ok(SysMkdirResult {
                     hit: true,
-                    post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+                    post_hook_needed: false,
                 });
             }
         }
@@ -2151,7 +2151,7 @@ impl Kernel {
 
         Ok(SysMkdirResult {
             hit: true,
-            post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+            post_hook_needed: false,
         })
     }
 
@@ -2327,7 +2327,7 @@ impl Kernel {
 
         Ok(SysRmdirResult {
             hit: true,
-            post_hook_needed: self.rmdir_hook_count.load(Ordering::Relaxed) > 0,
+            post_hook_needed: false,
             children_deleted,
         })
     }
@@ -2519,8 +2519,7 @@ impl Kernel {
                     results.push(Ok(SysWriteResult {
                         hit: true,
                         content_id: Some(wr.content_id),
-                        post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0
-                            || self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
+                        post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
                         version: new_version,
                         gen: new_gen,
                         size: wr.size,

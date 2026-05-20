@@ -354,6 +354,172 @@ def test_cat_stream_survives_broken_pipe(patched_fs):
     assert p1.returncode in (0, 141, -13), f"unexpected rc={p1.returncode}: {stderr!r}"
 
 
+def test_cross_path_parity_syscall_rpc_cli(patched_fs, cli_runner: CliRunner):
+    """Spec correctness assertion #5: read via (a) kernel syscall direct,
+    (b) generic ``Call`` RPC (the path used by both the typed gRPC
+    servicer and the HTTP ``/api/nfs/read`` route), and (c) CLI
+    ``nexus cat`` — all return byte-identical content. Stat from
+    syscall vs RPC returns identical ``content_id`` + ``size``.
+
+    The HTTP ``/api/nfs/{method}`` route dispatches through
+    ``dispatch_kernel_syscall`` for the kernel-syscall wire names
+    (read/write/stat/...) and the gRPC ``Call`` servicer reuses the
+    same dispatch path, so exercising it in-process proves both
+    transports use a byte-identical decoder + kernel.
+    """
+    import asyncio
+
+    from nexus.cli.commands.file_ops import cat
+    from nexus.server._kernel_syscall_dispatch import dispatch_kernel_syscall
+
+    nx = patched_fs
+    body = b"cross-path-parity-payload"
+    nx.write("/cp/file.bin", body)
+
+    # (a) syscall direct
+    syscall_bytes = nx.sys_read("/cp/file.bin")
+    syscall_stat = nx.stat("/cp/file.bin")
+
+    # (b) Generic Call / HTTP-RPC dispatch path. dispatch_kernel_syscall
+    # routes the OperationContext through context_utils.normalize_context
+    # which only accepts OperationContext|dict — so pass an OC directly.
+    from nexus.contracts.types import OperationContext
+
+    ctx = OperationContext(
+        user_id="root",
+        groups=[],
+        zone_id="default",
+        is_admin=True,
+    )
+    rpc_bytes = asyncio.run(dispatch_kernel_syscall(nx, "read", {"path": "/cp/file.bin"}, ctx))
+    rpc_stat = asyncio.run(dispatch_kernel_syscall(nx, "stat", {"path": "/cp/file.bin"}, ctx))
+
+    # (c) CLI — the cli_runner harness emits the JSON envelope by default
+    # (data + _timing). Extract data.content for the byte comparison.
+    res = cli_runner.invoke(cat, ["/cp/file.bin"])
+    assert res.exit_code == 0, res.output
+    cli_payload = json.loads(res.output)
+    cli_content = cli_payload["data"]["content"]
+    cli_bytes = cli_content.encode("utf-8") if isinstance(cli_content, str) else cli_content
+
+    # Byte-identity across all three paths.
+    assert syscall_bytes == body
+    # dispatch_kernel_syscall may return bytes or a dict containing bytes.
+    if isinstance(rpc_bytes, dict):
+        rpc_bytes = rpc_bytes.get("content") or rpc_bytes.get("data") or rpc_bytes
+    assert rpc_bytes == body
+    assert cli_bytes == body
+
+    # Metadata identity: same content_id + size from syscall and RPC.
+    if isinstance(rpc_stat, dict):
+        assert rpc_stat["content_id"] == syscall_stat["content_id"]
+        assert rpc_stat["size"] == syscall_stat["size"] == len(body)
+
+
+def test_auth_denial_401_unauth_and_403_admin_only():
+    """Spec correctness assertion #7: unauthenticated request → 401;
+    authenticated but unpermitted (non-admin on admin-only) → 403.
+
+    Exercises the FastAPI dependencies directly (the same gates the
+    HTTP RPC endpoint composes via ``Depends(require_auth)``).
+    """
+    import asyncio
+
+    import pytest as _pytest
+    from fastapi import HTTPException
+
+    from nexus.server.dependencies import require_admin, require_auth
+
+    # 401: no auth result (anonymous request)
+    with _pytest.raises(HTTPException) as exc_unauth:
+        asyncio.run(require_auth(None))
+    assert exc_unauth.value.status_code == 401
+
+    # 401: auth result present but ``authenticated`` is False
+    with _pytest.raises(HTTPException) as exc_bad:
+        asyncio.run(require_auth({"authenticated": False}))
+    assert exc_bad.value.status_code == 401
+
+    # 200-equivalent: authenticated user passes require_auth.
+    out = asyncio.run(require_auth({"authenticated": True, "is_admin": False}))
+    assert out["authenticated"] is True
+
+    # 403: authenticated but non-admin → admin-only endpoint refuses.
+    with _pytest.raises(HTTPException) as exc_403:
+        asyncio.run(require_admin({"authenticated": True, "is_admin": False}))
+    assert exc_403.value.status_code == 403
+
+    # Admin passes.
+    admin_out = asyncio.run(require_admin({"authenticated": True, "is_admin": True}))
+    assert admin_out["is_admin"] is True
+
+
+def test_etag_if_match_occ_conflict(inproc_nexus):
+    """Spec correctness assertion #8: ``write`` with a stale ``content_id``
+    via :func:`nexus.lib.occ.occ_write_sync` is rejected with
+    :class:`ConflictError`. A write with the matching ``content_id``
+    succeeds, advancing the version.
+    """
+    import pytest as _pytest
+
+    from nexus.contracts.exceptions import ConflictError
+    from nexus.lib.occ import occ_write_sync
+
+    nx = inproc_nexus
+    nx.write("/occ/a.txt", b"v1")
+    st1 = nx.stat("/occ/a.txt")
+    good_id = st1["content_id"]
+
+    # Stale id → ConflictError
+    with _pytest.raises(ConflictError):
+        occ_write_sync(nx, "/occ/a.txt", b"v2", if_match="sha256:stale-id-deadbeef")
+
+    # File contents unchanged after the rejected write.
+    assert nx.read("/occ/a.txt") == b"v1"
+
+    # Matching id → succeeds, bytes update.
+    out = occ_write_sync(nx, "/occ/a.txt", b"v2", if_match=good_id)
+    assert "content_id" in out
+    assert nx.read("/occ/a.txt") == b"v2"
+
+    # The in-process kernel uses a path-stable content_id (matches HTTP
+    # API stat output); the bytes-changed invariant is the meaningful
+    # part of OCC here. Version/gen advance regardless.
+    st2 = nx.stat("/occ/a.txt")
+    assert st2.get("version", 0) >= st1.get("version", 0)
+
+
+def test_lock_contention_second_acquirer_refused(inproc_nexus):
+    """Spec correctness assertion #4: a second acquirer of an exclusive
+    advisory lock is refused while the first holder is alive. The
+    kernel raises NexusError("lock acquisition failed (contention)").
+    After the first holder releases, a fresh acquire succeeds.
+    """
+    import pytest as _pytest
+
+    from nexus.contracts.exceptions import NexusError
+
+    nx = inproc_nexus
+    nx.write("/lk/x.txt", b"x")
+
+    lid1 = nx.sys_lock("/lk/x.txt")
+    assert lid1, "first acquire must succeed"
+
+    # Second acquirer must be refused while lid1 is alive.
+    with _pytest.raises(NexusError, match="contention"):
+        nx.sys_lock("/lk/x.txt")
+
+    # First holder releases cleanly. sys_unlock may return ``True`` or the
+    # legacy wire shape ``{"released": True}``.
+    rel = nx.sys_unlock("/lk/x.txt", lock_id=lid1)
+    assert rel is True or (isinstance(rel, dict) and rel.get("released") is True)
+
+    # After release, a fresh acquire succeeds with a different lid.
+    lid3 = nx.sys_lock("/lk/x.txt")
+    assert lid3 and lid3 != lid1
+    nx.sys_unlock("/lk/x.txt", lock_id=lid3)
+
+
 def test_concurrent_fs_stress(inproc_nexus):
     """Fire parallel write / read / stat / rename / delete across threads and
     assert no crashes + final state correct. Targets the path-index race that

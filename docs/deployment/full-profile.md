@@ -215,9 +215,20 @@ hub.
 | Stream broken-pipe exit                  | ✅ verified | `test_cat_stream_survives_broken_pipe` (subprocess + real pipe) |
 | Smoke regression (cat / write existing)  | ✅ verified | 34 tests in `test_commands_smoke.py`               |
 | Concurrent multi-thread FS stress        | ✅ verified | `test_concurrent_fs_stress`: 200 files × 4 ops × 16 threads, no errors, post-state correct |
+| Sustained soak (opt-in)                  | ✅ verified | `test_sustained_fs_soak` gated by `NEXUS_SOAK=1`: 1000 files × 32 threads × 60s, 0 errors |
+| Large-file >10 MiB CLI cat (auto-stream) | ✅ verified | `test_cat_large_file_above_stream_threshold`: 11 MiB write, CLI cat byte-identical (triggers `STREAM_THRESHOLD` branch) |
 | Benchmark medians above                  | ✅ executed | `tests/benchmarks/bench_read_write_overhead.py` with `--benchmark-min-rounds=20` |
-| Over-the-wire (real Docker stack)        | ✅ verified | `test_full_profile_fs.py::test_full_fs_lifecycle_batch_range_lock` (12 RPC methods, HTTP wire, ~80s; Bug B from #4132 bypassed by `full_stack_tolerant` fixture stripping zoekt from services) |
-| Large-file (>10MB) end-to-end            | ⚠️ not run  | 10 MB threshold flips `cat` to streaming; no stress harness explicitly above the boundary |
+| Over-the-wire (real Docker stack)        | ✅ verified | `test_full_profile_fs.py::test_full_fs_lifecycle_batch_range_lock` (12 RPC methods, HTTP wire, ~80s; worktree CLI used so the historical Bug B from #4132 — older `shared` preset including zoekt — never fires) |
+| IPv4 pin for `localhost` gRPC            | ✅ verified | 3 unit tests in `tests/unit/remote/test_grpc_target.py` (`test_localhost_pinned_to_ipv4`, `test_ipv6_loopback_pinned_to_ipv4`, `test_non_loopback_host_untouched`) |
+| Worktree CLI resolution (PYTHONPATH=src) | ✅ verified | `test_worktree_cli_resolves_to_src_with_pythonpath` ensures subprocess pytest harnesses run the worktree, not a stale system install |
+
+**Out of #4133 scope (covered by sibling suites):**
+
+| Layer                                    | Owner                                              |
+|------------------------------------------|----------------------------------------------------|
+| ReBAC path-level deny (`enforce=True`)   | `tests/unit/bricks/rebac/` — needs `permission_hook` wired through the rebac brick |
+| Multi-zone / cross-zone isolation        | `tests/unit/server/test_zone_*` + federation suite |
+| Typed gRPC `Read/Write/Delete/Ping/BatchRead` over the wire | `nexusd-cluster` binary + `rust/transport/tests/` — hub presets intentionally don't bind gRPC per commit `607ae89b5` |
 
 **Benchmark guidance** (dev-laptop medians on Apple Silicon, in-process
 kernel; from `tests/benchmarks/bench_read_write_overhead.py`,

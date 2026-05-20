@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 
@@ -416,6 +417,71 @@ def test_cross_path_parity_syscall_rpc_cli(patched_fs, cli_runner: CliRunner):
         assert rpc_stat["size"] == syscall_stat["size"] == len(body)
 
 
+def test_cat_large_file_above_stream_threshold(patched_fs, cli_runner: CliRunner):
+    """`cat` flips to auto-streaming for files above the 10 MiB threshold
+    (see file_ops.py: ``STREAM_THRESHOLD = 10 * 1024 * 1024``). Write
+    11 MiB, read via `cat`, assert byte-identical.
+
+    Catches the regression where the >10 MiB branch silently drops or
+    truncates content because it takes a different code path from the
+    sub-10 MiB read.
+    """
+    from nexus.cli.commands.file_ops import cat as _cat
+
+    nx = patched_fs
+    body = b"L" * (11 * 1024 * 1024)  # 11 MiB — above 10 MiB threshold
+    nx.write("/big/huge.bin", body)
+
+    # Direct read via syscall — sanity check.
+    assert nx.read("/big/huge.bin") == body
+
+    # CLI cat — triggers the >10 MiB stream-auto branch.
+    res = cli_runner.invoke(_cat, ["/big/huge.bin"])
+    assert res.exit_code == 0, res.output[:500]
+    # The cli_runner emits the JSON envelope; extract data.content.
+    payload = json.loads(res.output)
+    content = payload["data"]["content"]
+    cli_bytes = content.encode("utf-8") if isinstance(content, str) else content
+    assert len(cli_bytes) == len(body)
+    assert cli_bytes == body
+
+
+def test_worktree_cli_resolves_to_src_with_pythonpath():
+    """E2E fixtures invoke ``python -m nexus.cli`` with ``PYTHONPATH=src``
+    so the worktree CLI runs, not the system-installed package. Verify
+    that resolution actually picks up the worktree (otherwise Bug B
+    creeps back if a stale install ships an older ``shared`` preset).
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_src = Path(__file__).resolve().parents[3] / "src"
+    assert (repo_src / "nexus" / "__init__.py").exists()
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo_src) + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+    )
+
+    # Use a one-shot Python that prints the resolved nexus.__file__ so
+    # we can assert it lives under the worktree, not site-packages.
+    proc = subprocess.run(
+        [sys.executable, "-c", "import nexus; print(nexus.__file__)"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    assert proc.returncode == 0, f"import nexus failed: {proc.stderr!r}"
+    resolved = Path(proc.stdout.strip()).resolve()
+    assert str(resolved).startswith(str(repo_src.resolve())), (
+        f"nexus loaded from {resolved}, expected under {repo_src.resolve()} — "
+        "PYTHONPATH=src not winning over site-packages"
+    )
+
+
 def test_auth_denial_401_unauth_and_403_admin_only():
     """Spec correctness assertion #7: unauthenticated request → 401;
     authenticated but unpermitted (non-admin on admin-only) → 403.
@@ -518,6 +584,69 @@ def test_lock_contention_second_acquirer_refused(inproc_nexus):
     lid3 = nx.sys_lock("/lk/x.txt")
     assert lid3 and lid3 != lid1
     nx.sys_unlock("/lk/x.txt", lock_id=lid3)
+
+
+def test_sustained_fs_soak(inproc_nexus):
+    """Opt-in sustained soak (gated by ``NEXUS_SOAK=1``): 1000 files,
+    32 threads, ≥60s of writes+reads+stats+renames. Surfaces leaks /
+    contention regressions that the 9-second stress doesn't see.
+    Skipped by default to keep CI fast.
+    """
+    import concurrent.futures as cf
+    import os
+    import random
+    import time
+
+    if os.environ.get("NEXUS_SOAK") != "1":
+        pytest.skip("opt-in: set NEXUS_SOAK=1 to run the sustained soak (~60s)")
+
+    nx = inproc_nexus
+    n_files = 1000
+    workers = 32
+    duration_s = 60.0
+    random.seed(0xCAFEBABE)
+
+    # Seed
+    for i in range(n_files):
+        nx.write(f"/soak/{i:05d}.txt", b"v0")
+
+    end_at = time.monotonic() + duration_s
+    errors: list[BaseException] = []
+    counters = {"w": 0, "r": 0, "s": 0, "rn": 0}
+
+    def _worker(seed: int) -> None:
+        rng = random.Random(seed)
+        local = {"w": 0, "r": 0, "s": 0, "rn": 0}
+        while time.monotonic() < end_at:
+            op = rng.choice(("w", "r", "s", "rn"))
+            i = rng.randrange(n_files)
+            path = f"/soak/{i:05d}.txt"
+            try:
+                if op == "w":
+                    nx.write(path, f"v-{rng.randrange(10):x}".encode())
+                elif op == "r":
+                    nx.read(path)
+                elif op == "s":
+                    nx.stat(path)
+                else:
+                    j = rng.randrange(n_files)
+                    other = f"/soak/{j:05d}.txt"
+                    nx.rename_batch([(path, other)])
+                local[op] += 1
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+                return
+        for k, v in local.items():
+            counters[k] += v
+
+    with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = [pool.submit(_worker, w) for w in range(workers)]
+        for f in cf.as_completed(futs):
+            f.result()
+
+    assert not errors, f"{len(errors)} errors during soak; first: {errors[0]!r}"
+    total_ops = sum(counters.values())
+    assert total_ops > 1000, f"soak ran too few ops: {counters}"
 
 
 def test_concurrent_fs_stress(inproc_nexus):

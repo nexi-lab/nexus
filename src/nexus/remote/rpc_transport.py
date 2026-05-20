@@ -389,6 +389,39 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
+    def batch_read(
+        self,
+        items: list[tuple[str, int, int | None]],
+        read_timeout: float | None = None,
+    ) -> list[Any]:
+        """Vectored batch read via the typed BatchRead RPC — one round-trip.
+
+        ``items`` is a list of ``(path, offset, length)`` tuples; ``length``
+        is omitted from the request when ``None`` (read to EOF from offset).
+        Returns the ``BatchReadItemResponse`` messages in input order —
+        per-item failures are reported in-band (``is_error`` /
+        ``error_payload``); only transport-level failures raise.
+        """
+        req_items = []
+        for path, offset, length in items:
+            item = vfs_pb2.BatchReadItemRequest(path=path, offset=offset)
+            if length is not None:
+                item.length = length
+            req_items.append(item)
+        request = vfs_pb2.BatchReadRequest(auth_token=self._auth_token, items=req_items)
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        try:
+            response = self._stub.BatchRead(request, timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, "BatchRead")
+        return list(response.results)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._auth_token)

@@ -288,6 +288,40 @@ class TestRPCTransportTypedMethods:
         request = transport._mock_stub.Delete.call_args[0][0]
         assert request.recursive is True
 
+    def test_batch_read_success(self, transport) -> None:
+        """batch_read issues one BatchRead RPC and returns results in order."""
+        item_a = MagicMock(is_error=False, content=b"aaa", content_id="cid-a", gen=1)
+        item_b = MagicMock(is_error=False, content=b"bb", content_id="cid-b", gen=2)
+        mock_response = MagicMock()
+        mock_response.results = [item_a, item_b]
+        transport._mock_stub.BatchRead.return_value = mock_response
+
+        results = transport.batch_read([("/a.txt", 0, None), ("/b.txt", 4, 2)])
+
+        assert results == [item_a, item_b]
+        transport._mock_stub.BatchRead.assert_called_once()
+        request = transport._mock_stub.BatchRead.call_args[0][0]
+        assert request.auth_token == "test-token"
+        assert len(request.items) == 2
+        assert request.items[0].path == "/a.txt"
+        assert request.items[0].offset == 0
+        # length omitted when None — proto3 `optional` reports unset.
+        assert not request.items[0].HasField("length")
+        assert request.items[1].offset == 4
+        assert request.items[1].length == 2
+
+    def test_batch_read_per_item_error_in_band(self, transport) -> None:
+        """batch_read surfaces per-item errors in-band — it never raises."""
+        ok = MagicMock(is_error=False, content=b"x", content_id="", gen=0)
+        bad = MagicMock(is_error=True, error_payload=b"{}", content=b"")
+        mock_response = MagicMock()
+        mock_response.results = [ok, bad]
+        transport._mock_stub.BatchRead.return_value = mock_response
+
+        results = transport.batch_read([("/ok", 0, None), ("/bad", 0, None)])
+
+        assert results == [ok, bad]
+
     def test_ping_success(self, transport) -> None:
         """ping returns version/zone_id/uptime dict."""
         mock_response = MagicMock()

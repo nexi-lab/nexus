@@ -27,6 +27,8 @@ from types import SimpleNamespace
 from typing import IO, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.rpc_types import RPCErrorCode
+from nexus.lib.rpc_codec import decode_rpc_message
 from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
@@ -432,31 +434,32 @@ class KernelClient:
         items: list[tuple[str, int, int | None]],
         context: Any = None,
     ) -> list[Any]:
-        """Batch read — loop individual typed Read RPCs.
+        """Batch read via the typed BatchRead RPC — one round-trip.
 
-        Uses the existing typed Read RPC per item (same as sys_read).
-        Returns list of _SysReadResult in same order as items.
-        On per-item failure, surfaces error_kind so the caller
+        Replaces the former N-round-trip loop of single Read RPCs. The
+        Rust kernel reads every item in one pass (rayon par_iter) and
+        returns a per-item result vector in input order.
+
+        Returns a list of _SysReadResult in the same order as ``items``.
+        Per-item failures are surfaced via ``error_kind`` so the caller
         (nexus_fs_content.read_batch) can distinguish not_found from
         other errors and implement partial/strict mode correctly.
         """
-        from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError
-
+        assert self._transport is not None
+        if not items:
+            return []
         results: list[Any] = []
-        for path, offset, _count in items:
-            try:
-                results.append(self.sys_read(path, offset=offset))
-            except NexusFileNotFoundError:
+        for item in self._transport.batch_read(items):
+            if item.is_error:
+                kind, message = _error_kind_from_payload(item.error_payload)
+                results.append(_SysReadResult(data=None, error_kind=kind, error_message=message))
+            else:
                 results.append(
-                    _SysReadResult(data=None, error_kind="not_found", error_message=path)
-                )
-            except NexusPermissionError as e:
-                results.append(
-                    _SysReadResult(data=None, error_kind="permission_denied", error_message=str(e))
-                )
-            except Exception as e:
-                results.append(
-                    _SysReadResult(data=None, error_kind="io_error", error_message=str(e))
+                    _SysReadResult(
+                        data=bytes(item.content),
+                        content_id=item.content_id or None,
+                        gen=item.gen,
+                    )
                 )
         return results
 
@@ -849,6 +852,26 @@ class KernelClient:
 
 
 # ── Result types ───────────────────────────────────────────────────────
+
+
+def _error_kind_from_payload(error_payload: bytes) -> tuple[str, str]:
+    """Classify a typed-RPC error payload into a ``(error_kind, message)``
+    pair for ``_SysReadResult``.
+
+    BatchRead reports per-item failures in-band as a JSON ``{code,
+    message}`` dict. Mapping the JSON-RPC code here yields the same
+    ``error_kind`` the former per-item single-Read path derived from its
+    raised exception, so the caller's partial/strict handling is
+    unchanged.
+    """
+    err = decode_rpc_message(error_payload) if error_payload else {}
+    code = err.get("code") if isinstance(err, dict) else None
+    message = err.get("message", "") if isinstance(err, dict) else ""
+    if code == RPCErrorCode.FILE_NOT_FOUND.value:
+        return "not_found", message
+    if code in (RPCErrorCode.PERMISSION_ERROR.value, RPCErrorCode.ACCESS_DENIED.value):
+        return "permission_denied", message
+    return "io_error", message
 
 
 class _SysReadResult:

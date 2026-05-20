@@ -5,6 +5,7 @@ Enables team-based permissions, hierarchical access, and dynamic inheritance.
 """
 
 import sys
+from inspect import isawaitable
 from typing import Any
 
 import click
@@ -16,6 +17,7 @@ from nexus.cli.utils import (
     console,
     get_filesystem,
     handle_error,
+    parse_subject,
 )
 
 
@@ -35,6 +37,19 @@ def rebac() -> None:
     pass
 
 
+def _print_json(payload: Any) -> None:
+    import json
+
+    click.echo(json.dumps(payload, indent=2, default=str))
+
+
+async def _call_rebac(rebac_svc: Any, method: str, /, *args: Any, **kwargs: Any) -> Any:
+    result = getattr(rebac_svc, method)(*args, **kwargs)
+    if isawaitable(result):
+        return await result
+    return result
+
+
 @rebac.command(name="create")
 @click.argument("subject_type", type=str)
 @click.argument("subject_id", type=str)
@@ -42,7 +57,6 @@ def rebac() -> None:
 @click.argument("object_type", type=str)
 @click.argument("object_id", type=str)
 @click.option("--expires", type=str, default=None, help="Expiration time (ISO format)")
-# Note: --zone-id is provided by @add_context_options decorator
 @click.option(
     "--subject-relation",
     type=str,
@@ -142,7 +156,6 @@ async def _async_rebac_create(
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Parse expiration time if provided
         expires_at = None
         if expires:
             from datetime import datetime
@@ -155,10 +168,8 @@ async def _async_rebac_create(
                 nx.close()
                 sys.exit(1)
 
-        # Get zone_id from operation_context (set by @add_context_options)
         zone = operation_context.get("zone")
 
-        # Parse column_config JSON if provided
         column_config_dict = None
         if column_config:
             import json
@@ -172,27 +183,20 @@ async def _async_rebac_create(
                 nx.close()
                 sys.exit(1)
 
-        # Build subject tuple
         subject_tuple: tuple[str, str] | tuple[str, str, str]
         if wildcard:
-            # Wildcard subject for public access
             subject_tuple = ("*", "*")
             subject_display = "*:*"
         elif subject_relation:
-            # Userset-as-subject (3-tuple)
             subject_tuple = (subject_type, subject_id, subject_relation)
             subject_display = f"{subject_type}:{subject_id}#{subject_relation}"
         else:
-            # Regular subject (2-tuple)
             subject_tuple = (subject_type, subject_id)
             subject_display = f"{subject_type}:{subject_id}"
 
-        # Create tuple
-        # SECURITY: Pass operation_context for execute permission enforcement
-        # Only owners (execute permission) can create permissions on files
         rebac_svc = nx.service("rebac")
         assert rebac_svc is not None, "ReBAC service not available"
-        tuple_id = rebac_svc.rebac_create_sync(
+        create_result = rebac_svc.rebac_create_sync(
             subject=subject_tuple,
             relation=relation,
             object=(object_type, object_id),
@@ -200,6 +204,9 @@ async def _async_rebac_create(
             zone_id=zone,
             column_config=column_config_dict,
             context=operation_context,
+        )
+        tuple_id = (
+            create_result.get("tuple_id") if isinstance(create_result, dict) else create_result
         )
 
         nx.close()
@@ -267,13 +274,10 @@ def rebac_list_cmd(
     """List relationship tuples with optional filters.
 
     Examples:
-        # List all tuples
         nexus rebac list
 
-        # List tuples for a specific file
         nexus rebac list --object-type file --object-id /workspace/test.txt
 
-        # List all tuples for user alice
         nexus rebac list --subject-type user --subject-id alice
 
         # List all editor relations
@@ -318,7 +322,6 @@ async def _async_rebac_list_cmd(
 
         nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Build filters
         subject = None
         if subject_type and subject_id:
             subject = (subject_type, subject_id)
@@ -327,7 +330,6 @@ async def _async_rebac_list_cmd(
         if object_type and object_id:
             obj = (object_type, object_id)
 
-        # List tuples
         rebac_svc = nx.service("rebac")
         assert rebac_svc is not None, "ReBAC service not available"
         tuples = rebac_svc.rebac_list_tuples_sync(
@@ -338,11 +340,9 @@ async def _async_rebac_list_cmd(
 
         nx.close()
 
-        # Apply limit if specified
         if limit and limit > 0:
             tuples = tuples[:limit]
 
-        # Display results
         if not tuples:
             console.print("[nexus.warning]No tuples found[/nexus.warning]")
             return
@@ -357,7 +357,6 @@ async def _async_rebac_list_cmd(
                 obj_str = f"{t['object_type']}:{t['object_id']}"
                 console.print(f"{subj} → {t['relation']} → {obj_str}")
         else:
-            # Table format
             table = Table(title=f"ReBAC Tuples ({len(tuples)} found)")
             table.add_column("Tuple ID", style="nexus.muted", no_wrap=True)
             table.add_column("Subject", style="nexus.warning")
@@ -366,15 +365,12 @@ async def _async_rebac_list_cmd(
             table.add_column("Zone", style="nexus.reference")
 
             for t in tuples:
-                # Format subject
                 subj = f"{t['subject_type']}:{t['subject_id']}"
                 if t.get("subject_relation"):
                     subj += f"#{t['subject_relation']}"
 
-                # Format object
                 obj_str = f"{t['object_type']}:{t['object_id']}"
 
-                # Truncate IDs for display
                 tuple_id = t["tuple_id"]
                 if len(tuple_id) > 36:
                     tuple_id = tuple_id[:8] + "..." + tuple_id[-8:]
@@ -1047,6 +1043,943 @@ async def _async_rebac_check_batch_cmd(
                 f"Summary: [nexus.success]{allowed_count} allowed[/nexus.success], [nexus.error]{denied_count} denied[/nexus.error]"
             )
 
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac.command(name="list-objects")
+@click.argument("relation", type=str)
+@click.argument("subject_type", type=str)
+@click.argument("subject_id", type=str)
+@click.option("--format", "output_format", type=click.Choice(["table", "json"]), default="table")
+@add_backend_options
+@add_context_options
+def rebac_list_objects_cmd(
+    relation: str,
+    subject_type: str,
+    subject_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """List objects a subject has a specific relation to."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_list_objects_cmd(
+            relation,
+            subject_type,
+            subject_id,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_list_objects_cmd(
+    relation: str,
+    subject_type: str,
+    subject_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        zone = operation_context.get("zone")
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        objects = await _call_rebac(
+            rebac_svc,
+            "rebac_list_objects",
+            relation=relation,
+            subject=(subject_type, subject_id),
+            zone_id=zone,
+        )
+        nx.close()
+
+        if output_format == "json":
+            _print_json({"objects": objects})
+            return
+
+        if not objects:
+            console.print("[nexus.warning]No objects found[/nexus.warning]")
+            return
+        table = Table(title=f"Objects with '{relation}'")
+        table.add_column("Object Type", style="nexus.warning")
+        table.add_column("Object ID", style="nexus.value")
+        for obj_type, obj_id in objects:
+            table.add_row(obj_type, obj_id)
+        console.print(table)
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac.command(name="public")
+@click.argument("object_type", type=str)
+@click.argument("object_id", type=str)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+@add_context_options
+def rebac_public_cmd(
+    object_type: str,
+    object_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Make a resource publicly discoverable."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_public_cmd(
+            object_type, object_id, output_format, remote_url, remote_api_key, operation_context
+        )
+    )
+
+
+async def _async_rebac_public_cmd(
+    object_type: str,
+    object_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        result = await _call_rebac(
+            rebac_svc,
+            "make_public",
+            (object_type, object_id),
+            zone_id=operation_context.get("zone"),
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json(result)
+        else:
+            console.print(f"[nexus.success]✓[/nexus.success] Public: {object_type}:{object_id}")
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac.command(name="private")
+@click.argument("object_type", type=str)
+@click.argument("object_id", type=str)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+@add_context_options
+def rebac_private_cmd(
+    object_type: str,
+    object_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Remove public discoverability from a resource."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_private_cmd(
+            object_type, object_id, output_format, remote_url, remote_api_key, operation_context
+        )
+    )
+
+
+async def _async_rebac_private_cmd(
+    object_type: str,
+    object_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        revoked = await _call_rebac(
+            rebac_svc,
+            "make_private",
+            (object_type, object_id),
+            zone_id=operation_context.get("zone"),
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json({"private": revoked})
+        elif revoked:
+            console.print(f"[nexus.success]✓[/nexus.success] Private: {object_type}:{object_id}")
+        else:
+            console.print("[nexus.warning]No public tuple found[/nexus.warning]")
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac.command(name="expand-with-privacy")
+@click.argument("permission", type=str)
+@click.argument("object_type", type=str)
+@click.argument("object_id", type=str)
+@click.option("--requester", type=str, default=None, help="Requester subject as type:id")
+@click.option(
+    "--no-consent-filter",
+    is_flag=True,
+    help="Return raw expansion without consent filtering",
+)
+@click.option("--format", "output_format", type=click.Choice(["table", "json"]), default="table")
+@add_backend_options
+@add_context_options
+def rebac_expand_with_privacy_cmd(
+    permission: str,
+    object_type: str,
+    object_id: str,
+    requester: str | None,
+    no_consent_filter: bool,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Expand permissions with consent/privacy filtering."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_expand_with_privacy_cmd(
+            permission,
+            object_type,
+            object_id,
+            requester,
+            no_consent_filter,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_expand_with_privacy_cmd(
+    permission: str,
+    object_type: str,
+    object_id: str,
+    requester: str | None,
+    no_consent_filter: bool,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        requester_subject = parse_subject(requester) if requester else None
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        subjects = await _call_rebac(
+            rebac_svc,
+            "rebac_expand_with_privacy",
+            permission,
+            (object_type, object_id),
+            zone_id=operation_context.get("zone"),
+            requester=requester_subject,
+            respect_consent=not no_consent_filter,
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json({"subjects": subjects})
+            return
+        if not subjects:
+            console.print("[nexus.warning]No subjects found[/nexus.warning]")
+            return
+        table = Table(title=f"Privacy-filtered '{permission}' expansion")
+        table.add_column("Subject Type", style="nexus.warning")
+        table.add_column("Subject ID", style="nexus.value")
+        for subject_type, subject_id in subjects:
+            table.add_row(subject_type, subject_id)
+        console.print(table)
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac.group(name="consent")
+def rebac_consent_group() -> None:
+    """Manage discovery consent relationships."""
+    pass
+
+
+@rebac_consent_group.command(name="grant")
+@click.argument("from_subject_type", type=str)
+@click.argument("from_subject_id", type=str)
+@click.argument("to_subject_type", type=str)
+@click.argument("to_subject_id", type=str)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+@add_context_options
+def rebac_consent_grant_cmd(
+    from_subject_type: str,
+    from_subject_id: str,
+    to_subject_type: str,
+    to_subject_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Grant one subject consent to discover another."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_consent_grant_cmd(
+            from_subject_type,
+            from_subject_id,
+            to_subject_type,
+            to_subject_id,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_consent_grant_cmd(
+    from_subject_type: str,
+    from_subject_id: str,
+    to_subject_type: str,
+    to_subject_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        result = await _call_rebac(
+            rebac_svc,
+            "grant_consent",
+            (from_subject_type, from_subject_id),
+            (to_subject_type, to_subject_id),
+            zone_id=operation_context.get("zone"),
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json(result)
+        else:
+            console.print("[nexus.success]✓[/nexus.success] Consent granted")
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac_consent_group.command(name="revoke")
+@click.argument("from_subject_type", type=str)
+@click.argument("from_subject_id", type=str)
+@click.argument("to_subject_type", type=str)
+@click.argument("to_subject_id", type=str)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+@add_context_options
+def rebac_consent_revoke_cmd(
+    from_subject_type: str,
+    from_subject_id: str,
+    to_subject_type: str,
+    to_subject_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Revoke discovery consent."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_consent_revoke_cmd(
+            from_subject_type,
+            from_subject_id,
+            to_subject_type,
+            to_subject_id,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_consent_revoke_cmd(
+    from_subject_type: str,
+    from_subject_id: str,
+    to_subject_type: str,
+    to_subject_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        revoked = await _call_rebac(
+            rebac_svc,
+            "revoke_consent",
+            (from_subject_type, from_subject_id),
+            (to_subject_type, to_subject_id),
+            zone_id=operation_context.get("zone"),
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json({"revoked": revoked})
+        elif revoked:
+            console.print("[nexus.success]✓[/nexus.success] Consent revoked")
+        else:
+            console.print("[nexus.warning]No consent tuple found[/nexus.warning]")
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac.group(name="share")
+def rebac_share_group() -> None:
+    """Share resources with users or groups."""
+    pass
+
+
+@rebac_share_group.command(name="user")
+@click.argument("object_type", type=str)
+@click.argument("object_id", type=str)
+@click.argument("target_user", type=str)
+@click.option("--permission", type=click.Choice(["viewer", "editor", "owner"]), default="viewer")
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+@add_context_options
+def rebac_share_user_cmd(
+    object_type: str,
+    object_id: str,
+    target_user: str,
+    permission: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Share a resource with a user."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_share_user_cmd(
+            object_type,
+            object_id,
+            target_user,
+            permission,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_share_user_cmd(
+    object_type: str,
+    object_id: str,
+    target_user: str,
+    permission: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        result = await _call_rebac(
+            rebac_svc,
+            "share_with_user",
+            (object_type, object_id),
+            target_user,
+            permission=permission,
+            zone_id=operation_context.get("zone"),
+            context=operation_context,
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json(result)
+        else:
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Shared {object_type}:{object_id} with user:{target_user}"
+            )
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac_share_group.command(name="group")
+@click.argument("object_type", type=str)
+@click.argument("object_id", type=str)
+@click.argument("target_group", type=str)
+@click.option("--permission", type=click.Choice(["viewer", "editor", "owner"]), default="viewer")
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+@add_context_options
+def rebac_share_group_cmd(
+    object_type: str,
+    object_id: str,
+    target_group: str,
+    permission: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Share a resource with a group."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_share_group_cmd(
+            object_type,
+            object_id,
+            target_group,
+            permission,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_share_group_cmd(
+    object_type: str,
+    object_id: str,
+    target_group: str,
+    permission: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        result = await _call_rebac(
+            rebac_svc,
+            "share_with_group",
+            (object_type, object_id),
+            target_group,
+            permission=permission,
+            zone_id=operation_context.get("zone"),
+            context=operation_context,
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json(result)
+        else:
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Shared {object_type}:{object_id} with group:{target_group}"
+            )
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac_share_group.command(name="outgoing")
+@click.argument("object_type", type=str)
+@click.argument("object_id", type=str)
+@click.option("--format", "output_format", type=click.Choice(["table", "json"]), default="table")
+@add_backend_options
+@add_context_options
+def rebac_share_outgoing_cmd(
+    object_type: str,
+    object_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """List outgoing ReBAC shares for a resource."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_share_outgoing_cmd(
+            object_type, object_id, output_format, remote_url, remote_api_key, operation_context
+        )
+    )
+
+
+async def _async_rebac_share_outgoing_cmd(
+    object_type: str,
+    object_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        items = await _call_rebac(
+            rebac_svc,
+            "list_outgoing_shares",
+            (object_type, object_id),
+            zone_id=operation_context.get("zone"),
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json({"items": items})
+            return
+        if not items:
+            console.print("[nexus.warning]No outgoing shares found[/nexus.warning]")
+            return
+        table = Table(title="Outgoing ReBAC Shares")
+        table.add_column("Recipient", style="nexus.warning")
+        table.add_column("Permission", style="nexus.identity")
+        table.add_column("Share ID", style="nexus.muted")
+        for item in items:
+            table.add_row(
+                str(item.get("recipient_id")),
+                str(item.get("permission_level")),
+                str(item.get("share_id")),
+            )
+        console.print(table)
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac_share_group.command(name="incoming")
+@click.argument("subject_type", type=str)
+@click.argument("subject_id", type=str)
+@click.option("--object-type", type=str, default="file")
+@click.option("--format", "output_format", type=click.Choice(["table", "json"]), default="table")
+@add_backend_options
+@add_context_options
+def rebac_share_incoming_cmd(
+    subject_type: str,
+    subject_id: str,
+    object_type: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """List incoming ReBAC shares for a subject."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_share_incoming_cmd(
+            subject_type,
+            subject_id,
+            object_type,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_share_incoming_cmd(
+    subject_type: str,
+    subject_id: str,
+    object_type: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        items = await _call_rebac(
+            rebac_svc,
+            "list_incoming_shares",
+            (subject_type, subject_id),
+            object_type=object_type,
+            zone_id=operation_context.get("zone"),
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json({"items": items})
+            return
+        if not items:
+            console.print("[nexus.warning]No incoming shares found[/nexus.warning]")
+            return
+        table = Table(title="Incoming ReBAC Shares")
+        table.add_column("Resource", style="nexus.value")
+        table.add_column("Permission", style="nexus.identity")
+        table.add_column("Share ID", style="nexus.muted")
+        for item in items:
+            table.add_row(
+                f"{item.get('resource_type')}:{item.get('resource_id')}",
+                str(item.get("permission_level")),
+                str(item.get("share_id")),
+            )
+        console.print(table)
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac_share_group.command(name="revoke")
+@click.argument("object_type", type=str)
+@click.argument("object_id", type=str)
+@click.argument("target_type", type=str)
+@click.argument("target_id", type=str)
+@click.option("--permission", type=click.Choice(["viewer", "editor", "owner"]), default="viewer")
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+@add_context_options
+def rebac_share_revoke_cmd(
+    object_type: str,
+    object_id: str,
+    target_type: str,
+    target_id: str,
+    permission: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Revoke a ReBAC share by resource and target."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_share_revoke_cmd(
+            object_type,
+            object_id,
+            target_type,
+            target_id,
+            permission,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_share_revoke_cmd(
+    object_type: str,
+    object_id: str,
+    target_type: str,
+    target_id: str,
+    permission: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        revoked = await _call_rebac(
+            rebac_svc,
+            "revoke_share",
+            (object_type, object_id),
+            (target_type, target_id),
+            permission=permission,
+            zone_id=operation_context.get("zone"),
+            context=operation_context,
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json({"revoked": revoked})
+        elif revoked:
+            console.print("[nexus.success]✓[/nexus.success] Share revoked")
+        else:
+            console.print("[nexus.warning]No matching share found[/nexus.warning]")
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac_share_group.command(name="revoke-id")
+@click.argument("tuple_id", type=str)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+def rebac_share_revoke_id_cmd(
+    tuple_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Revoke a ReBAC share by tuple ID."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_share_revoke_id_cmd(tuple_id, output_format, remote_url, remote_api_key)
+    )
+
+
+async def _async_rebac_share_revoke_id_cmd(
+    tuple_id: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        revoked = await _call_rebac(rebac_svc, "revoke_share_by_id", tuple_id)
+        nx.close()
+        if output_format == "json":
+            _print_json({"revoked": revoked})
+        elif revoked:
+            console.print("[nexus.success]✓[/nexus.success] Share revoked")
+        else:
+            console.print("[nexus.warning]No matching share found[/nexus.warning]")
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac.group(name="dynamic")
+def rebac_dynamic_group() -> None:
+    """Inspect and apply dynamic viewer column filters."""
+    pass
+
+
+@rebac_dynamic_group.command(name="config")
+@click.argument("subject_type", type=str)
+@click.argument("subject_id", type=str)
+@click.argument("file_path", type=str)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+@add_context_options
+def rebac_dynamic_config_cmd(
+    subject_type: str,
+    subject_id: str,
+    file_path: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Get stored dynamic_viewer column config for a subject and CSV file."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_dynamic_config_cmd(
+            subject_type,
+            subject_id,
+            file_path,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_dynamic_config_cmd(
+    subject_type: str,
+    subject_id: str,
+    file_path: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        config = await _call_rebac(
+            rebac_svc,
+            "get_dynamic_viewer_config",
+            ("file", file_path),
+            zone_id=operation_context.get("zone"),
+            subject=(subject_type, subject_id),
+        )
+        nx.close()
+        payload = {
+            "subject": [subject_type, subject_id],
+            "resource": ["file", file_path],
+            "column_config": config,
+        }
+        if output_format == "json":
+            _print_json(payload)
+        elif config:
+            console.print(config)
+        else:
+            console.print("[nexus.warning]No dynamic viewer config found[/nexus.warning]")
+    except Exception as e:
+        handle_error(e)
+
+
+@rebac_dynamic_group.command(name="read")
+@click.argument("subject_type", type=str)
+@click.argument("subject_id", type=str)
+@click.argument("file_path", type=str)
+@click.option("--content-file", type=click.Path(exists=True), default=None)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+@add_context_options
+def rebac_dynamic_read_cmd(
+    subject_type: str,
+    subject_id: str,
+    file_path: str,
+    content_file: str | None,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Read CSV content with stored dynamic_viewer filtering applied."""
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_dynamic_read_cmd(
+            subject_type,
+            subject_id,
+            file_path,
+            content_file,
+            output_format,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_dynamic_read_cmd(
+    subject_type: str,
+    subject_id: str,
+    file_path: str,
+    content_file: str | None,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    try:
+        from pathlib import Path
+
+        source = content_file or file_path
+        content = Path(source).read_text()
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac_svc = nx.service("rebac")
+        assert rebac_svc is not None, "ReBAC service not available"
+        filtered = await _call_rebac(
+            rebac_svc,
+            "read_with_dynamic_viewer",
+            ("file", file_path),
+            content,
+            zone_id=operation_context.get("zone"),
+            subject=(subject_type, subject_id),
+        )
+        nx.close()
+        if output_format == "json":
+            _print_json({"filtered_data": filtered})
+        else:
+            console.print(filtered, end="")
     except Exception as e:
         handle_error(e)
 

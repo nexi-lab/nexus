@@ -357,6 +357,8 @@ async def rpc_endpoint(
             RPCErrorCode.INTERNAL_ERROR,
             f"Operation timed out (method={method})",
         )
+    except PermissionError as e:
+        return _error_response(None, RPCErrorCode.PERMISSION_ERROR, str(e))
     except ZoneScopingError as e:
         return _error_response(None, RPCErrorCode.PERMISSION_ERROR, str(e))
     except ValueError as e:

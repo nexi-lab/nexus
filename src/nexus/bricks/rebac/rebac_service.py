@@ -21,6 +21,10 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+from nexus.bricks.rebac.dynamic_viewer import (
+    apply_column_config_fallback,
+    apply_hidden_column_filter,
+)
 from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 from nexus.contracts.exceptions import CircuitOpenError
 from nexus.contracts.types import OperationContext
@@ -34,6 +38,29 @@ T = TypeVar("T")
 if TYPE_CHECKING:
     from nexus.bricks.rebac.circuit_breaker import AsyncCircuitBreaker
     from nexus.bricks.rebac.manager import ReBACManager
+
+
+def _coerce_pair_tuple(value: Any, name: str) -> tuple[str, str]:
+    """Normalize JSON-RPC list tuples into ReBAC pair tuples."""
+    if isinstance(value, list):
+        value = tuple(value)
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise ValueError(f"{name} must be (type, id) tuple, got {value}")
+    return cast(tuple[str, str], value)
+
+
+def _coerce_subject_tuple(value: Any, name: str) -> tuple[str, str]:
+    return _coerce_pair_tuple(value, name)
+
+
+def _coerce_object_tuple(value: Any, name: str) -> tuple[str, str]:
+    return _coerce_pair_tuple(value, name)
+
+
+def _coerce_subject_tuple_optional(value: Any, name: str) -> tuple[str, str] | None:
+    if value is None:
+        return None
+    return _coerce_subject_tuple(value, name)
 
 
 class ReBACService(ReBACShareMixin):
@@ -1129,6 +1156,8 @@ class ReBACService(ReBACShareMixin):
         permission: str,
         object: tuple[str, str],
         zone_id: str | None = None,
+        requester: tuple[str, str] | None = None,
+        respect_consent: bool = True,
     ) -> list[tuple[str, str]]:
         """Expand permissions, filtering out subjects without consent.
 
@@ -1136,29 +1165,37 @@ class ReBACService(ReBACShareMixin):
             permission: Permission to expand
             object: Target object
             zone_id: Zone scope
+            requester: Subject requesting discovery of expanded subjects
+            respect_consent: If false, return the raw expansion
 
         Returns:
             List of (subject_type, subject_id) with consent
         """
         if not self._rebac_manager:
             return []
-        subjects = await self._run_in_thread(
-            self._rebac_manager.rebac_expand, permission, object, zone_id
-        )
-        # Filter by consent: keep subjects that have a consent-to-discover relation
-        consented: list[tuple[str, str]] = []
-        for subj in subjects:
-            has_consent = await self._run_in_thread(
-                self._rebac_manager.rebac_check,
-                subj,
-                "consent-to-discover",
-                object,
-                None,
-                zone_id,
-            )
-            if has_consent:
-                consented.append(subj)
-        return consented
+        object = _coerce_object_tuple(object, "object")
+        requester = _coerce_subject_tuple_optional(requester, "requester")
+
+        def _expand_with_privacy_sync() -> list[tuple[str, str]]:
+            subjects = self.rebac_expand_sync(permission, object, zone_id=zone_id)
+            if not respect_consent or requester is None:
+                return subjects
+
+            consented: list[tuple[str, str]] = []
+            for subj in subjects:
+                if subj == requester:
+                    consented.append(subj)
+                    continue
+                grants = self.rebac_list_tuples_sync(
+                    subject=requester,
+                    relation="consent_granted",
+                    object=subj,
+                )
+                if any(zone_id is None or grant.get("zone_id") == zone_id for grant in grants):
+                    consented.append(subj)
+            return consented
+
+        return await self._run_in_thread(_expand_with_privacy_sync)
 
     @rpc_expose(description="Grant discovery consent")
     async def grant_consent(
@@ -1179,20 +1216,14 @@ class ReBACService(ReBACShareMixin):
         """
         if not self._rebac_manager:
             raise RuntimeError("ReBAC manager not available")
-        result = await self._run_in_thread(
-            self._rebac_manager.rebac_write,
-            subject,
-            "consent-to-discover",
-            target,
-            None,
-            None,
-            zone_id,
+        subject = _coerce_subject_tuple(subject, "subject")
+        target = _coerce_subject_tuple(target, "target")
+        return await self._run_in_thread(
+            self.grant_consent_sync,
+            from_subject=subject,
+            to_subject=target,
+            zone_id=zone_id,
         )
-        return {
-            "tuple_id": result.tuple_id,
-            "revision": result.revision,
-            "consistency_token": result.consistency_token,
-        }
 
     @rpc_expose(description="Revoke discovery consent")
     async def revoke_consent(
@@ -1213,11 +1244,21 @@ class ReBACService(ReBACShareMixin):
         """
         if not self._rebac_manager:
             return False
-        # Find the consent tuple and delete it
-        subjects = await self._run_in_thread(
-            self._rebac_manager.rebac_expand, "consent-to-discover", target, zone_id
-        )
-        return any(s == subject for s in subjects)
+        subject = _coerce_subject_tuple(subject, "subject")
+        target = _coerce_subject_tuple(target, "target")
+
+        def _revoke_consent_sync() -> bool:
+            tuples = self.rebac_list_tuples_sync(
+                subject=target,
+                relation="consent_granted",
+                object=subject,
+            )
+            for tuple_data in tuples:
+                if zone_id is None or tuple_data.get("zone_id") == zone_id:
+                    return self.rebac_delete_sync(tuple_data["tuple_id"])
+            return False
+
+        return await self._run_in_thread(_revoke_consent_sync)
 
     @rpc_expose(description="Make resource public")
     async def make_public(
@@ -1236,19 +1277,7 @@ class ReBACService(ReBACShareMixin):
         """
         if not self._rebac_manager:
             raise RuntimeError("ReBAC manager not available")
-        result = await self._run_in_thread(
-            self._rebac_manager.rebac_write,
-            ("*", "*"),
-            "viewer",
-            resource,
-            None,
-            None,
-            zone_id,
-        )
-        return {
-            "tuple_id": result.tuple_id,
-            "revision": result.revision,
-        }
+        return await self._run_in_thread(self.make_public_sync, resource, zone_id=zone_id)
 
     @rpc_expose(description="Make resource private")
     async def make_private(
@@ -1267,16 +1296,19 @@ class ReBACService(ReBACShareMixin):
         """
         if not self._rebac_manager:
             return False
-        # Find wildcard viewer tuples and delete them
-        subjects = await self._run_in_thread(
-            self._rebac_manager.rebac_expand, "viewer", resource, zone_id
-        )
-        deleted = False
-        for s in subjects:
-            if s == ("*", "*"):
-                deleted = True
-                break
-        return deleted
+
+        def _make_private_sync() -> bool:
+            tuples = self.rebac_list_tuples_sync(
+                subject=("*", "*"),
+                relation="public_discoverable",
+                object=resource,
+            )
+            for tuple_data in tuples:
+                if zone_id is None or tuple_data.get("zone_id") == zone_id:
+                    return self.rebac_delete_sync(tuple_data["tuple_id"])
+            return False
+
+        return await self._run_in_thread(_make_private_sync)
 
     # =========================================================================
     # Resource Sharing (Issue #1385)
@@ -1305,19 +1337,16 @@ class ReBACService(ReBACShareMixin):
         """
         if not self._rebac_manager:
             raise RuntimeError("ReBAC manager not available")
-        self._check_share_permission(resource, context)
         result = await self._run_in_thread(
-            self._rebac_manager.rebac_write,
-            ("user", target_user),
-            permission,
+            self.share_with_user_sync,
             resource,
-            None,
-            None,
-            zone_id,
+            target_user,
+            relation=permission,
+            zone_id=zone_id,
+            context=context,
         )
         return {
-            "tuple_id": result.tuple_id,
-            "revision": result.revision,
+            **result,
             "shared_with": target_user,
             "permission": permission,
         }
@@ -1345,19 +1374,16 @@ class ReBACService(ReBACShareMixin):
         """
         if not self._rebac_manager:
             raise RuntimeError("ReBAC manager not available")
-        self._check_share_permission(resource, context)
         result = await self._run_in_thread(
-            self._rebac_manager.rebac_write,
-            ("group", target_group),
-            permission,
+            self.share_with_group_sync,
             resource,
-            None,
-            None,
-            zone_id,
+            target_group,
+            relation=permission,
+            zone_id=zone_id,
+            context=context,
         )
         return {
-            "tuple_id": result.tuple_id,
-            "revision": result.revision,
+            **result,
             "shared_with_group": target_group,
             "permission": permission,
         }
@@ -1366,10 +1392,12 @@ class ReBACService(ReBACShareMixin):
     async def revoke_share(
         self,
         resource: tuple[str, str],
-        target: tuple[str, str],
+        target: tuple[str, str] | None = None,
         permission: str = "viewer",
         zone_id: str | None = None,
         context: Any = None,
+        target_user: str | None = None,
+        target_group: str | None = None,
     ) -> bool:
         """Revoke a specific share (find and delete the matching tuple).
 
@@ -1379,36 +1407,73 @@ class ReBACService(ReBACShareMixin):
             permission: Permission relation to revoke
             zone_id: Zone scope
             context: Operation context for permission check
+            target_user: User ID alias for target=("user", target_user)
+            target_group: Group ID alias for target=("group", target_group)
 
         Returns:
             True if share was found and revoked
         """
         if not self._rebac_manager:
             return False
-        self._check_share_permission(resource, context)
-        # Expand to find matching subjects
-        subjects = await self._run_in_thread(
-            self._rebac_manager.rebac_expand, permission, resource, zone_id
-        )
-        return target in subjects
+        resource = _coerce_object_tuple(resource, "resource")
+        if target is None:
+            if target_user and target_group:
+                raise ValueError("Only one of target_user or target_group may be provided")
+            if target_user:
+                target = ("user", target_user)
+            elif target_group:
+                target = ("group", target_group)
+            else:
+                raise ValueError("target, target_user, or target_group is required")
+        else:
+            target = _coerce_subject_tuple(target, "target")
+
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
+        if permission not in relation_map:
+            raise ValueError(
+                f"permission must be 'viewer', 'editor', or 'owner', got '{permission}'"
+            )
+
+        def _revoke_share_sync() -> bool:
+            self._check_share_permission(resource, context)
+            tuples = self.rebac_list_tuples_sync(
+                subject=target,
+                relation=relation_map[permission],
+                object=resource,
+            )
+            for tuple_data in tuples:
+                if zone_id is None or tuple_data.get("zone_id") == zone_id:
+                    return self.rebac_delete_sync(tuple_data["tuple_id"])
+            return False
+
+        return await self._run_in_thread(_revoke_share_sync)
 
     @rpc_expose(description="Revoke share by tuple ID")
     async def revoke_share_by_id(
         self,
-        tuple_id: str,
+        tuple_id: str | None = None,
         context: Any = None,  # noqa: ARG002
+        share_id: str | None = None,
     ) -> bool:
         """Revoke a share by its tuple ID.
 
         Args:
             tuple_id: ID of the tuple to delete
             context: Operation context
+            share_id: Alias for tuple_id used by share listing responses
 
         Returns:
             True if deleted
         """
         if not self._rebac_manager:
             return False
+        tuple_id = tuple_id or share_id
+        if not tuple_id:
+            raise ValueError("tuple_id or share_id is required")
         return await self._run_in_thread(self._rebac_manager.rebac_delete, tuple_id)
 
     @rpc_expose(description="List outgoing shares")
@@ -1428,22 +1493,38 @@ class ReBACService(ReBACShareMixin):
         """
         if not self._rebac_manager:
             return []
-        shares: list[dict[str, Any]] = []
-        for perm in ("viewer", "editor", "owner"):
-            subjects = await self._run_in_thread(
-                self._rebac_manager.rebac_expand, perm, resource, zone_id
+
+        def _list_outgoing_sync() -> list[dict[str, Any]]:
+            relation_to_level = {
+                "shared-viewer": "viewer",
+                "shared-editor": "editor",
+                "shared-owner": "owner",
+            }
+            tuples = self.rebac_list_tuples_sync(
+                relation_in=list(relation_to_level),
+                object=resource,
             )
-            for subj_type, subj_id in subjects:
+            shares: list[dict[str, Any]] = []
+            for tuple_data in tuples:
+                if zone_id is not None and tuple_data.get("zone_id") != zone_id:
+                    continue
                 shares.append(
                     {
-                        "subject_type": subj_type,
-                        "subject_id": subj_id,
-                        "permission": perm,
-                        "resource_type": resource[0],
-                        "resource_id": resource[1],
+                        "share_id": tuple_data.get("tuple_id"),
+                        "resource_type": tuple_data.get("object_type"),
+                        "resource_id": tuple_data.get("object_id"),
+                        "recipient_type": tuple_data.get("subject_type"),
+                        "recipient_id": tuple_data.get("subject_id"),
+                        "permission_level": relation_to_level.get(
+                            tuple_data.get("relation") or "", "viewer"
+                        ),
+                        "created_at": tuple_data.get("created_at"),
+                        "expires_at": tuple_data.get("expires_at"),
                     }
                 )
-        return shares
+            return shares
+
+        return await self._run_in_thread(_list_outgoing_sync)
 
     @rpc_expose(description="List incoming shares")
     async def list_incoming_shares(
@@ -1464,26 +1545,40 @@ class ReBACService(ReBACShareMixin):
         """
         if not self._rebac_manager:
             return []
-        shares: list[dict[str, Any]] = []
-        for perm in ("viewer", "editor", "owner"):
-            objects = await self._run_in_thread(
-                self._rebac_manager.rebac_list_objects,
-                subject,
-                perm,
-                object_type,
-                zone_id,
+        subject = _coerce_subject_tuple(subject, "subject")
+
+        def _list_incoming_sync() -> list[dict[str, Any]]:
+            relation_to_level = {
+                "shared-viewer": "viewer",
+                "shared-editor": "editor",
+                "shared-owner": "owner",
+            }
+            tuples = self.rebac_list_tuples_sync(
+                subject=subject,
+                relation_in=list(relation_to_level),
             )
-            for obj_type, obj_id in objects:
+            shares: list[dict[str, Any]] = []
+            for tuple_data in tuples:
+                if zone_id is not None and tuple_data.get("zone_id") != zone_id:
+                    continue
+                if tuple_data.get("object_type") != object_type:
+                    continue
                 shares.append(
                     {
-                        "subject_type": subject[0],
-                        "subject_id": subject[1],
-                        "permission": perm,
-                        "resource_type": obj_type,
-                        "resource_id": obj_id,
+                        "share_id": tuple_data.get("tuple_id"),
+                        "resource_type": tuple_data.get("object_type"),
+                        "resource_id": tuple_data.get("object_id"),
+                        "owner_zone_id": tuple_data.get("zone_id"),
+                        "permission_level": relation_to_level.get(
+                            tuple_data.get("relation") or "", "viewer"
+                        ),
+                        "created_at": tuple_data.get("created_at"),
+                        "expires_at": tuple_data.get("expires_at"),
                     }
                 )
-        return shares
+            return shares
+
+        return await self._run_in_thread(_list_incoming_sync)
 
     # =========================================================================
     # Dynamic Viewer (Issue #1385)
@@ -1494,6 +1589,7 @@ class ReBACService(ReBACShareMixin):
         self,
         resource: tuple[str, str],
         zone_id: str | None = None,
+        subject: tuple[str, str] | None = None,
     ) -> dict[str, Any] | None:
         """Get dynamic viewer configuration for a resource.
 
@@ -1502,22 +1598,42 @@ class ReBACService(ReBACShareMixin):
         Args:
             resource: Resource to get config for
             zone_id: Zone scope
+            subject: Optional viewer subject. When provided, returns stored
+                column_config for that subject/resource tuple.
 
         Returns:
             Dynamic viewer config dict or None
         """
         if not self._rebac_manager:
             return None
-        # Query dynamic_viewer tuples for the resource
-        subjects = await self._run_in_thread(
-            self._rebac_manager.rebac_expand, "dynamic-viewer", resource, zone_id
-        )
-        if not subjects:
-            return None
-        return {
-            "resource": resource,
-            "viewers": [{"subject_type": s[0], "subject_id": s[1]} for s in subjects],
-        }
+        resource = _coerce_object_tuple(resource, "resource")
+        subject = _coerce_subject_tuple_optional(subject, "subject")
+        if subject is not None:
+            if resource[0] != "file":
+                return None
+            return await self._run_in_thread(
+                self.get_dynamic_viewer_config_sync,
+                subject,
+                resource[1],
+                zone_id=zone_id,
+            )
+
+        def _list_dynamic_viewers_sync() -> dict[str, Any] | None:
+            assert self._rebac_manager is not None
+            tuples = self._rebac_manager.list_tuples(relation="dynamic_viewer", object=resource)
+            if zone_id is not None:
+                tuples = [t for t in tuples if t.get("zone_id") == zone_id]
+            if not tuples:
+                return None
+            return {
+                "resource": resource,
+                "viewers": [
+                    {"subject_type": t["subject_type"], "subject_id": t["subject_id"]}
+                    for t in tuples
+                ],
+            }
+
+        return await self._run_in_thread(_list_dynamic_viewers_sync)
 
     def apply_dynamic_viewer_filter(
         self,
@@ -1535,26 +1651,29 @@ class ReBACService(ReBACShareMixin):
         Returns:
             Filtered CSV content
         """
-        if not columns_to_hide or not content:
+        return apply_hidden_column_filter(content, columns_to_hide, delimiter)
+
+    def apply_dynamic_viewer_config(
+        self,
+        content: str,
+        column_config: dict[str, Any],
+        delimiter: str = ",",
+    ) -> str:
+        """Apply stored dynamic_viewer column config to CSV content."""
+        if not content:
             return content
-        lines = content.split("\n")
-        if not lines:
-            return content
-        # Parse header
-        header = lines[0].split(delimiter)
-        hide_indices = {i for i, col in enumerate(header) if col.strip() in columns_to_hide}
-        if not hide_indices:
-            return content
-        # Filter columns
-        filtered_lines: list[str] = []
-        for line in lines:
-            if not line.strip():
-                filtered_lines.append(line)
-                continue
-            cols = line.split(delimiter)
-            filtered = [c for i, c in enumerate(cols) if i not in hide_indices]
-            filtered_lines.append(delimiter.join(filtered))
-        return "\n".join(filtered_lines)
+
+        aggregations = column_config.get("aggregations", {})
+        if aggregations:
+            try:
+                result = self.apply_dynamic_viewer_filter_sync(content, column_config)
+                return str(result["filtered_data"])
+            except RuntimeError:
+                logger.warning(
+                    "pandas unavailable; applying dynamic_viewer hidden/visible columns only"
+                )
+
+        return apply_column_config_fallback(content, column_config, delimiter)
 
     @rpc_expose(description="Read with dynamic viewer filter")
     async def read_with_dynamic_viewer(
@@ -1562,6 +1681,7 @@ class ReBACService(ReBACShareMixin):
         resource: tuple[str, str],
         content: str,
         zone_id: str | None = None,
+        subject: tuple[str, str] | None = None,
     ) -> str:
         """Read content with dynamic viewer filter applied.
 
@@ -1569,13 +1689,19 @@ class ReBACService(ReBACShareMixin):
             resource: Resource being read
             content: Raw content
             zone_id: Zone scope
+            subject: Optional viewer subject whose stored column_config applies
 
         Returns:
             Filtered content (or original if no dynamic viewer)
         """
-        config = await self.get_dynamic_viewer_config(resource, zone_id)
+        resource = _coerce_object_tuple(resource, "resource")
+        subject = _coerce_subject_tuple_optional(subject, "subject")
+        config = await self.get_dynamic_viewer_config(resource, zone_id, subject=subject)
         if not config:
             return content
+        if subject is not None:
+            return self.apply_dynamic_viewer_config(content, config)
+
         # Extract column hide list from viewer config
         columns_to_hide: list[str] = []
         for viewer in config.get("viewers", []):
@@ -2107,11 +2233,13 @@ class ReBACService(ReBACShareMixin):
                         "tuple_id": row.tuple_id,
                         "subject_type": row.subject_type,
                         "subject_id": row.subject_id,
+                        "subject_relation": getattr(row, "subject_relation", None),
                         "relation": row.relation,
                         "object_type": row.object_type,
                         "object_id": row.object_id,
                         "created_at": row.created_at,
                         "expires_at": row.expires_at,
+                        "conditions": getattr(row, "conditions", None),
                         "zone_id": row.zone_id,
                     }
                 )

@@ -133,16 +133,16 @@
 
     <h2>Bricks (27)</h2>
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Access control</h2>
-    <a href="#m-rebac">rebac<span class="count">22</span></a>
-    <a href="#m-auth">auth<span class="count">69</span></a>
+    <a href="#m-rebac">rebac<span class="count">33</span></a>
+    <a href="#m-auth">auth<span class="count">68</span></a>
     <a href="#m-identity">identity<span class="count">8</span></a>
     <a href="#m-secrets">secrets<span class="count">31</span></a>
     <a href="#m-delegation">delegation<span class="count">12</span></a>
     <a href="#m-access_manifest">access_manifest<span class="count">10</span></a>
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Storage &amp; layout</h2>
-    <a href="#m-filesystem">filesystem<span class="count">106</span></a>
-    <a href="#m-mount">mount<span class="count">37</span></a>
-    <a href="#m-share_link">share_link<span class="count">12</span></a>
+    <a href="#m-filesystem">filesystem<span class="count">125</span></a>
+    <a href="#m-mount">mount<span class="count">38</span></a>
+    <a href="#m-share_link">share_link<span class="count">6</span></a>
     <a href="#m-workspace">workspace<span class="count">16</span></a>
     <a href="#m-snapshot">snapshot<span class="count">20</span></a>
     <a href="#m-versioning">versioning<span class="count">7</span></a>
@@ -155,7 +155,7 @@
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Agent runtime</h2>
     <a href="#m-mcp">mcp<span class="count">11</span></a>
     <a href="#m-sandbox">sandbox<span class="count">5</span></a>
-    <a href="#m-agent_log">agent_log<span class="count">34</span></a>
+    <a href="#m-agent_log">agent_log<span class="count">35</span></a>
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Process &amp; policy</h2>
     <a href="#m-workflows">workflows<span class="count">23</span></a>
     <a href="#m-approvals">approvals<span class="count">6</span></a>
@@ -173,7 +173,7 @@
     <a href="#m-zone">zone<span class="count">14</span></a>
     <a href="#m-daemon">daemon<span class="count">4</span></a>
     <h2>NexusFS wrapper</h2>
-    <a href="#m-nexus_fs">nexus_fs<span class="count">20</span></a>
+    <a href="#m-nexus_fs">nexus_fs<span class="count">32</span></a>
   </aside>
 
   <main>
@@ -184,7 +184,7 @@
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
       <div class="stat"><div class="stat-value">28</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">transports</div></div>
-      <div class="stat"><div class="stat-value">628</div><div class="stat-label">operations</div></div>
+      <div class="stat"><div class="stat-value">687</div><div class="stat-label">operations</div></div>
       <div class="stat"><div class="stat-value">14</div><div class="stat-label">missing</div></div>
     </div>
 
@@ -341,7 +341,7 @@ graph TB
           <span class="mod-name">rebac</span>
           <span class="mod-desc">&mdash; Zanzibar-style relation-based access control.</span>
           <span class="mod-meta">
-<span class="gate-badge">BRICK_REBAC</span><span class="tier-badge tier-independent">independent</span>            <span>22 ops</span>
+<span class="gate-badge">BRICK_REBAC</span><span class="tier-badge tier-independent">independent</span>            <span>33 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -387,10 +387,31 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="get.namespace" data-op-text="get.namespace  get_namespace ">
+<div class="op" data-op-id="get.dynamic_viewer_config" data-op-text="get.dynamic_viewer_config Get stored dynamic-viewer column_config for a subject/resource or list dynamic viewers for a resource. get_dynamic_viewer_config ">
+  <div class="op-header">
+    <span class="op-id">get.dynamic_viewer_config</span>
+    <span class="op-summary">&mdash; Get stored dynamic-viewer column_config for a subject/resource or list dynamic viewers for a resource.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>get_dynamic_viewer_config</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: get_dynamic_viewer_config((&#34;file&#34;, &#34;/data/users.csv&#34;), zone_id=&#34;corp&#34;, subject=(&#34;user&#34;, &#34;bob&#34;))</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="get.namespace" data-op-text="get.namespace Get the ReBAC namespace schema for an object type. get_namespace ">
   <div class="op-header">
     <span class="op-id">get.namespace</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Get the ReBAC namespace schema for an object type.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>get_namespace</span></span>
@@ -401,17 +422,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac namespace-get file --format json</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:993">tests/unit/services/test_rebac_service.py:993</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="get.rebac_option" data-op-text="get.rebac_option  get_rebac_option ">
+<div class="op" data-op-id="get.rebac_option" data-op-text="get.rebac_option Read a ReBAC service tuning option. get_rebac_option ">
   <div class="op-header">
     <span class="op-id">get.rebac_option</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Read a ReBAC service tuning option.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>get_rebac_option</span></span>
@@ -422,17 +443,80 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: get_rebac_option(&#34;max_depth&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:697">tests/unit/services/test_rebac_service.py:697</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="make.private" data-op-text="make.private  make_private ">
+<div class="op" data-op-id="grant.consent" data-op-text="grant.consent Grant discovery consent by writing a consent_granted tuple from the grantee to the consenting subject. grant_consent ">
+  <div class="op-header">
+    <span class="op-id">grant.consent</span>
+    <span class="op-summary">&mdash; Grant discovery consent by writing a consent_granted tuple from the grantee to the consenting subject.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>grant_consent</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: grant_consent((&#34;user&#34;, &#34;alice&#34;), (&#34;user&#34;, &#34;bob&#34;), zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="list.incoming_shares" data-op-text="list.incoming_shares List resources shared with a user from shared-* tuples with immediate revoke visibility. list_incoming_shares ">
+  <div class="op-header">
+    <span class="op-id">list.incoming_shares</span>
+    <span class="op-summary">&mdash; List resources shared with a user from shared-* tuples with immediate revoke visibility.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_incoming_shares</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: list_incoming_shares((&#34;user&#34;, &#34;bob&#34;), object_type=&#34;file&#34;, zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="list.outgoing_shares" data-op-text="list.outgoing_shares List shared-* tuples granted on a resource with immediate revoke visibility. list_outgoing_shares ">
+  <div class="op-header">
+    <span class="op-id">list.outgoing_shares</span>
+    <span class="op-summary">&mdash; List shared-* tuples granted on a resource with immediate revoke visibility.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_outgoing_shares</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: list_outgoing_shares((&#34;file&#34;, &#34;/workspace/secret.txt&#34;), zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="make.private" data-op-text="make.private Remove public discoverability by deleting the matching public_discoverable wildcard tuple. make_private ">
   <div class="op-header">
     <span class="op-id">make.private</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Remove public discoverability by deleting the matching public_discoverable wildcard tuple.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>make_private</span></span>
@@ -443,17 +527,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: make_private((&#34;file&#34;, &#34;/workspace/readme.md&#34;), zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="make.public" data-op-text="make.public  make_public ">
+<div class="op" data-op-id="make.public" data-op-text="make.public Make a resource publicly discoverable by writing a public_discoverable wildcard tuple. make_public ">
   <div class="op-header">
     <span class="op-id">make.public</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Make a resource publicly discoverable by writing a public_discoverable wildcard tuple.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>make_public</span></span>
@@ -464,17 +548,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: make_public((&#34;file&#34;, &#34;/workspace/readme.md&#34;), zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="namespace.delete" data-op-text="namespace.delete  namespace_delete ">
+<div class="op" data-op-id="namespace.delete" data-op-text="namespace.delete Delete or clean up ReBAC namespace data for an object type. namespace_delete ">
   <div class="op-header">
     <span class="op-id">namespace.delete</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Delete or clean up ReBAC namespace data for an object type.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>namespace_delete</span></span>
@@ -485,17 +569,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac namespace-delete document --yes</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:1043">tests/unit/services/test_rebac_service.py:1043</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="namespace.list" data-op-text="namespace.list  namespace_list ">
+<div class="op" data-op-id="namespace.list" data-op-text="namespace.list List registered ReBAC namespace schemas. namespace_list ">
   <div class="op-header">
     <span class="op-id">namespace.list</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List registered ReBAC namespace schemas.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>namespace_list</span></span>
@@ -506,10 +590,31 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac namespace-list --format json</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:1010">tests/unit/services/test_rebac_service.py:1010</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="read.with_dynamic_viewer" data-op-text="read.with_dynamic_viewer Read CSV content with stored dynamic-viewer column_config filtering applied for the requesting subject. read_with_dynamic_viewer ">
+  <div class="op-header">
+    <span class="op-id">read.with_dynamic_viewer</span>
+    <span class="op-summary">&mdash; Read CSV content with stored dynamic-viewer column_config filtering applied for the requesting subject.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>read_with_dynamic_viewer</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: read_with_dynamic_viewer((&#34;file&#34;, &#34;/data/users.csv&#34;), csv_content, zone_id=&#34;corp&#34;, subject=(&#34;user&#34;, &#34;bob&#34;))</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -534,10 +639,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.check" data-op-text="rebac.check  rebac_check ">
+<div class="op" data-op-id="rebac.check" data-op-text="rebac.check Check whether a subject has a permission on an object. rebac_check ">
   <div class="op-header">
     <span class="op-id">rebac.check</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Check whether a subject has a permission on an object.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rebac_check</span></span>
@@ -548,17 +653,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac check agent alice write file /workspace/secret.txt</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:349">tests/unit/services/test_rebac_service.py:349</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.check_batch" data-op-text="rebac.check_batch  rebac_check_batch ">
+<div class="op" data-op-id="rebac.check_batch" data-op-text="rebac.check_batch Check many subject/permission/object tuples in one RPC. rebac_check_batch ">
   <div class="op-header">
     <span class="op-id">rebac.check_batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Check many subject/permission/object tuples in one RPC.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rebac_check_batch</span></span>
@@ -569,10 +674,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac check-batch checks.json --format summary</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:479">tests/unit/services/test_rebac_service.py:479</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -597,10 +702,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.create" data-op-text="rebac.create  rebac_create ">
+<div class="op" data-op-id="rebac.create" data-op-text="rebac.create Create a ReBAC relationship tuple. rebac_create ">
   <div class="op-header">
     <span class="op-id">rebac.create</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Create a ReBAC relationship tuple.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rebac_create</span></span>
@@ -611,17 +716,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac create agent alice direct_owner file /workspace/secret.txt</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:131">tests/unit/services/test_rebac_service.py:131</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.delete" data-op-text="rebac.delete  rebac_delete ">
+<div class="op" data-op-id="rebac.delete" data-op-text="rebac.delete Delete a ReBAC relationship tuple by tuple id. rebac_delete ">
   <div class="op-header">
     <span class="op-id">rebac.delete</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Delete a ReBAC relationship tuple by tuple id.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rebac_delete</span></span>
@@ -632,17 +737,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac delete tuple-123</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:638">tests/unit/services/test_rebac_service.py:638</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.expand" data-op-text="rebac.expand  rebac_expand ">
+<div class="op" data-op-id="rebac.expand" data-op-text="rebac.expand Expand a permission to all subjects that currently have it. rebac_expand ">
   <div class="op-header">
     <span class="op-id">rebac.expand</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Expand a permission to all subjects that currently have it.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rebac_expand</span></span>
@@ -653,17 +758,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac expand read file /workspace/secret.txt</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:535">tests/unit/services/test_rebac_service.py:535</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.expand_with_privacy" data-op-text="rebac.expand_with_privacy  rebac_expand_with_privacy ">
+<div class="op" data-op-id="rebac.expand_with_privacy" data-op-text="rebac.expand_with_privacy Expand permissions with requester-aware consent filtering. rebac_expand_with_privacy ">
   <div class="op-header">
     <span class="op-id">rebac.expand_with_privacy</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Expand permissions with requester-aware consent filtering.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rebac_expand_with_privacy</span></span>
@@ -674,17 +779,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: rebac_expand_with_privacy(&#34;read&#34;, (&#34;file&#34;, &#34;/workspace/secret.txt&#34;), zone_id=&#34;corp&#34;, requester=(&#34;user&#34;, &#34;bob&#34;))</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.explain" data-op-text="rebac.explain  rebac_explain ">
+<div class="op" data-op-id="rebac.explain" data-op-text="rebac.explain Explain the graph path behind a ReBAC permission decision. rebac_explain ">
   <div class="op-header">
     <span class="op-id">rebac.explain</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Explain the graph path behind a ReBAC permission decision.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rebac_explain</span></span>
@@ -695,17 +800,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac explain agent alice write file /workspace/secret.txt --verbose</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:571">tests/unit/services/test_rebac_service.py:571</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.list_objects" data-op-text="rebac.list_objects  rebac_list_objects ">
+<div class="op" data-op-id="rebac.list_objects" data-op-text="rebac.list_objects List objects a subject has a relation to. rebac_list_objects ">
   <div class="op-header">
     <span class="op-id">rebac.list_objects</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List objects a subject has a relation to.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rebac_list_objects</span></span>
@@ -716,17 +821,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: rebac_list_objects(relation=&#34;direct_viewer&#34;, subject=(&#34;user&#34;, &#34;alice&#34;), zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:937">tests/unit/services/test_rebac_service.py:937</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rebac.list_tuples" data-op-text="rebac.list_tuples  rebac_list_tuples ">
+<div class="op" data-op-id="rebac.list_tuples" data-op-text="rebac.list_tuples List ReBAC tuples with subject, relation, object, or relation-set filters. rebac_list_tuples ">
   <div class="op-header">
     <span class="op-id">rebac.list_tuples</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List ReBAC tuples with subject, relation, object, or relation-set filters.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rebac_list_tuples</span></span>
@@ -737,10 +842,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rebac list --subject-type user --subject-id alice --format json</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:909">tests/unit/services/test_rebac_service.py:909</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -765,10 +870,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="register.namespace" data-op-text="register.namespace  register_namespace ">
+<div class="op" data-op-id="register.namespace" data-op-text="register.namespace Register a ReBAC namespace schema for an object type. register_namespace ">
   <div class="op-header">
     <span class="op-id">register.namespace</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Register a ReBAC namespace schema for an object type.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>register_namespace</span></span>
@@ -779,20 +884,83 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: register_namespace({&#34;object_type&#34;: &#34;file&#34;, &#34;config&#34;: {&#34;relations&#34;: {}, &#34;permissions&#34;: {}}})</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:730">tests/unit/services/test_rebac_service.py:730</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="set.rebac_option" data-op-text="set.rebac_option  set_rebac_option ">
+<div class="op" data-op-id="revoke.consent" data-op-text="revoke.consent Revoke discovery consent by deleting the matching consent_granted tuple. revoke_consent ">
   <div class="op-header">
-    <span class="op-id">set.rebac_option</span>
+    <span class="op-id">revoke.consent</span>
+    <span class="op-summary">&mdash; Revoke discovery consent by deleting the matching consent_granted tuple.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>revoke_consent</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: revoke_consent((&#34;user&#34;, &#34;alice&#34;), (&#34;user&#34;, &#34;bob&#34;), zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="revoke.share" data-op-text="revoke.share Revoke a resource share by deleting the matching shared-* tuple. revoke_share ">
+  <div class="op-header">
+    <span class="op-id">revoke.share</span>
+    <span class="op-summary">&mdash; Revoke a resource share by deleting the matching shared-* tuple.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>revoke_share</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: revoke_share((&#34;file&#34;, &#34;/workspace/secret.txt&#34;), (&#34;user&#34;, &#34;bob&#34;), permission=&#34;viewer&#34;, zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="revoke.share_by_id" data-op-text="revoke.share_by_id Revoke a resource share by tuple id. revoke_share_by_id ">
+  <div class="op-header">
+    <span class="op-id">revoke.share_by_id</span>
+    <span class="op-summary">&mdash; Revoke a resource share by tuple id.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>revoke_share_by_id</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: revoke_share_by_id(&#34;tuple-share-1&#34;)</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:959">tests/unit/services/test_rebac_service.py:959</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="set.permission_provider" data-op-text="set.permission_provider  KernelClient.set_permission_provider ">
+  <div class="op-header">
+    <span class="op-id">set.permission_provider</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>set_rebac_option</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.set_permission_provider</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -807,6 +975,69 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="set.rebac_option" data-op-text="set.rebac_option Set a ReBAC service tuning option such as max_depth or cache_ttl. set_rebac_option ">
+  <div class="op-header">
+    <span class="op-id">set.rebac_option</span>
+    <span class="op-summary">&mdash; Set a ReBAC service tuning option such as max_depth or cache_ttl.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>set_rebac_option</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: set_rebac_option(&#34;max_depth&#34;, 15)</code></span>
+    <span>test: <a href="../../tests/unit/services/test_rebac_service.py:667">tests/unit/services/test_rebac_service.py:667</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="share.with_group" data-op-text="share.with_group Share a resource with a group by writing a group#member shared-* tuple. share_with_group ">
+  <div class="op-header">
+    <span class="op-id">share.with_group</span>
+    <span class="op-summary">&mdash; Share a resource with a group by writing a group#member shared-* tuple.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>share_with_group</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: share_with_group((&#34;file&#34;, &#34;/workspace/secret.txt&#34;), &#34;eng&#34;, permission=&#34;viewer&#34;, zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="share.with_user" data-op-text="share.with_user Share a resource with a user by writing a shared-* tuple. share_with_user ">
+  <div class="op-header">
+    <span class="op-id">share.with_user</span>
+    <span class="op-summary">&mdash; Share a resource with a user by writing a shared-* tuple.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>share_with_user</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>RPC: share_with_user((&#34;file&#34;, &#34;/workspace/secret.txt&#34;), &#34;bob&#34;, permission=&#34;viewer&#34;, zone_id=&#34;corp&#34;)</code></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_rebac_full_story_e2e.py">tests/e2e/self_contained/test_rebac_full_story_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4134">#4134</a></span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
         </div>
       </details>
       <details id="m-auth" class="module" >
@@ -814,7 +1045,7 @@ graph TB
           <span class="mod-name">auth</span>
           <span class="mod-desc">&mdash; OAuth providers + identity tokens.</span>
           <span class="mod-meta">
-<span class="gate-badge">BRICK_AUTH</span><span class="tier-badge tier-independent">independent</span>            <span>69 ops</span>
+<span class="gate-badge">BRICK_AUTH</span><span class="tier-badge tier-independent">independent</span>            <span>68 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -1973,27 +2204,6 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="grant.consent" data-op-text="grant.consent  grant_consent ">
-  <div class="op-header">
-    <span class="op-id">grant.consent</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>grant_consent</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
 <div class="op" data-op-id="jwks.v1_.well_known" data-op-text="jwks.v1_.well_known  GET /v1/.well-known/jwks.json ">
   <div class="op-header">
     <span class="op-id">jwks.v1_.well_known</span>
@@ -2141,27 +2351,6 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="revoke.consent" data-op-text="revoke.consent  revoke_consent ">
-  <div class="op-header">
-    <span class="op-id">revoke.consent</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>revoke_consent</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
 <div class="op" data-op-id="revoke.credential" data-op-text="revoke.credential  OAuthClient.revoke_credential ">
   <div class="op-header">
     <span class="op-id">revoke.credential</span>
@@ -2190,6 +2379,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>AsyncAdminClient.revoke_key</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="service.mark_bootstrapped" data-op-text="service.mark_bootstrapped  KernelClient.service_mark_bootstrapped ">
+  <div class="op-header">
+    <span class="op-id">service.mark_bootstrapped</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.service_mark_bootstrapped</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -3600,7 +3810,7 @@ graph TB
           <span class="mod-name">filesystem</span>
           <span class="mod-desc">&mdash; Path-scoping wrappers for NexusFS.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-independent">independent</span>            <span>106 ops</span>
+<span class="tier-badge tier-independent">independent</span>            <span>125 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -4003,6 +4213,69 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="close.all_streams" data-op-text="close.all_streams  KernelClient.close_all_streams ">
+  <div class="op-header">
+    <span class="op-id">close.all_streams</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.close_all_streams</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="close.stream" data-op-text="close.stream  KernelClient.close_stream ">
+  <div class="op-header">
+    <span class="op-id">close.stream</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.close_stream</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="create.stream" data-op-text="create.stream  KernelClient.create_stream ">
+  <div class="op-header">
+    <span class="op-id">create.stream</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.create_stream</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="delete.batch" data-op-text="delete.batch  delete_batch ">
   <div class="op-header">
     <span class="op-id">delete.batch</span>
@@ -4031,6 +4304,48 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_delete_file</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="destroy.stream" data-op-text="destroy.stream  KernelClient.destroy_stream ">
+  <div class="op-header">
+    <span class="op-id">destroy.stream</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.destroy_stream</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="dispatch.pre_hooks_batch_stat" data-op-text="dispatch.pre_hooks_batch_stat  KernelClient.dispatch_pre_hooks_batch_stat ">
+  <div class="op-header">
+    <span class="op-id">dispatch.pre_hooks_batch_stat</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.dispatch_pre_hooks_batch_stat</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -4129,13 +4444,14 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="exists.batch" data-op-text="exists.batch  exists_batch ">
+<div class="op" data-op-id="exists.batch" data-op-text="exists.batch  exists_batch KernelClient.exists_batch ">
   <div class="op-header">
     <span class="op-id">exists.batch</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>exists_batch</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.exists_batch</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5037,6 +5353,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="fs.open" data-op-text="fs.open  KernelClient.open ">
+  <div class="op-header">
+    <span class="op-id">fs.open</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.open</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="fs.pause" data-op-text="fs.pause  SandboxClient.pause ">
   <div class="op-header">
     <span class="op-id">fs.pause</span>
@@ -5044,6 +5381,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>SandboxClient.pause</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="fs.register" data-op-text="fs.register  _AgentRegistryProxy.register ">
+  <div class="op-header">
+    <span class="op-id">fs.register</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.register</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5184,6 +5542,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="fs.unregister" data-op-text="fs.unregister  _AgentRegistryProxy.unregister ">
+  <div class="op-header">
+    <span class="op-id">fs.unregister</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.unregister</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="fs.validate" data-op-text="fs.validate  SandboxClient.validate ">
   <div class="op-header">
     <span class="op-id">fs.validate</span>
@@ -5205,13 +5584,77 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="get.content_id" data-op-text="get.content_id  get_content_id ">
+<div class="op" data-op-id="get.content_id" data-op-text="get.content_id  get_content_id KernelClient.get_content_id ">
   <div class="op-header">
     <span class="op-id">get.content_id</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>get_content_id</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.get_content_id</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="get.xattr" data-op-text="get.xattr  KernelClient.get_xattr ">
+  <div class="op-header">
+    <span class="op-id">get.xattr</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.get_xattr</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="get.xattr_bulk" data-op-text="get.xattr_bulk  KernelClient.get_xattr_bulk ">
+  <div class="op-header">
+    <span class="op-id">get.xattr_bulk</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.get_xattr_bulk</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="has.stream" data-op-text="has.stream  KernelClient.has_stream ">
+  <div class="op-header">
+    <span class="op-id">has.stream</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.has_stream</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5478,6 +5921,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="metastore.list_paginated" data-op-text="metastore.list_paginated  KernelClient.metastore_list_paginated ">
+  <div class="op-header">
+    <span class="op-id">metastore.list_paginated</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.metastore_list_paginated</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="path_contexts.api_v2" data-op-text="path_contexts.api_v2  PUT /api/v2/path-contexts/ ">
   <div class="op-header">
     <span class="op-id">path_contexts.api_v2</span>
@@ -5562,13 +6026,14 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="read.batch" data-op-text="read.batch  read_batch ">
+<div class="op" data-op-id="read.batch" data-op-text="read.batch  read_batch KernelClient.read_batch ">
   <div class="op-header">
     <span class="op-id">read.batch</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>read_batch</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.read_batch</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5646,27 +6111,6 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="read.with_dynamic_viewer" data-op-text="read.with_dynamic_viewer  read_with_dynamic_viewer ">
-  <div class="op-header">
-    <span class="op-id">read.with_dynamic_viewer</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>read_with_dynamic_viewer</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
 <div class="op" data-op-id="rename.batch" data-op-text="rename.batch  rename_batch ">
   <div class="op-header">
     <span class="op-id">rename.batch</span>
@@ -5709,6 +6153,90 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="service.enlist" data-op-text="service.enlist  KernelClient.service_enlist ">
+  <div class="op-header">
+    <span class="op-id">service.enlist</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.service_enlist</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="set.metastore_path" data-op-text="set.metastore_path  KernelClient.set_metastore_path ">
+  <div class="op-header">
+    <span class="op-id">set.metastore_path</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.set_metastore_path</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="set.xattr" data-op-text="set.xattr  KernelClient.set_xattr ">
+  <div class="op-header">
+    <span class="op-id">set.xattr</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.set_xattr</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="stat.batch" data-op-text="stat.batch  KernelClient.stat_batch ">
+  <div class="op-header">
+    <span class="op-id">stat.batch</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.stat_batch</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="stat.bulk" data-op-text="stat.bulk  stat_bulk ">
   <div class="op-header">
     <span class="op-id">stat.bulk</span>
@@ -5716,6 +6244,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>stat_bulk</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="stream.collect_all" data-op-text="stream.collect_all  KernelClient.stream_collect_all ">
+  <div class="op-header">
+    <span class="op-id">stream.collect_all</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.stream_collect_all</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5751,6 +6300,69 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="stream.read_at" data-op-text="stream.read_at  KernelClient.stream_read_at ">
+  <div class="op-header">
+    <span class="op-id">stream.read_at</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.stream_read_at</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="stream.read_at_blocking" data-op-text="stream.read_at_blocking  KernelClient.stream_read_at_blocking ">
+  <div class="op-header">
+    <span class="op-id">stream.read_at_blocking</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.stream_read_at_blocking</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="stream.write_nowait" data-op-text="stream.write_nowait  KernelClient.stream_write_nowait ">
+  <div class="op-header">
+    <span class="op-id">stream.write_nowait</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.stream_write_nowait</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="streaming.api_stream" data-op-text="streaming.api_stream  GET /api/stream/{path:path} ">
   <div class="op-header">
     <span class="op-id">streaming.api_stream</span>
@@ -5772,13 +6384,14 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="write.batch" data-op-text="write.batch  write_batch ">
+<div class="op" data-op-id="write.batch" data-op-text="write.batch  write_batch KernelClient.write_batch ">
   <div class="op-header">
     <span class="op-id">write.batch</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>write_batch</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.write_batch</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5842,7 +6455,7 @@ graph TB
           <span class="mod-name">mount</span>
           <span class="mod-desc">&mdash; Backend mount lifecycle + driver registration.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-independent">independent</span>            <span>37 ops</span>
+<span class="tier-badge tier-independent">independent</span>            <span>38 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -6266,13 +6879,35 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="get.top_level_mounts" data-op-text="get.top_level_mounts  get_top_level_mounts ">
+<div class="op" data-op-id="get.mount_points" data-op-text="get.mount_points  KernelClient.get_mount_points ">
+  <div class="op-header">
+    <span class="op-id">get.mount_points</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.get_mount_points</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="get.top_level_mounts" data-op-text="get.top_level_mounts  get_top_level_mounts KernelClient.get_top_level_mounts ">
   <div class="op-header">
     <span class="op-id">get.top_level_mounts</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>get_top_level_mounts</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.get_top_level_mounts</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -6631,7 +7266,7 @@ graph TB
           <span class="mod-name">share_link</span>
           <span class="mod-desc">&mdash; Public/scoped share URLs for paths.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-dependent">dependent</span>            <span>12 ops</span>
+<span class="tier-badge tier-dependent">dependent</span>            <span>6 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -6719,48 +7354,6 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="list.incoming_shares" data-op-text="list.incoming_shares  list_incoming_shares ">
-  <div class="op-header">
-    <span class="op-id">list.incoming_shares</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_incoming_shares</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="list.outgoing_shares" data-op-text="list.outgoing_shares  list_outgoing_shares ">
-  <div class="op-header">
-    <span class="op-id">list.outgoing_shares</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_outgoing_shares</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
 <div class="op" data-op-id="list.share_links" data-op-text="list.share_links  list_share_links ">
   <div class="op-header">
     <span class="op-id">list.share_links</span>
@@ -6782,48 +7375,6 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="revoke.share" data-op-text="revoke.share  revoke_share ">
-  <div class="op-header">
-    <span class="op-id">revoke.share</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>revoke_share</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="revoke.share_by_id" data-op-text="revoke.share_by_id  revoke_share_by_id ">
-  <div class="op-header">
-    <span class="op-id">revoke.share_by_id</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>revoke_share_by_id</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
 <div class="op" data-op-id="revoke.share_link" data-op-text="revoke.share_link  revoke_share_link ">
   <div class="op-header">
     <span class="op-id">revoke.share_link</span>
@@ -6831,48 +7382,6 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>revoke_share_link</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="share.with_group" data-op-text="share.with_group  share_with_group ">
-  <div class="op-header">
-    <span class="op-id">share.with_group</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>share_with_group</span></span>
-  </div>
-  <div class="meta-row">
-    <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
-<span class="profile-badge profile-supported">full</span>
-    </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
-    <span>gap: &mdash;</span>
-  </div>
-</div>
-<div class="op" data-op-id="share.with_user" data-op-text="share.with_user  share_with_user ">
-  <div class="op-header">
-    <span class="op-id">share.with_user</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
-  </div>
-  <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>share_with_user</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -9427,7 +9936,7 @@ graph TB
           <span class="mod-name">agent_log</span>
           <span class="mod-desc">&mdash; Append-only agent activity log.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-independent">independent</span>            <span>34 ops</span>
+<span class="tier-badge tier-independent">independent</span>            <span>35 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -9459,6 +9968,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>agent_list_by_zone</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="agent.registry" data-op-text="agent.registry  KernelClient.agent_registry ">
+  <div class="op-header">
+    <span class="op-id">agent.registry</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.agent_registry</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -10062,13 +10592,14 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="list.agents" data-op-text="list.agents  list_agents ">
+<div class="op" data-op-id="list.agents" data-op-text="list.agents  list_agents _AgentRegistryProxy.list_agents ">
   <div class="op-header">
     <span class="op-id">list.agents</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_agents</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>_AgentRegistryProxy.list_agents</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -12574,7 +13105,7 @@ graph TB
           <span class="mod-name">nexus_fs</span>
           <span class="mod-desc">&mdash; Python mixin stack: Content/Dispatch/Metadata/Watch. Calls Rust kernel.</span>
           <span class="mod-meta">
-            <span>20 ops</span>
+            <span>32 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -12904,7 +13435,7 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-unavailable">sandbox</span>
+<span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
     <span>usage: <code>Cluster-profile-only by architecture: NexusVFSService is spawned solely by the cluster binary (rust/profiles/cluster/src/main.rs:422). Sandbox is HTTP-only for the VFS surface; the typed VFS gRPC port is never bound there (reproduced connection-refused on http_port+2). #4148 = triage issue (close-recommended).</code></span>
@@ -12977,13 +13508,266 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="sys.watch" data-op-text="sys.watch  sys_watch ">
+<div class="op" data-op-id="set.vfs_lock" data-op-text="set.vfs_lock  KernelClient.set_vfs_lock ">
+  <div class="op-header">
+    <span class="op-id">set.vfs_lock</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.set_vfs_lock</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.copy" data-op-text="sys.copy  KernelClient.sys_copy ">
+  <div class="op-header">
+    <span class="op-id">sys.copy</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_copy</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.lock" data-op-text="sys.lock  KernelClient.sys_lock ">
+  <div class="op-header">
+    <span class="op-id">sys.lock</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_lock</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.mkdir" data-op-text="sys.mkdir  KernelClient.sys_mkdir ">
+  <div class="op-header">
+    <span class="op-id">sys.mkdir</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_mkdir</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.read" data-op-text="sys.read  KernelClient.sys_read ">
+  <div class="op-header">
+    <span class="op-id">sys.read</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_read</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.readdir" data-op-text="sys.readdir  KernelClient.sys_readdir ">
+  <div class="op-header">
+    <span class="op-id">sys.readdir</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_readdir</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.rename" data-op-text="sys.rename  KernelClient.sys_rename ">
+  <div class="op-header">
+    <span class="op-id">sys.rename</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_rename</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.setattr" data-op-text="sys.setattr  KernelClient.sys_setattr ">
+  <div class="op-header">
+    <span class="op-id">sys.setattr</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_setattr</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.stat" data-op-text="sys.stat  KernelClient.sys_stat ">
+  <div class="op-header">
+    <span class="op-id">sys.stat</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_stat</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.unlink" data-op-text="sys.unlink  KernelClient.sys_unlink ">
+  <div class="op-header">
+    <span class="op-id">sys.unlink</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_unlink</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.unlock" data-op-text="sys.unlock  KernelClient.sys_unlock ">
+  <div class="op-header">
+    <span class="op-id">sys.unlock</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_unlock</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.watch" data-op-text="sys.watch  sys_watch KernelClient.sys_watch ">
   <div class="op-header">
     <span class="op-id">sys.watch</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>sys_watch</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_watch</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="sys.write" data-op-text="sys.write  KernelClient.sys_write ">
+  <div class="op-header">
+    <span class="op-id">sys.write</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.sys_write</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -13010,10 +13794,73 @@ graph TB
           <span class="mod-name">uncategorized</span>
           <span class="mod-desc">&mdash; Operations the classifier couldn&#39;t place. Add a rule in taxonomy.py.</span>
           <span class="mod-meta">
-            <span>43 ops</span>
+            <span>65 ops</span>
           </span>
         </summary>
         <div class="module-body">
+<div class="op" data-op-id="close.all_pipes" data-op-text="close.all_pipes  KernelClient.close_all_pipes ">
+  <div class="op-header">
+    <span class="op-id">close.all_pipes</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.close_all_pipes</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="close.pipe" data-op-text="close.pipe  KernelClient.close_pipe ">
+  <div class="op-header">
+    <span class="op-id">close.pipe</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.close_pipe</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="create.pipe" data-op-text="create.pipe  KernelClient.create_pipe ">
+  <div class="op-header">
+    <span class="op-id">create.pipe</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.create_pipe</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="debug.api_auth" data-op-text="debug.api_auth  GET /api/auth/whoami ">
   <div class="op-header">
     <span class="op-id">debug.api_auth</span>
@@ -13063,6 +13910,69 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /debug/asyncio</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="destroy.pipe" data-op-text="destroy.pipe  KernelClient.destroy_pipe ">
+  <div class="op-header">
+    <span class="op-id">destroy.pipe</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.destroy_pipe</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="dispatch.post_hooks" data-op-text="dispatch.post_hooks  KernelClient.dispatch_post_hooks ">
+  <div class="op-header">
+    <span class="op-id">dispatch.post_hooks</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.dispatch_post_hooks</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="dispatch.pre_hooks" data-op-text="dispatch.pre_hooks  KernelClient.dispatch_pre_hooks ">
+  <div class="op-header">
+    <span class="op-id">dispatch.pre_hooks</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.dispatch_pre_hooks</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -13224,13 +14134,13 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="get.dynamic_viewer_config" data-op-text="get.dynamic_viewer_config  get_dynamic_viewer_config ">
+<div class="op" data-op-id="get.or_create" data-op-text="get.or_create  SandboxClient.get_or_create ">
   <div class="op-header">
-    <span class="op-id">get.dynamic_viewer_config</span>
+    <span class="op-id">get.or_create</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
-    <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>get_dynamic_viewer_config</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>SandboxClient.get_or_create</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -13245,13 +14155,13 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="get.or_create" data-op-text="get.or_create  SandboxClient.get_or_create ">
+<div class="op" data-op-id="has.pipe" data-op-text="has.pipe  KernelClient.has_pipe ">
   <div class="op-header">
-    <span class="op-id">get.or_create</span>
+    <span class="op-id">has.pipe</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
-    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>SandboxClient.get_or_create</span></span>
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.has_pipe</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -13315,6 +14225,48 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /metrics/pool</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="hook.count" data-op-text="hook.count  KernelClient.hook_count ">
+  <div class="op-header">
+    <span class="op-id">hook.count</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.hook_count</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="is.directory" data-op-text="is.directory  KernelClient.is_directory ">
+  <div class="op-header">
+    <span class="op-id">is.directory</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.is_directory</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -13525,6 +14477,279 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /healthz/startup</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="probes.healthz_storage" data-op-text="probes.healthz_storage  GET /healthz/storage ">
+  <div class="op-header">
+    <span class="op-id">probes.healthz_storage</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /healthz/storage</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="register.hook" data-op-text="register.hook  KernelClient.register_hook ">
+  <div class="op-header">
+    <span class="op-id">register.hook</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.register_hook</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="register.native_hook" data-op-text="register.native_hook  KernelClient.register_native_hook ">
+  <div class="op-header">
+    <span class="op-id">register.native_hook</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.register_native_hook</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="service.close_all" data-op-text="service.close_all  KernelClient.service_close_all ">
+  <div class="op-header">
+    <span class="op-id">service.close_all</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.service_close_all</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="service.lookup" data-op-text="service.lookup  KernelClient.service_lookup ">
+  <div class="op-header">
+    <span class="op-id">service.lookup</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.service_lookup</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="service.start_all" data-op-text="service.start_all  KernelClient.service_start_all ">
+  <div class="op-header">
+    <span class="op-id">service.start_all</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.service_start_all</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="service.stop_all" data-op-text="service.stop_all  KernelClient.service_stop_all ">
+  <div class="op-header">
+    <span class="op-id">service.stop_all</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.service_stop_all</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="service.swap" data-op-text="service.swap  KernelClient.service_swap ">
+  <div class="op-header">
+    <span class="op-id">service.swap</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.service_swap</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="service.unregister" data-op-text="service.unregister  KernelClient.service_unregister ">
+  <div class="op-header">
+    <span class="op-id">service.unregister</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.service_unregister</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="set.hook_count" data-op-text="set.hook_count  KernelClient.set_hook_count ">
+  <div class="op-header">
+    <span class="op-id">set.hook_count</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.set_hook_count</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="trie.lookup" data-op-text="trie.lookup  KernelClient.trie_lookup ">
+  <div class="op-header">
+    <span class="op-id">trie.lookup</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.trie_lookup</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="trie.register" data-op-text="trie.register  KernelClient.trie_register ">
+  <div class="op-header">
+    <span class="op-id">trie.register</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.trie_register</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="trie.unregister" data-op-text="trie.unregister  KernelClient.trie_unregister ">
+  <div class="op-header">
+    <span class="op-id">trie.unregister</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.trie_unregister</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -13903,6 +15128,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus upgrade</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="unregister.hook" data-op-text="unregister.hook  KernelClient.unregister_hook ">
+  <div class="op-header">
+    <span class="op-id">unregister.hook</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="sdk"><span class="label">SDK</span> <span>KernelClient.unregister_hook</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">

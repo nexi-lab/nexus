@@ -10,6 +10,34 @@ from nexus.core.config import CacheConfig, ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+try:
+    import pytest_benchmark  # noqa: F401
+except ImportError:
+
+    class _FallbackBenchmark:
+        """Minimal pytest-benchmark-compatible fixture for lean test environments."""
+
+        def __init__(self) -> None:
+            self.stats: dict[str, float] | None = None
+
+        def __call__(self, fn, *args, **kwargs):
+            import time
+
+            start = time.perf_counter()
+            result = fn(*args, **kwargs)
+            elapsed = time.perf_counter() - start
+            self.stats = {
+                "min": elapsed,
+                "max": elapsed,
+                "mean": elapsed,
+                "median": elapsed,
+            }
+            return result
+
+    @pytest.fixture
+    def benchmark():
+        return _FallbackBenchmark()
+
 
 def _build_kernel_metastore(db_path) -> tuple[object, object]:
     """Create a kernel handle pair for benchmarks.

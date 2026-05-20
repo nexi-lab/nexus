@@ -2015,7 +2015,7 @@ class ReBACManager:
         """Get current zone revision for consistency during expansion."""
         if self._version_store is not None:
             return get_zone_revision_for_grant(self._version_store, zone_id)
-        return 0
+        return self._repo.get_zone_revision(zone_id)
 
     def _get_directory_descendants(self, directory_path: str, zone_id: str) -> list[str]:
         """Get all file paths under a directory."""
@@ -2113,7 +2113,8 @@ class ReBACManager:
         """
         if self._version_store is not None:
             return increment_version_token(self._version_store, zone_id)
-        return "v0"
+        revision = self._repo.get_zone_revision(zone_id)
+        return f"v{revision}"
 
     def _get_cached_check_zone_aware_bounded(
         self,

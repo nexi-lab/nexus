@@ -1,7 +1,8 @@
 """Manual RPC Param overrides — classes that cannot be auto-generated.
 
-These classes are imported AFTER ``_rpc_params_generated.py`` by ``protocol.py``,
-so they **replace** any generated version with the same name.
+Methods listed in ``OVERRIDE_METHOD_PARAMS`` are skipped by
+``scripts/generate_rpc_params.py`` so ``protocol.py`` can re-export these
+hand-written Param classes and route parsing through them.
 
 Kernel syscalls (sys_*, mkdir, rmdir, access, is_directory, locks +
 aliases) DO NOT need overrides — they go through the thin dispatch in
@@ -165,6 +166,39 @@ class AdminGcVersionsStatsParams:
 
 
 # ============================================================
+# 4. ReBAC RPC compatibility aliases
+# ============================================================
+
+
+@dataclass
+class RevokeShareParams:
+    """Parameters for revoke_share(), including HTTP/JSON alias fields."""
+
+    resource: tuple[str, str]
+    target: tuple[str, str] | None = None
+    target_user: str | None = None
+    target_group: str | None = None
+    permission: str = "viewer"
+    zone_id: str | None = None
+    context: Any = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.resource, list):
+            object.__setattr__(self, "resource", tuple(self.resource))
+        if isinstance(self.target, list):
+            object.__setattr__(self, "target", tuple(self.target))
+
+
+@dataclass
+class RevokeShareByIdParams:
+    """Parameters for revoke_share_by_id(), accepting share_id as tuple_id."""
+
+    tuple_id: str | None = None
+    share_id: str | None = None
+    context: Any = None
+
+
+# ============================================================
 # 8. Namespace override (RPC name differs from method name)
 # ============================================================
 
@@ -229,6 +263,9 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "hub_admin_status": HubAdminStatusParams,
     "admin_gc_versions": AdminGcVersionsParams,
     "admin_gc_versions_stats": AdminGcVersionsStatsParams,
+    # ReBAC aliases
+    "revoke_share": RevokeShareParams,
+    "revoke_share_by_id": RevokeShareByIdParams,
     # Namespace
     "namespace_get": NamespaceGetParams,
     # Semantic search init (Issue #3728 follow-up — the client calls this

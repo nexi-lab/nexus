@@ -42,6 +42,7 @@ class _NexusFSProto(Protocol):
 
     def sys_write(self, path: str, buf: bytes | str, **kwargs: Any) -> Any: ...
     def sys_setattr(self, path: str, **kwargs: Any) -> Any: ...
+    def sys_stat(self, path: str, **kwargs: Any) -> Any: ...
     def sys_read(self, path: str, **kwargs: Any) -> Any: ...
 
 
@@ -73,6 +74,17 @@ class MetastoreVersionStore:
     def get_version(self, zone_id: str) -> int:
         """Get current version for a zone. Returns 0 if not found."""
         path = _version_path(zone_id)
+        stat_fn = getattr(self._nx, "sys_stat", None)
+        if callable(stat_fn):
+            try:
+                if stat_fn(path) is None:
+                    return 0
+            except FileNotFoundError:
+                return 0
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "get_version(%s): sys_stat failed, falling back to sys_read: %s", zone_id, exc
+                )
         try:
             result = self._nx.sys_read(path)
         except FileNotFoundError:

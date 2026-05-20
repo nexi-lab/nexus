@@ -151,6 +151,21 @@ class ContentMixin:
             # in which case ``self._kernel`` is None.
             if self._kernel is None:
                 raise NexusFileNotFoundError(path)
+            if getattr(self._kernel, "requires_python_hooks", False) and self._kernel.hook_count(
+                "read"
+            ):
+                from nexus.contracts.vfs_hooks import ReadHookContext
+
+                zone_id, agent_id, _ = self._get_context_identity(context)
+                self._kernel.dispatch_pre_hooks(
+                    "read",
+                    ReadHookContext(
+                        path=path,
+                        context=context,
+                        zone_id=zone_id,
+                        agent_id=agent_id,
+                    ),
+                )
             _rust_ctx = self._build_rust_ctx(context, _is_admin)
             # DT_STREAM uses 30s timeout (long-poll); DT_PIPE uses 5s.
             # The caller's `offset` param doubles as the stream cursor position.
@@ -881,6 +896,22 @@ class ContentMixin:
         # subject (Codex Round 2 flagged this).  Trusting the cache fast-path
         # keeps the original caller identity intact end-to-end.
         _ = _zone_perms_grants_write  # kept as a hook for future propagation work
+
+        if getattr(self._kernel, "requires_python_hooks", False) and self._kernel.hook_count(
+            "write"
+        ):
+            from nexus.contracts.vfs_hooks import WriteHookContext
+
+            old_metadata = self._kernel.sys_stat(path, ROOT_ZONE_ID)
+            self._kernel.dispatch_pre_hooks(
+                "write",
+                WriteHookContext(
+                    path=path,
+                    content=buf,
+                    context=context,
+                    old_metadata=old_metadata,
+                ),
+            )
 
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 

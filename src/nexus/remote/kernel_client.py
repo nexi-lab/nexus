@@ -57,6 +57,8 @@ class KernelClient:
         self._transport: RPCTransport | None = None
         self._timeout = timeout
         self._auth_token = auth_token or ""
+        self.requires_python_hooks = True
+        self._hooks: dict[str, list[Any]] = {}
 
         if server_address:
             # Remote mode — connect to existing server.
@@ -196,8 +198,32 @@ class KernelClient:
     ) -> Any:
         """Read file content via typed Read RPC."""
         assert self._transport is not None
+        if timeout_ms != 5000 or offset:
+            result = self._call(
+                "sys_read",
+                {
+                    "path": path,
+                    "timeout_ms": int(timeout_ms),
+                    "offset": int(offset),
+                },
+            )
+            if isinstance(result, dict):
+                data = result.get("data")
+                if data is None:
+                    data = b""
+                elif isinstance(data, str):
+                    data = data.encode("utf-8")
+                return _SysReadResult(
+                    data=data,
+                    content_id=result.get("content_id"),
+                    gen=int(result.get("gen") or 0),
+                    entry_type=int(result.get("entry_type") or 1),
+                    stream_next_offset=result.get("stream_next_offset"),
+                    post_hook_needed=bool(result.get("post_hook_needed"))
+                    or self.hook_count("read") > 0,
+                )
         content = self._transport.read_file(path, content_id="", read_timeout=self._timeout)
-        return _SysReadResult(data=content)
+        return _SysReadResult(data=content, post_hook_needed=self.hook_count("read") > 0)
 
     def sys_write(
         self,
@@ -419,30 +445,43 @@ class KernelClient:
         self._call("service_close_all", {})
 
     # ── Hook dispatch (stays in Python) ────────────────────────────────
-    # Python-level hooks are dispatched by the Python DispatchMixin.
-    # The kernel client provides no-op stubs for hook_count and
-    # dispatch_post_hooks since native Rust hooks run inside the kernel
-    # process automatically.
+    # The subprocess kernel cannot hold Python hook objects. Keep a local
+    # mirror so NexusFS can run Python permission/redaction hooks before or
+    # after typed kernel RPCs.
 
     def hook_count(self, op: str) -> int:
-        """Return 0 — native hooks run in-kernel, Python hooks use DispatchMixin."""
-        return 0
+        return len(self._hooks.get(op, ()))
 
     def dispatch_post_hooks(self, op: str, ctx: Any) -> None:
-        """No-op — native hooks fire inside the kernel process."""
-        pass
+        method = f"on_post_{op}"
+        for hook in tuple(self._hooks.get(op, ())):
+            fn = getattr(hook, method, None)
+            if callable(fn):
+                fn(ctx)
 
     def dispatch_pre_hooks(self, op: str, ctx: Any) -> None:
-        """No-op — native hooks fire inside the kernel process."""
-        pass
+        method = f"on_pre_{op}"
+        for hook in tuple(self._hooks.get(op, ())):
+            fn = getattr(hook, method, None)
+            if callable(fn):
+                fn(ctx)
 
-    def register_hook(self, *args: Any, **kwargs: Any) -> None:
-        """No-op — hooks are kernel-internal in subprocess mode."""
-        pass
+    def register_hook(self, op: str, hook: Any, *args: Any, **kwargs: Any) -> None:
+        hooks = self._hooks.setdefault(op, [])
+        if hook not in hooks:
+            hooks.append(hook)
 
     def unregister_hook(self, op: str, hook: Any) -> bool:
-        """No-op — hooks are kernel-internal in subprocess mode."""
-        return False
+        hooks = self._hooks.get(op)
+        if not hooks:
+            return False
+        try:
+            hooks.remove(hook)
+        except ValueError:
+            return False
+        if not hooks:
+            self._hooks.pop(op, None)
+        return True
 
     def set_hook_count(self, op: str, count: int) -> None:
         """No-op — hook bitmap is kernel-internal in subprocess mode."""
@@ -451,7 +490,7 @@ class KernelClient:
     def dispatch_pre_hooks_batch_stat(
         self, paths: list[str], rust_ctx: Any, permission: Any
     ) -> list[bool]:
-        """Allow all — permission hooks run inside the kernel process."""
+        """Allow all; callers with Python OperationContext dispatch per-path hooks."""
         return [True] * len(paths)
 
     # ── Convenience wrappers (derived from syscalls) ──────────────────
@@ -731,13 +770,14 @@ class _SysReadResult:
         stream_next_offset: int | None = None,
         error_kind: str = "",
         error_message: str = "",
+        post_hook_needed: bool = False,
     ) -> None:
         self.data = data
         self.content_id = content_id
         self.gen = gen
         self.entry_type = entry_type
         self.stream_next_offset = stream_next_offset
-        self.post_hook_needed = False  # hooks fire inside Rust kernel
+        self.post_hook_needed = post_hook_needed
         self.error_kind = error_kind
         self.error_message = error_message
 

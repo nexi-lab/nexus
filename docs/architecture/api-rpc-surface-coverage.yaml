@@ -523,6 +523,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: agent.registry
+  module: agent_log
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.agent_registry
+      source: src/nexus/remote/kernel_client.py:699
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: agent.transition
   module: agent_log
   summary: ''
@@ -2236,6 +2253,74 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: close.all_pipes
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.close_all_pipes
+      source: src/nexus/remote/kernel_client.py:622
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: close.all_streams
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.close_all_streams
+      source: src/nexus/remote/kernel_client.py:658
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: close.pipe
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.close_pipe
+      source: src/nexus/remote/kernel_client.py:616
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: close.stream
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.close_stream
+      source: src/nexus/remote/kernel_client.py:652
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: connectors.api_v2
   module: mount
   summary: ''
@@ -2542,6 +2627,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: create.pipe
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.create_pipe
+      source: src/nexus/remote/kernel_client.py:610
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: create.share_link
   module: share_link
   summary: ''
@@ -2549,6 +2651,23 @@ operations:
     grpc_expose:
       name: create_share_link
       source: src/nexus/bricks/share_link/share_link_service.py:145
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: create.stream
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.create_stream
+      source: src/nexus/remote/kernel_client.py:627
   profiles:
     lite: supported
     sandbox: supported
@@ -2967,6 +3086,40 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: destroy.pipe
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.destroy_pipe
+      source: src/nexus/remote/kernel_client.py:613
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: destroy.stream
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.destroy_stream
+      source: src/nexus/remote/kernel_client.py:655
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: diff.versions
   module: versioning
   summary: ''
@@ -3042,6 +3195,57 @@ operations:
     mcp:
       name: nexus_discovery_search_tools
       source: src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: dispatch.post_hooks
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.dispatch_post_hooks
+      source: src/nexus/remote/kernel_client.py:431
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: dispatch.pre_hooks
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.dispatch_pre_hooks
+      source: src/nexus/remote/kernel_client.py:435
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: dispatch.pre_hooks_batch_stat
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.dispatch_pre_hooks_batch_stat
+      source: src/nexus/remote/kernel_client.py:451
   profiles:
     lite: supported
     sandbox: supported
@@ -3504,6 +3708,9 @@ operations:
     grpc_expose:
       name: exists_batch
       source: src/nexus/core/nexus_fs_metadata.py:1315
+    sdk:
+      name: KernelClient.exists_batch
+      source: src/nexus/remote/kernel_client.py:477
   profiles:
     lite: supported
     sandbox: supported
@@ -3674,7 +3881,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_client_whoami
-      source: src/nexus/server/rpc/services/federation_rpc.py:34
+      source: src/nexus/server/rpc/services/federation_rpc.py:33
   profiles:
     lite: supported
     sandbox: supported
@@ -3691,7 +3898,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_cluster_info
-      source: src/nexus/server/rpc/services/federation_rpc.py:553
+      source: src/nexus/server/rpc/services/federation_rpc.py:545
   profiles:
     lite: supported
     sandbox: supported
@@ -3708,7 +3915,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_create_zone
-      source: src/nexus/server/rpc/services/federation_rpc.py:303
+      source: src/nexus/server/rpc/services/federation_rpc.py:302
   profiles:
     lite: supported
     sandbox: supported
@@ -3725,7 +3932,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_export_zone
-      source: src/nexus/server/rpc/services/federation_rpc.py:87
+      source: src/nexus/server/rpc/services/federation_rpc.py:86
   profiles:
     lite: supported
     sandbox: supported
@@ -3742,7 +3949,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_import_zone
-      source: src/nexus/server/rpc/services/federation_rpc.py:157
+      source: src/nexus/server/rpc/services/federation_rpc.py:156
   profiles:
     lite: supported
     sandbox: supported
@@ -3759,7 +3966,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_join
-      source: src/nexus/server/rpc/services/federation_rpc.py:344
+      source: src/nexus/server/rpc/services/federation_rpc.py:341
   profiles:
     lite: supported
     sandbox: supported
@@ -3776,7 +3983,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_list_zones
-      source: src/nexus/server/rpc/services/federation_rpc.py:536
+      source: src/nexus/server/rpc/services/federation_rpc.py:528
   profiles:
     lite: supported
     sandbox: supported
@@ -3793,7 +4000,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_mount
-      source: src/nexus/server/rpc/services/federation_rpc.py:404
+      source: src/nexus/server/rpc/services/federation_rpc.py:399
   profiles:
     lite: supported
     sandbox: supported
@@ -3810,7 +4017,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_remove_zone
-      source: src/nexus/server/rpc/services/federation_rpc.py:334
+      source: src/nexus/server/rpc/services/federation_rpc.py:333
   profiles:
     lite: supported
     sandbox: supported
@@ -3827,7 +4034,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_share
-      source: src/nexus/server/rpc/services/federation_rpc.py:489
+      source: src/nexus/server/rpc/services/federation_rpc.py:482
   profiles:
     lite: supported
     sandbox: supported
@@ -3844,7 +4051,7 @@ operations:
   transports:
     grpc_expose:
       name: federation_unmount
-      source: src/nexus/server/rpc/services/federation_rpc.py:453
+      source: src/nexus/server/rpc/services/federation_rpc.py:448
   profiles:
     lite: supported
     sandbox: supported
@@ -3932,7 +4139,7 @@ operations:
   transports:
     grpc_call:
       name: close
-      source: src/nexus/server/_kernel_syscall_dispatch.py:47
+      source: src/nexus/server/_kernel_syscall_dispatch.py:48
   profiles:
     lite: supported
     sandbox: supported
@@ -3983,7 +4190,7 @@ operations:
   transports:
     grpc_call:
       name: delete
-      source: src/nexus/server/_kernel_syscall_dispatch.py:48
+      source: src/nexus/server/_kernel_syscall_dispatch.py:49
   profiles:
     lite: supported
     sandbox: supported
@@ -4017,7 +4224,7 @@ operations:
   transports:
     grpc_call:
       name: exists
-      source: src/nexus/server/_kernel_syscall_dispatch.py:49
+      source: src/nexus/server/_kernel_syscall_dispatch.py:50
   profiles:
     lite: supported
     sandbox: supported
@@ -4034,7 +4241,7 @@ operations:
   transports:
     grpc_call:
       name: is_directory
-      source: src/nexus/server/_kernel_syscall_dispatch.py:50
+      source: src/nexus/server/_kernel_syscall_dispatch.py:51
   profiles:
     lite: supported
     sandbox: supported
@@ -4051,7 +4258,7 @@ operations:
   transports:
     grpc_call:
       name: list
-      source: src/nexus/server/_kernel_syscall_dispatch.py:51
+      source: src/nexus/server/_kernel_syscall_dispatch.py:52
     grpc_expose:
       name: list
       source: src/nexus/bricks/search/search_service.py:447
@@ -4088,7 +4295,7 @@ operations:
   transports:
     grpc_call:
       name: lock_acquire
-      source: src/nexus/server/_kernel_syscall_dispatch.py:52
+      source: src/nexus/server/_kernel_syscall_dispatch.py:53
   profiles:
     lite: supported
     sandbox: supported
@@ -4125,7 +4332,7 @@ operations:
       source: src/nexus/cli/commands/directory.py:1
     grpc_call:
       name: mkdir
-      source: src/nexus/server/_kernel_syscall_dispatch.py:53
+      source: src/nexus/server/_kernel_syscall_dispatch.py:54
   profiles:
     lite: supported
     sandbox: supported
@@ -4210,7 +4417,7 @@ operations:
   transports:
     grpc_call:
       name: read
-      source: src/nexus/server/_kernel_syscall_dispatch.py:54
+      source: src/nexus/server/_kernel_syscall_dispatch.py:55
   profiles:
     lite: supported
     sandbox: supported
@@ -4245,7 +4452,7 @@ operations:
   transports:
     grpc_call:
       name: rename
-      source: src/nexus/server/_kernel_syscall_dispatch.py:55
+      source: src/nexus/server/_kernel_syscall_dispatch.py:56
   profiles:
     lite: supported
     sandbox: supported
@@ -4282,7 +4489,7 @@ operations:
       source: src/nexus/cli/commands/directory.py:1
     grpc_call:
       name: rmdir
-      source: src/nexus/server/_kernel_syscall_dispatch.py:56
+      source: src/nexus/server/_kernel_syscall_dispatch.py:57
   profiles:
     lite: supported
     sandbox: supported
@@ -4329,8 +4536,8 @@ operations:
   owning_issue: null
 - id: filesystem.status
   module: filesystem
-  summary: Service health overview. Resolves the server URL from the runtime-state record persisted by `nexus up --profile sandbox`
-    (#4144), so a sandbox started on a non-default host/port is reported reachable.
+  summary: Service health overview. Resolves the server URL from the runtime-state record persisted by `nexus up --profile
+    sandbox` (#4144), so a sandbox started on a non-default host/port is reported reachable.
   transports:
     cli:
       name: nexus status
@@ -4405,7 +4612,7 @@ operations:
       source: src/nexus/cli/commands/file_ops.py:1
     grpc_call:
       name: write
-      source: src/nexus/server/_kernel_syscall_dispatch.py:69
+      source: src/nexus/server/_kernel_syscall_dispatch.py:70
   profiles:
     lite: supported
     sandbox: supported
@@ -4603,6 +4810,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: fs.open
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.open
+      source: src/nexus/remote/kernel_client.py:71
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.pause
   module: filesystem
   summary: ''
@@ -4610,6 +4834,23 @@ operations:
     sdk:
       name: SandboxClient.pause
       source: src/nexus/remote/domain/sandbox.py:64
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.register
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: _AgentRegistryProxy.register
+      source: src/nexus/remote/kernel_client.py:875
   profiles:
     lite: supported
     sandbox: supported
@@ -4739,6 +4980,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: fs.unregister
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: _AgentRegistryProxy.unregister
+      source: src/nexus/remote/kernel_client.py:878
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.validate
   module: filesystem
   summary: ''
@@ -4844,6 +5102,9 @@ operations:
     grpc_expose:
       name: get_content_id
       source: src/nexus/core/nexus_fs_metadata.py:613
+    sdk:
+      name: KernelClient.get_content_id
+      source: src/nexus/remote/kernel_client.py:468
   profiles:
     lite: supported
     sandbox: supported
@@ -4855,22 +5116,22 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: get.dynamic_viewer_config
-  module: uncategorized
-  summary: ''
+  module: rebac
+  summary: Get stored dynamic-viewer column_config for a subject/resource or list dynamic viewers for a resource.
   transports:
     grpc_expose:
       name: get_dynamic_viewer_config
-      source: src/nexus/bricks/rebac/rebac_service.py:1492
+      source: src/nexus/bricks/rebac/rebac_service.py:1534
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: get_dynamic_viewer_config(("file", "/data/users.csv"), zone_id="corp", subject=("user", "bob"))'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: control
+  perf_link: control-plane config lookup; dynamic read overhead is covered by tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: get.key
   module: auth
   summary: ''
@@ -4905,13 +5166,13 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: get.namespace
-  module: rebac
+- id: get.mount_points
+  module: mount
   summary: ''
   transports:
-    grpc_expose:
-      name: get_namespace
-      source: src/nexus/bricks/rebac/rebac_service.py:1046
+    sdk:
+      name: KernelClient.get_mount_points
+      source: src/nexus/remote/kernel_client.py:482
   profiles:
     lite: supported
     sandbox: supported
@@ -4922,6 +5183,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: get.namespace
+  module: rebac
+  summary: Get the ReBAC namespace schema for an object type.
+  transports:
+    grpc_expose:
+      name: get_namespace
+      source: src/nexus/bricks/rebac/rebac_service.py:1046
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: nexus rebac namespace-get file --format json
+  correctness_test: tests/unit/services/test_rebac_service.py:993
+  perf_class: setup
+  perf_link: setup/control-plane schema operation; not on the per-request permission hot path
+  gap_issue: null
+  owning_issue: 4134
 - id: get.oauth_url
   module: auth
   summary: ''
@@ -4958,7 +5236,7 @@ operations:
   owning_issue: null
 - id: get.rebac_option
   module: rebac
-  summary: ''
+  summary: Read a ReBAC service tuning option.
   transports:
     grpc_expose:
       name: get_rebac_option
@@ -4967,12 +5245,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: get_rebac_option("max_depth")'
+  correctness_test: tests/unit/services/test_rebac_service.py:697
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: get.share_link
   module: share_link
   summary: ''
@@ -5014,6 +5292,9 @@ operations:
     grpc_expose:
       name: get_top_level_mounts
       source: src/nexus/core/nexus_fs_metadata.py:268
+    sdk:
+      name: KernelClient.get_top_level_mounts
+      source: src/nexus/remote/kernel_client.py:486
   profiles:
     lite: supported
     sandbox: supported
@@ -5048,6 +5329,40 @@ operations:
     grpc_expose:
       name: get_workspace_info
       source: src/nexus/services/workspace/workspace_rpc_service.py:360
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.xattr
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.get_xattr
+      source: src/nexus/remote/kernel_client.py:583
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: get.xattr_bulk
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.get_xattr_bulk
+      source: src/nexus/remote/kernel_client.py:598
   profiles:
     lite: supported
     sandbox: supported
@@ -5144,22 +5459,22 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: grant.consent
-  module: auth
-  summary: ''
+  module: rebac
+  summary: Grant discovery consent by writing a consent_granted tuple from the grantee to the consenting subject.
   transports:
     grpc_expose:
       name: grant_consent
-      source: src/nexus/bricks/rebac/rebac_service.py:1163
+      source: src/nexus/bricks/rebac/rebac_service.py:1171
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: grant_consent(("user", "alice"), ("user", "bob"), zone_id="corp")'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: graph.entity_entity_id
   module: catalog
   summary: ''
@@ -5262,6 +5577,40 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: has.pipe
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.has_pipe
+      source: src/nexus/remote/kernel_client.py:619
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: has.stream
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.has_stream
+      source: src/nexus/remote/kernel_client.py:630
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: health.health
   module: uncategorized
   summary: 'GET /health: liveness/readiness endpoint the sandbox daemon serves over HTTP. Polled by `nexus ready` and the
@@ -5269,7 +5618,7 @@ operations:
   transports:
     http:
       name: GET /health
-      source: src/nexus/server/api/core/health.py:31
+      source: src/nexus/server/api/core/health.py:30
   profiles:
     lite: supported
     sandbox: supported
@@ -5286,7 +5635,7 @@ operations:
   transports:
     http:
       name: GET /health/detailed
-      source: src/nexus/server/api/core/health.py:82
+      source: src/nexus/server/api/core/health.py:57
   profiles:
     lite: supported
     sandbox: supported
@@ -5303,7 +5652,24 @@ operations:
   transports:
     http:
       name: GET /metrics/pool
-      source: src/nexus/server/api/core/health.py:220
+      source: src/nexus/server/api/core/health.py:195
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: hook.count
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.hook_count
+      source: src/nexus/remote/kernel_client.py:427
   profiles:
     lite: supported
     sandbox: supported
@@ -5478,6 +5844,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: is.directory
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.is_directory
+      source: src/nexus/remote/kernel_client.py:459
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: jwks.v1_.well_known
   module: auth
   summary: ''
@@ -5621,6 +6004,9 @@ operations:
     grpc_expose:
       name: list_agents
       source: src/nexus/services/agents/agent_rpc_service.py:497
+    sdk:
+      name: _AgentRegistryProxy.list_agents
+      source: src/nexus/remote/kernel_client.py:881
   profiles:
     lite: supported
     sandbox: supported
@@ -5683,22 +6069,22 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.incoming_shares
-  module: share_link
-  summary: ''
+  module: rebac
+  summary: List resources shared with a user from shared-* tuples with immediate revoke visibility.
   transports:
     grpc_expose:
       name: list_incoming_shares
-      source: src/nexus/bricks/rebac/rebac_service.py:1448
+      source: src/nexus/bricks/rebac/rebac_service.py:1475
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: list_incoming_shares(("user", "bob"), object_type="file", zone_id="corp")'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: hot
+  perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: list.keys
   module: filesystem
   summary: ''
@@ -5737,22 +6123,22 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: list.outgoing_shares
-  module: share_link
-  summary: ''
+  module: rebac
+  summary: List shared-* tuples granted on a resource with immediate revoke visibility.
   transports:
     grpc_expose:
       name: list_outgoing_shares
-      source: src/nexus/bricks/rebac/rebac_service.py:1414
+      source: src/nexus/bricks/rebac/rebac_service.py:1425
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: list_outgoing_shares(("file", "/workspace/secret.txt"), zone_id="corp")'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: hot
+  perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: list.providers
   module: filesystem
   summary: ''
@@ -6010,38 +6396,38 @@ operations:
   owning_issue: null
 - id: make.private
   module: rebac
-  summary: ''
+  summary: Remove public discoverability by deleting the matching public_discoverable wildcard tuple.
   transports:
     grpc_expose:
       name: make_private
-      source: src/nexus/bricks/rebac/rebac_service.py:1253
+      source: src/nexus/bricks/rebac/rebac_service.py:1249
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: make_private(("file", "/workspace/readme.md"), zone_id="corp")'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: make.public
   module: rebac
-  summary: ''
+  summary: Make a resource publicly discoverable by writing a public_discoverable wildcard tuple.
   transports:
     grpc_expose:
       name: make_public
-      source: src/nexus/bricks/rebac/rebac_service.py:1222
+      source: src/nexus/bricks/rebac/rebac_service.py:1230
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: make_public(("file", "/workspace/readme.md"), zone_id="corp")'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: mcp.cli
   module: mcp
   summary: ''
@@ -6246,6 +6632,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: 4133
+- id: metastore.list_paginated
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.metastore_list_paginated
+      source: src/nexus/remote/kernel_client.py:494
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: mobile.detect
   module: uncategorized
   summary: ''
@@ -6419,8 +6822,8 @@ operations:
 - id: mount.up
   module: mount
   summary: Boot the Nexus stack/daemon. `nexus up --profile sandbox` starts the HTTP-only sandbox daemon (nexusd) for an isolated
-    workspace, passing --host/--port/--data-dir through and persisting a runtime-state record (#4144) so nexus env/status/run can
-    discover a sandbox on a non-default host/port.
+    workspace, passing --host/--port/--data-dir through and persisting a runtime-state record (#4144) so nexus env/status/run
+    can discover a sandbox on a non-default host/port.
   transports:
     cli:
       name: nexus up
@@ -6437,7 +6840,7 @@ operations:
   owning_issue: 4126
 - id: namespace.delete
   module: rebac
-  summary: ''
+  summary: Delete or clean up ReBAC namespace data for an object type.
   transports:
     grpc_expose:
       name: namespace_delete
@@ -6446,15 +6849,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus rebac namespace-delete document --yes
+  correctness_test: tests/unit/services/test_rebac_service.py:1043
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: namespace.list
   module: rebac
-  summary: ''
+  summary: List registered ReBAC namespace schemas.
   transports:
     grpc_expose:
       name: namespace_list
@@ -6463,19 +6866,19 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus rebac namespace-list --format json
+  correctness_test: tests/unit/services/test_rebac_service.py:1010
+  perf_class: setup
+  perf_link: setup/control-plane schema operation; not on the per-request permission hot path
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: nexus_fs.sys_copy
   module: nexus_fs
   summary: ''
   transports:
     grpc_call:
       name: sys_copy
-      source: src/nexus/server/_kernel_syscall_dispatch.py:57
+      source: src/nexus/server/_kernel_syscall_dispatch.py:58
   profiles:
     lite: supported
     sandbox: supported
@@ -6492,7 +6895,7 @@ operations:
   transports:
     grpc_call:
       name: sys_lock
-      source: src/nexus/server/_kernel_syscall_dispatch.py:58
+      source: src/nexus/server/_kernel_syscall_dispatch.py:59
   profiles:
     lite: supported
     sandbox: supported
@@ -6509,7 +6912,7 @@ operations:
   transports:
     grpc_call:
       name: sys_mkdir
-      source: src/nexus/server/_kernel_syscall_dispatch.py:59
+      source: src/nexus/server/_kernel_syscall_dispatch.py:60
   profiles:
     lite: supported
     sandbox: supported
@@ -6526,7 +6929,7 @@ operations:
   transports:
     grpc_call:
       name: sys_read
-      source: src/nexus/server/_kernel_syscall_dispatch.py:60
+      source: src/nexus/server/_kernel_syscall_dispatch.py:61
   profiles:
     lite: supported
     sandbox: supported
@@ -6543,7 +6946,7 @@ operations:
   transports:
     grpc_call:
       name: sys_readdir
-      source: src/nexus/server/_kernel_syscall_dispatch.py:61
+      source: src/nexus/server/_kernel_syscall_dispatch.py:62
   profiles:
     lite: supported
     sandbox: supported
@@ -6560,7 +6963,7 @@ operations:
   transports:
     grpc_call:
       name: sys_rename
-      source: src/nexus/server/_kernel_syscall_dispatch.py:62
+      source: src/nexus/server/_kernel_syscall_dispatch.py:63
   profiles:
     lite: supported
     sandbox: supported
@@ -6577,7 +6980,7 @@ operations:
   transports:
     grpc_call:
       name: sys_rmdir
-      source: src/nexus/server/_kernel_syscall_dispatch.py:63
+      source: src/nexus/server/_kernel_syscall_dispatch.py:64
   profiles:
     lite: supported
     sandbox: supported
@@ -6594,7 +6997,7 @@ operations:
   transports:
     grpc_call:
       name: sys_setattr
-      source: src/nexus/server/_kernel_syscall_dispatch.py:64
+      source: src/nexus/server/_kernel_syscall_dispatch.py:65
   profiles:
     lite: supported
     sandbox: supported
@@ -6611,7 +7014,7 @@ operations:
   transports:
     grpc_call:
       name: sys_stat
-      source: src/nexus/server/_kernel_syscall_dispatch.py:65
+      source: src/nexus/server/_kernel_syscall_dispatch.py:66
   profiles:
     lite: supported
     sandbox: supported
@@ -6628,7 +7031,7 @@ operations:
   transports:
     grpc_call:
       name: sys_unlink
-      source: src/nexus/server/_kernel_syscall_dispatch.py:66
+      source: src/nexus/server/_kernel_syscall_dispatch.py:67
   profiles:
     lite: supported
     sandbox: supported
@@ -6645,7 +7048,7 @@ operations:
   transports:
     grpc_call:
       name: sys_unlock
-      source: src/nexus/server/_kernel_syscall_dispatch.py:67
+      source: src/nexus/server/_kernel_syscall_dispatch.py:68
   profiles:
     lite: supported
     sandbox: supported
@@ -6662,7 +7065,7 @@ operations:
   transports:
     grpc_call:
       name: sys_write
-      source: src/nexus/server/_kernel_syscall_dispatch.py:68
+      source: src/nexus/server/_kernel_syscall_dispatch.py:69
   profiles:
     lite: supported
     sandbox: supported
@@ -6726,28 +7129,27 @@ operations:
   owning_issue: null
 - id: nexus_v_f_s_service.ping
   module: nexus_fs
-  summary: 'gRPC liveness ping on NexusVFSService. Unavailable in sandbox by architecture: the typed VFS gRPC server is
-    bound only by the cluster profile (single spawn call site rust/profiles/cluster/src/main.rs:422); the sandbox path
-    never binds it (reproduced connection-refused on http_port+2). As of #4126 the sandbox path also no longer starts
-    the Raft federation gRPC on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 (which reported an
-    UNAUTHENTICATED Ping) does not reproduce in sandbox — close-recommended / reclassify as cluster-only.'
+  summary: "gRPC liveness ping on NexusVFSService. Unavailable in sandbox by architecture: the typed VFS gRPC server is bound\
+    \ only by the cluster profile (single spawn call site rust/profiles/cluster/src/main.rs:422); the sandbox path never binds\
+    \ it (reproduced connection-refused on http_port+2). As of #4126 the sandbox path also no longer starts the Raft federation\
+    \ gRPC on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 (which reported an UNAUTHENTICATED Ping) does not\
+    \ reproduce in sandbox \u2014 close-recommended / reclassify as cluster-only."
   transports:
     grpc_typed:
       name: NexusVFSService.Ping
       source: proto/nexus/grpc/vfs/vfs.proto:28
   profiles:
     lite: supported
-    sandbox: unavailable
+    sandbox: supported
     full: supported
-  usage_example: 'Cluster-profile-only by architecture: NexusVFSService is spawned solely by the cluster binary
-    (rust/profiles/cluster/src/main.rs:422). Sandbox is HTTP-only for the VFS surface; the typed VFS gRPC port is never
-    bound there (reproduced connection-refused on http_port+2). #4148 = triage issue (close-recommended).'
+  usage_example: 'Cluster-profile-only by architecture: NexusVFSService is spawned solely by the cluster binary (rust/profiles/cluster/src/main.rs:422).
+    Sandbox is HTTP-only for the VFS surface; the typed VFS gRPC port is never bound there (reproduced connection-refused
+    on http_port+2). #4148 = triage issue (close-recommended).'
   correctness_test: tests/integration/test_sandbox_boot_smoke.py
   perf_class: control
-  perf_link: 'N/A in sandbox — the typed VFS gRPC server is cluster-profile-only and is never bound in the sandbox path
-    (reproduced connection-refused on http_port+2). As of #4126 sandbox also no longer starts the Raft federation gRPC
-    on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 tracked for triage (close-recommended / reclassify as
-    cluster-only).'
+  perf_link: "N/A in sandbox \u2014 the typed VFS gRPC server is cluster-profile-only and is never bound in the sandbox path\
+    \ (reproduced connection-refused on http_port+2). As of #4126 sandbox also no longer starts the Raft federation gRPC on\
+    \ :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 tracked for triage (close-recommended / reclassify as cluster-only)."
   gap_issue: 4148
   owning_issue: 4126
 - id: nexus_v_f_s_service.read
@@ -7774,7 +8176,7 @@ operations:
   transports:
     http:
       name: GET /healthz/live
-      source: src/nexus/server/health/probes.py:101
+      source: src/nexus/server/health/probes.py:160
   profiles:
     lite: supported
     sandbox: supported
@@ -7791,7 +8193,7 @@ operations:
   transports:
     http:
       name: GET /healthz/ready
-      source: src/nexus/server/health/probes.py:111
+      source: src/nexus/server/health/probes.py:170
   profiles:
     lite: supported
     sandbox: supported
@@ -7808,7 +8210,24 @@ operations:
   transports:
     http:
       name: GET /healthz/startup
-      source: src/nexus/server/health/probes.py:159
+      source: src/nexus/server/health/probes.py:218
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: probes.healthz_storage
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /healthz/storage
+      source: src/nexus/server/health/probes.py:250
   profiles:
     lite: supported
     sandbox: supported
@@ -7872,6 +8291,9 @@ operations:
     grpc_expose:
       name: read_batch
       source: src/nexus/core/nexus_fs_content.py:1569
+    sdk:
+      name: KernelClient.read_batch
+      source: src/nexus/remote/kernel_client.py:341
   profiles:
     lite: supported
     sandbox: supported
@@ -7934,22 +8356,23 @@ operations:
   gap_issue: null
   owning_issue: 4133
 - id: read.with_dynamic_viewer
-  module: filesystem
-  summary: ''
+  module: rebac
+  summary: Read CSV content with stored dynamic-viewer column_config filtering applied for the requesting subject.
   transports:
     grpc_expose:
       name: read_with_dynamic_viewer
-      source: src/nexus/bricks/rebac/rebac_service.py:1559
+      source: src/nexus/bricks/rebac/rebac_service.py:1673
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: read_with_dynamic_viewer(("file", "/data/users.csv"), csv_content, zone_id="corp", subject=("user",
+    "bob"))'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: hot
+  perf_link: tests/e2e/self_contained/test_rebac_full_story_e2e.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: reauth.mount
   module: mount
   summary: ''
@@ -7973,7 +8396,7 @@ operations:
   transports:
     grpc_call:
       name: access
-      source: src/nexus/server/_kernel_syscall_dispatch.py:46
+      source: src/nexus/server/_kernel_syscall_dispatch.py:47
   profiles:
     lite: supported
     sandbox: supported
@@ -7986,7 +8409,7 @@ operations:
   owning_issue: null
 - id: rebac.check
   module: rebac
-  summary: ''
+  summary: Check whether a subject has a permission on an object.
   transports:
     grpc_expose:
       name: rebac_check
@@ -7995,15 +8418,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus rebac check agent alice write file /workspace/secret.txt
+  correctness_test: tests/unit/services/test_rebac_service.py:349
+  perf_class: hot
+  perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: rebac.check_batch
   module: rebac
-  summary: ''
+  summary: Check many subject/permission/object tuples in one RPC.
   transports:
     grpc_expose:
       name: rebac_check_batch
@@ -8012,12 +8435,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus rebac check-batch checks.json --format summary
+  correctness_test: tests/unit/services/test_rebac_service.py:479
+  perf_class: hot
+  perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: rebac.cli
   module: rebac
   summary: ''
@@ -8037,7 +8460,7 @@ operations:
   owning_issue: null
 - id: rebac.create
   module: rebac
-  summary: ''
+  summary: Create a ReBAC relationship tuple.
   transports:
     grpc_expose:
       name: rebac_create
@@ -8046,15 +8469,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus rebac create agent alice direct_owner file /workspace/secret.txt
+  correctness_test: tests/unit/services/test_rebac_service.py:131
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: rebac.delete
   module: rebac
-  summary: ''
+  summary: Delete a ReBAC relationship tuple by tuple id.
   transports:
     grpc_expose:
       name: rebac_delete
@@ -8063,15 +8486,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus rebac delete tuple-123
+  correctness_test: tests/unit/services/test_rebac_service.py:638
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: rebac.expand
   module: rebac
-  summary: ''
+  summary: Expand a permission to all subjects that currently have it.
   transports:
     grpc_expose:
       name: rebac_expand
@@ -8080,15 +8503,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus rebac expand read file /workspace/secret.txt
+  correctness_test: tests/unit/services/test_rebac_service.py:535
+  perf_class: hot
+  perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: rebac.expand_with_privacy
   module: rebac
-  summary: ''
+  summary: Expand permissions with requester-aware consent filtering.
   transports:
     grpc_expose:
       name: rebac_expand_with_privacy
@@ -8097,15 +8520,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: rebac_expand_with_privacy("read", ("file", "/workspace/secret.txt"), zone_id="corp", requester=("user",
+    "bob"))'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: hot
+  perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: rebac.explain
   module: rebac
-  summary: ''
+  summary: Explain the graph path behind a ReBAC permission decision.
   transports:
     grpc_expose:
       name: rebac_explain
@@ -8114,15 +8538,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus rebac explain agent alice write file /workspace/secret.txt --verbose
+  correctness_test: tests/unit/services/test_rebac_service.py:571
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: rebac.list_objects
   module: rebac
-  summary: ''
+  summary: List objects a subject has a relation to.
   transports:
     grpc_expose:
       name: rebac_list_objects
@@ -8131,15 +8555,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: rebac_list_objects(relation="direct_viewer", subject=("user", "alice"), zone_id="corp")'
+  correctness_test: tests/unit/services/test_rebac_service.py:937
+  perf_class: hot
+  perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: rebac.list_tuples
   module: rebac
-  summary: ''
+  summary: List ReBAC tuples with subject, relation, object, or relation-set filters.
   transports:
     grpc_expose:
       name: rebac_list_tuples
@@ -8148,12 +8572,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus rebac list --subject-type user --subject-id alice --format json
+  correctness_test: tests/unit/services/test_rebac_service.py:909
+  perf_class: hot
+  perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: rebac.tuples
   module: rebac
   summary: ''
@@ -8188,13 +8612,47 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: register.hook
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.register_hook
+      source: src/nexus/remote/kernel_client.py:439
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: register.namespace
   module: rebac
-  summary: ''
+  summary: Register a ReBAC namespace schema for an object type.
   transports:
     grpc_expose:
       name: register_namespace
       source: src/nexus/bricks/rebac/rebac_service.py:985
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: 'RPC: register_namespace({"object_type": "file", "config": {"relations": {}, "permissions": {}}})'
+  correctness_test: tests/unit/services/test_rebac_service.py:730
+  perf_class: setup
+  perf_link: setup/control-plane schema operation; not on the per-request permission hot path
+  gap_issue: null
+  owning_issue: 4134
+- id: register.native_hook
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.register_native_hook
+      source: src/nexus/remote/kernel_client.py:677
   profiles:
     lite: supported
     sandbox: supported
@@ -8308,8 +8766,8 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: revoke.consent
-  module: auth
-  summary: ''
+  module: rebac
+  summary: Revoke discovery consent by deleting the matching consent_granted tuple.
   transports:
     grpc_expose:
       name: revoke_consent
@@ -8318,12 +8776,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: revoke_consent(("user", "alice"), ("user", "bob"), zone_id="corp")'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: revoke.credential
   module: auth
   summary: ''
@@ -8359,39 +8817,39 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: revoke.share
-  module: share_link
-  summary: ''
+  module: rebac
+  summary: Revoke a resource share by deleting the matching shared-* tuple.
   transports:
     grpc_expose:
       name: revoke_share
-      source: src/nexus/bricks/rebac/rebac_service.py:1365
+      source: src/nexus/bricks/rebac/rebac_service.py:1358
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: revoke_share(("file", "/workspace/secret.txt"), ("user", "bob"), permission="viewer", zone_id="corp")'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: revoke.share_by_id
-  module: share_link
-  summary: ''
+  module: rebac
+  summary: Revoke a resource share by tuple id.
   transports:
     grpc_expose:
       name: revoke_share_by_id
-      source: src/nexus/bricks/rebac/rebac_service.py:1395
+      source: src/nexus/bricks/rebac/rebac_service.py:1406
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: revoke_share_by_id("tuple-share-1")'
+  correctness_test: tests/unit/services/test_rebac_service.py:959
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: revoke.share_link
   module: share_link
   summary: ''
@@ -8479,9 +8937,9 @@ operations:
   owning_issue: null
 - id: sandbox.run
   module: sandbox
-  summary: Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env`
-    (env_cmd.py load_project_config + load_runtime_state + resolve_connection_env), so it transitively benefits from the sandbox
-    runtime-state persisted by `nexus up --profile sandbox` (#4144). Covered via the shared resolver, not a run-specific sandbox test.
+  summary: Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env` (env_cmd.py
+    load_project_config + load_runtime_state + resolve_connection_env), so it transitively benefits from the sandbox runtime-state
+    persisted by `nexus up --profile sandbox` (#4144). Covered via the shared resolver, not a run-specific sandbox test.
   transports:
     cli:
       name: nexus run
@@ -9224,13 +9682,234 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: set.rebac_option
+- id: service.close_all
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.service_close_all
+      source: src/nexus/remote/kernel_client.py:418
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: service.enlist
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.service_enlist
+      source: src/nexus/remote/kernel_client.py:405
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: service.lookup
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.service_lookup
+      source: src/nexus/remote/kernel_client.py:393
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: service.mark_bootstrapped
+  module: auth
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.service_mark_bootstrapped
+      source: src/nexus/remote/kernel_client.py:390
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: service.start_all
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.service_start_all
+      source: src/nexus/remote/kernel_client.py:387
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: service.stop_all
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.service_stop_all
+      source: src/nexus/remote/kernel_client.py:415
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: service.swap
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.service_swap
+      source: src/nexus/remote/kernel_client.py:397
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: service.unregister
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.service_unregister
+      source: src/nexus/remote/kernel_client.py:564
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: set.hook_count
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.set_hook_count
+      source: src/nexus/remote/kernel_client.py:447
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: set.metastore_path
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.set_metastore_path
+      source: src/nexus/remote/kernel_client.py:665
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: set.permission_provider
   module: rebac
   summary: ''
+  transports:
+    sdk:
+      name: KernelClient.set_permission_provider
+      source: src/nexus/remote/kernel_client.py:681
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: set.rebac_option
+  module: rebac
+  summary: Set a ReBAC service tuning option such as max_depth or cache_ttl.
   transports:
     grpc_expose:
       name: set_rebac_option
       source: src/nexus/bricks/rebac/rebac_service.py:917
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: 'RPC: set_rebac_option("max_depth", 15)'
+  correctness_test: tests/unit/services/test_rebac_service.py:667
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
+  gap_issue: null
+  owning_issue: 4134
+- id: set.vfs_lock
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.set_vfs_lock
+      source: src/nexus/remote/kernel_client.py:673
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: set.xattr
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.set_xattr
+      source: src/nexus/remote/kernel_client.py:591
   profiles:
     lite: supported
     sandbox: supported
@@ -9242,39 +9921,39 @@ operations:
   gap_issue: null
   owning_issue: null
 - id: share.with_group
-  module: share_link
-  summary: ''
+  module: rebac
+  summary: Share a resource with a group by writing a group#member shared-* tuple.
   transports:
     grpc_expose:
       name: share_with_group
-      source: src/nexus/bricks/rebac/rebac_service.py:1325
+      source: src/nexus/bricks/rebac/rebac_service.py:1321
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: share_with_group(("file", "/workspace/secret.txt"), "eng", permission="viewer", zone_id="corp")'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: share.with_user
-  module: share_link
-  summary: ''
+  module: rebac
+  summary: Share a resource with a user by writing a shared-* tuple.
   transports:
     grpc_expose:
       name: share_with_user
-      source: src/nexus/bricks/rebac/rebac_service.py:1285
+      source: src/nexus/bricks/rebac/rebac_service.py:1284
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: share_with_user(("file", "/workspace/secret.txt"), "bob", permission="viewer", zone_id="corp")'
+  correctness_test: tests/e2e/self_contained/test_rebac_full_story_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4134
 - id: snapshot.begin
   module: snapshot
   summary: ''
@@ -9615,6 +10294,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: stat.batch
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.stat_batch
+      source: src/nexus/remote/kernel_client.py:374
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: stat.bulk
   module: filesystem
   summary: ''
@@ -9632,6 +10328,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: 4133
+- id: stream.collect_all
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.stream_collect_all
+      source: src/nexus/remote/kernel_client.py:648
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: stream.range
   module: filesystem
   summary: ''
@@ -9649,6 +10362,57 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: 4133
+- id: stream.read_at
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.stream_read_at
+      source: src/nexus/remote/kernel_client.py:645
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: stream.read_at_blocking
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.stream_read_at_blocking
+      source: src/nexus/remote/kernel_client.py:633
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: stream.write_nowait
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.stream_write_nowait
+      source: src/nexus/remote/kernel_client.py:642
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: streaming.api_stream
   module: filesystem
   summary: ''
@@ -9785,6 +10549,176 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: sys.copy
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_copy
+      source: src/nexus/remote/kernel_client.py:279
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.lock
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_lock
+      source: src/nexus/remote/kernel_client.py:314
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.mkdir
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_mkdir
+      source: src/nexus/remote/kernel_client.py:258
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.read
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_read
+      source: src/nexus/remote/kernel_client.py:190
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.readdir
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_readdir
+      source: src/nexus/remote/kernel_client.py:291
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.rename
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_rename
+      source: src/nexus/remote/kernel_client.py:267
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.setattr
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_setattr
+      source: src/nexus/remote/kernel_client.py:244
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.stat
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_stat
+      source: src/nexus/remote/kernel_client.py:218
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.unlink
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_unlink
+      source: src/nexus/remote/kernel_client.py:251
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.unlock
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_unlock
+      source: src/nexus/remote/kernel_client.py:337
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: sys.watch
   module: nexus_fs
   summary: ''
@@ -9792,6 +10726,26 @@ operations:
     grpc_expose:
       name: sys_watch
       source: src/nexus/core/nexus_fs_watch.py:26
+    sdk:
+      name: KernelClient.sys_watch
+      source: src/nexus/remote/kernel_client.py:381
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.write
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_write
+      source: src/nexus/remote/kernel_client.py:202
   profiles:
     lite: supported
     sandbox: supported
@@ -9860,6 +10814,57 @@ operations:
     http:
       name: POST /token-exchange
       source: src/nexus/server/api/v1/routers/token_exchange.py:110
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: trie.lookup
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.trie_lookup
+      source: src/nexus/remote/kernel_client.py:575
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: trie.register
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.trie_register
+      source: src/nexus/remote/kernel_client.py:572
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: trie.unregister
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.trie_unregister
+      source: src/nexus/remote/kernel_client.py:578
   profiles:
     lite: supported
     sandbox: supported
@@ -10025,9 +11030,9 @@ operations:
   owning_issue: null
 - id: uncategorized.env
   module: uncategorized
-  summary: Print connection env vars for the running stack. Under the sandbox profile it consumes the runtime-state record persisted
-    by `nexus up --profile sandbox` (#4144), emitting NEXUS_URL/NEXUS_GRPC_HOST/NEXUS_GRPC_PORT/NEXUS_PROFILE/NEXUS_WORKSPACE; the
-    hub token is never persisted.
+  summary: Print connection env vars for the running stack. Under the sandbox profile it consumes the runtime-state record
+    persisted by `nexus up --profile sandbox` (#4144), emitting NEXUS_URL/NEXUS_GRPC_HOST/NEXUS_GRPC_PORT/NEXUS_PROFILE/NEXUS_WORKSPACE;
+    the hub token is never persisted.
   transports:
     cli:
       name: nexus env
@@ -10219,6 +11224,23 @@ operations:
     cli:
       name: nexus upgrade
       source: src/nexus/cli/commands/stack.py:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: unregister.hook
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.unregister_hook
+      source: src/nexus/remote/kernel_client.py:443
   profiles:
     lite: supported
     sandbox: supported
@@ -10794,6 +11816,9 @@ operations:
     grpc_expose:
       name: write_batch
       source: src/nexus/core/nexus_fs_content.py:1407
+    sdk:
+      name: KernelClient.write_batch
+      source: src/nexus/remote/kernel_client.py:685
   profiles:
     lite: supported
     sandbox: supported
@@ -11244,6 +12269,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: agent.registry
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: agent_log.agent
   has:
   - cli
@@ -11852,6 +12885,38 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: close.all_pipes
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: close.all_streams
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: close.pipe
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: close.stream
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: connectors.api_v2
   has:
   - http
@@ -11956,6 +13021,22 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: create.pipe
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: create.stream
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: credentials.delegate
   has:
   - http
@@ -12052,6 +13133,22 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
+- operation_id: destroy.pipe
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: destroy.stream
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: discovery.get_tool_details
   has:
   - mcp
@@ -12084,6 +13181,30 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
+- operation_id: dispatch.post_hooks
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: dispatch.pre_hooks
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: dispatch.pre_hooks_batch_stat
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: edit.file
   has:
   - mcp
@@ -12268,6 +13389,14 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
+- operation_id: exists.batch
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: extensions.api_v2
   has:
   - http
@@ -12548,7 +13677,23 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: fs.open
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: fs.pause
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: fs.register
   has:
   - sdk
   missing:
@@ -12612,6 +13757,14 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: fs.unregister
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: fs.validate
   has:
   - sdk
@@ -12636,7 +13789,23 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: get.content_id
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: get.key
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: get.mount_points
   has:
   - sdk
   missing:
@@ -12653,6 +13822,30 @@ parity_warnings:
   - http
   - mcp
 - operation_id: get.or_create
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: get.top_level_mounts
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: get.xattr
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: get.xattr_bulk
   has:
   - sdk
   missing:
@@ -12700,6 +13893,22 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: has.pipe
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: has.stream
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: health.health
   has:
   - http
@@ -12724,6 +13933,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: hook.count
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: hub.admin
   has:
   - mcp
@@ -12748,6 +13965,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: is.directory
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: jwks.v1_.well_known
   has:
   - http
@@ -12804,6 +14029,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: list.agents
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: list.credentials
   has:
   - sdk
@@ -12916,6 +14149,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: metastore.list_paginated
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: mobile.detect
   has:
   - http
@@ -13340,6 +14581,22 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: probes.healthz_storage
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: read.batch
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: read.file
   has:
   - mcp
@@ -13364,6 +14621,22 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: register.hook
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: register.native_hook
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: registry.workspaces
   has:
   - http
@@ -13724,6 +14997,110 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
+- operation_id: service.close_all
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: service.enlist
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: service.lookup
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: service.mark_bootstrapped
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: service.start_all
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: service.stop_all
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: service.swap
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: service.unregister
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: set.hook_count
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: set.metastore_path
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: set.permission_provider
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: set.vfs_lock
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: set.xattr
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: snapshot.cli
   has:
   - cli
@@ -13772,6 +15149,46 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: stat.batch
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: stream.collect_all
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: stream.read_at
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: stream.read_at_blocking
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: stream.write_nowait
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: streaming.api_stream
   has:
   - http
@@ -13804,6 +15221,102 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: sys.copy
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.lock
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.mkdir
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.read
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.readdir
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.rename
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.setattr
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.stat
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.unlink
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.unlock
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.watch
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: sys.write
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: task_manager.scheduler
   has:
   - cli
@@ -13836,6 +15349,30 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: trie.lookup
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: trie.register
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: trie.unregister
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: tus_uploads.options
   has:
   - http
@@ -14004,6 +15541,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: unregister.hook
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: update.key
   has:
   - sdk
@@ -14108,6 +15653,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: write.batch
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: write.file
   has:
   - mcp

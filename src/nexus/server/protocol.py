@@ -15,14 +15,14 @@ from typing import Any
 # Issue #1519, 1A: RPC types live in contracts/rpc_types.py (pure data types).
 # Re-exported here for backward compatibility.
 from nexus.contracts.rpc_types import RPCErrorCode, RPCRequest, RPCResponse  # noqa: F401
-
-# ============================================================
-# Generated Param classes + METHOD_PARAMS
-# ============================================================
 from nexus.server._rpc_param_overrides import *  # noqa: F401, F403, E402
 from nexus.server._rpc_param_overrides import (  # noqa: E402
     OVERRIDE_METHOD_PARAMS as _OVERRIDE_METHOD_PARAMS,
 )
+
+# ============================================================
+# Generated Param classes + METHOD_PARAMS
+# ============================================================
 from nexus.server._rpc_params_generated import *  # noqa: F401, F403, E402
 from nexus.server._rpc_params_generated import METHOD_PARAMS as _GEN_METHOD_PARAMS  # noqa: E402
 from nexus.server.rpc_results import RebacCheckResult, RebacCreateResult  # noqa: F401, E402

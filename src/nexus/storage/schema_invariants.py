@@ -120,6 +120,140 @@ def _ensure_nullable_column(
         return
 
 
+def _ensure_file_paths_search_columns(
+    conn: Any,
+    columns_by_table: dict[str, set[str]],
+) -> None:
+    columns = columns_by_table.get("file_paths")
+    if columns is None:
+        return
+
+    if "content_id" not in columns:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE file_paths
+                ADD COLUMN content_id VARCHAR(255)
+                """
+            )
+        )
+        columns.add("content_id")
+
+    if "content_hash" in columns:
+        conn.execute(
+            text(
+                """
+                UPDATE file_paths
+                SET content_id = content_hash
+                WHERE content_id IS NULL
+                """
+            )
+        )
+
+    if "indexed_content_id" not in columns:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE file_paths
+                ADD COLUMN indexed_content_id VARCHAR(255)
+                """
+            )
+        )
+        columns.add("indexed_content_id")
+
+    if "indexed_content_hash" in columns:
+        conn.execute(
+            text(
+                """
+                UPDATE file_paths
+                SET indexed_content_id = indexed_content_hash
+                WHERE indexed_content_id IS NULL
+                """
+            )
+        )
+
+    if "last_indexed_at" not in columns:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE file_paths
+                ADD COLUMN last_indexed_at TIMESTAMP
+                """
+            )
+        )
+        columns.add("last_indexed_at")
+
+
+def _ensure_rebac_namespaces_table(
+    conn: Any,
+    columns_by_table: dict[str, set[str]],
+    table_names: set[str],
+) -> None:
+    if "rebac_namespaces" in table_names:
+        return
+
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS rebac_namespaces (
+                namespace_id VARCHAR(255) PRIMARY KEY,
+                object_type VARCHAR(255) UNIQUE NOT NULL,
+                config TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
+            )
+            """
+        )
+    )
+    table_names.add("rebac_namespaces")
+    columns_by_table["rebac_namespaces"] = {
+        "namespace_id",
+        "object_type",
+        "config",
+        "created_at",
+        "updated_at",
+    }
+
+
+def _ensure_version_history_content_columns(
+    conn: Any,
+    columns_by_table: dict[str, set[str]],
+) -> None:
+    columns = columns_by_table.get("version_history")
+    if columns is None:
+        return
+
+    if "content_id" not in columns:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE version_history
+                ADD COLUMN content_id VARCHAR(255)
+                """
+            )
+        )
+        columns.add("content_id")
+
+    if "content_hash" in columns:
+        conn.execute(
+            text(
+                """
+                UPDATE version_history
+                SET content_id = content_hash
+                WHERE content_id IS NULL
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE version_history
+                ALTER COLUMN content_hash DROP NOT NULL
+                """
+            )
+        )
+
+
 def _ensure_varchar_lengths(
     conn: Any,
     inspector: Any,
@@ -149,6 +283,14 @@ def _ensure_rebac_id_lengths(conn: Any, inspector: Any, table_names: set[str]) -
 
 
 def _ensure_zone_indexes(conn: Any, columns_by_table: dict[str, set[str]]) -> None:
+    zone_columns = columns_by_table.get("zones", set())
+    if "name" in zone_columns:
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_zones_name ON zones (name)"))
+    if "phase" in zone_columns:
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_zones_phase ON zones (phase)"))
+    if "deleted_at" in zone_columns:
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_zones_deleted_at ON zones (deleted_at)"))
+
     file_path_columns = columns_by_table.get("file_paths", set())
     if {"zone_id", "virtual_path", "deleted_at"}.issubset(file_path_columns):
         conn.execute(
@@ -193,6 +335,35 @@ def _ensure_zone_indexes(conn: Any, columns_by_table: dict[str, set[str]]) -> No
             )
         )
 
+    version_history_columns = columns_by_table.get("version_history", set())
+    if "content_id" in version_history_columns:
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_version_history_content_id
+                ON version_history (content_id)
+                """
+            )
+        )
+    if "created_at" in version_history_columns:
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_version_history_created_at
+                ON version_history (created_at)
+                """
+            )
+        )
+    if "parent_version_id" in version_history_columns:
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_version_history_parent
+                ON version_history (parent_version_id)
+                """
+            )
+        )
+
     tiger_directory_columns = columns_by_table.get("tiger_directory_grants", set())
     if {"zone_id", "directory_path", "subject_type", "subject_id", "permission"}.issubset(
         tiger_directory_columns
@@ -231,6 +402,50 @@ def _ensure_zone_indexes(conn: Any, columns_by_table: dict[str, set[str]]) -> No
                 """
             )
         )
+
+
+def _ensure_zones_table_shape(conn: Any, columns_by_table: dict[str, set[str]]) -> None:
+    """Repair legacy ``zones`` tables before ORM reads ``ZoneModel`` rows."""
+    columns = columns_by_table.get("zones")
+    if columns is None:
+        return
+
+    def add_column(column_name: str, definition: str) -> None:
+        if column_name in columns:
+            return
+        conn.execute(text(f"ALTER TABLE zones ADD COLUMN {column_name} {definition}"))
+        columns.add(column_name)
+
+    add_column("name", "VARCHAR(255) NOT NULL DEFAULT 'Root'")
+    add_column("domain", "VARCHAR(255)")
+    add_column("description", "TEXT")
+    add_column("settings", "TEXT")
+    add_column("indexing_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'")
+    add_column("phase", "VARCHAR(12) NOT NULL DEFAULT 'Active'")
+    add_column("finalizers", "TEXT NOT NULL DEFAULT '[]'")
+    add_column("deleted_at", "TIMESTAMP NULL")
+    add_column("created_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP")
+    add_column("updated_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
+    conn.execute(text("UPDATE zones SET name = 'Root' WHERE name IS NULL"))
+    conn.execute(text("UPDATE zones SET indexing_mode = 'all' WHERE indexing_mode IS NULL"))
+    conn.execute(text("UPDATE zones SET phase = 'Active' WHERE phase IS NULL"))
+    conn.execute(text("UPDATE zones SET finalizers = '[]' WHERE finalizers IS NULL"))
+    conn.execute(text("UPDATE zones SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+    conn.execute(text("UPDATE zones SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"))
+
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN name SET DEFAULT 'Root'"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN name SET NOT NULL"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN indexing_mode SET DEFAULT 'all'"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN indexing_mode SET NOT NULL"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN phase SET DEFAULT 'Active'"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN phase SET NOT NULL"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN finalizers SET DEFAULT '[]'"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN finalizers SET NOT NULL"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN created_at SET NOT NULL"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP"))
+    conn.execute(text("ALTER TABLE zones ALTER COLUMN updated_at SET NOT NULL"))
 
 
 def _ensure_tiger_cache_constraint(conn: Any, columns_by_table: dict[str, set[str]]) -> None:
@@ -511,6 +726,8 @@ def ensure_postgres_schema_invariants(engine: Engine) -> None:
     columns_by_table = _column_names_by_table(inspector, table_names)
 
     with engine.begin() as conn:
+        _ensure_rebac_namespaces_table(conn, columns_by_table, table_names)
+        _ensure_zones_table_shape(conn, columns_by_table)
         _ensure_zone_column(conn, columns_by_table, "file_paths", "VARCHAR(255)")
         _ensure_zone_column(conn, columns_by_table, "rebac_changelog", "VARCHAR(255)")
         _ensure_zone_column(
@@ -557,6 +774,8 @@ def ensure_postgres_schema_invariants(engine: Engine) -> None:
         _ensure_tenant_column_default(conn, columns_by_table, "subscriptions")
         _ensure_nullable_column(conn, inspector, table_names, "file_paths", "backend_id")
         _ensure_nullable_column(conn, inspector, table_names, "file_paths", "physical_path")
+        _ensure_file_paths_search_columns(conn, columns_by_table)
+        _ensure_version_history_content_columns(conn, columns_by_table)
         _ensure_rebac_id_lengths(conn, inspector, table_names)
         _ensure_varchar_lengths(
             conn,

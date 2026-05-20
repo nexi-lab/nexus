@@ -137,9 +137,9 @@ def seeded_manager(manager):
 
     # Parent hierarchy: /workspace/project/ -> parent -> /workspace/
     m.rebac_write(
-        subject=("file", "/workspace/"),
+        subject=("file", "/workspace/project/"),
         relation="parent",
-        object=("file", "/workspace/project/"),
+        object=("file", "/workspace/"),
         zone_id=ZONE_ID,
     )
 
@@ -161,17 +161,17 @@ def seeded_manager(manager):
     )
     for i in range(len(levels) - 1):
         m.rebac_write(
-            subject=("file", levels[i]),
+            subject=("file", levels[i + 1]),
             relation="parent",
-            object=("file", levels[i + 1]),
+            object=("file", levels[i]),
             zone_id=ZONE_ID,
         )
 
     # Deep file at the bottom of the tree
     m.rebac_write(
-        subject=("file", levels[-1]),
+        subject=("file", "/workspace/deep/l1/l2/l3/l4/l5/file_deep.txt"),
         relation="parent",
-        object=("file", "/workspace/deep/l1/l2/l3/l4/l5/file_deep.txt"),
+        object=("file", levels[-1]),
         zone_id=ZONE_ID,
     )
 

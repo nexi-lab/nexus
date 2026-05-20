@@ -222,13 +222,14 @@ hub.
 | IPv4 pin for `localhost` gRPC            | ✅ verified | 3 unit tests in `tests/unit/remote/test_grpc_target.py` (`test_localhost_pinned_to_ipv4`, `test_ipv6_loopback_pinned_to_ipv4`, `test_non_loopback_host_untouched`) |
 | Worktree CLI resolution (PYTHONPATH=src) | ✅ verified | `test_worktree_cli_resolves_to_src_with_pythonpath` ensures subprocess pytest harnesses run the worktree, not a stale system install |
 
+| Typed gRPC `Ping/Read/Write/Delete/BatchRead` (real cluster) | ✅ verified | `tests/integration/test_typed_grpc_cluster.py::test_typed_grpc_ping_write_read_delete_batch` boots `nexus-cluster --no-tls`, connects via `NexusVFSServiceStub`, asserts byte-identity + content_id stability + Delete success + BatchRead per-item shape |
+
 **Out of #4133 scope (covered by sibling suites):**
 
 | Layer                                    | Owner                                              |
 |------------------------------------------|----------------------------------------------------|
 | ReBAC path-level deny (`enforce=True`)   | `tests/unit/bricks/rebac/` — needs `permission_hook` wired through the rebac brick |
-| Multi-zone / cross-zone isolation        | `tests/unit/server/test_zone_*` + federation suite |
-| Typed gRPC `Read/Write/Delete/Ping/BatchRead` over the wire | `nexusd-cluster` binary + `rust/transport/tests/` — hub presets intentionally don't bind gRPC per commit `607ae89b5` |
+| Multi-zone / cross-zone isolation        | `tests/unit/server/test_zone_*` + federation suite — zones are a federation concern (Raft + ZoneManager), not part of the FS contract |
 
 **Benchmark guidance** (dev-laptop medians on Apple Silicon, in-process
 kernel; from `tests/benchmarks/bench_read_write_overhead.py`,

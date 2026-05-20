@@ -136,10 +136,17 @@ data-plane hot path in the startup story.
 
 ## Filesystem surface
 
-FULL exposes the complete file API over four equivalent paths: kernel
-syscalls, typed gRPC (`Read`/`Write`/`Delete`/`Ping`/`BatchRead`), generic
-gRPC `Call`, and the CLI (a thin wrapper). The deprecated HTTP
-`POST /api/nfs/{method}` is migration-only (sunset 2026-06-25, Issue #1133).
+FULL exposes the complete file API over three equivalent paths against
+the Python ``nexusd`` daemon (`shared`/`demo` presets): kernel syscalls,
+HTTP RPC `POST /api/nfs/{method}` (generic ``Call``), and the CLI
+(a thin wrapper over either). The typed gRPC service
+(`Read`/`Write`/`Delete`/`Ping`/`BatchRead`) is implemented in Rust and
+only bound by the ``nexusd-cluster`` federation binary — the standalone
+hub maps the port for compose compatibility but does not bind it (see
+commit 607ae89b5 "delete legacy Python gRPC bridge"). The HTTP RPC
+`POST /api/nfs/{method}` is marked deprecated (sunset 2026-06-25, Issue
+#1133) only for the future when the typed gRPC service is added to the
+hub.
 
 | Group    | RPC                                                  | CLI                                                   |
 |----------|------------------------------------------------------|-------------------------------------------------------|
@@ -163,6 +170,10 @@ gRPC `Call`, and the CLI (a thin wrapper). The deprecated HTTP
   stale `content_id` is rejected).
 - Admin ops (`backfill_directory_index`, `flush_write_observer`) require
   admin; non-admin callers are refused server-side.
+- macOS gRPC clients: `nexus.connect(profile="remote", url="http://localhost:...")`
+  resolves `localhost` to `127.0.0.1` automatically. Docker Desktop /
+  OrbStack only bind IPv4 (0.0.0.0) on host port maps; without this
+  pin, macOS happy-eyeballs to `::1` first and gets "Socket closed".
 - Stream commands (`cat --stream`, `write --stream`) honor Unix
   `SIGPIPE = SIG_DFL` — piping into `head`, `tee`, or any reader that
   closes early exits cleanly (status 141), no traceback.

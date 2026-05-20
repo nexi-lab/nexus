@@ -45,9 +45,33 @@ def _docker_available() -> bool:
         return False
 
 
-def _nexus_bin() -> str:
-    """Resolve the venv-local ``nexus`` CLI binary."""
-    return str(Path(sys.executable).parent / "nexus")
+def _nexus_bin() -> list[str]:
+    """Resolve the ``nexus`` CLI invocation for the *worktree* code.
+
+    Returns a ``python -m nexus.cli`` invocation rather than the bare
+    ``nexus`` shim because the latter is the system-installed package on
+    ``$PATH``, which can lag the worktree by months and ship a different
+    preset definition (e.g. the historical ``shared`` preset that
+    included ``zoekt`` in ``services`` — the upstream of Bug B). Pair
+    this with ``_nexus_env()`` so subprocesses pick up ``src/`` first.
+    """
+    return [sys.executable, "-m", "nexus.cli"]
+
+
+def _nexus_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Subprocess env with the worktree ``src`` first on ``PYTHONPATH``.
+
+    Subprocesses don't inherit the pytest-time ``sys.path`` insertion in
+    ``tests/conftest.py``, so we must export it explicitly. Without this
+    ``python -m nexus.cli`` would resolve the installed package.
+    """
+    env = os.environ.copy()
+    repo_src = str(Path(__file__).resolve().parents[2] / "src")
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = repo_src + (os.pathsep + existing if existing else "")
+    if extra:
+        env.update(extra)
+    return env
 
 
 def _verify_hub_serving(data_dir: Path) -> bool:
@@ -100,16 +124,17 @@ def _verify_hub_serving(data_dir: Path) -> bool:
         return False
 
 
-def _teardown_stack(nexus_bin: str, project_dir: Path) -> None:
+def _teardown_stack(nexus_bin: list[str], project_dir: Path) -> None:
     """Best-effort `nexus down --volumes` (used before fail/skip so a
     failed boot does not leak containers/ports into later tests)."""
     with contextlib.suppress(Exception):
         subprocess.run(
-            [nexus_bin, "down", "--volumes"],
+            [*nexus_bin, "down", "--volumes"],
             capture_output=True,
             text=True,
             timeout=120,
             cwd=str(project_dir),
+            env=_nexus_env(),
         )
 
 
@@ -206,7 +231,7 @@ def _boot_full_stack(
 
     # ---- nexus init --------------------------------------------------------
     init_cmd = [
-        nexus_bin,
+        *nexus_bin,
         "init",
         "--preset",
         preset,
@@ -225,6 +250,7 @@ def _boot_full_stack(
             text=True,
             timeout=60,
             cwd=str(project_dir),
+            env=_nexus_env(),
         )
     except subprocess.TimeoutExpired:
         pytest.skip("nexus init timed out after 60s")
@@ -232,19 +258,26 @@ def _boot_full_stack(
         pytest.skip(f"nexus init failed: {init_result.stderr[-400:]!r}")
 
     # ---- post-init normalize (tolerant mode) -------------------------------
-    # When tolerant, strip the zoekt-style service entries that cause Bug B
-    # (nexus up rc=1 waiting on an unstarted service). Restrict services /
-    # compose_profiles to the three the in-tree compose actually defines.
-    # Mirrors tests/e2e/self_contained/conftest.py::_normalize_running_nexus_config.
+    # The worktree's ``shared`` preset already omits zoekt from services
+    # (see init_cmd.py PRESETS["shared"]) — running the worktree CLI via
+    # ``python -m nexus.cli`` is enough to avoid Bug B. The block below
+    # is a defensive normalization for environments where an older
+    # generated ``nexus.yaml`` from a previous CLI version lingers; it's
+    # a no-op for clean inits.
     if bug_b_tolerant:
         import yaml as _yaml
 
         with open(config_path) as _cf:
             _cfg = _yaml.safe_load(_cf) or {}
-        _cfg["services"] = ["nexus", "postgres", "dragonfly"]
-        _cfg["compose_profiles"] = ["core", "cache"]
-        with open(config_path, "w") as _cf:
-            _yaml.safe_dump(_cfg, _cf, sort_keys=False)
+        if "zoekt" in (_cfg.get("services") or []) or "search" in (
+            _cfg.get("compose_profiles") or []
+        ):
+            _cfg["services"] = [s for s in (_cfg.get("services") or []) if s != "zoekt"]
+            _cfg["compose_profiles"] = [
+                p for p in (_cfg.get("compose_profiles") or []) if p != "search"
+            ]
+            with open(config_path, "w") as _cf:
+                _yaml.safe_dump(_cfg, _cf, sort_keys=False)
 
     # ---- nexus up ----------------------------------------------------------
     # Use the documented prebuilt path (matches docs/deployment/full-profile.md
@@ -254,9 +287,9 @@ def _boot_full_stack(
     # Forcing `--build` here was a defect: it triggers a from-scratch Rust +
     # Python Dockerfile build (minutes) that blew the subprocess timeout.
     # Opt in to a source build only when explicitly iterating on the image.
-    up_env = os.environ.copy()
+    up_env = _nexus_env()
     force_build = os.environ.get("NEXUS_E2E_BUILD") == "1"
-    up_cmd = [nexus_bin, "up"] + (["--build"] if force_build else [])
+    up_cmd = [*nexus_bin, "up"] + (["--build"] if force_build else [])
 
     try:
         up_result = subprocess.run(
@@ -370,11 +403,12 @@ def _boot_full_stack(
 
     # ---- nexus env --json --------------------------------------------------
     env_result = subprocess.run(
-        [nexus_bin, "env", "--json"],
+        [*nexus_bin, "env", "--json"],
         capture_output=True,
         text=True,
         timeout=30,
         cwd=str(project_dir),
+        env=_nexus_env(),
     )
     if env_result.returncode != 0:
         # The stack booted but `nexus env` failed — a real product/CLI
@@ -433,11 +467,12 @@ def _boot_full_stack(
     finally:
         if os.environ.get("NEXUS_E2E_KEEP", "").lower() not in ("1", "true", "yes"):
             subprocess.run(
-                [nexus_bin, "down", "--volumes"],
+                [*nexus_bin, "down", "--volumes"],
                 capture_output=True,
                 text=True,
                 timeout=180,
                 cwd=str(project_dir),
+                env=_nexus_env(),
             )
             shutil.rmtree(project_dir, ignore_errors=True)
 

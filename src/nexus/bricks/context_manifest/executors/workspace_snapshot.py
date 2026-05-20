@@ -52,6 +52,17 @@ class WorkspaceSnapshotExecutor:
         self._manifest_reader = manifest_reader
         self._thread_pool = thread_pool
 
+    def attach_filesystem(self, nexus_fs: Any) -> None:
+        """Forward the post-boot NexusFS handle to the manifest reader.
+
+        The manifest reader resolves snapshot manifests through the §2.5
+        syscall surface and needs a NexusFS handle, which only exists after
+        the kernel tier boots.
+        """
+        reader = self._manifest_reader
+        if reader is not None and hasattr(reader, "attach_filesystem"):
+            reader.attach_filesystem(nexus_fs)
+
     async def execute(
         self,
         source: ContextSourceProtocol,
@@ -117,11 +128,14 @@ class WorkspaceSnapshotExecutor:
             "created_at": snapshot.get("created_at"),
         }
 
-        # Optionally load file tree from manifest
-        manifest_hash = snapshot.get("manifest_hash")
-        if self._manifest_reader is not None and manifest_hash:
+        # Optionally load file tree from the snapshot manifest. The manifest
+        # is keyed by (workspace_path, snapshot_id) — its §2.5 syscall path —
+        # not by manifest_hash (the hash is an integrity check only).
+        _snap_id = snapshot.get("snapshot_id")
+        _ws_path = snapshot.get("workspace_path")
+        if self._manifest_reader is not None and _snap_id and _ws_path:
             try:
-                file_paths = self._manifest_reader.read_file_paths(manifest_hash)
+                file_paths = self._manifest_reader.read_file_paths(_ws_path, _snap_id)
                 if file_paths is not None:
                     total_files = len(file_paths)
                     capped_paths = file_paths[:MAX_TREE_FILES]
@@ -130,7 +144,7 @@ class WorkspaceSnapshotExecutor:
                     data["file_tree_capped"] = total_files > MAX_TREE_FILES
             except Exception as exc:
                 # Graceful degradation — omit file_tree on reader failure
-                logger.warning("Failed to read file tree for manifest %s: %s", manifest_hash, exc)
+                logger.warning("Failed to read file tree for snapshot %s: %s", _snap_id, exc)
 
         elapsed_ms = (time.monotonic() - start) * 1000
 

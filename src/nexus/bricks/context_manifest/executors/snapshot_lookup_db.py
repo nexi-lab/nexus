@@ -1,9 +1,9 @@
-"""Snapshot lookup protocols and CAS manifest reader (Issue #1428).
+"""Snapshot lookup protocols and manifest reader (Issue #1428).
 
 Provides Protocol-based DI for snapshot retrieval and manifest reading.
 
 SnapshotLookup: retrieve snapshot metadata by ID or latest.
-ManifestReader: read file paths from a CAS-stored workspace manifest.
+ManifestReader: read file paths from a workspace snapshot manifest.
 
 Concrete SQLAlchemy implementation lives in
 ``nexus.storage.repositories.snapshot_lookup`` (Issue #2189).
@@ -11,7 +11,12 @@ Concrete SQLAlchemy implementation lives in
 
 import json
 import logging
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+from nexus.contracts.workspace_manifest import manifest_storage_path
+
+if TYPE_CHECKING:
+    from nexus.contracts.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -31,41 +36,55 @@ class SnapshotLookup(Protocol):
 
 @runtime_checkable
 class ManifestReader(Protocol):
-    """Protocol for reading workspace manifest file paths from CAS."""
+    """Protocol for reading workspace snapshot manifest file paths."""
 
-    def read_file_paths(self, manifest_hash: str) -> list[str] | None:
-        """Read file paths from a CAS-stored manifest. Returns None on failure."""
+    def read_file_paths(self, workspace_path: str, snapshot_id: str) -> list[str] | None:
+        """Read file paths from a workspace snapshot manifest. None on failure."""
         ...
 
 
-class CASManifestReader:
-    """CAS-backed implementation of ManifestReader.
+class SyscallManifestReader:
+    """ManifestReader that reads manifests through the §2.5 syscall surface.
 
-    Reads a workspace manifest from content-addressable storage and
-    extracts the sorted list of file paths.
+    Workspace snapshot manifests live at
+    ``/__sys__/workspace-history/{workspace_id}/{snapshot_id}.json`` (see
+    nexus.contracts.workspace_manifest.manifest_storage_path — the SSOT for
+    the path scheme, also used by WorkspaceManager). This reader is in the
+    context_manifest brick, which cannot import nexus.services; it reaches
+    the manifest bytes via sys_read, not the kernel-internal ObjectStore.
+
+    The NexusFS handle is attached post-boot via attach_filesystem() — the
+    brick tier is constructed before NexusFS exists.
     """
 
-    def __init__(self, backend: Any) -> None:
-        self._backend = backend
+    def __init__(self, nexus_fs: "NexusFilesystem | None" = None) -> None:
+        self._nexus_fs = nexus_fs
 
-    def read_file_paths(self, manifest_hash: str) -> list[str] | None:
-        """Read file paths from a CAS-stored workspace manifest."""
+    def attach_filesystem(self, nexus_fs: "NexusFilesystem") -> None:
+        """Attach the NexusFS handle once it exists (post-kernel boot)."""
+        self._nexus_fs = nexus_fs
+
+    def read_file_paths(self, workspace_path: str, snapshot_id: str) -> list[str] | None:
+        """Read file paths from a workspace snapshot manifest via sys_read."""
+        if self._nexus_fs is None:
+            logger.warning("SyscallManifestReader has no NexusFS handle attached")
+            return None
+        from nexus.contracts.types import OperationContext
+
+        path = manifest_storage_path(workspace_path, snapshot_id)
         try:
-            content = self._backend.read_content(manifest_hash)
-            if content is None:
-                logger.warning("Manifest hash %s not found in CAS", manifest_hash)
-                return None
-
-            raw = content if isinstance(content, bytes) else content.encode("utf-8")
+            ctx = OperationContext(user_id="system", groups=[], is_system=True)
+            content = self._nexus_fs.sys_read(path, context=ctx)
+            raw = content if isinstance(content, bytes) else str(content).encode("utf-8")
             parsed = json.loads(raw)
             return sorted(parsed.keys())
         except Exception as exc:
-            logger.warning("Failed to read manifest %s: %s", manifest_hash, exc)
+            logger.warning("Failed to read manifest at %s: %s", path, exc)
             return None
 
 
 __all__ = [
-    "CASManifestReader",
     "ManifestReader",
     "SnapshotLookup",
+    "SyscallManifestReader",
 ]

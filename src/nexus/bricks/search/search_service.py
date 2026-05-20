@@ -1145,7 +1145,7 @@ class SearchService:
             try:
                 child_entries = self._nexus_fs.sys_readdir(
                     directory,
-                    recursive=True,
+                    recursive=False,
                     details=True,
                     context=ctx,
                 )

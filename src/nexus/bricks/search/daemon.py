@@ -2054,9 +2054,6 @@ class SearchDaemon:
                 import hashlib
                 import uuid
 
-                now = datetime.now(UTC).replace(tzinfo=None)
-                content_id = hashlib.sha256(text_clean.encode("utf-8")).hexdigest()
-                size_bytes = len(text_clean.encode("utf-8"))
                 async with self._async_session() as session:
                     row = (
                         await session.execute(
@@ -2075,20 +2072,17 @@ class SearchDaemon:
                             sa_text(
                                 "UPDATE file_paths "
                                 "SET deleted_at = NULL, "
-                                "    size_bytes = :size_bytes, "
-                                "    content_id = :content_id, "
-                                "    file_type = COALESCE(file_type, 'file'), "
-                                "    updated_at = :updated_at "
+                                "    file_type = COALESCE(file_type, 'file') "
                                 "WHERE path_id = :path_id"
                             ),
                             {
                                 "path_id": path_id,
-                                "size_bytes": size_bytes,
-                                "content_id": content_id,
-                                "updated_at": now,
                             },
                         )
                     else:
+                        now = datetime.now(UTC).replace(tzinfo=None)
+                        content_id = hashlib.sha256(text_clean.encode("utf-8")).hexdigest()
+                        size_bytes = len(text_clean.encode("utf-8"))
                         path_id = str(uuid.uuid4())
                         await session.execute(
                             sa_text(

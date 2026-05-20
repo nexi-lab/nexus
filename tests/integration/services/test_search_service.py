@@ -328,6 +328,47 @@ class TestGatewayDelegation:
         with pytest.raises(NotImplementedError, match="gateway not provided"):
             await svc._read("/test.txt")
 
+    def test_sys_readdir_entries_expands_children_non_recursively(self, service, mock_gateway):
+        """Fallback recursion should avoid recursively rereading every subtree."""
+        entries_by_path = {
+            "/workspace": [
+                {"path": "/workspace/src", "entry_type": 1},
+            ],
+            "/workspace/src": [
+                {"path": "/workspace/src/main.py", "entry_type": 0},
+                {"path": "/workspace/src/pkg", "entry_type": 1},
+            ],
+            "/workspace/src/pkg": [
+                {"path": "/workspace/src/pkg/nested.py", "entry_type": 0},
+            ],
+        }
+        calls: list[tuple[str, bool]] = []
+
+        def _sys_readdir(
+            path: str,
+            *,
+            recursive: bool,
+            details: bool,
+            context: object,
+        ) -> list[dict]:
+            assert details is True
+            assert context is not None
+            calls.append((path, recursive))
+            return entries_by_path[path]
+
+        mock_gateway.sys_readdir.side_effect = _sys_readdir
+
+        entries = service._sys_readdir_entries("/workspace")
+
+        assert {entry["path"] for entry in entries} == {
+            "/workspace/src",
+            "/workspace/src/main.py",
+            "/workspace/src/pkg",
+            "/workspace/src/pkg/nested.py",
+        }
+        assert calls[0] == ("/workspace", True)
+        assert all(recursive is False for _, recursive in calls[1:])
+
     async def test_read_converts_str_to_bytes(self, service, mock_gateway):
         """_read converts string response to bytes."""
         mock_gateway.read_file.return_value = "string content"

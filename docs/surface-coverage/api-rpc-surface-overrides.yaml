@@ -1,6 +1,6 @@
 # Human overrides for the surface-coverage extractor.
 # Populated as parity warnings and unmapped surfaces surface during triage.
-# See docs/architecture/api-rpc-surface-contract.md for field semantics.
+# See docs/surface-coverage/api-rpc-surface-contract.md for field semantics.
 schema_version: 1
 op_id_overrides: {}    # raw transport-name -> canonical op-id
 module_overrides: {}   # op-id -> module-id

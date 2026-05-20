@@ -134,30 +134,69 @@ async def rpc_endpoint(
             state = request.app.state
 
             # OCC header → param translation for write methods. RFC 9110
-            # If-Match / If-None-Match must apply to the deprecated
-            # ``POST /api/nfs/{method}`` write surface too — otherwise a
-            # client using the canonical HTTP wire with ``If-Match:
-            # "stale"`` performs a lost-update overwrite. Body params
-            # win; the headers fill in when the body omits them.
+            # If-Match / If-None-Match apply to the deprecated-but-
+            # canonical ``POST /api/nfs/{method}`` write surface too —
+            # without this a client sending ``If-Match: "stale"`` (or
+            # multi-tag / weak / concrete-If-None-Match forms) would
+            # silently perform a lost-update overwrite. Body params win;
+            # headers fill in when the body omits them. Matches the
+            # semantics in async_files._parse_etag_list.
             if method in ("write", "sys_write"):
+
+                def _parse_etag_list_rpc(raw: str | None, *, strong_only: bool) -> list[str]:
+                    if not raw:
+                        return []
+                    tags: list[str] = []
+                    for part in raw.split(","):
+                        p = part.strip()
+                        if not p:
+                            continue
+                        is_weak = p.startswith("W/")
+                        if is_weak:
+                            p = p[2:].strip()
+                        p = p.strip('"')
+                        if not p:
+                            continue
+                        if is_weak and strong_only:
+                            continue  # weak validators forbidden on If-Match
+                        tags.append(p)
+                    return tags
+
                 _hdr_if_match = request.headers.get("If-Match")
-                if _hdr_if_match and "if_match" not in raw_params:
-                    _val = _hdr_if_match.strip()
-                    if _val == "*":
-                        raw_params["if_match_star"] = True
-                    elif _val.startswith("W/"):
-                        # Weak validators must not satisfy state-changing
-                        # If-Match — RFC 9110 §13.1.1.
-                        raw_params["if_match"] = None
-                    else:
-                        raw_params["if_match"] = _val.strip('"')
+                _hdr_if_match_star = _hdr_if_match is not None and _hdr_if_match.strip() == "*"
+                _if_match_list = (
+                    []
+                    if _hdr_if_match_star
+                    else _parse_etag_list_rpc(_hdr_if_match, strong_only=True)
+                )
+                # Weak-only If-Match: client meant a precondition the
+                # server cannot honor (strong comparison only). Reject
+                # by injecting an impossible match so occ_write fails
+                # instead of falling through to plain write.
+                _has_weak_only_if_match = (
+                    _hdr_if_match is not None and not _hdr_if_match_star and not _if_match_list
+                )
+
                 _hdr_if_none_match = request.headers.get("If-None-Match")
-                if (
-                    _hdr_if_none_match
-                    and "if_none_match" not in raw_params
-                    and _hdr_if_none_match.strip() == "*"
-                ):
+                _hdr_if_none_match_star = (
+                    _hdr_if_none_match is not None and _hdr_if_none_match.strip() == "*"
+                )
+                _if_none_match_list = (
+                    []
+                    if _hdr_if_none_match_star
+                    else _parse_etag_list_rpc(_hdr_if_none_match, strong_only=False)
+                )
+
+                if _hdr_if_match_star and "if_match_star" not in raw_params:
+                    raw_params["if_match_star"] = True
+                if _if_match_list and "if_match_any" not in raw_params:
+                    raw_params["if_match_any"] = _if_match_list
+                if _has_weak_only_if_match and "if_match_any" not in raw_params:
+                    raw_params["if_match_any"] = ["__nx_weak_only_if_match__"]
+                if _hdr_if_none_match_star and "if_none_match" not in raw_params:
                     raw_params["if_none_match"] = True
+                if _if_none_match_list and "if_none_match_any" not in raw_params:
+                    raw_params["if_none_match_any"] = _if_none_match_list
 
             # #4005 round-5: NO early 304 in the kernel branch.
             # ``state.nexus_fs.get_content_id`` ignores OperationContext

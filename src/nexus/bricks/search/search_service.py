@@ -241,8 +241,13 @@ class SearchService:
                 ``litellm`` are importable.
         """
         self.metadata = metadata_store
-        # Pull the kernel out of the proxy for direct ``metastore_*`` calls
-        # (and survive W3, which deletes the proxy).
+        # Kernel handle, kept ONLY for kernel-ABI methods that have no
+        # NexusFilesystem syscall equivalent: stat_batch (bulk stat) and
+        # get_xattr / get_xattr_bulk (extended attributes). These are
+        # composed kernel operations, not MetaStore/ObjectStore HAL pillar
+        # access, so they are not §2.5 boundary violations — NexusFS itself
+        # calls _kernel.stat_batch the same way. All path/list/stat work
+        # goes through self._nexus_fs (the syscall surface).
         self._kernel = metadata_store
         self._record_store = record_store
         self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
@@ -494,8 +499,15 @@ class SearchService:
                 # Derive mount point from first path segments
                 _parts = path.strip("/").split("/")
                 _mp_guess = "/" + "/".join(_parts[:2]) if len(_parts) >= 2 else "/" + _parts[0]
+                from nexus.contracts.types import OperationContext as _OC
+
                 _mount_stat = (
-                    self._kernel.sys_stat(_mp_guess, ROOT_ZONE_ID) if self._kernel else None
+                    self._nexus_fs.sys_stat(
+                        _mp_guess,
+                        context=_OC(user_id="system", groups=[], is_system=True),
+                    )
+                    if self._nexus_fs
+                    else None
                 )
                 _is_ext = _mount_stat is not None and _mount_stat.get("entry_type") == 5
                 if _is_ext:
@@ -956,9 +968,12 @@ class SearchService:
         all_paths: builtins.list[str],
     ) -> builtins.list[dict[str, Any]]:
         """Build detailed results for dynamic connector paths."""
+        from nexus.contracts.types import OperationContext as _OC
+
+        _stat_ctx = _OC(user_id="system", groups=[], is_system=True)
         results_with_details = []
         for entry_path in all_paths:
-            file_stat = self._kernel.sys_stat(entry_path, ROOT_ZONE_ID)
+            file_stat = self._nexus_fs.sys_stat(entry_path, context=_stat_ctx)
             is_dir = bool(file_stat and file_stat.get("is_directory", False))
             name = entry_path.rstrip("/").split("/")[-1]
             results_with_details.append(

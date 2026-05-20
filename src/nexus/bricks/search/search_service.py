@@ -38,10 +38,7 @@ from nexus.contracts.search_types import (
     SearchStrategy,
 )
 from nexus.contracts.types import Permission
-from nexus.kernel_helpers import (
-    metastore_get_searchable_text_bulk,
-    metastore_list_iter,
-)
+from nexus.kernel_helpers import metastore_get_searchable_text_bulk
 from nexus.lib.rpc_decorator import rpc_expose
 
 # List directory traversal thresholds (Issue #901)
@@ -1541,6 +1538,7 @@ class SearchService:
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
+        from nexus.contracts.types import OperationContext
         from nexus.core.pagination import PaginatedResult
         from nexus.lib.pagination import encode_cursor
 
@@ -1573,13 +1571,19 @@ class SearchService:
             except CursorError:
                 current_cursor_path = None
 
+        # §2.5: paginated scan goes through sys_readdir (native limit/cursor
+        # support), not the metastore_list_iter → metastore_list_paginated
+        # HAL bypass. is_system=True so the wrapper skips its zone filter —
+        # the service applies its own filter_list permission pass below.
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         while len(collected_items) < limit and has_more:
-            from nexus.core.pagination import paginate_iter
-
-            batch = paginate_iter(
-                metastore_list_iter(self._kernel, prefix=list_prefix, recursive=recursive),
+            batch = self._nexus_fs.sys_readdir(
+                list_prefix or "/",
+                recursive=recursive,
+                details=True,
                 limit=fetch_limit,
-                cursor_path=current_cursor_path,
+                cursor=current_cursor_path,
+                context=sys_ctx,
             )
 
             from nexus.contracts.constants import SYSTEM_PATH_PREFIX
@@ -1589,13 +1593,14 @@ class SearchService:
                 for item in batch.items
                 # Fix nexi-lab/nexus#3733 Bug B: drop synthetic metadata entries
                 # (e.g. ns:rebac:*) whose paths are not valid virtual paths.
-                if item.path.startswith("/") and not item.path.startswith(SYSTEM_PATH_PREFIX)
+                if str(item.get("path", "")).startswith("/")
+                and not str(item.get("path", "")).startswith(SYSTEM_PATH_PREFIX)
             ]
 
             if self._enforce_permissions and context:
-                paths = [item.path for item in batch.items]
+                paths = [str(item["path"]) for item in batch.items]
                 allowed_paths = set(self._permission_enforcer.filter_list(paths, context))
-                filtered_items = [item for item in batch.items if item.path in allowed_paths]
+                filtered_items = [item for item in batch.items if item["path"] in allowed_paths]
             else:
                 filtered_items = batch.items
 
@@ -1613,7 +1618,7 @@ class SearchService:
             last_item = result_items[-1]
             filters = {"prefix": list_prefix, "recursive": recursive, "zone_id": list_zone_id}
             next_cursor = encode_cursor(
-                last_path=last_item.path,
+                last_path=str(last_item["path"]),
                 last_path_id=None,
                 filters=filters,
             )
@@ -1621,18 +1626,18 @@ class SearchService:
         if details:
             items_output = [
                 {
-                    "path": meta.path,
-                    "size": meta.size,
-                    "modified_at": meta.modified_at,
-                    "created_at": meta.created_at,
-                    "content_id": meta.content_id,
-                    "mime_type": meta.mime_type,
-                    "is_directory": meta.is_dir if hasattr(meta, "is_dir") else False,
+                    "path": meta["path"],
+                    "size": meta.get("size", 0),
+                    "modified_at": meta.get("modified_at"),
+                    "created_at": meta.get("created_at"),
+                    "content_id": meta.get("content_id"),
+                    "mime_type": meta.get("mime_type"),
+                    "is_directory": meta.get("entry_type") == 1,
                 }
                 for meta in result_items
             ]
         else:
-            items_output = [meta.path for meta in result_items]
+            items_output = [meta["path"] for meta in result_items]
 
         return PaginatedResult(
             items=items_output,

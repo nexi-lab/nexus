@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -118,6 +119,10 @@ class TigerCacheManager:
         resource_map = getattr(tiger_cache, "_resource_map", None)
         if not resource_map:
             logger.debug("No resource map in Tiger Cache - skipping sync")
+            return 0
+
+        if self._nexus_fs is None:
+            logger.debug("No NexusFS handle - skipping resource map sync")
             return 0
 
         try:

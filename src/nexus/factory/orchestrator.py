@@ -40,6 +40,7 @@ def create_nexus_services(
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
     enabled_bricks: frozenset[str] | None = None,
+    nexus_fs: "Any" = None,
 ) -> "dict[str, Any]":
     """Create default services for NexusFS dependency injection.
 
@@ -70,6 +71,9 @@ def create_nexus_services(
         resiliency_raw: Raw resiliency policy dict from YAML config.
         enabled_bricks: Set of brick names to enable. When None, all bricks
             are enabled (backward-compatible default = FULL profile).
+        nexus_fs: NexusFS handle, when services are booted from
+            ``create_nexus_fs``. Service-tier boot code uses it to reach the
+            kernel via Tier 1 syscalls. None for standalone callers.
 
     Returns:
         dict[str, Any] — all services keyed by canonical name.
@@ -153,6 +157,7 @@ def create_nexus_services(
         resiliency_raw=resiliency_raw,
         db_url=getattr(record_store, "database_url", ""),
         profile_tuning=_profile_tuning,
+        nexus_fs=nexus_fs,
     )
 
     # --- Tier 0: KERNEL (validate Storage Pillars — inlined from _kernel.py) ---
@@ -318,6 +323,7 @@ def create_nexus_fs(
             agent_id=agent_id,
             enable_write_buffer=enable_write_buffer,
             enabled_bricks=enabled_bricks,
+            nexus_fs=nx,
         )
 
     # Default to empty dict when not provided

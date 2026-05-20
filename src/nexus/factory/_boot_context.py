@@ -44,5 +44,10 @@ class _BootContext:
     wal_sync_mode: str | None = None
     wal_segment_size: int | None = None
 
+    # NexusFS handle — present when services are booted from create_nexus_fs
+    # (the common path); None for standalone create_nexus_services callers.
+    # Service-tier boot code uses it to reach the kernel via Tier 1 syscalls.
+    nexus_fs: "Any" = None
+
     # Issue #3193: shared signal for write-observer -> delivery-worker wakeup
     event_signal: asyncio.Event = field(default_factory=asyncio.Event)

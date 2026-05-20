@@ -721,44 +721,72 @@ def create_async_files_router(
                     "buf": content,
                     "context": context,
                 }
-                # Honor OCC from either the JSON body (``request.if_match``
-                # / ``request.if_none_match``) or the standard HTTP headers
-                # ``If-Match`` / ``If-None-Match``. Header form is what
-                # generic HTTP clients (curl, browsers, jQuery, axios)
-                # use — accepting body-only would silently overwrite a
-                # caller who supplied the ETag via header.
-                hdr_if_match = http_request.headers.get("If-Match")
-                if hdr_if_match:
-                    # Strip surrounding quotes (W/"..." weak ETags +
-                    # standard double-quoted strong ETags).
-                    hdr_if_match = hdr_if_match.strip()
-                    if hdr_if_match.startswith("W/"):
-                        hdr_if_match = hdr_if_match[2:].strip()
-                    hdr_if_match = hdr_if_match.strip('"')
-                hdr_if_none_match = http_request.headers.get("If-None-Match")
-                # "If-None-Match: *" → create-only (same as if_none_match=True).
-                header_create_only = (
-                    hdr_if_none_match is not None and hdr_if_none_match.strip().strip('"') == "*"
+
+                # Honor OCC from either the JSON body or HTTP headers.
+                # RFC 9110 entity-tag list semantics:
+                #   * ``If-Match: "a", "b"``       — proceed iff current
+                #     ETag matches ANY listed tag.
+                #   * ``If-None-Match: *``         — proceed iff resource
+                #     does not exist (create-only).
+                #   * ``If-None-Match: "a", "b"``  — proceed iff current
+                #     ETag matches NONE of the tags (else 412).
+                def _parse_etag_list(raw: str | None) -> list[str]:
+                    if not raw:
+                        return []
+                    tags: list[str] = []
+                    for part in raw.split(","):
+                        p = part.strip()
+                        if not p:
+                            continue
+                        if p.startswith("W/"):
+                            p = p[2:].strip()
+                        p = p.strip('"')
+                        if p:
+                            tags.append(p)
+                    return tags
+
+                hdr_if_match_list = _parse_etag_list(http_request.headers.get("If-Match"))
+                hdr_if_none_match_raw = http_request.headers.get("If-None-Match")
+                hdr_if_none_match_list = _parse_etag_list(hdr_if_none_match_raw)
+                hdr_none_match_star = (
+                    hdr_if_none_match_raw is not None and hdr_if_none_match_raw.strip() == "*"
                 )
 
-                if_match = request.if_match or hdr_if_match
-                if_none_match = request.if_none_match or header_create_only
+                # Body wins; otherwise first concrete header tag.
+                if_match = request.if_match or (hdr_if_match_list[0] if hdr_if_match_list else None)
+                if_none_match_create_only = request.if_none_match or hdr_none_match_star
 
-                if if_match is not None or if_none_match:
+                # If-None-Match with concrete tags: pre-stat and reject
+                # before overwriting. occ_write only models the
+                # create-only form, not the entity-tag-list form.
+                if hdr_if_none_match_list and not hdr_none_match_star:
+                    _cur = fs.sys_stat(request.path, context=context)
+                    _cur_id = (
+                        (_cur.get("content_id") if isinstance(_cur, dict) else None)
+                        if _cur
+                        else None
+                    )
+                    if _cur_id and _cur_id in hdr_if_none_match_list:
+                        raise HTTPException(
+                            status_code=412,
+                            detail=(
+                                "If-None-Match precondition failed: current "
+                                f"content_id {_cur_id!r} matches a listed tag"
+                            ),
+                        )
+
+                if if_match is not None or if_none_match_create_only:
                     from nexus.contracts.exceptions import ConflictError
                     from nexus.lib.occ import occ_write
 
                     try:
-                        # Async helper: offloads stat+write to a thread so
-                        # the event loop is never blocked by a slow
-                        # backend during the compare-and-swap window.
                         result = await occ_write(
                             fs,
                             request.path,
                             content,
                             context=context,
                             if_match=if_match,
-                            if_none_match=if_none_match,
+                            if_none_match=if_none_match_create_only,
                         )
                     except ConflictError as exc:
                         raise HTTPException(status_code=409, detail=str(exc)) from exc

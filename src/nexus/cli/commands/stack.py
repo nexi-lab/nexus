@@ -1586,6 +1586,12 @@ def up(
         compose_args.append("-d")
     if build:
         compose_args.append("--build")
+    else:
+        # Forward ``--no-build`` to Docker Compose so a compose file that
+        # carries a ``build:`` directive cannot silently build when the
+        # image is missing — the user said "don't build" and we honor it
+        # at the compose layer too, not just the Nexus CLI layer.
+        compose_args.append("--no-build")
 
     # Pull logic:
     # - --pull flag: always pull

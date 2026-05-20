@@ -22,11 +22,13 @@ use tonic::{transport::Server, Request, Response, Status};
 
 use crate::TlsConfig;
 use kernel::abi::KernelAbi;
+use kernel::kernel::convenience::KernelConvenience;
 use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
-    BatchReadItemResponse, BatchReadRequest, BatchReadResponse, CallRequest, CallResponse,
-    DeleteRequest, DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse,
-    WriteRequest, WriteResponse,
+    BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchWriteItemResponse,
+    BatchWriteRequest, BatchWriteResponse, CallRequest, CallResponse, DeleteRequest,
+    DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse, WriteRequest,
+    WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -309,6 +311,63 @@ impl NexusVfsService for VfsServiceImpl {
         Ok(Response::new(BatchReadResponse { results: mapped }))
     }
 
+    async fn batch_write(
+        &self,
+        req: Request<BatchWriteRequest>,
+    ) -> Result<Response<BatchWriteResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Err(s),
+        };
+        if !ctx.zone_perms.is_empty() {
+            return Err(Status::permission_denied(
+                "federation token: use Call dispatch — typed BatchWrite bypasses zone authorization",
+            ));
+        }
+
+        // Tier 2 `write_batch`: create-or-overwrite per item, each item
+        // independent. One bad path no longer aborts the batch the way
+        // the generic `write_batch` Call did (it looped Tier 1 sys_write
+        // and `return Err`d on the first failure — and never created
+        // missing files). The positional per-item result vector matches
+        // the input order.
+        let items: Vec<(String, Vec<u8>)> = req
+            .items
+            .into_iter()
+            .map(|it| (it.path, it.content))
+            .collect();
+
+        let results = KernelConvenience::write_batch(&*self.kernel, &items, &ctx);
+
+        let mapped: Vec<BatchWriteItemResponse> = results
+            .into_iter()
+            .map(|r| match r {
+                Ok(r) => BatchWriteItemResponse {
+                    content_id: r.content_id.unwrap_or_default(),
+                    size: r.size as i64,
+                    gen: r.gen,
+                    version: r.version,
+                    is_error: false,
+                    error_payload: Vec::new(),
+                },
+                Err(e) => {
+                    let (code, msg) = self.map_kernel_err(e);
+                    BatchWriteItemResponse {
+                        content_id: String::new(),
+                        size: 0,
+                        gen: 0,
+                        version: 0,
+                        is_error: true,
+                        error_payload: encode_rpc_error(code, &msg),
+                    }
+                }
+            })
+            .collect();
+
+        Ok(Response::new(BatchWriteResponse { results: mapped }))
+    }
+
     async fn call(&self, req: Request<CallRequest>) -> Result<Response<CallResponse>, Status> {
         let req = req.into_inner();
         let ctx = self.resolve_context(&req.auth_token)?;
@@ -471,6 +530,7 @@ mod tests {
     use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
     use kernel::kernel::vfs_proto::{
         nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
+        BatchWriteItemRequest, BatchWriteRequest,
     };
     use kernel::kernel::Kernel;
 
@@ -603,6 +663,52 @@ mod tests {
         });
 
         let resp = svc.batch_read(req).await.expect("rpc ok").into_inner();
+        assert_eq!(resp.results.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn batch_write_creates_all_items_and_reports_per_item() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel.clone());
+
+        let req = tonic::Request::new(BatchWriteRequest {
+            auth_token: "test-key".into(),
+            items: vec![
+                BatchWriteItemRequest {
+                    path: "/a.txt".into(),
+                    content: b"alpha".to_vec(),
+                },
+                BatchWriteItemRequest {
+                    path: "/b.txt".into(),
+                    content: b"bravo!".to_vec(),
+                },
+            ],
+        });
+
+        let resp = svc.batch_write(req).await.expect("rpc ok").into_inner();
+        assert_eq!(resp.results.len(), 2);
+        assert!(!resp.results[0].is_error);
+        assert_eq!(resp.results[0].size, 5);
+        assert!(!resp.results[1].is_error);
+        assert_eq!(resp.results[1].size, 6);
+
+        // Tier 2 create-or-overwrite landed the bytes — read /a.txt back.
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        let read = KernelAbi::sys_read(&*kernel, "/a.txt", &ctx, 5000, 0).expect("read");
+        assert_eq!(read.data.unwrap_or_default(), b"alpha");
+    }
+
+    #[tokio::test]
+    async fn batch_write_empty_items_returns_empty_results() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let req = tonic::Request::new(BatchWriteRequest {
+            auth_token: "test-key".into(),
+            items: vec![],
+        });
+
+        let resp = svc.batch_write(req).await.expect("rpc ok").into_inner();
         assert_eq!(resp.results.len(), 0);
     }
 }

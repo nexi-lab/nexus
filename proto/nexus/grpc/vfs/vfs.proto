@@ -30,6 +30,10 @@ service NexusVFSService {
   // Vectored batch read (Issue #4058). Per-request errors are reported
   // per-item; outer Status is reserved for transport-level failures.
   rpc BatchRead(BatchReadRequest) returns (BatchReadResponse);
+
+  // Vectored batch write — native bytes (no base64 tax) + per-item
+  // error isolation. Replaces the generic `write_batch` Call.
+  rpc BatchWrite(BatchWriteRequest) returns (BatchWriteResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -130,4 +134,29 @@ message BatchReadItemResponse {
   bytes error_payload = 3;  // JSON RPC error dict (same as CallResponse)
   string content_id = 4;
   uint64 gen = 5;
+}
+
+// --- Batch write (typed — replaces the base64 `write_batch` Call) ---
+
+message BatchWriteRequest {
+  string auth_token = 1;
+  repeated BatchWriteItemRequest items = 2;
+}
+
+message BatchWriteItemRequest {
+  string path = 1;
+  bytes content = 2;        // Raw file bytes — no base64
+}
+
+message BatchWriteResponse {
+  repeated BatchWriteItemResponse results = 1;  // input order
+}
+
+message BatchWriteItemResponse {
+  string content_id = 1;
+  int64 size = 2;
+  uint64 gen = 3;
+  uint32 version = 4;
+  bool is_error = 5;
+  bytes error_payload = 6;  // JSON RPC error dict (same as CallResponse)
 }

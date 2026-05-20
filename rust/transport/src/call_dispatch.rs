@@ -99,9 +99,6 @@ pub fn dispatch(
         "get_xattr" => do_get_xattr(kernel, &params),
         "get_xattr_bulk" => do_get_xattr_bulk(kernel, &params),
 
-        // Write batch — delegate to individual writes
-        "write_batch" => do_write_batch(kernel, &params, ctx),
-
         _ => Err(call_err(
             RpcErrorCode::InternalError,
             &format!("unknown Call method: {method}"),
@@ -1071,52 +1068,6 @@ fn do_get_xattr_bulk(kernel: &Kernel, params: &serde_json::Value) -> Result<Vec<
         }
         Err(e) => Err(kernel_err_to_payload(e)),
     }
-}
-
-fn do_write_batch(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let files = params
-        .get("files")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let mut reqs = Vec::with_capacity(files.len());
-    for item in &files {
-        let path = item
-            .as_array()
-            .and_then(|a| a.first())
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let data = item
-            .as_array()
-            .and_then(|a| a.get(1))
-            .map(|v| decode_bytes_value(v))
-            .unwrap_or_default();
-        reqs.push(WriteRequest {
-            path: path.to_string(),
-            content: data,
-            offset: 0,
-        });
-    }
-
-    let mut results = Vec::with_capacity(reqs.len());
-    for item in kernel.sys_write(&reqs, ctx) {
-        match item {
-            Ok(r) => results.push(serde_json::json!({
-                "content_id": r.content_id,
-                "size": r.size,
-                "gen": r.gen,
-                "version": r.version,
-            })),
-            Err(e) => {
-                return Err(kernel_err_to_payload(e));
-            }
-        }
-    }
-    ok_json(serde_json::json!(results))
 }
 
 // ── Bytes encoding/decoding ─────────────────────────────────────────

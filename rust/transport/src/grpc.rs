@@ -27,8 +27,8 @@ use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     BatchReadItemResponse, BatchReadRequest, BatchReadResponse, BatchWriteItemResponse,
     BatchWriteRequest, BatchWriteResponse, CallRequest, CallResponse, DeleteRequest,
-    DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse, WriteRequest,
-    WriteResponse,
+    DeleteResponse, PingRequest, PingResponse, ReadRequest, ReadResponse, StatRequest,
+    StatResponse, WriteRequest, WriteResponse,
 };
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
@@ -230,6 +230,47 @@ impl NexusVfsService for VfsServiceImpl {
                     error_payload: encode_rpc_error(code, &msg),
                 }))
             }
+        }
+    }
+
+    async fn stat(&self, req: Request<StatRequest>) -> Result<Response<StatResponse>, Status> {
+        let req = req.into_inner();
+        let ctx = match self.resolve_context(&req.auth_token) {
+            Ok(c) => c,
+            Err(s) => return Ok(Response::new(error_stat(s))),
+        };
+        let zone_id = if req.zone_id.is_empty() {
+            ctx.zone_id.as_str()
+        } else {
+            req.zone_id.as_str()
+        };
+        // `sys_stat` returns `Option` — `None` is "no such path", a
+        // normal result surfaced as `found = false` (not an error).
+        match self.kernel.sys_stat(&req.path, zone_id) {
+            Some(s) => Ok(Response::new(StatResponse {
+                found: true,
+                path: s.path,
+                size: s.size as i64,
+                content_id: s.content_id.unwrap_or_default(),
+                mime_type: s.mime_type,
+                is_directory: s.is_directory,
+                entry_type: s.entry_type as i32,
+                mode: s.mode,
+                version: s.version,
+                gen: s.gen,
+                zone_id: s.zone_id.unwrap_or_default(),
+                created_at_ms: s.created_at_ms,
+                modified_at_ms: s.modified_at_ms,
+                last_writer_address: s.last_writer_address.unwrap_or_default(),
+                link_target: s.link_target.unwrap_or_default(),
+                owner_id: s.owner_id.unwrap_or_default(),
+                is_error: false,
+                error_payload: Vec::new(),
+            })),
+            None => Ok(Response::new(StatResponse {
+                found: false,
+                ..Default::default()
+            })),
         }
     }
 
@@ -509,6 +550,15 @@ fn error_delete(status: Status) -> DeleteResponse {
     }
 }
 
+fn error_stat(status: Status) -> StatResponse {
+    StatResponse {
+        found: false,
+        is_error: true,
+        error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
+        ..Default::default()
+    }
+}
+
 fn status_to_code(s: &Status) -> RpcErrorCode {
     use tonic::Code;
     match s.code() {
@@ -530,7 +580,7 @@ mod tests {
     use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
     use kernel::kernel::vfs_proto::{
         nexus_vfs_service_server::NexusVfsService, BatchReadItemRequest, BatchReadRequest,
-        BatchWriteItemRequest, BatchWriteRequest,
+        BatchWriteItemRequest, BatchWriteRequest, StatRequest,
     };
     use kernel::kernel::Kernel;
 
@@ -696,6 +746,47 @@ mod tests {
         let ctx = OperationContext::new("test", "root", true, None, true);
         let read = KernelAbi::sys_read(&*kernel, "/a.txt", &ctx, 5000, 0).expect("read");
         assert_eq!(read.data.unwrap_or_default(), b"alpha");
+    }
+
+    #[tokio::test]
+    async fn stat_reports_metadata_and_not_found() {
+        let kernel = std::sync::Arc::new(kernel_with_mem_backend());
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        // Create-or-overwrite so a metastore entry exists for stat.
+        let _ = KernelConvenience::write_batch(
+            &*kernel,
+            &[("/s.txt".to_string(), b"stat-me".to_vec())],
+            &ctx,
+        );
+
+        let svc = VfsServiceImpl::for_test(kernel);
+
+        let found = svc
+            .stat(tonic::Request::new(StatRequest {
+                path: "/s.txt".into(),
+                auth_token: "test-key".into(),
+                zone_id: String::new(),
+            }))
+            .await
+            .expect("rpc ok")
+            .into_inner();
+        assert!(found.found);
+        assert!(!found.is_error);
+        assert_eq!(found.path, "/s.txt");
+        assert_eq!(found.size, 7);
+        assert!(!found.is_directory);
+
+        let missing = svc
+            .stat(tonic::Request::new(StatRequest {
+                path: "/nope.txt".into(),
+                auth_token: "test-key".into(),
+                zone_id: String::new(),
+            }))
+            .await
+            .expect("rpc ok")
+            .into_inner();
+        assert!(!missing.found);
+        assert!(!missing.is_error);
     }
 
     #[tokio::test]

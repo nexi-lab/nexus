@@ -34,6 +34,9 @@ service NexusVFSService {
   // Vectored batch write — native bytes (no base64 tax) + per-item
   // error isolation. Replaces the generic `write_batch` Call.
   rpc BatchWrite(BatchWriteRequest) returns (BatchWriteResponse);
+
+  // Typed metadata stat — the hottest metadata op.
+  rpc Stat(StatRequest) returns (StatResponse);
 }
 
 // --- Generic dispatch messages (Phase 1, unchanged) ---
@@ -159,4 +162,36 @@ message BatchWriteItemResponse {
   uint32 version = 4;
   bool is_error = 5;
   bytes error_payload = 6;  // JSON RPC error dict (same as CallResponse)
+}
+
+// --- Typed metadata stat (replaces the `sys_stat` Call) ---
+
+message StatRequest {
+  string path = 1;
+  string auth_token = 2;
+  string zone_id = 3;       // empty → caller's context zone
+}
+
+message StatResponse {
+  bool found = 1;           // false → path does not exist (not an error)
+  // Stat fields — valid only when found == true. Mirrors StatResult /
+  // the `stat_to_json` shape; the `lock` field is intentionally omitted
+  // (matches the generic Call path — include_lock is a separate query).
+  string path = 2;
+  int64 size = 3;
+  string content_id = 4;            // "" when unset
+  string mime_type = 5;
+  bool is_directory = 6;
+  int32 entry_type = 7;
+  uint32 mode = 8;
+  uint32 version = 9;
+  uint64 gen = 10;
+  string zone_id = 11;              // "" when unset
+  optional int64 created_at_ms = 12;
+  optional int64 modified_at_ms = 13;
+  string last_writer_address = 14;  // "" when unset
+  string link_target = 15;          // "" when unset
+  string owner_id = 16;             // "" when unset
+  bool is_error = 17;
+  bytes error_payload = 18;         // JSON error dict — auth failures only
 }

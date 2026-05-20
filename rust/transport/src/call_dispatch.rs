@@ -34,7 +34,6 @@ pub fn dispatch(
 
     let result = match method {
         "sys_read" => do_sys_read(kernel, &params, ctx),
-        "sys_stat" => do_sys_stat(kernel, &params, ctx),
         "sys_setattr" => do_sys_setattr(kernel, &params, ctx),
         "sys_mkdir" => do_sys_mkdir(kernel, &params, ctx),
         "sys_unlink" => do_sys_unlink(kernel, &params, ctx),
@@ -465,23 +464,6 @@ fn do_sys_read(
             }))
         }
         Err(e) => Err(kernel_err_to_payload(e)),
-    }
-}
-
-fn do_sys_stat(
-    kernel: &Kernel,
-    params: &serde_json::Value,
-    ctx: &OperationContext,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let path = s(params, "path");
-    let zone_id = if let Some(zid) = params.get("zone_id").and_then(|v| v.as_str()) {
-        zid.to_string()
-    } else {
-        ctx.zone_id.clone()
-    };
-    match kernel.sys_stat(&path, &zone_id) {
-        Some(stat) => ok_json(stat_to_json(&stat)),
-        None => Err(call_err(RpcErrorCode::FileNotFound, &path)),
     }
 }
 

@@ -44,10 +44,11 @@ def test_health_reports_workspace_index_status_when_present():
         _kernel=object(),
         _perm_config=SimpleNamespace(enforce=False),
         _enforce_zone_isolation=True,
-        _health_state={"status": "indexing"},
     )
 
-    response = TestClient(_app_with_health(fs)).get("/health")
+    app = _app_with_health(fs)
+    app.state.health_state = {"status": "indexing"}
+    response = TestClient(app).get("/health")
 
     assert response.status_code == 200
     assert response.json()["workspace_index_status"] == "indexing"

@@ -133,6 +133,32 @@ async def rpc_endpoint(
             context = context_for_target_zone(context, target_zone)
             state = request.app.state
 
+            # OCC header → param translation for write methods. RFC 9110
+            # If-Match / If-None-Match must apply to the deprecated
+            # ``POST /api/nfs/{method}`` write surface too — otherwise a
+            # client using the canonical HTTP wire with ``If-Match:
+            # "stale"`` performs a lost-update overwrite. Body params
+            # win; the headers fill in when the body omits them.
+            if method in ("write", "sys_write"):
+                _hdr_if_match = request.headers.get("If-Match")
+                if _hdr_if_match and "if_match" not in raw_params:
+                    _val = _hdr_if_match.strip()
+                    if _val == "*":
+                        raw_params["if_match_star"] = True
+                    elif _val.startswith("W/"):
+                        # Weak validators must not satisfy state-changing
+                        # If-Match — RFC 9110 §13.1.1.
+                        raw_params["if_match"] = None
+                    else:
+                        raw_params["if_match"] = _val.strip('"')
+                _hdr_if_none_match = request.headers.get("If-None-Match")
+                if (
+                    _hdr_if_none_match
+                    and "if_none_match" not in raw_params
+                    and _hdr_if_none_match.strip() == "*"
+                ):
+                    raw_params["if_none_match"] = True
+
             # #4005 round-5: NO early 304 in the kernel branch.
             # ``state.nexus_fs.get_content_id`` ignores OperationContext
             # (see nexus_fs_metadata.py: ``noqa: ARG002`` on the context

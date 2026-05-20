@@ -118,6 +118,7 @@ def occ_write_sync(
     offset: int = 0,
     if_match_any: list[str] | None = None,
     if_none_match_any: list[str] | None = None,
+    if_match_star: bool = False,
 ) -> dict[str, Any]:
     """Write with OCC pre-check (compare-and-swap).
 
@@ -158,7 +159,9 @@ def occ_write_sync(
     # in different threads and both commit (lost updates / double-create
     # under if_match / if_none_match). Same-process serialization only;
     # cross-process atomicity still requires backend constraints.
-    has_precondition = if_match is not None or if_none_match or if_match_any or if_none_match_any
+    has_precondition = (
+        if_match is not None or if_none_match or if_match_any or if_none_match_any or if_match_star
+    )
     if not has_precondition:
         # Plain write — no compare phase, no lock needed.
         plain: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)
@@ -179,6 +182,18 @@ def occ_write_sync(
             if meta
             else None
         )
+
+        # If-Match: * (RFC 9110 §13.1.1): proceed iff the resource
+        # exists at write time. Evaluated INSIDE the OCC lock so a
+        # concurrent delete between the route's stat and the lock
+        # cannot mis-fire (and we don't require an observable
+        # content_id, which some backends omit).
+        if if_match_star and meta is None:
+            raise ConflictError(
+                path=path,
+                expected_content_id="* (resource must exist)",
+                current_content_id="(file does not exist)",
+            )
 
         if if_none_match and meta is not None:
             raise FileExistsError(f"File already exists: {path}")
@@ -230,6 +245,7 @@ async def occ_write(
     offset: int = 0,
     if_match_any: list[str] | None = None,
     if_none_match_any: list[str] | None = None,
+    if_match_star: bool = False,
 ) -> dict[str, Any]:
     """Async wrapper around :func:`occ_write_sync` (offloaded to a thread)."""
     import asyncio
@@ -245,4 +261,5 @@ async def occ_write(
         offset=offset,
         if_match_any=if_match_any,
         if_none_match_any=if_none_match_any,
+        if_match_star=if_match_star,
     )

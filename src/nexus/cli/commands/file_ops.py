@@ -813,7 +813,23 @@ def write(
     async def _impl() -> None:
         try:
             if stream_mode:
-                # Read stdin in chunks and write via write_stream
+                # Read stdin in chunks and write via write_stream. OCC
+                # flags do NOT compose with streaming — the OCC helper
+                # requires the full payload in memory for the
+                # compare-and-write critical section. Refuse the combo
+                # explicitly instead of silently overwriting (data-loss
+                # path the advertised contract forbids).
+                if (if_match or if_none_match) and not force:
+                    render_error(
+                        ValueError(
+                            "--stream is incompatible with --if-match / "
+                            "--if-none-match (OCC requires the full payload "
+                            "in one compare-and-write critical section). "
+                            "Drop --stream for a conditional write, or pass "
+                            "--force to bypass OCC."
+                        )
+                    )
+                    sys.exit(2)
                 raw = sys.stdin.buffer.read()
                 if dry_run:
                     preview = dry_run_preview("write-stream", path=path, details={"size": len(raw)})

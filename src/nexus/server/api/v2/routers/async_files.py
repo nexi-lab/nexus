@@ -730,7 +730,15 @@ def create_async_files_router(
                 #     does not exist (create-only).
                 #   * ``If-None-Match: "a", "b"``  — proceed iff current
                 #     ETag matches NONE of the tags (else 412).
-                def _parse_etag_list(raw: str | None) -> list[str]:
+                def _parse_etag_list(raw: str | None, *, strong_only: bool = False) -> list[str]:
+                    """Parse an entity-tag list per RFC 9110 §8.8.3.
+
+                    Each element is ``("W/")? '"' opaque-tag '"'``. When
+                    ``strong_only`` is True (required by ``If-Match`` for
+                    state-changing requests — RFC 9110 §13.1.1), weak
+                    validators (``W/`` prefix) are skipped instead of
+                    silently downgraded to strong.
+                    """
                     if not raw:
                         return []
                     tags: list[str] = []
@@ -738,16 +746,27 @@ def create_async_files_router(
                         p = part.strip()
                         if not p:
                             continue
-                        if p.startswith("W/"):
+                        is_weak = p.startswith("W/")
+                        if is_weak:
                             p = p[2:].strip()
                         p = p.strip('"')
-                        if p:
-                            tags.append(p)
+                        if not p:
+                            continue
+                        if is_weak and strong_only:
+                            # Drop weak validators on If-Match — HTTP
+                            # forbids weak for state-changing preconditions.
+                            continue
+                        tags.append(p)
                     return tags
 
                 hdr_if_match_raw = http_request.headers.get("If-Match")
                 hdr_if_match_star = hdr_if_match_raw is not None and hdr_if_match_raw.strip() == "*"
-                hdr_if_match_list = [] if hdr_if_match_star else _parse_etag_list(hdr_if_match_raw)
+                # If-Match: strong comparison only (RFC 9110 §13.1.1).
+                hdr_if_match_list = (
+                    []
+                    if hdr_if_match_star
+                    else _parse_etag_list(hdr_if_match_raw, strong_only=True)
+                )
                 hdr_if_none_match_raw = http_request.headers.get("If-None-Match")
                 hdr_none_match_star = (
                     hdr_if_none_match_raw is not None and hdr_if_none_match_raw.strip() == "*"
@@ -763,30 +782,18 @@ def create_async_files_router(
 
                 if_none_match_create_only = request.if_none_match or hdr_none_match_star
 
-                # ``If-Match: *`` per RFC 9110: proceed iff the resource
-                # exists. Stat first (still under OCC lock once we route
-                # through occ_write below); on existence, add the
-                # current content_id to the match list so the atomic
-                # compare-and-write keeps the precondition tight.
-                if hdr_if_match_star:
-                    _cur = fs.sys_stat(request.path, context=context)
-                    if not _cur:
-                        raise HTTPException(
-                            status_code=412,
-                            detail=(
-                                f"If-Match: * precondition failed: {request.path} does not exist"
-                            ),
-                        )
-                    _cur_id = (
-                        _cur.get("content_id")
-                        if isinstance(_cur, dict)
-                        else getattr(_cur, "content_id", None)
-                    )
-                    if _cur_id:
-                        if_match_any.append(_cur_id)
+                # ``If-Match: *`` (RFC 9110 §13.1.1): proceed iff the
+                # resource exists at write time. Routed through
+                # ``occ_write`` with ``if_match_star=True`` so the
+                # existence check happens INSIDE the per-path OCC lock
+                # — no TOCTOU window where a concurrent delete or
+                # replace flips the precondition between stat and write.
 
                 has_precondition = bool(
-                    if_match_any or hdr_if_none_match_list or if_none_match_create_only
+                    if_match_any
+                    or hdr_if_none_match_list
+                    or if_none_match_create_only
+                    or hdr_if_match_star
                 )
 
                 if has_precondition:
@@ -802,12 +809,13 @@ def create_async_files_router(
                             if_match_any=if_match_any or None,
                             if_none_match=if_none_match_create_only,
                             if_none_match_any=hdr_if_none_match_list or None,
+                            if_match_star=hdr_if_match_star,
                         )
                     except ConflictError as exc:
-                        # RFC 9110: failed If-None-Match precondition →
-                        # 412 Precondition Failed. Generic If-Match
-                        # conflict → 409 (existing contract).
-                        status_code = 412 if hdr_if_none_match_list else 409
+                        # RFC 9110: failed If-None-Match or If-Match: *
+                        # precondition → 412 Precondition Failed.
+                        # Generic If-Match conflict → 409.
+                        status_code = 412 if (hdr_if_none_match_list or hdr_if_match_star) else 409
                         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
                     except FileExistsError as exc:
                         raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -136,17 +136,28 @@ data-plane hot path in the startup story.
 
 ## Filesystem surface
 
-FULL exposes the complete file API over three equivalent paths against
-the Python ``nexusd`` daemon (`shared`/`demo` presets): kernel syscalls,
-HTTP RPC `POST /api/nfs/{method}` (generic ``Call``), and the CLI
-(a thin wrapper over either). The typed gRPC service
-(`Read`/`Write`/`Delete`/`Ping`/`BatchRead`) is implemented in Rust and
-only bound by the ``nexusd-cluster`` federation binary — the standalone
-hub maps the port for compose compatibility but does not bind it (see
-commit 607ae89b5 "delete legacy Python gRPC bridge"). The HTTP RPC
-`POST /api/nfs/{method}` is marked deprecated (sunset 2026-06-25, Issue
-#1133) only for the future when the typed gRPC service is added to the
-hub.
+FULL exposes the file API over two transports against the Python
+``nexusd`` daemon (`shared`/`demo` presets):
+
+1. **HTTP RPC** — `POST /api/nfs/{method}` (generic ``Call``) and the
+   typed `POST /api/v2/files/{write,read,exists,batch-read,…}` routes.
+   This is the only wire the hub actually binds.
+2. **Kernel syscalls** — in-process calls when you embed `NexusFS`.
+
+The CLI (`nexus cat`/`write`/`stat`/...) currently constructs a gRPC
+client when invoked against a *remote* URL (`nexus.connect(profile=
+"remote")` → ``RPCTransport``). Against ``shared``/``demo`` that wire
+isn't bound, so **the CLI is local-stack-only on the hub presets** —
+remote use of the CLI requires the ``nexusd-cluster`` federation
+binary (Rust), which IS the only thing that binds typed gRPC
+(`Ping`/`Read`/`Write`/`Delete`/`BatchRead` — see
+`rust/transport/src/grpc.rs`). The standalone hub maps the gRPC port
+for compose compatibility but does not bind it (commit `607ae89b5`
+"delete legacy Python gRPC bridge"); dialing it returns "Connection
+reset by peer". The HTTP RPC `POST /api/nfs/{method}` is marked
+deprecated (sunset 2026-06-25, Issue #1133) for the day the hub adds
+gRPC; until then it remains the canonical wire for script/CLI HTTP
+clients.
 
 | Group    | RPC                                                  | CLI                                                   |
 |----------|------------------------------------------------------|-------------------------------------------------------|

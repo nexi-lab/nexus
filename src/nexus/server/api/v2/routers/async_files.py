@@ -720,8 +720,31 @@ def create_async_files_router(
                     "buf": content,
                     "context": context,
                 }
-                # fs.write is async — call directly
-                result = fs.write(**write_kwargs)
+                # Honor OCC fields (#4133 round-2 review): if either
+                # ``if_match`` (stale ETag → reject) or ``if_none_match``
+                # (create-only) is set, route through the OCC helper so
+                # the compare-and-swap is atomic. Bypassing this lets a
+                # stale ``if_match`` silently overwrite a newer version.
+                if request.if_match is not None or request.if_none_match:
+                    from nexus.contracts.exceptions import ConflictError
+                    from nexus.lib.occ import occ_write_sync
+
+                    try:
+                        result = occ_write_sync(
+                            fs,
+                            request.path,
+                            content,
+                            context=context,
+                            if_match=request.if_match,
+                            if_none_match=request.if_none_match,
+                        )
+                    except ConflictError as exc:
+                        raise HTTPException(status_code=409, detail=str(exc)) from exc
+                    except FileExistsError as exc:
+                        raise HTTPException(status_code=409, detail=str(exc)) from exc
+                else:
+                    # fs.write is async — call directly
+                    result = fs.write(**write_kwargs)
 
                 # Track write in transaction AFTER successful write.
                 # Skip if _write_internal already tracked it (path already in registry).

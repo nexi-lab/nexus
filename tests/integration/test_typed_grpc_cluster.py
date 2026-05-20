@@ -36,24 +36,31 @@ requires_e2e = pytest.mark.skipif(
 
 
 def _resolve_worktree_cluster_binary() -> str | None:
-    """Resolve the ``nexus-cluster`` binary from the *worktree's* Rust
-    build, not from ``$PATH``. We want this E2E to verify the code
-    under review, not whatever stale system install happens to be on
-    PATH. Returns the absolute path if found, else ``None``.
+    """Resolve the cluster daemon from the *worktree's* Rust build, not
+    from ``$PATH``. The Cargo ``[[bin]]`` name is ``nexusd-cluster``;
+    ``nexus-cluster`` is a common downstream symlink (e.g. ``cargo
+    install`` renames). Probe both, prefer the canonical name.
     """
     repo_root = Path(__file__).resolve().parents[2]
-    for candidate in (
-        repo_root / "rust" / "target" / "release" / "nexus-cluster",
-        repo_root / "rust" / "target" / "debug" / "nexus-cluster",
-        repo_root / "target" / "release" / "nexus-cluster",
-        repo_root / "target" / "debug" / "nexus-cluster",
-    ):
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return str(candidate)
+    names = ("nexusd-cluster", "nexus-cluster")
+    targets = (
+        repo_root / "rust" / "target" / "release",
+        repo_root / "rust" / "target" / "debug",
+        repo_root / "target" / "release",
+        repo_root / "target" / "debug",
+    )
+    for tdir in targets:
+        for name in names:
+            candidate = tdir / name
+            if candidate.exists() and os.access(candidate, os.X_OK):
+                return str(candidate)
     # Last resort: a $PATH binary, only if NEXUS_E2E_ALLOW_SYSTEM_CLUSTER=1
     # opts in explicitly (e.g. CI installs the right version itself).
     if os.environ.get("NEXUS_E2E_ALLOW_SYSTEM_CLUSTER") == "1":
-        return shutil.which("nexus-cluster")
+        for name in names:
+            path = shutil.which(name)
+            if path:
+                return path
     return None
 
 

@@ -446,15 +446,13 @@ def test_cat_large_file_above_stream_threshold(patched_fs, cli_runner: CliRunner
 
 
 def test_cat_auto_stream_branch_fires(patched_fs, monkeypatch):
-    """Verify the >10 MiB auto-stream branch in ``cat`` actually fires —
-    not just that it doesn't crash. We count calls to ``nx.stream`` and
-    assert it was invoked at least once when the file size is above
-    ``STREAM_THRESHOLD`` (10 MiB).
+    """Verify the >10 MiB auto-stream branch in ``cat``:
+    (a) fires (nx.stream invoked), and
+    (b) writes raw bytes to stdout — byte-identical, no banner mixed in.
 
-    Catches the silent-skip regression where the size probe falls through
-    (``hasattr(nx, "metadata")`` False or ``nx._kernel.sys_stat`` raises)
-    and ``cat`` quietly takes the small-file path instead — masking a
-    real truncation bug in production on >10 MiB reads.
+    Catches both the silent-skip regression (size probe falls through →
+    whole-file read + JSON envelope) and the corruption regression
+    (banner text written before file bytes on stdout).
     """
     from click.testing import CliRunner
 
@@ -473,15 +471,26 @@ def test_cat_auto_stream_branch_fires(patched_fs, monkeypatch):
 
     monkeypatch.setattr(nx, "stream", _spy_stream)
 
-    res = CliRunner().invoke(_cat, ["/big/auto.bin"])
-    assert res.exit_code == 0, res.output[:500]
+    res = CliRunner(mix_stderr=False).invoke(_cat, ["/big/auto.bin"])
+    assert res.exit_code == 0, (res.output[:500], res.stderr[:500] if res.stderr else "")
     assert stream_calls, (
         "cat did not invoke nx.stream — the >10 MiB auto-stream branch "
         "was skipped. Likely the size probe failed silently. "
-        f"Output head: {res.output[:200]!r}"
+        f"stdout head: {res.stdout_bytes[:200]!r}"
     )
-    # Confirm the chunk size matches the auto-stream branch (65536).
+    # Chunk size matches the auto-stream branch.
     assert stream_calls[0][1] == 65536
+    # Critical: stdout must be byte-identical to the file. The "Streaming
+    # large file..." status line is on stderr; nothing else may appear on
+    # stdout before/after the file bytes.
+    assert res.stdout_bytes == body, (
+        f"stdout corruption: got {len(res.stdout_bytes)} bytes, "
+        f"expected {len(body)}. head={res.stdout_bytes[:80]!r}"
+    )
+    # Status banner should be on stderr (informational only).
+    assert b"Streaming" in (res.stderr_bytes or b""), (
+        f"expected 'Streaming...' status line on stderr; stderr={res.stderr_bytes[:200]!r}"
+    )
 
 
 def test_worktree_cli_resolves_to_src_with_pythonpath():
@@ -556,6 +565,66 @@ def test_auth_denial_401_unauth_and_403_admin_only():
     # Admin passes.
     admin_out = asyncio.run(require_admin({"authenticated": True, "is_admin": True}))
     assert admin_out["is_admin"] is True
+
+
+def test_etag_if_match_occ_http_v2_write(inproc_nexus):
+    """The ``/api/v2/files/write`` route advertises ``if_match`` in its
+    request schema, but until this round it built ``write_kwargs``
+    without forwarding the field — so a stale ``if_match`` would
+    silently overwrite. Verify the route now routes through
+    ``occ_write_sync`` and returns 409 on stale, 200 on matching.
+    """
+    import base64
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from nexus.server.api.v2.routers.async_files import create_async_files_router
+    from nexus.server.dependencies import require_auth as _require_auth_dep
+
+    nx = inproc_nexus
+    nx.write("/occhttp/a.txt", b"v1")
+    good_id = nx.stat("/occhttp/a.txt")["content_id"]
+
+    app = FastAPI()
+    # Direct-mode router: nexus_fs supplied at construction. Prefix
+    # matches how production mounts it (see versioning.py:147).
+    app.include_router(create_async_files_router(nexus_fs=nx), prefix="/api/v2/files")
+
+    async def _fake_require_auth():
+        return {
+            "authenticated": True,
+            "is_admin": True,
+            "subject_id": "root",
+            "subject_type": "user",
+            "zone_id": "root",
+        }
+
+    app.dependency_overrides[_require_auth_dep] = _fake_require_auth
+
+    client = TestClient(app)
+
+    def _payload(content_id: str | None) -> dict:
+        body = {
+            "path": "/occhttp/a.txt",
+            "content": base64.b64encode(b"v2").decode(),
+            "encoding": "base64",
+        }
+        if content_id is not None:
+            body["if_match"] = content_id
+        return body
+
+    # Stale id → 409 (route now honors OCC).
+    stale = client.post("/api/v2/files/write", json=_payload("sha256:stale-deadbeef"))
+    assert stale.status_code == 409, (
+        f"expected 409 on stale if_match, got {stale.status_code}: {stale.text[:200]}"
+    )
+    assert nx.read("/occhttp/a.txt") == b"v1"
+
+    # Matching id → 200/201 + bytes updated.
+    fresh = client.post("/api/v2/files/write", json=_payload(good_id))
+    assert fresh.status_code in (200, 201), fresh.text
+    assert nx.read("/occhttp/a.txt") == b"v2"
 
 
 def test_etag_if_match_occ_conflict(inproc_nexus):

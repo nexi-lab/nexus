@@ -236,29 +236,39 @@ def cat(
                         }
                     else:
                         # Check file size to decide between read() and stream().
-                        # The previous ``hasattr(nx, "metadata")`` guard was a
-                        # latent dead-branch: NexusFS exposes no ``metadata``
-                        # attribute, so the size probe never ran and the
-                        # auto-stream branch never fired — meaning >10 MiB
-                        # reads silently fell back to whole-file read +
-                        # base64-encoded JSON envelope. Guard on the actual
-                        # capability instead.
+                        # Two correctness invariants:
+                        #   (a) Use the public ``nx.sys_stat`` with the
+                        #       caller's operation_context — calling
+                        #       ``nx._kernel.sys_stat(path, ROOT_ZONE_ID)``
+                        #       directly leaks size/existence to denied
+                        #       callers and bypasses zone scoping.
+                        #   (b) NEVER write status text to stdout for ``cat``;
+                        #       it must remain byte-identical to the file.
+                        #       The "Streaming large file..." line goes to
+                        #       stderr so ``nexus cat /big > copy`` produces
+                        #       a faithful copy.
                         STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
                         file_size = 0
-                        kernel = getattr(nx, "_kernel", None)
-                        if kernel is not None and hasattr(kernel, "sys_stat"):
-                            try:
-                                from nexus.contracts.constants import ROOT_ZONE_ID
+                        try:
+                            from nexus.lib.context_utils import parse_context
 
-                                file_stat = kernel.sys_stat(path, ROOT_ZONE_ID)
-                                file_size = file_stat["size"] if file_stat else 0
-                            except Exception:
-                                file_size = 0
+                            _ctx = parse_context(cast(Any, operation_context))
+                            _stat = nx.sys_stat(path, context=_ctx)
+                            if _stat:
+                                file_size = (
+                                    _stat.get("size", 0)
+                                    if isinstance(_stat, dict)
+                                    else getattr(_stat, "size", 0)
+                                )
+                        except Exception:
+                            # Permission denial / unknown path — fall through
+                            # to the regular read path which surfaces the
+                            # error with the right context (no size leak).
+                            file_size = 0
 
                         if file_size > STREAM_THRESHOLD and not section:
-                            console.print(
-                                f"[nexus.muted]Streaming large file ({file_size:,} bytes)...[/nexus.muted]"
-                            )
+                            sys.stderr.write(f"Streaming large file ({file_size:,} bytes)...\n")
+                            sys.stderr.flush()
                             for chunk in nx.stream(
                                 path, chunk_size=65536, context=cast(Any, operation_context)
                             ):

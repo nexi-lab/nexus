@@ -118,3 +118,50 @@ def test_grpc_tls_true_no_certs_fails_closed(monkeypatch: pytest.MonkeyPatch) ->
         pytest.raises(RuntimeError, match="NEXUS_GRPC_TLS=true"),
     ):
         resolve_grpc_target("https://hub:443")
+
+
+def test_localhost_pinned_to_ipv4(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``localhost`` must resolve to ``127.0.0.1`` so Docker port maps
+    (IPv4-only) work on macOS where Happy-Eyeballs picks ``::1`` first.
+    """
+    monkeypatch.setenv("NEXUS_GRPC_PORT", "2028")
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+    addr, _, _ = resolve_grpc_target("http://localhost:2026")
+    assert addr == "127.0.0.1:2028"
+
+
+def test_ipv6_loopback_pinned_to_ipv4(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``::1`` must also pin to ``127.0.0.1`` (Docker host maps bind IPv4)."""
+    monkeypatch.setenv("NEXUS_GRPC_PORT", "2028")
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+    addr, _, _ = resolve_grpc_target("http://[::1]:2026")
+    assert addr == "127.0.0.1:2028"
+
+
+def test_non_loopback_host_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real DNS-resolved hosts keep their dual-stack behavior — the
+    IPv4 pin must NOT apply outside loopback names."""
+    monkeypatch.setenv("NEXUS_GRPC_PORT", "2028")
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+    addr, _, _ = resolve_grpc_target("http://hub.example.com:2026")
+    assert addr == "hub.example.com:2028"
+    addr2, _, _ = resolve_grpc_target("http://10.0.0.42:2026")
+    assert addr2 == "10.0.0.42:2028"
+
+
+def test_hostless_url_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A URL without a hostname (``http:///foo``, bare paths) must raise
+    instead of silently dialing 127.0.0.1 — otherwise the SDK would send
+    the configured API key to whatever is listening on the loopback gRPC
+    port (token exposure + wrong-target operations).
+    """
+    monkeypatch.setenv("NEXUS_GRPC_PORT", "2028")
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+    with pytest.raises(ValueError, match="missing a hostname"):
+        resolve_grpc_target("http:///foo")
+    with pytest.raises(ValueError, match="missing a hostname"):
+        resolve_grpc_target("///bare-path")

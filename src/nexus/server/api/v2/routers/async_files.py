@@ -650,6 +650,7 @@ def create_async_files_router(
     @router.post("/write", response_model=WriteResponse)
     async def write_file(
         request: WriteRequest,
+        http_request: Request,
         transaction_id: str | None = Query(
             None,
             description="Active transaction ID to track this write in (from snapshots API)",
@@ -720,8 +721,74 @@ def create_async_files_router(
                     "buf": content,
                     "context": context,
                 }
-                # fs.write is async — call directly
-                result = fs.write(**write_kwargs)
+
+                # Honor OCC from either the JSON body or HTTP headers.
+                # Shared parser in ``nexus.lib.http_etag`` so the v2 +
+                # /api/nfs routes never drift (round-7 caught a parser-
+                # drift bug where one route handled weak-only If-Match
+                # safely and the other silently let it through).
+                from nexus.lib.http_etag import parse_write_preconditions
+
+                hdr_preconds = parse_write_preconditions(
+                    http_request.headers.get("If-Match"),
+                    http_request.headers.get("If-None-Match"),
+                )
+
+                # Weak-only If-Match → unconditional 412. Reject BEFORE
+                # merging any body OCC field so a body if_match cannot
+                # neutralize the failure (round-9 review caught this).
+                if hdr_preconds.get("weak_only_if_match"):
+                    raise HTTPException(
+                        status_code=412,
+                        detail=(
+                            "If-Match precondition failed: only weak "
+                            "validators supplied; RFC 9110 §13.1.1 "
+                            "requires strong comparison for state-"
+                            "changing requests."
+                        ),
+                    )
+
+                # Body fields stack on top of the header form. Body
+                # ``if_match`` collapses into ``if_match_any``.
+                if_match_any: list[str] = list(hdr_preconds.get("if_match_any") or [])
+                if request.if_match is not None:
+                    if_match_any.append(request.if_match)
+                if_none_match_create_only = request.if_none_match or hdr_preconds.get(
+                    "if_none_match", False
+                )
+                if_match_star = hdr_preconds.get("if_match_star", False)
+                if_none_match_any = hdr_preconds.get("if_none_match_any") or None
+
+                has_precondition = bool(
+                    if_match_any or if_none_match_any or if_none_match_create_only or if_match_star
+                )
+
+                if has_precondition:
+                    from nexus.contracts.exceptions import ConflictError
+                    from nexus.lib.occ import occ_write
+
+                    try:
+                        result = await occ_write(
+                            fs,
+                            request.path,
+                            content,
+                            context=context,
+                            if_match_any=if_match_any or None,
+                            if_none_match=if_none_match_create_only,
+                            if_none_match_any=if_none_match_any,
+                            if_match_star=if_match_star,
+                        )
+                    except ConflictError as exc:
+                        # RFC 9110: failed If-None-Match or If-Match: *
+                        # precondition → 412 Precondition Failed.
+                        # Generic If-Match conflict → 409.
+                        status_code = 412 if (if_none_match_any or if_match_star) else 409
+                        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+                    except FileExistsError as exc:
+                        raise HTTPException(status_code=409, detail=str(exc)) from exc
+                else:
+                    # fs.write is async — call directly
+                    result = fs.write(**write_kwargs)
 
                 # Track write in transaction AFTER successful write.
                 # Skip if _write_internal already tracked it (path already in registry).
@@ -987,18 +1054,34 @@ def create_async_files_router(
                         headers={"ETag": f'"{version}"'},
                     )
 
-                # Check If-None-Match header for caching
+                # Check If-None-Match header for caching. Pass the
+                # caller's ``context`` to ``sys_stat`` so the early
+                # 304 short-circuit cannot return ETag/freshness info
+                # to a caller that lacks READ permission on the path.
+                #
+                # ``NexusFS.sys_stat`` returns a dict (not an object) —
+                # using ``meta.content_id`` directly raises
+                # AttributeError → 500. Use the same dict-or-attr
+                # accessor pattern as ``_metadata_field``.
                 if_none_match = request.headers.get("If-None-Match")
-
-                # Get metadata first for ETag check
                 if if_none_match:
-                    meta = fs.sys_stat(path)
-                    if meta and meta.content_id:
+                    try:
+                        meta = fs.sys_stat(path, context=context)
+                    except Exception:
+                        meta = None
+                    meta_cid = None
+                    if meta is not None:
+                        meta_cid = (
+                            meta.get("content_id")
+                            if isinstance(meta, dict)
+                            else getattr(meta, "content_id", None)
+                        )
+                    if meta_cid:
                         client_etag = if_none_match.strip('"')
-                        if client_etag == meta.content_id:
+                        if client_etag == meta_cid:
                             return Response(
                                 status_code=304,
-                                headers={"ETag": f'"{meta.content_id}"'},
+                                headers={"ETag": f'"{meta_cid}"'},
                             )
 
                 # Issue #3266: For connector display paths (/mnt/*), resolve

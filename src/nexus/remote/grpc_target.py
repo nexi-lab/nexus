@@ -92,7 +92,29 @@ def resolve_grpc_target(
     """
     grpc_port = _grpc_port(trust_local_project=trust_local_project)
     parsed = urlparse(server_url)
-    grpc_address = f"{parsed.hostname}:{grpc_port}"
+    host = parsed.hostname
+    # Fail-closed on hostless / malformed URLs: never silently fall back
+    # to localhost, because that would dial 127.0.0.1:<grpc_port> and
+    # send the configured API key to whatever happens to be listening on
+    # the loopback port (token exposure + wrong-target operations).
+    # Callers that genuinely want the local stack must pass an explicit
+    # ``http://localhost:<port>``.
+    if not host:
+        raise ValueError(
+            f"server_url is missing a hostname: {server_url!r}. "
+            "Pass an explicit URL like 'http://localhost:2026' for the "
+            "local stack or 'http://<host>:<port>' for a remote target."
+        )
+    # Force IPv4 for ``localhost``: macOS resolves localhost to ``::1``
+    # first ("Happy Eyeballs"), but Docker Desktop / OrbStack publish
+    # port maps on IPv4 (0.0.0.0) only — so gRPC's first attempt hits
+    # ``[::1]:<port>`` and gets "Socket closed", while only the IPv4
+    # fallback would have worked. Pin to 127.0.0.1 so the channel
+    # picks the right family immediately. Non-localhost hosts are
+    # untouched (DNS-resolved targets keep dual-stack behavior).
+    if host in ("localhost", "::1"):
+        host = "127.0.0.1"
+    grpc_address = f"{host}:{grpc_port}"
 
     tls_config: ZoneTlsConfig | None = None
     grpc_tls_env = os.getenv("NEXUS_GRPC_TLS", "").lower()

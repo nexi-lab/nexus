@@ -116,6 +116,9 @@ def occ_write_sync(
     if_match: str | None = None,
     if_none_match: bool = False,
     offset: int = 0,
+    if_match_any: list[str] | None = None,
+    if_none_match_any: list[str] | None = None,
+    if_match_star: bool = False,
 ) -> dict[str, Any]:
     """Write with OCC pre-check (compare-and-swap).
 
@@ -128,15 +131,27 @@ def occ_write_sync(
         buf: File content.
         context: Operation context for permission checks.
         if_match: Expected etag — raises ConflictError on mismatch.
+            (Convenience scalar form; equivalent to
+            ``if_match_any=[if_match]``.)
         if_none_match: If True, fail if file already exists (create-only).
         offset: POSIX pwrite offset (R20.10). 0 = full-file write.
+        if_match_any: List of acceptable etags — RFC 9110 ``If-Match``
+            semantics: proceed iff the current content_id matches ANY
+            listed tag. Evaluated atomically inside the OCC lock.
+        if_none_match_any: List of forbidden etags — RFC 9110
+            ``If-None-Match`` (concrete tag form): proceed iff the
+            current content_id matches NONE of the listed tags.
+            Evaluated atomically inside the OCC lock so a concurrent
+            writer can't slip in between the precondition check and the
+            write.
 
     Returns:
         Dict with metadata (etag, version, modified_at, size) from write().
 
     Raises:
         FileExistsError: if_none_match=True and file exists.
-        ConflictError: if_match provided and etag doesn't match.
+        ConflictError: precondition (if_match / if_match_any /
+            if_none_match_any) failed.
     """
     # #4005 round-5: serialize the stat+write across worker threads
     # via a per-(zone, path) lock. Without this, two callers offloaded
@@ -144,7 +159,10 @@ def occ_write_sync(
     # in different threads and both commit (lost updates / double-create
     # under if_match / if_none_match). Same-process serialization only;
     # cross-process atomicity still requires backend constraints.
-    if if_match is None and not if_none_match:
+    has_precondition = (
+        if_match is not None or if_none_match or if_match_any or if_none_match_any or if_match_star
+    )
+    if not has_precondition:
         # Plain write — no compare phase, no lock needed.
         plain: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)
         return plain
@@ -155,28 +173,58 @@ def occ_write_sync(
     # surface aliases (foo, /foo, /foo/, //foo) all hash to one entry.
     with _occ_path_lock(path):
         meta = fs.sys_stat(path, context=context)
-
-        if if_none_match and meta is not None:
-            raise FileExistsError(f"File already exists: {path}")
-
-        if if_match is not None:
-            if meta is None:
-                raise ConflictError(
-                    path=path,
-                    expected_content_id=if_match,
-                    current_content_id="(file does not exist)",
-                )
-            current_content_id = (
+        current_content_id = (
+            (
                 meta.get("content_id")
                 if isinstance(meta, dict)
                 else getattr(meta, "content_id", None)
             )
-            if current_content_id != if_match:
+            if meta
+            else None
+        )
+
+        # If-Match: * (RFC 9110 §13.1.1): proceed iff the resource
+        # exists at write time. Evaluated INSIDE the OCC lock so a
+        # concurrent delete between the route's stat and the lock
+        # cannot mis-fire (and we don't require an observable
+        # content_id, which some backends omit).
+        if if_match_star and meta is None:
+            raise ConflictError(
+                path=path,
+                expected_content_id="* (resource must exist)",
+                current_content_id="(file does not exist)",
+            )
+
+        if if_none_match and meta is not None:
+            raise FileExistsError(f"File already exists: {path}")
+
+        # If-Match list (RFC 9110): proceed iff current matches ANY listed.
+        match_list = list(if_match_any or [])
+        if if_match is not None:
+            match_list.append(if_match)
+        if match_list:
+            if meta is None:
                 raise ConflictError(
                     path=path,
-                    expected_content_id=if_match,
+                    expected_content_id=", ".join(match_list),
+                    current_content_id="(file does not exist)",
+                )
+            if current_content_id not in match_list:
+                raise ConflictError(
+                    path=path,
+                    expected_content_id=", ".join(match_list),
                     current_content_id=current_content_id or "(no content_id)",
                 )
+
+        # If-None-Match list (RFC 9110): proceed iff current matches NONE.
+        # Evaluated INSIDE the OCC lock so a concurrent commit of a
+        # listed content_id can't slip in between check and write.
+        if if_none_match_any and current_content_id in if_none_match_any:
+            raise ConflictError(
+                path=path,
+                expected_content_id=f"NOT in {if_none_match_any!r}",
+                current_content_id=current_content_id or "(no content_id)",
+            )
 
         result: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)
         return result
@@ -195,6 +243,9 @@ async def occ_write(
     if_match: str | None = None,
     if_none_match: bool = False,
     offset: int = 0,
+    if_match_any: list[str] | None = None,
+    if_none_match_any: list[str] | None = None,
+    if_match_star: bool = False,
 ) -> dict[str, Any]:
     """Async wrapper around :func:`occ_write_sync` (offloaded to a thread)."""
     import asyncio
@@ -208,4 +259,7 @@ async def occ_write(
         if_match=if_match,
         if_none_match=if_none_match,
         offset=offset,
+        if_match_any=if_match_any,
+        if_none_match_any=if_none_match_any,
+        if_match_star=if_match_star,
     )

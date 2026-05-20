@@ -168,6 +168,13 @@ def resolve_skill_base_path(context: Any) -> str:
 def parse_context(context: OperationContext | dict | None = None) -> OperationContext:
     """Parse context dict or OperationContext into OperationContext.
 
+    Accepts both the canonical kernel keys (``user_id``, ``zone_id``,
+    ``groups``, …) and the CLI's ``create_operation_context`` shape
+    (``zone``, ``subject`` as a ``(type, id)`` tuple). Without this
+    alias handling a CLI-built context loses its zone/subject identity
+    when handed to a kernel call and silently falls back to the
+    ``"system"`` user / no-zone path.
+
     Args:
         context: Optional context dict or OperationContext.
 
@@ -180,13 +187,41 @@ def parse_context(context: OperationContext | dict | None = None) -> OperationCo
     if context is None:
         context = {}
 
+    # Zone: kernel uses ``zone_id``; CLI dict uses ``zone``.
+    zone_id = context.get("zone_id") or context.get("zone")
+
+    # Subject: CLI emits ``subject`` as ``(type, id)`` tuple. Map the
+    # id half into ``user_id``/``agent_id`` per type so downstream
+    # permission checks see the actual principal. Crucially, also
+    # preserve ``subject_type`` + ``subject_id`` on the returned
+    # ``OperationContext`` — without them ``--subject agent:bot``
+    # collapses to ``get_subject() == ("user", "bot")`` and permission
+    # hooks authorize the agent request as a user with the same id.
+    user_id = context.get("user_id")
+    agent_id = context.get("agent_id")
+    subject_type = context.get("subject_type")
+    subject_id = context.get("subject_id")
+    subject = context.get("subject")
+    if subject and isinstance(subject, list | tuple) and len(subject) == 2:
+        subj_type, subj_id = subject[0], subject[1]
+        subject_type = subject_type or subj_type
+        subject_id = subject_id or subj_id
+        if subj_type == "agent" and not agent_id:
+            agent_id = subj_id
+        if not user_id:
+            user_id = subj_id
+    if not user_id:
+        user_id = "system"
+
     return OperationContext(
-        user_id=context.get("user_id", "system"),
+        user_id=user_id,
         groups=context.get("groups", []),
-        zone_id=context.get("zone_id"),
-        agent_id=context.get("agent_id"),
+        zone_id=zone_id,
+        agent_id=agent_id,
         is_admin=context.get("is_admin", False),
         is_system=context.get("is_system", False),
+        subject_type=subject_type or "user",
+        subject_id=subject_id,
     )
 
 

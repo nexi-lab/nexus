@@ -88,8 +88,8 @@ modules:
   - nexus_fs
 - id: fuse
   name: FUSE
-  description: Mounts Nexus as a POSIX filesystem via the nexus-fuse Rust binary. Userspace processes read/write paths as
-    if they were on a local disk.
+  description: Mounts Nexus as a POSIX filesystem via the nexus-fuse Rust binary.
+    Userspace processes read/write paths as if they were on a local disk.
   layer: transport
   depends_on:
   - nexus_fs
@@ -112,7 +112,8 @@ modules:
   depends_on: []
 - id: hub
   name: Hub
-  description: Shared Nexus instance that other nodes connect to. Manages multi-tenant zones + admin RPCs.
+  description: Shared Nexus instance that other nodes connect to. Manages multi-tenant
+    zones + admin RPCs.
   layer: deployment
   depends_on: []
 - id: identity
@@ -915,7 +916,8 @@ operations:
   owning_issue: null
 - id: approvals.grant
   module: approvals
-  summary: Grant a pending approval (CLI + RPC). approvals brick currently exposes 0 external surfaces.
+  summary: Grant a pending approval (CLI + RPC). approvals brick currently exposes
+    0 external surfaces.
   transports: {}
   profiles:
     lite: missing_needed
@@ -1068,7 +1070,8 @@ operations:
     lite: missing_needed
     sandbox: missing_needed
     full: missing_needed
-  usage_example: 'WANTED: We can create archives (1 op) but no documented restore path.'
+  usage_example: 'WANTED: We can create archives (1 op) but no documented restore
+    path.'
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -2057,12 +2060,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus admin fs backfill-index /
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_admin_fs_flush_and_backfill
+  perf_class: not_perf_sensitive
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: batch.batch
   module: filesystem
   summary: ''
@@ -2890,12 +2893,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus rm-batch /a /b --json
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: delete.connector
   module: mount
   summary: ''
@@ -3505,12 +3508,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus exists /a /b --json
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_exists_batch_parity_and_exit
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: export.metadata
   module: portability
   summary: ''
@@ -4353,12 +4356,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus cat /f --stream --chunk-size 65536
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_cat_stream_matches_full
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: filesystem.sync
   module: filesystem
   summary: ''
@@ -4458,12 +4461,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus admin fs flush-write-observer
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_admin_fs_flush_and_backfill
+  perf_class: not_perf_sensitive
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: fs.access
   module: filesystem
   summary: ''
@@ -4755,13 +4758,15 @@ operations:
   owning_issue: null
 - id: fuse.mount
   module: fuse
-  summary: '`nexus fuse mount /local/path /nexus/zone` from the main CLI (currently a separate binary).'
+  summary: '`nexus fuse mount /local/path /nexus/zone` from the main CLI (currently
+    a separate binary).'
   transports: {}
   profiles:
     lite: missing_needed
     sandbox: missing_needed
     full: missing_needed
-  usage_example: 'WANTED: Unifies UX; FUSE is its own crate today with no nexus-cli integration.'
+  usage_example: 'WANTED: Unifies UX; FUSE is its own crate today with no nexus-cli
+    integration.'
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -6235,12 +6240,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus metadata /a /b --json
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: mobile.detect
   module: uncategorized
   summary: ''
@@ -6974,7 +6979,8 @@ operations:
     lite: missing_needed
     sandbox: missing_needed
     full: missing_needed
-  usage_example: 'WANTED: Parsers brick has rich plugin system but no introspection surface.'
+  usage_example: 'WANTED: Parsers brick has rich plugin system but no introspection
+    surface.'
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -7838,7 +7844,8 @@ operations:
     lite: missing_needed
     sandbox: missing_needed
     full: missing_needed
-  usage_example: 'WANTED: Cluster profile is new; operators need visibility for HA debugging.'
+  usage_example: 'WANTED: Cluster profile is new; operators need visibility for HA
+    debugging.'
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -7869,12 +7876,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus read-bulk /a /b --atomic --json
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: read.bulk
   module: filesystem
   summary: ''
@@ -7886,12 +7893,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus read-bulk /a.txt /b.txt --json
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_parity
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: read.file
   module: filesystem
   summary: ''
@@ -7920,12 +7927,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus cat /f --offset 0 --length 1024
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_cat_range_equals_slice
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: read.with_dynamic_viewer
   module: filesystem
   summary: ''
@@ -8277,12 +8284,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus rename-batch /a:/b /c:/d --json
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: rename.file
   module: filesystem
   summary: ''
@@ -8707,14 +8714,15 @@ operations:
   owning_issue: null
 - id: search.grep_section
   module: search
-  summary: 'Section-aware grep: `nexus grep PATTERN /file.md --in-section ''## API''`. Lets users target markdown / code section
-    without piping cat -> head -> grep.'
+  summary: 'Section-aware grep: `nexus grep PATTERN /file.md --in-section ''## API''`.
+    Lets users target markdown / code section without piping cat -> head -> grep.'
   transports: {}
   profiles:
     lite: missing_needed
     sandbox: missing_needed
     full: missing_needed
-  usage_example: 'WANTED: Users commonly want to grep within a heading scope; current grep is whole-file only.'
+  usage_example: 'WANTED: Users commonly want to grep within a heading scope; current
+    grep is whole-file only.'
   correctness_test: null
   perf_class: null
   perf_link: null
@@ -9618,12 +9626,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus stat /a /b --json
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_stat_multi_uses_stat_bulk
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: stream.range
   module: filesystem
   summary: ''
@@ -9635,12 +9643,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: nexus cat /f --stream --offset 0 --length 1048576
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_cat_stream_matches_full
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: streaming.api_stream
   module: filesystem
   summary: ''
@@ -10824,12 +10832,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
+  usage_example: cat local.bin | nexus write /f --stream
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_write_stream_from_stdin
+  perf_class: hot_path
   perf_link: null
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4133
 - id: x402.config
   module: pay
   summary: ''

@@ -8,6 +8,7 @@ When invoked with no subcommand, ``nexus`` execs into the TUI (``nexus-tui``).
 
 import os
 import shutil
+import signal
 import sys
 import warnings
 from pathlib import Path
@@ -20,6 +21,12 @@ from nexus.core import setup_uvloop
 
 # Suppress pydub warning about missing ffmpeg/avconv
 warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv", category=RuntimeWarning)
+
+# Restore Unix default SIGPIPE handling so `nexus cat --stream /big | head -c …`
+# exits cleanly when the downstream pipe closes, instead of raising
+# BrokenPipeError and emitting a Python traceback to stderr.
+if hasattr(signal, "SIGPIPE"):
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 # Install uvloop early for better async performance in all CLI commands
 # This affects all asyncio.run() calls throughout the CLI

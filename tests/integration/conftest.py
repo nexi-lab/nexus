@@ -45,9 +45,33 @@ def _docker_available() -> bool:
         return False
 
 
-def _nexus_bin() -> str:
-    """Resolve the venv-local ``nexus`` CLI binary."""
-    return str(Path(sys.executable).parent / "nexus")
+def _nexus_bin() -> list[str]:
+    """Resolve the ``nexus`` CLI invocation for the *worktree* code.
+
+    Returns a ``python -m nexus.cli`` invocation rather than the bare
+    ``nexus`` shim because the latter is the system-installed package on
+    ``$PATH``, which can lag the worktree by months and ship a different
+    preset definition (e.g. the historical ``shared`` preset that
+    included ``zoekt`` in ``services`` — the upstream of Bug B). Pair
+    this with ``_nexus_env()`` so subprocesses pick up ``src/`` first.
+    """
+    return [sys.executable, "-m", "nexus.cli"]
+
+
+def _nexus_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Subprocess env with the worktree ``src`` first on ``PYTHONPATH``.
+
+    Subprocesses don't inherit the pytest-time ``sys.path`` insertion in
+    ``tests/conftest.py``, so we must export it explicitly. Without this
+    ``python -m nexus.cli`` would resolve the installed package.
+    """
+    env = os.environ.copy()
+    repo_src = str(Path(__file__).resolve().parents[2] / "src")
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = repo_src + (os.pathsep + existing if existing else "")
+    if extra:
+        env.update(extra)
+    return env
 
 
 def _verify_hub_serving(data_dir: Path) -> bool:
@@ -100,16 +124,17 @@ def _verify_hub_serving(data_dir: Path) -> bool:
         return False
 
 
-def _teardown_stack(nexus_bin: str, project_dir: Path) -> None:
+def _teardown_stack(nexus_bin: list[str], project_dir: Path) -> None:
     """Best-effort `nexus down --volumes` (used before fail/skip so a
     failed boot does not leak containers/ports into later tests)."""
     with contextlib.suppress(Exception):
         subprocess.run(
-            [nexus_bin, "down", "--volumes"],
+            [*nexus_bin, "down", "--volumes"],
             capture_output=True,
             text=True,
             timeout=120,
             cwd=str(project_dir),
+            env=_nexus_env(),
         )
 
 
@@ -172,7 +197,12 @@ class _HttpResponse:
 # ---------------------------------------------------------------------------
 
 
-def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullStack]:
+def _boot_full_stack(
+    tmp_path: Path,
+    preset: str = "shared",
+    *,
+    bug_b_tolerant: bool = False,
+) -> Iterator[FullStack]:
     """Internal: boot a FULL nexus stack and yield a FullStack handle.
 
     Shared by the ``full_stack`` fixture and sibling integration fixtures
@@ -201,7 +231,7 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
 
     # ---- nexus init --------------------------------------------------------
     init_cmd = [
-        nexus_bin,
+        *nexus_bin,
         "init",
         "--preset",
         preset,
@@ -220,11 +250,36 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
             text=True,
             timeout=60,
             cwd=str(project_dir),
+            env=_nexus_env(),
         )
     except subprocess.TimeoutExpired:
         pytest.skip("nexus init timed out after 60s")
     if init_result.returncode != 0:
         pytest.skip(f"nexus init failed: {init_result.stderr[-400:]!r}")
+
+    # ---- post-init preset regression check ---------------------------------
+    # The worktree's ``shared`` preset MUST already omit zoekt from
+    # services (see init_cmd.py PRESETS["shared"]) — running the
+    # worktree CLI via ``python -m nexus.cli`` is what makes Bug B
+    # impossible. We assert that here rather than silently rewriting
+    # the generated config, because rewriting would mask the exact
+    # preset regression the worktree-CLI bridge is supposed to catch.
+    if bug_b_tolerant:
+        import yaml as _yaml
+
+        with open(config_path) as _cf:
+            _cfg = _yaml.safe_load(_cf) or {}
+        services = list(_cfg.get("services") or [])
+        profiles = list(_cfg.get("compose_profiles") or [])
+        bad_services = [s for s in services if s == "zoekt"]
+        bad_profiles = [p for p in profiles if p == "search"]
+        if bad_services or bad_profiles:
+            pytest.fail(
+                "PRESET REGRESSION: `nexus init --preset shared` (worktree CLI) "
+                f"emitted services={services!r} compose_profiles={profiles!r} — "
+                "expected no zoekt/search (Bug B from #4132 came back). "
+                "Fix init_cmd.py PRESETS['shared'] instead of normalizing here."
+            )
 
     # ---- nexus up ----------------------------------------------------------
     # Use the documented prebuilt path (matches docs/deployment/full-profile.md
@@ -234,9 +289,16 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
     # Forcing `--build` here was a defect: it triggers a from-scratch Rust +
     # Python Dockerfile build (minutes) that blew the subprocess timeout.
     # Opt in to a source build only when explicitly iterating on the image.
-    up_env = os.environ.copy()
+    up_env = _nexus_env()
     force_build = os.environ.get("NEXUS_E2E_BUILD") == "1"
-    up_cmd = [nexus_bin, "up"] + (["--build"] if force_build else [])
+    # The in-tree ``nexus-stack.yml`` carries a ``build:`` directive, so
+    # ``nexus up`` (no flag) defaults to a from-scratch build for
+    # repo-checkouts — minutes, blew the prior 300s timeout. Pass
+    # ``--no-build`` unless the caller explicitly opts into building
+    # (NEXUS_E2E_BUILD=1) so the fixture is pull-only by default and
+    # actually matches the "pull-only" promise in the comment above.
+    up_cmd = [*nexus_bin, "up"]
+    up_cmd.append("--build" if force_build else "--no-build")
 
     try:
         up_result = subprocess.run(
@@ -337,20 +399,25 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
             )
         # Hub PROVEN healthy; only `nexus up`'s aggregate exit is wrong
         # because of the out-of-scope zoekt health gate (Bug B).
-        _teardown_stack(nexus_bin, project_dir)
-        pytest.xfail(
-            "Bug B: `nexus up --preset shared` rc=1 (health gate waits on "
-            "unstarted `zoekt`) BUT the hub was verified serving /health + "
-            f"/api/v2/features directly. Out of #4132 scope. log: {debug_path}"
-        )
+        if not bug_b_tolerant:
+            _teardown_stack(nexus_bin, project_dir)
+            pytest.xfail(
+                "Bug B: `nexus up --preset shared` rc=1 (health gate waits on "
+                "unstarted `zoekt`) BUT the hub was verified serving /health + "
+                f"/api/v2/features directly. Out of #4132 scope. log: {debug_path}"
+            )
+        # Tolerant path (#4133 E2E): hub is proven serving; continue to
+        # capture env + yield the handle so over-the-wire tests can run
+        # against the real gRPC port even though Bug B is unresolved.
 
     # ---- nexus env --json --------------------------------------------------
     env_result = subprocess.run(
-        [nexus_bin, "env", "--json"],
+        [*nexus_bin, "env", "--json"],
         capture_output=True,
         text=True,
         timeout=30,
         cwd=str(project_dir),
+        env=_nexus_env(),
     )
     if env_result.returncode != 0:
         # The stack booted but `nexus env` failed — a real product/CLI
@@ -404,16 +471,48 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
         project_dir=project_dir,
     )
 
+    # Hermeticity gate: the default ``nexus up --no-build`` pulls a
+    # published image that may be weeks behind this branch's server
+    # code. Round-9 review flagged that comparing static
+    # nexus.__version__ values is too weak — both this branch and the
+    # last release report 0.10.0, so a stale image satisfies the gate
+    # while running server code that pre-dates the change under test.
+    #
+    # The only sound branch-validation modes are:
+    #   * NEXUS_E2E_BUILD=1                — build the image from HEAD
+    #     so the running server is the worktree commit by construction.
+    #   * NEXUS_E2E_ALLOW_VERSION_DRIFT=1  — opt-in "validate the
+    #     released image" smoke-test mode, not branch validation.
+    def _env_truthy(name: str) -> bool:
+        # Strict boolean parse: matches the ``force_build = ... == "1"``
+        # check above. A bare ``os.environ.get(...)`` check treats "0"
+        # or "false" as truthy (any non-empty string), defeating the
+        # gate.
+        v = (os.environ.get(name) or "").strip().lower()
+        return v in ("1", "true", "yes", "on")
+
+    if not (_env_truthy("NEXUS_E2E_BUILD") or _env_truthy("NEXUS_E2E_ALLOW_VERSION_DRIFT")):
+        _teardown_stack(nexus_bin, project_dir)
+        pytest.skip(
+            "E2E hermeticity gate: pull-only (default) cannot prove the "
+            "running server is the worktree commit. Set NEXUS_E2E_BUILD=1 "
+            "to build the server image from HEAD (slow, ~5–10 min) or "
+            "NEXUS_E2E_ALLOW_VERSION_DRIFT=1 to accept release-image-vs-"
+            "branch drift (smoke-test mode). Values 0/false/no are NOT "
+            "treated as opt-in."
+        )
+
     try:
         yield handle
     finally:
         if os.environ.get("NEXUS_E2E_KEEP", "").lower() not in ("1", "true", "yes"):
             subprocess.run(
-                [nexus_bin, "down", "--volumes"],
+                [*nexus_bin, "down", "--volumes"],
                 capture_output=True,
                 text=True,
                 timeout=180,
                 cwd=str(project_dir),
+                env=_nexus_env(),
             )
             shutil.rmtree(project_dir, ignore_errors=True)
 
@@ -421,6 +520,17 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
 # ---------------------------------------------------------------------------
 # full_stack fixture (thin wrapper around _boot_full_stack)
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="function")
+def full_stack_tolerant(tmp_path: Path) -> Iterator[FullStack]:
+    """Like ``full_stack``, but tolerates Bug B (out-of-scope `nexus up`
+    rc=1 due to zoekt health gate) when the hub itself is proven serving.
+
+    Used by #4133 FS E2E so we can verify CLI/RPC parity over the wire
+    while Bug B remains tracked separately under #4132.
+    """
+    yield from _boot_full_stack(tmp_path, preset="shared", bug_b_tolerant=True)
 
 
 @pytest.fixture(scope="function")

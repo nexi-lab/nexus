@@ -307,9 +307,14 @@ async def _occ_write_dispatch(
     offset = int(params.get("offset", 0) or 0)
     if_match = params.get("if_match") or None
     if_none_match = bool(params.get("if_none_match"))
+    if_match_star = bool(params.get("if_match_star"))
+    if_match_any = params.get("if_match_any") or None
+    if_none_match_any = params.get("if_none_match_any") or None
     force = bool(params.get("force"))
 
-    if (if_match or if_none_match) and not force:
+    if (
+        if_match or if_none_match or if_match_star or if_match_any or if_none_match_any
+    ) and not force:
         return await occ_write(
             nexus_fs,
             params["path"],
@@ -317,6 +322,9 @@ async def _occ_write_dispatch(
             context=context,
             if_match=if_match,
             if_none_match=if_none_match,
+            if_match_star=if_match_star,
+            if_match_any=if_match_any,
+            if_none_match_any=if_none_match_any,
             offset=offset,
         )
     # #4005 round-2: NexusFS.write is sync — offload like dispatch_kernel_syscall.

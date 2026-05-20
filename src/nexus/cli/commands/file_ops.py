@@ -30,6 +30,12 @@ def register_commands(cli: click.Group) -> None:
     It is registered separately in ``__init__.py``.
     """
     cli.add_command(cat)
+    cli.add_command(stat_cmd)
+    cli.add_command(metadata_cmd)
+    cli.add_command(exists_cmd)
+    cli.add_command(read_bulk_cmd)
+    cli.add_command(rename_batch_cmd)
+    cli.add_command(rm_batch_cmd)
     cli.add_command(write)
     cli.add_command(append)
     cli.add_command(write_batch)
@@ -109,6 +115,31 @@ def init(path: str) -> None:
     default=None,
     help="(Markdown) Filter by block type within --section",
 )
+@click.option(
+    "--offset",
+    type=int,
+    default=None,
+    help="Start byte offset for a range read (read_range)",
+)
+@click.option(
+    "--length",
+    type=int,
+    default=None,
+    help="Number of bytes from --offset (requires --offset)",
+)
+@click.option(
+    "--stream",
+    "stream_mode",
+    is_flag=True,
+    help="Stream content in chunks (stream / stream_range)",
+)
+@click.option(
+    "--chunk-size",
+    type=int,
+    default=65536,
+    show_default=True,
+    help="Chunk size for --stream",
+)
 @add_output_options
 @add_backend_options
 @add_context_options
@@ -118,6 +149,10 @@ def cat(
     at_operation: str | None,
     section: str | None,
     block_type: str | None,
+    offset: int | None,
+    length: int | None,
+    stream_mode: bool,
+    chunk_size: int,
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -156,6 +191,34 @@ def cat(
                     return
 
                 with timing.phase("server"):
+                    if offset is not None:
+                        if offset < 0 or (length is not None and length < 0):
+                            render_error(error=ValueError("--offset/--length must be non-negative"))
+                            sys.exit(2)
+                        end = offset + length if length is not None else nx.stat(path)["size"]
+                        if stream_mode:
+                            for ch in nx.stream_range(
+                                path,
+                                offset,
+                                end,
+                                chunk_size=chunk_size,
+                                context=cast(Any, operation_context),
+                            ):
+                                sys.stdout.buffer.write(ch)
+                        else:
+                            chunk = nx.read_range(
+                                path, offset, end, context=cast(Any, operation_context)
+                            )
+                            sys.stdout.buffer.write(chunk)
+                        return
+                    if stream_mode:
+                        for ch in nx.stream(
+                            path,
+                            chunk_size=chunk_size,
+                            context=cast(Any, operation_context),
+                        ):
+                            sys.stdout.buffer.write(ch)
+                        return
                     if metadata:
                         read_result = nx.read(
                             path, context=cast(Any, operation_context), return_metadata=True
@@ -172,22 +235,40 @@ def cat(
                             "modified_at": str(read_result["modified_at"]),
                         }
                     else:
-                        # Check file size to decide between read() and stream()
+                        # Check file size to decide between read() and stream().
+                        # Two correctness invariants:
+                        #   (a) Use the public ``nx.sys_stat`` with the
+                        #       caller's operation_context — calling
+                        #       ``nx._kernel.sys_stat(path, ROOT_ZONE_ID)``
+                        #       directly leaks size/existence to denied
+                        #       callers and bypasses zone scoping.
+                        #   (b) NEVER write status text to stdout for ``cat``;
+                        #       it must remain byte-identical to the file.
+                        #       The "Streaming large file..." line goes to
+                        #       stderr so ``nexus cat /big > copy`` produces
+                        #       a faithful copy.
                         STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
                         file_size = 0
-                        if hasattr(nx, "metadata"):
-                            try:
-                                from nexus.contracts.constants import ROOT_ZONE_ID
+                        try:
+                            from nexus.lib.context_utils import parse_context
 
-                                file_stat = nx._kernel.sys_stat(path, ROOT_ZONE_ID)
-                                file_size = file_stat["size"] if file_stat else 0
-                            except Exception:
-                                file_size = 0
+                            _ctx = parse_context(cast(Any, operation_context))
+                            _stat = nx.sys_stat(path, context=_ctx)
+                            if _stat:
+                                file_size = (
+                                    _stat.get("size", 0)
+                                    if isinstance(_stat, dict)
+                                    else getattr(_stat, "size", 0)
+                                )
+                        except Exception:
+                            # Permission denial / unknown path — fall through
+                            # to the regular read path which surfaces the
+                            # error with the right context (no size leak).
+                            file_size = 0
 
                         if file_size > STREAM_THRESHOLD and not section:
-                            console.print(
-                                f"[nexus.muted]Streaming large file ({file_size:,} bytes)...[/nexus.muted]"
-                            )
+                            sys.stderr.write(f"Streaming large file ({file_size:,} bytes)...\n")
+                            sys.stderr.flush()
                             for chunk in nx.stream(
                                 path, chunk_size=65536, context=cast(Any, operation_context)
                             ):
@@ -363,6 +444,300 @@ def _print_content(path: str, content: bytes) -> None:
         console.print(f"[nexus.muted]{content[:100]!r}...[/nexus.muted]")
 
 
+@click.command(name="stat")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@add_output_options
+@add_backend_options
+@add_context_options
+def stat_cmd(
+    paths: tuple[str, ...],
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Show file metadata without reading content.
+
+    One path -> stat; multiple paths -> stat_bulk (one round-trip).
+
+    Examples:
+        nexus stat /workspace/data.txt
+        nexus stat /a.txt /b.txt --json
+    """
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    if len(paths) == 1:
+                        data: Any = nx.stat(paths[0], context=cast(Any, operation_context))
+                    else:
+                        # Batch RPC: mirror write-batch precedent and omit
+                        # context (the CLI's dict-shaped operation_context
+                        # is not an OperationContext object; stat_bulk's
+                        # server-side permission probe rejects it even when
+                        # PermissionConfig.enforce is False).
+                        data = nx.stat_bulk(list(paths))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            render_error(error=e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+@click.command(name="metadata")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@add_output_options
+@add_backend_options
+@add_context_options
+def metadata_cmd(
+    paths: tuple[str, ...],
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Extended metadata for one or more paths (metadata_batch).
+
+    Unlike `nexus stat`, this includes mime_type, created_at, zone_id.
+    Missing paths map to null.
+
+    Examples:
+        nexus metadata /a.txt /b.txt --json
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.metadata_batch(list(paths))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            render_error(error=e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+@click.command(name="exists")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@add_output_options
+@add_backend_options
+@add_context_options
+def exists_cmd(
+    paths: tuple[str, ...],
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Check existence of one or more paths (exists_batch).
+
+    Exit 0 iff every path exists; 1 otherwise. --json prints the full map.
+
+    Examples:
+        nexus exists /a.txt /b.txt
+        nexus exists /a.txt --json
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.exists_batch(list(paths))
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+            # Exit 1 if any path is missing — but only when --json was NOT
+            # passed explicitly. With --json the caller consumes the map
+            # directly. Use json_output_explicit (not json_output) so the
+            # auto-JSON-on-pipe fallback does not clobber the exit-code
+            # signal a shell script piping our output relies on.
+            if not output_opts.json_output_explicit and not all(data.values()):
+                sys.exit(1)
+        except SystemExit:
+            raise
+        except Exception as e:  # noqa: BLE001
+            render_error(error=e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+def _b2s(v: Any) -> Any:
+    """Decode bytes for JSON; pass through None / non-bytes."""
+    if isinstance(v, bytes):
+        try:
+            return v.decode()
+        except UnicodeDecodeError:
+            import base64
+
+            return {"_base64": base64.b64encode(v).decode()}
+    return v
+
+
+@click.command(name="read-bulk")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@click.option(
+    "--atomic",
+    is_flag=True,
+    help="Use read_batch (all-or-nothing: error on first missing path)",
+)
+@add_output_options
+@add_backend_options
+@add_context_options
+def read_bulk_cmd(
+    paths: tuple[str, ...],
+    atomic: bool,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Read multiple files in one round-trip.
+
+    Default uses read_bulk (missing paths -> null). --atomic uses read_batch
+    (raises on the first missing/inaccessible path).
+
+    Examples:
+        nexus read-bulk /a.txt /b.txt --json
+        nexus read-bulk /a.txt /b.txt --atomic --json
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    if atomic:
+                        items = nx.read_batch(list(paths), partial=False)
+                        data: Any = {it["path"]: _b2s(it.get("content")) for it in items}
+                    else:
+                        raw = nx.read_bulk(list(paths))
+                        data = {p: _b2s(v) for p, v in raw.items()}
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            render_error(error=e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+@click.command(name="rename-batch")
+@click.argument("pairs", nargs=-1, required=True, type=str)
+@add_output_options
+@add_backend_options
+@add_context_options
+def rename_batch_cmd(
+    pairs: tuple[str, ...],
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Rename/move multiple files. Each pair is SRC:DST.
+
+    Per-item independent (a failed rename does not abort the others).
+
+    Examples:
+        nexus rename-batch /a.txt:/b.txt /c.txt:/d.txt --json
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+    renames: list[tuple[str, str]] = []
+    for p in pairs:
+        if ":" not in p:
+            render_error(error=ValueError(f"Expected SRC:DST, got {p!r}"))
+            sys.exit(2)
+        src, dst = p.split(":", 1)
+        renames.append((src, dst))
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.rename_batch(renames)
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            render_error(error=e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+@click.command(name="rm-batch")
+@click.argument("paths", nargs=-1, required=True, type=str)
+@click.option("--recursive", "-r", is_flag=True, help="Delete non-empty directories")
+@add_output_options
+@add_backend_options
+@add_context_options
+def rm_batch_cmd(
+    paths: tuple[str, ...],
+    recursive: bool,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
+    """Delete multiple files/directories (delete_batch).
+
+    Per-item independent. Use -r for non-empty directories.
+
+    Examples:
+        nexus rm-batch /a.txt /b.txt --json
+        nexus rm-batch /dir1 /dir2 -r
+    """
+    del operation_context  # batch RPC: dict context rejected by server-side probe
+
+    async def _impl() -> None:
+        timing = CommandTiming()
+        try:
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                with timing.phase("server"):
+                    data = nx.delete_batch(list(paths), recursive=recursive)
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            render_error(error=e)
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
 @click.command()
 @click.argument("path", type=str)
 @click.argument("content", type=str, required=False)
@@ -387,6 +762,12 @@ def _print_content(path: str, content: bytes) -> None:
     is_flag=True,
     help="Show metadata (content_id, version) after writing",
 )
+@click.option(
+    "--stream",
+    "stream_mode",
+    is_flag=True,
+    help="Read content from stdin in chunks and write via write_stream",
+)
 @add_dry_run_option
 @add_backend_options
 @add_context_options
@@ -398,6 +779,7 @@ def write(
     if_none_match: bool,
     force: bool,
     show_metadata: bool,
+    stream_mode: bool,
     dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -430,6 +812,43 @@ def write(
 
     async def _impl() -> None:
         try:
+            if stream_mode:
+                # Read stdin in chunks and write via write_stream. OCC
+                # flags do NOT compose with streaming — the OCC helper
+                # requires the full payload in memory for the
+                # compare-and-write critical section. Refuse the combo
+                # explicitly instead of silently overwriting (data-loss
+                # path the advertised contract forbids).
+                if (if_match or if_none_match) and not force:
+                    render_error(
+                        error=ValueError(
+                            "--stream is incompatible with --if-match / "
+                            "--if-none-match (OCC requires the full payload "
+                            "in one compare-and-write critical section). "
+                            "Drop --stream for a conditional write, or pass "
+                            "--force to bypass OCC."
+                        )
+                    )
+                    sys.exit(2)
+                raw = sys.stdin.buffer.read()
+                if dry_run:
+                    preview = dry_run_preview("write-stream", path=path, details={"size": len(raw)})
+                    render_dry_run(preview)
+                    return
+                cs = 65536
+                chunks = (raw[i : i + cs] for i in range(0, len(raw), cs))
+                async with open_filesystem(
+                    remote_url, remote_api_key, allow_local_default=True
+                ) as nx:
+                    result = nx.write_stream(path, chunks)
+                if show_metadata:
+                    console.print(result)
+                else:
+                    console.print(
+                        f"[nexus.success]✓[/nexus.success] {len(raw)} bytes -> [nexus.path]{path}[/nexus.path]"
+                    )
+                return
+
             file_content = resolve_content(content, input_file)
 
             if dry_run:

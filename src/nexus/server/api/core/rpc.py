@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from nexus.contracts.exceptions import (
@@ -132,6 +132,56 @@ async def rpc_endpoint(
             target_zone = target_zone_for_context(context, raw_params)
             context = context_for_target_zone(context, target_zone)
             state = request.app.state
+
+            # OCC header → param translation for write methods. Shared
+            # parser in ``nexus.lib.http_etag`` is the single source of
+            # truth for this route AND ``/api/v2/files/write``.
+            #
+            # Headers stack ON TOP of body-supplied OCC: a stale
+            # ``If-Match`` header MUST NOT be bypassable by setting
+            # empty/false body fields like ``if_match_any: []``. We
+            # filter such empty body OCC fields BEFORE merging so a
+            # well-formed header always wins over a default-shaped
+            # body.
+            if method in ("write", "sys_write"):
+                from fastapi import HTTPException as _HTTPException
+
+                from nexus.lib.http_etag import parse_write_preconditions
+
+                _hdr_preconds = parse_write_preconditions(
+                    request.headers.get("If-Match"),
+                    request.headers.get("If-None-Match"),
+                )
+
+                # Weak-only If-Match → unconditional 412 before any
+                # body field gets a chance to "neutralize" it.
+                if _hdr_preconds.get("weak_only_if_match"):
+                    raise _HTTPException(
+                        status_code=412,
+                        detail=(
+                            "If-Match precondition failed: only weak "
+                            "validators supplied; RFC 9110 §13.1.1 "
+                            "requires strong comparison for state-"
+                            "changing requests."
+                        ),
+                    )
+
+                # Drop empty/false body OCC fields so the header form
+                # wins (instead of being silently masked by a default).
+                _occ_keys = (
+                    "if_match",
+                    "if_none_match",
+                    "if_match_star",
+                    "if_match_any",
+                    "if_none_match_any",
+                )
+                for _k in _occ_keys:
+                    if _k in raw_params and not raw_params[_k]:
+                        raw_params.pop(_k, None)
+                for _k, _v in _hdr_preconds.items():
+                    if _k == "weak_only_if_match":
+                        continue
+                    raw_params.setdefault(_k, _v)
 
             # #4005 round-5: NO early 304 in the kernel branch.
             # ``state.nexus_fs.get_content_id`` ignores OperationContext
@@ -339,6 +389,13 @@ async def rpc_endpoint(
     except NexusError as e:
         logger.warning("NexusError in method %s: %s", method, e)
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
+    except HTTPException:
+        # Preserve FastAPI HTTPException (e.g. 412 Precondition Failed
+        # from weak-only If-Match) — without this the generic
+        # ``except Exception`` below would map it to JSON-RPC
+        # INTERNAL_ERROR and clients couldn't distinguish a precondition
+        # failure from a server fault.
+        raise
     except Exception:
         logger.exception(f"Error executing method {method}")
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")

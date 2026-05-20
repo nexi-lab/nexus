@@ -176,9 +176,10 @@ class TestSearchServiceInit:
         self, mock_metadata_store, mock_permission_enforcer, mock_dlc, mock_gateway
     ):
         """Predicate pushdown must request the bitmap for the current list zone."""
-        meta = MagicMock()
-        meta.path = "/visible.txt"
-        mock_metadata_store.list.return_value = [meta]
+        # _list_slow_path scans via the §2.5 syscall surface — sys_readdir
+        # detail dicts, not metadata_store.list FileMetadata objects.
+        entry = {"path": "/visible.txt", "entry_type": 0, "size": 0}
+        mock_gateway.sys_readdir.return_value = [entry]
 
         tiger_cache = MagicMock()
         tiger_cache.get_accessible_int_ids.return_value = {1}
@@ -203,7 +204,7 @@ class TestSearchServiceInit:
             _rebac_manager=rebac_manager,
         )
 
-        assert all_files == [meta]
+        assert all_files == [entry]
         assert accessible_ids == {1}
         tiger_cache.get_accessible_int_ids.assert_called_once_with(
             subject_type="user",

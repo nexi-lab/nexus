@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--yaml",
         type=Path,
-        default=Path("docs/architecture/api-rpc-surface-coverage.yaml"),
+        default=Path("docs/surface-coverage/api-rpc-surface-coverage.yaml"),
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument(

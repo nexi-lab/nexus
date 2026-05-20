@@ -198,7 +198,7 @@ def generate_coverage(
         _ = extract_profiles.extract_profile_names(dp, enum_class="DeploymentProfile")
 
     # --- Manual missing_needed gaps from api-rpc-surface-gaps.yaml ---
-    gaps_path = repo_root / "docs/architecture/api-rpc-surface-gaps.yaml"
+    gaps_path = repo_root / "docs/surface-coverage/api-rpc-surface-gaps.yaml"
     if gaps_path.exists():
         import yaml as _yaml
 
@@ -328,12 +328,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--output",
         type=Path,
-        default=Path("docs/architecture/api-rpc-surface-coverage.yaml"),
+        default=Path("docs/surface-coverage/api-rpc-surface-coverage.yaml"),
     )
     p.add_argument(
         "--overrides",
         type=Path,
-        default=Path("docs/architecture/api-rpc-surface-overrides.yaml"),
+        default=Path("docs/surface-coverage/api-rpc-surface-overrides.yaml"),
         help="reserved for v2; ignored in v1",
     )
     args = p.parse_args(argv)

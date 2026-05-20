@@ -21,12 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--input",
         type=Path,
-        default=Path("docs/architecture/api-rpc-surface-coverage.yaml"),
+        default=Path("docs/surface-coverage/api-rpc-surface-coverage.yaml"),
     )
     p.add_argument(
         "--output",
         type=Path,
-        default=Path("docs/architecture/api-rpc-surface-coverage.html"),
+        default=Path("docs/surface-coverage/api-rpc-surface-coverage.html"),
     )
     args = p.parse_args(argv)
     coverage = load_yaml(args.input)

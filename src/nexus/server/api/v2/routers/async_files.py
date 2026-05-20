@@ -734,6 +734,20 @@ def create_async_files_router(
                     http_request.headers.get("If-None-Match"),
                 )
 
+                # Weak-only If-Match → unconditional 412. Reject BEFORE
+                # merging any body OCC field so a body if_match cannot
+                # neutralize the failure (round-9 review caught this).
+                if hdr_preconds.get("weak_only_if_match"):
+                    raise HTTPException(
+                        status_code=412,
+                        detail=(
+                            "If-Match precondition failed: only weak "
+                            "validators supplied; RFC 9110 §13.1.1 "
+                            "requires strong comparison for state-"
+                            "changing requests."
+                        ),
+                    )
+
                 # Body fields stack on top of the header form. Body
                 # ``if_match`` collapses into ``if_match_any``.
                 if_match_any: list[str] = list(hdr_preconds.get("if_match_any") or [])

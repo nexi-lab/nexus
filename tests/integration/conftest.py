@@ -471,48 +471,27 @@ def _boot_full_stack(
         project_dir=project_dir,
     )
 
-    # Hermeticity check: the default `nexus up --no-build` path pulls
-    # ``ghcr.io/nexi-lab/nexus:<channel>`` — a published image that may
-    # lag the worktree by weeks. If the test changed server code,
-    # asserting against that image gives false confidence. Verify the
-    # running server's package version matches the worktree;
-    # mismatch → skip with a clear instruction to rebuild.
-    try:
-        import importlib.metadata as _ilm
-
-        from nexus import __version__ as _wt_version
-
-        _ver_resp = handle.http_get("/api/v2/features")
-        if _ver_resp.status_code == 200:
-            _feats = _ver_resp.json()
-            _server_version = (
-                _feats.get("version") or _feats.get("server_version") or _feats.get("nexus_version")
-            )
-            if (
-                _server_version
-                and _wt_version
-                and _server_version != _wt_version
-                and not os.environ.get("NEXUS_E2E_ALLOW_VERSION_DRIFT")
-            ):
-                _teardown_stack(nexus_bin, project_dir)
-                pytest.skip(
-                    f"E2E hermeticity gate: server image is "
-                    f"{_server_version!r} but worktree is {_wt_version!r}. "
-                    "Pulled image cannot exercise branch server code. "
-                    "Set NEXUS_E2E_BUILD=1 to build from the worktree, or "
-                    "NEXUS_E2E_ALLOW_VERSION_DRIFT=1 to accept the drift "
-                    "(release-image smoke test mode)."
-                )
-        # If /api/v2/features doesn't surface a version, fall through —
-        # we can't gate without a comparison point. The skip is opt-in
-        # strict, not blocking.
-        del _ilm
-    except Exception as _exc:  # noqa: BLE001
-        # Version gate is best-effort; don't fail the test if the probe
-        # itself trips.
-        import logging as _lg
-
-        _lg.getLogger(__name__).debug("version-gate probe failed: %s", _exc)
+    # Hermeticity gate: the default ``nexus up --no-build`` pulls a
+    # published image that may be weeks behind this branch's server
+    # code. Round-9 review flagged that comparing static
+    # nexus.__version__ values is too weak — both this branch and the
+    # last release report 0.10.0, so a stale image satisfies the gate
+    # while running server code that pre-dates the change under test.
+    #
+    # The only sound branch-validation modes are:
+    #   * NEXUS_E2E_BUILD=1                — build the image from HEAD
+    #     so the running server is the worktree commit by construction.
+    #   * NEXUS_E2E_ALLOW_VERSION_DRIFT=1  — opt-in "validate the
+    #     released image" smoke-test mode, not branch validation.
+    if not (os.environ.get("NEXUS_E2E_BUILD") or os.environ.get("NEXUS_E2E_ALLOW_VERSION_DRIFT")):
+        _teardown_stack(nexus_bin, project_dir)
+        pytest.skip(
+            "E2E hermeticity gate: pull-only (default) cannot prove the "
+            "running server is the worktree commit. Set NEXUS_E2E_BUILD=1 "
+            "to build the server image from HEAD (slow, ~5–10 min) or "
+            "NEXUS_E2E_ALLOW_VERSION_DRIFT=1 to accept release-image-vs-"
+            "branch drift (smoke-test mode)."
+        )
 
     try:
         yield handle

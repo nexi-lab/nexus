@@ -17,20 +17,20 @@ from typing import TypedDict
 
 
 class OccPreconditions(TypedDict, total=False):
-    """OCC kwargs derivable from HTTP If-Match / If-None-Match headers."""
+    """OCC kwargs derivable from HTTP If-Match / If-None-Match headers.
+
+    ``weak_only_if_match`` is an out-of-band signal (not consumed by
+    ``occ_write_sync``) — when True, the caller MUST short-circuit
+    with 412 Precondition Failed before merging any other OCC source.
+    See round-9 review: a weak-only sentinel mixed into ``if_match_any``
+    was neutralized when callers also supplied a matching body tag.
+    """
 
     if_match_star: bool  # ``If-Match: *`` (proceed iff resource exists)
     if_match_any: list[str]  # ``If-Match: "a", "b"`` (any-match)
     if_none_match: bool  # ``If-None-Match: *`` (create-only)
     if_none_match_any: list[str]  # ``If-None-Match: "a", "b"`` (none-match)
-
-
-# Sentinel content_id used to make weak-only If-Match a guaranteed
-# conflict. RFC 9110 §13.1.1 forbids weak validators on state-changing
-# preconditions; rather than treating "weak-only" as "no precondition"
-# (which would silently let the write through), inject this opaque tag
-# into ``if_match_any`` so ``occ_write`` raises ``ConflictError``.
-WEAK_ONLY_IF_MATCH_SENTINEL = "__nx_weak_only_if_match__"
+    weak_only_if_match: bool  # If-Match parsed to weak-only — fail-fast
 
 
 def _parse_etag_list(raw: str | None, *, strong_only: bool) -> list[str]:
@@ -97,10 +97,12 @@ def parse_write_preconditions(
                 out["if_match_any"] = tags
             else:
                 # Header was present but parsed empty (weak-only or
-                # otherwise malformed) — DO NOT fall through to plain
-                # write. Inject an unsatisfiable tag to surface the
-                # precondition failure.
-                out["if_match_any"] = [WEAK_ONLY_IF_MATCH_SENTINEL]
+                # otherwise malformed). Signal an unconditional
+                # precondition failure that callers MUST honor before
+                # merging any body-level OCC fields. Using a hard flag
+                # (not a sentinel tag stuffed into if_match_any) means
+                # a body tag cannot accidentally make the write succeed.
+                out["weak_only_if_match"] = True
 
     # ---- If-None-Match ----------------------------------------------------
     if if_none_match_header is not None:

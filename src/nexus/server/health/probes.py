@@ -129,8 +129,8 @@ def _run_storage_round_trip(nx_fs: Any) -> None:
         probe_error: Exception | None = None
 
         try:
-            nx_fs.write(path=probe_path, buf=_STORAGE_PROBE_PAYLOAD, context=context)
-            readback = nx_fs.read(probe_path, context=context)
+            nx_fs.sys_write(probe_path, _STORAGE_PROBE_PAYLOAD, context=context)
+            readback = nx_fs.sys_read(probe_path, context=context)
             if readback != _STORAGE_PROBE_PAYLOAD:
                 raise RuntimeError("storage probe readback mismatch")
         except Exception as exc:

@@ -410,6 +410,22 @@ def _boot_post_kernel_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] ContextBranchService unavailable: %s", exc)
 
+    # --- Tiger Cache Manager (moved from _system.py — initialize()'s
+    #     resource-map sync lists via NexusFS.sys_readdir) ---
+    try:
+        from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        _tiger_cache_manager = TigerCacheManager(
+            rebac_manager=services.get("rebac_manager"),
+            nexus_fs=nx,
+            default_zone_id=getattr(_nx_init_cred, "zone_id", None) or ROOT_ZONE_ID,
+        )
+        _tiger_cache_manager.initialize()
+        logger.debug("[BOOT:WIRED] TigerCacheManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] TigerCacheManager unavailable: %s", exc)
+
     workspace_rpc_service: Any = None
     try:
         from nexus.services.workspace.workspace_rpc_service import WorkspaceRPCService

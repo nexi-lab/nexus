@@ -9,9 +9,10 @@ import os
 import sys
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from nexus.kernel_helpers import metastore_list_iter
+if TYPE_CHECKING:
+    from nexus.contracts.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +27,15 @@ class TigerCacheManager:
     def __init__(
         self,
         rebac_manager: Any,
-        metadata_store: Any,
+        nexus_fs: "NexusFilesystem",
         default_zone_id: str,
         process_queue_fn: Callable | None = None,
         warm_cache_fn: Callable | None = None,
     ) -> None:
         self._rebac_manager = rebac_manager
-        self._metadata_store = metadata_store
-        # Pull the kernel out of the proxy so listing goes directly to
-        # ``kernel.metastore_*`` (and survives W3).
-        self._kernel: Any = metadata_store
+        # Resource-map sync lists the filesystem through the §2.2 syscall
+        # surface (sys_readdir), not the kernel-internal MetaStore pillar.
+        self._nexus_fs = nexus_fs
         self._default_zone_id = default_zone_id
         self._process_queue_fn = process_queue_fn
         self._warm_cache_fn = warm_cache_fn
@@ -124,10 +124,17 @@ class TigerCacheManager:
             count = 0
             log_interval = 1000
 
-            for meta in metastore_list_iter(self._kernel, "/", recursive=True):
+            from nexus.contracts.types import OperationContext
+
+            sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+            for entry_path in self._nexus_fs.sys_readdir(
+                "/", recursive=True, details=False, context=sys_ctx
+            ):
+                if not entry_path:
+                    continue
                 resource_map.get_or_create_int_id(
                     resource_type="file",
-                    resource_id=meta.path,
+                    resource_id=str(entry_path),
                 )
                 count += 1
 

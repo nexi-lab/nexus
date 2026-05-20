@@ -21,7 +21,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate
 
@@ -349,19 +348,9 @@ def _boot_pre_kernel_services(
     context_branch_service: Any = None
 
     # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
-    tiger_cache_manager: Any = None
-    try:
-        from nexus.bricks.rebac.tiger_cache_manager import TigerCacheManager
-
-        tiger_cache_manager = TigerCacheManager(
-            rebac_manager=rebac_manager,
-            metadata_store=ctx.metadata_store,
-            default_zone_id=ctx.zone_id or ROOT_ZONE_ID,
-        )
-        tiger_cache_manager.initialize()
-        logger.debug("[BOOT:SYSTEM] TigerCacheManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] TigerCacheManager unavailable: %s", exc)
+    # Deferred to post-kernel tier (factory/_wired.py) — initialize()'s
+    # resource-map sync now lists via NexusFS.sys_readdir (§2.5 mediation),
+    # so the manager needs a live NexusFS handle.
 
     # --- Zone Lifecycle Service (Issue #2061) ---
     zone_lifecycle: Any = None

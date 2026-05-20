@@ -163,6 +163,38 @@ gRPC `Call`, and the CLI (a thin wrapper). The deprecated HTTP
   stale `content_id` is rejected).
 - Admin ops (`backfill_directory_index`, `flush_write_observer`) require
   admin; non-admin callers are refused server-side.
+- Stream commands (`cat --stream`, `write --stream`) honor Unix
+  `SIGPIPE = SIG_DFL` — piping into `head`, `tee`, or any reader that
+  closes early exits cleanly (status 141), no traceback.
+
+**CLI ↔ RPC mapping (verified by `tests/unit/cli/test_fs_parity.py`):**
+
+| CLI                                       | RPC method                | Parity test                          |
+|-------------------------------------------|---------------------------|--------------------------------------|
+| `nexus stat <path>...`                    | `stat` / `stat_bulk`      | `test_stat_single_parity`, `test_stat_multi_uses_stat_bulk` |
+| `nexus metadata <path>...`                | `metadata_batch`          | `test_metadata_extended_parity`      |
+| `nexus exists <path>...`                  | `exists_batch`            | `test_exists_batch_parity_and_exit`  |
+| `nexus read-bulk <path>...`               | `read_bulk` / `read_batch`| `test_read_bulk_parity`, `test_read_bulk_atomic_raises_on_missing` |
+| `nexus rename-batch a:b ...`              | `rename_batch`            | `test_rename_batch_per_item_independent` |
+| `nexus rm-batch <path>...`                | `delete_batch`            | `test_rm_batch_per_item_independent` |
+| `nexus cat --offset N --length M`         | `read_range`              | `test_cat_range_equals_slice`, `test_range_out_of_bounds_is_bounded` |
+| `nexus cat --stream` / `write --stream`   | `stream` / `write_stream` | `test_cat_stream_matches_full`, `test_write_stream_from_stdin`, `test_cat_stream_survives_broken_pipe` |
+| `nexus admin fs backfill-index`           | `backfill_directory_index` | `test_admin_fs_flush_and_backfill`, `test_admin_only_metadata_is_set` |
+| `nexus admin fs flush-write-observer`     | `flush_write_observer`    | `test_admin_fs_flush_and_backfill`, `test_admin_only_metadata_is_set` |
+
+**Verification status** (PR #4173):
+
+| Layer                                    | Status      | Evidence                                           |
+|------------------------------------------|-------------|----------------------------------------------------|
+| CLI ↔ in-process kernel parity           | ✅ verified | 19 tests in `test_fs_parity.py` (serial, 7s)       |
+| Auth CLI parity                          | ✅ verified | 4 tests in `test_auth_cli_parity.py`               |
+| Admin-only enforcement metadata          | ✅ verified | `test_admin_only_metadata_is_set` (source-level)   |
+| Stream broken-pipe exit                  | ✅ verified | `test_cat_stream_survives_broken_pipe` (subprocess + real pipe) |
+| Smoke regression (cat / write existing)  | ✅ verified | 34 tests in `test_commands_smoke.py`               |
+| CLI ↔ gRPC parity over wire (real stack) | ⚠️ XFAIL    | `test_full_profile_fs.py` blocked by Bug B (`nexus up` rc=1 / zoekt health gate, out of #4133 scope) |
+| Benchmark execution (numbers above)      | ⚠️ not run  | Code present in `tests/benchmarks/`; medians documented but not gated in CI |
+| Concurrent / large-file (>10MB) stress   | ⚠️ not run  | 10 MB threshold triggers stream auto; no stress harness |
+| Auth-enforced mode                       | ⚠️ not run  | Parity fixture uses `PermissionConfig(enforce=False)` |
 
 **Benchmark guidance** (dev-laptop medians, not CI gates; from
 `tests/benchmarks/bench_read_write_overhead.py`):

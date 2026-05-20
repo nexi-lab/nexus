@@ -418,13 +418,16 @@ def test_cross_path_parity_syscall_rpc_cli(patched_fs, cli_runner: CliRunner):
 
 
 def test_cat_large_file_above_stream_threshold(patched_fs, cli_runner: CliRunner):
-    """`cat` flips to auto-streaming for files above the 10 MiB threshold
-    (see file_ops.py: ``STREAM_THRESHOLD = 10 * 1024 * 1024``). Write
-    11 MiB, read via `cat`, assert byte-identical.
+    """`cat --stream` on an 11 MiB file writes raw chunks to
+    ``sys.stdout.buffer`` and must round-trip byte-identical — no
+    JSON envelope, no truncation, no double-encoding.
 
-    Catches the regression where the >10 MiB branch silently drops or
-    truncates content because it takes a different code path from the
-    sub-10 MiB read.
+    Targets the chunked write loop (file_ops.py: ``sys.stdout.buffer.write(ch)``)
+    which is the same code path the >10 MiB auto-stream branch uses
+    internally. Explicit ``--stream`` makes the assertion deterministic
+    (CliRunner captures raw bytes via ``stdout_bytes``) and side-steps
+    the size-probe branch — see ``test_cat_auto_stream_branch_fires``
+    below for the auto-detect coverage.
     """
     from nexus.cli.commands.file_ops import cat as _cat
 
@@ -435,15 +438,50 @@ def test_cat_large_file_above_stream_threshold(patched_fs, cli_runner: CliRunner
     # Direct read via syscall — sanity check.
     assert nx.read("/big/huge.bin") == body
 
-    # CLI cat — triggers the >10 MiB stream-auto branch.
-    res = cli_runner.invoke(_cat, ["/big/huge.bin"])
+    res = cli_runner.invoke(_cat, ["/big/huge.bin", "--stream", "--chunk-size", str(64 * 1024)])
     assert res.exit_code == 0, res.output[:500]
-    # The cli_runner emits the JSON envelope; extract data.content.
-    payload = json.loads(res.output)
-    content = payload["data"]["content"]
-    cli_bytes = content.encode("utf-8") if isinstance(content, str) else content
-    assert len(cli_bytes) == len(body)
-    assert cli_bytes == body
+    assert res.stdout_bytes == body, (
+        f"stream output mismatch: got {len(res.stdout_bytes)} bytes, expected {len(body)}"
+    )
+
+
+def test_cat_auto_stream_branch_fires(patched_fs, monkeypatch):
+    """Verify the >10 MiB auto-stream branch in ``cat`` actually fires —
+    not just that it doesn't crash. We count calls to ``nx.stream`` and
+    assert it was invoked at least once when the file size is above
+    ``STREAM_THRESHOLD`` (10 MiB).
+
+    Catches the silent-skip regression where the size probe falls through
+    (``hasattr(nx, "metadata")`` False or ``nx._kernel.sys_stat`` raises)
+    and ``cat`` quietly takes the small-file path instead — masking a
+    real truncation bug in production on >10 MiB reads.
+    """
+    from click.testing import CliRunner
+
+    from nexus.cli.commands.file_ops import cat as _cat
+
+    nx = patched_fs
+    body = b"S" * (11 * 1024 * 1024)
+    nx.write("/big/auto.bin", body)
+
+    stream_calls: list[tuple[str, int]] = []
+    original_stream = nx.stream
+
+    def _spy_stream(path: str, *, chunk_size: int = 65536, **kw):
+        stream_calls.append((path, chunk_size))
+        return original_stream(path, chunk_size=chunk_size, **kw)
+
+    monkeypatch.setattr(nx, "stream", _spy_stream)
+
+    res = CliRunner().invoke(_cat, ["/big/auto.bin"])
+    assert res.exit_code == 0, res.output[:500]
+    assert stream_calls, (
+        "cat did not invoke nx.stream — the >10 MiB auto-stream branch "
+        "was skipped. Likely the size probe failed silently. "
+        f"Output head: {res.output[:200]!r}"
+    )
+    # Confirm the chunk size matches the auto-stream branch (65536).
+    assert stream_calls[0][1] == 65536
 
 
 def test_worktree_cli_resolves_to_src_with_pythonpath():

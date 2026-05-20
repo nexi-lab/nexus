@@ -235,14 +235,22 @@ def cat(
                             "modified_at": str(read_result["modified_at"]),
                         }
                     else:
-                        # Check file size to decide between read() and stream()
+                        # Check file size to decide between read() and stream().
+                        # The previous ``hasattr(nx, "metadata")`` guard was a
+                        # latent dead-branch: NexusFS exposes no ``metadata``
+                        # attribute, so the size probe never ran and the
+                        # auto-stream branch never fired — meaning >10 MiB
+                        # reads silently fell back to whole-file read +
+                        # base64-encoded JSON envelope. Guard on the actual
+                        # capability instead.
                         STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
                         file_size = 0
-                        if hasattr(nx, "metadata"):
+                        kernel = getattr(nx, "_kernel", None)
+                        if kernel is not None and hasattr(kernel, "sys_stat"):
                             try:
                                 from nexus.contracts.constants import ROOT_ZONE_ID
 
-                                file_stat = nx._kernel.sys_stat(path, ROOT_ZONE_ID)
+                                file_stat = kernel.sys_stat(path, ROOT_ZONE_ID)
                                 file_size = file_stat["size"] if file_stat else 0
                             except Exception:
                                 file_size = 0

@@ -150,3 +150,18 @@ def test_non_loopback_host_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
     assert addr == "hub.example.com:2028"
     addr2, _, _ = resolve_grpc_target("http://10.0.0.42:2026")
     assert addr2 == "10.0.0.42:2028"
+
+
+def test_hostless_url_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A URL without a hostname (``http:///foo``, bare paths) must raise
+    instead of silently dialing 127.0.0.1 — otherwise the SDK would send
+    the configured API key to whatever is listening on the loopback gRPC
+    port (token exposure + wrong-target operations).
+    """
+    monkeypatch.setenv("NEXUS_GRPC_PORT", "2028")
+    monkeypatch.delenv("NEXUS_GRPC_TLS", raising=False)
+    monkeypatch.delenv("NEXUS_DATA_DIR", raising=False)
+    with pytest.raises(ValueError, match="missing a hostname"):
+        resolve_grpc_target("http:///foo")
+    with pytest.raises(ValueError, match="missing a hostname"):
+        resolve_grpc_target("///bare-path")

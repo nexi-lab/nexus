@@ -257,27 +257,29 @@ def _boot_full_stack(
     if init_result.returncode != 0:
         pytest.skip(f"nexus init failed: {init_result.stderr[-400:]!r}")
 
-    # ---- post-init normalize (tolerant mode) -------------------------------
-    # The worktree's ``shared`` preset already omits zoekt from services
-    # (see init_cmd.py PRESETS["shared"]) — running the worktree CLI via
-    # ``python -m nexus.cli`` is enough to avoid Bug B. The block below
-    # is a defensive normalization for environments where an older
-    # generated ``nexus.yaml`` from a previous CLI version lingers; it's
-    # a no-op for clean inits.
+    # ---- post-init preset regression check ---------------------------------
+    # The worktree's ``shared`` preset MUST already omit zoekt from
+    # services (see init_cmd.py PRESETS["shared"]) — running the
+    # worktree CLI via ``python -m nexus.cli`` is what makes Bug B
+    # impossible. We assert that here rather than silently rewriting
+    # the generated config, because rewriting would mask the exact
+    # preset regression the worktree-CLI bridge is supposed to catch.
     if bug_b_tolerant:
         import yaml as _yaml
 
         with open(config_path) as _cf:
             _cfg = _yaml.safe_load(_cf) or {}
-        if "zoekt" in (_cfg.get("services") or []) or "search" in (
-            _cfg.get("compose_profiles") or []
-        ):
-            _cfg["services"] = [s for s in (_cfg.get("services") or []) if s != "zoekt"]
-            _cfg["compose_profiles"] = [
-                p for p in (_cfg.get("compose_profiles") or []) if p != "search"
-            ]
-            with open(config_path, "w") as _cf:
-                _yaml.safe_dump(_cfg, _cf, sort_keys=False)
+        services = list(_cfg.get("services") or [])
+        profiles = list(_cfg.get("compose_profiles") or [])
+        bad_services = [s for s in services if s == "zoekt"]
+        bad_profiles = [p for p in profiles if p == "search"]
+        if bad_services or bad_profiles:
+            pytest.fail(
+                "PRESET REGRESSION: `nexus init --preset shared` (worktree CLI) "
+                f"emitted services={services!r} compose_profiles={profiles!r} — "
+                "expected no zoekt/search (Bug B from #4132 came back). "
+                "Fix init_cmd.py PRESETS['shared'] instead of normalizing here."
+            )
 
     # ---- nexus up ----------------------------------------------------------
     # Use the documented prebuilt path (matches docs/deployment/full-profile.md

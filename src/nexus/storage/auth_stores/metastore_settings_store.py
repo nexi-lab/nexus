@@ -20,7 +20,6 @@ import json
 from typing import Any
 
 from nexus.contracts.auth_store_types import SystemSettingDTO
-from nexus.contracts.constants import ROOT_ZONE_ID
 
 _CFG_PREFIX = "/settings/"
 
@@ -28,17 +27,17 @@ _CFG_PREFIX = "/settings/"
 class MetastoreSettingsStore:
     """SystemSettingsStoreProtocol implementation backed by the kernel.
 
-    Accepts either a bare ``PyKernel`` (post-W3b factory wiring) or a
-    legacy ``RustMetastoreProxy`` shim — the constructor unwraps to the
-    kernel handle and dispatches to ``kernel.metastore_*`` directly.
+    Accepts a ``NexusFS`` (or any object exposing ``sys_stat`` / ``sys_setattr``)
+    and routes through the public syscall API.  Settings are stored at
+    ``/settings/{key}`` in the root zone — no zone_id needed since the
+    kernel resolves root-zone paths by default.
     """
 
-    def __init__(self, metastore: Any) -> None:
-        self._metastore = metastore
-        self._kernel = metastore
+    def __init__(self, nexus_fs: Any) -> None:
+        self._fs = nexus_fs
 
     def get_setting(self, key: str) -> SystemSettingDTO | None:
-        stat = self._kernel.sys_stat(f"{_CFG_PREFIX}{key}", ROOT_ZONE_ID)
+        stat = self._fs.sys_stat(f"{_CFG_PREFIX}{key}")
         if stat is None or not stat.get("content_id"):
             return None
         try:
@@ -64,10 +63,9 @@ class MetastoreSettingsStore:
         if description is not None:
             payload["d"] = description
         json_payload = json.dumps(payload)
-        self._kernel.sys_setattr(
+        self._fs.sys_setattr(
             f"{_CFG_PREFIX}{key}",
             entry_type=0,  # DT_REG upsert
             content_id=json_payload,
             size=0,
-            zone_id=ROOT_ZONE_ID,
         )

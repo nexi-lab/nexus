@@ -630,32 +630,21 @@ async def mount_connector(
                 # in root-level readdir. sys_write creates files but the HTTP
                 # readdir doesn't synthesize parent directories from child paths.
                 try:
-                    from datetime import UTC, datetime
+                    from nexus.contracts.metadata import DT_DIR
 
-                    from nexus.contracts.metadata import FileMetadata
-
-                    meta_store = nx._kernel
-                    if meta_store:
-                        for dir_path in [
-                            "/skills",
-                            f"/skills/{connector_name}",
-                            f"/skills/{connector_name}/schemas",
-                        ]:
-                            try:
-                                if not meta_store.get(dir_path):
-                                    meta_store.put(
-                                        FileMetadata(
-                                            path=dir_path,
-                                            size=0,
-                                            content_id=None,
-                                            created_at=datetime.now(UTC),
-                                            modified_at=datetime.now(UTC),
-                                            version=1,
-                                            zone_id=mount_context.zone_id,
-                                        )
-                                    )
-                            except Exception:
-                                pass
+                    for dir_path in [
+                        "/skills",
+                        f"/skills/{connector_name}",
+                        f"/skills/{connector_name}/schemas",
+                    ]:
+                        try:
+                            if not nx.sys_stat(dir_path):
+                                nx.sys_setattr(
+                                    dir_path,
+                                    entry_type=DT_DIR,
+                                )
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
@@ -1029,7 +1018,7 @@ async def write_to_connector(
 
                 # Load existing metadata so permission hooks can distinguish
                 # overwrite (check WRITE on file) vs create (check WRITE on parent).
-                _old_meta = nx._kernel.sys_stat(mount_path, ROOT_ZONE_ID)
+                _old_meta = nx.sys_stat(mount_path)
 
                 nx.intercept_pre_write(
                     _WHC(

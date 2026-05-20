@@ -313,27 +313,22 @@ class MountService:
         # Create directory entries for mount point AND parent directories
         # via sync metadata_put.
         if self.nexus_fs is not None and hasattr(self.nexus_fs, "metadata"):
-            from nexus.contracts.constants import ROOT_ZONE_ID
             from nexus.contracts.metadata import DT_DIR, DT_MOUNT
-            from nexus.lib.context_utils import get_zone_id
 
             if entry_type is None:
                 entry_type = DT_MOUNT
-
-            zone_id = get_zone_id(context) if context else "default"
 
             parts = mount_point.rstrip("/").split("/")
             for i in range(2, len(parts) + 1):
                 dir_path = "/".join(parts[:i])
                 try:
-                    existing = self.nexus_fs._kernel.access(dir_path, ROOT_ZONE_ID)
+                    existing = self.nexus_fs.access(dir_path)
                     if existing:
                         continue
                     is_mount_point = i == len(parts)
-                    self.nexus_fs._kernel.sys_setattr(
+                    self.nexus_fs.sys_setattr(
                         dir_path,
                         entry_type=entry_type if is_mount_point else DT_DIR,
-                        zone_id=zone_id,
                     )
                     logger.info(f"Created directory entry: {dir_path}")
                 except Exception as e:
@@ -597,15 +592,12 @@ class MountService:
         zone_id = get_zone_id(context)
 
         # --- NexusFS-based cleanup ---
-        if self.nexus_fs is not None and getattr(self.nexus_fs, "_kernel", None) is not None:
-            kernel = self.nexus_fs._kernel
+        if self.nexus_fs is not None:
             # Delete all metadata entries (mount point + children)
             try:
                 dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
-                child_entries = kernel.metastore_list_paginated(dir_prefix, True, 100000, None)[
-                    "items"
-                ]
-                paths_to_delete = [entry.path for entry in child_entries] if child_entries else []
+                child_paths = self.nexus_fs.sys_readdir(dir_prefix, recursive=True)
+                paths_to_delete = list(child_paths) if child_paths else []
                 paths_to_delete.append(mount_point)  # Include mount point itself
                 for path in paths_to_delete:
                     with contextlib.suppress(Exception):

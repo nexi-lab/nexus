@@ -84,6 +84,42 @@ class WorkspaceManager:
         )
         return hashlib.sha256(manifest_bytes).hexdigest()
 
+    def scan_workspace_files(self, workspace_path: str) -> list[tuple[str, str, int, str | None]]:
+        """Scan a workspace via sys_readdir → (rel_path, content_id, size, mime) tuples.
+
+        Single source for the workspace-content scan used by both
+        create_snapshot and ContextBranchService's change detection. Goes
+        through the §2.5 syscall surface (sys_readdir, is_system=True);
+        directories and content-less entries are skipped.
+        """
+        workspace_prefix = workspace_path if workspace_path.endswith("/") else workspace_path + "/"
+        sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
+        entries = self._nexus_fs.sys_readdir(
+            workspace_prefix,
+            recursive=True,
+            details=True,
+            context=sys_ctx,
+        )
+        file_entries: list[tuple[str, str, int, str | None]] = []
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            # Skip directories (entry_type=1) and files without content_id
+            if e.get("entry_type") == 1 or not e.get("content_id"):
+                continue
+            entry_path = e.get("path") or ""
+            if not entry_path:
+                continue
+            file_entries.append(
+                (
+                    entry_path[len(workspace_prefix) :],
+                    e["content_id"],
+                    int(e.get("size") or 0),
+                    e.get("mime_type"),
+                )
+            )
+        return file_entries
+
     def _read_manifest(self, snapshot: WorkspaceSnapshotModel) -> bytes:
         """Read a manifest blob from the syscall path namespace.
 
@@ -174,40 +210,9 @@ class WorkspaceManager:
             zone_id=zone_id,
         )
 
-        # Ensure workspace_path ends with / for prefix matching
-        workspace_prefix = workspace_path if workspace_path.endswith("/") else workspace_path + "/"
-
         # Get all files in workspace via the §2.5 syscall surface.
         with self.metadata_session_factory() as session:
-            sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
-            entries = self._nexus_fs.sys_readdir(
-                workspace_prefix,
-                recursive=True,
-                details=True,
-                context=sys_ctx,
-            )
-
-            # Collect file metadata for manifest
-            file_entries: list[tuple[str, str, int, str | None]] = []
-
-            for e in entries:
-                if not isinstance(e, dict):
-                    continue
-                # Skip directories (entry_type=1) and files without content_id
-                if e.get("entry_type") == 1 or not e.get("content_id"):
-                    continue
-                entry_path = e.get("path") or ""
-                if not entry_path:
-                    continue
-                rel_path = entry_path[len(workspace_prefix) :]
-                file_entries.append(
-                    (
-                        rel_path,
-                        e["content_id"],
-                        int(e.get("size") or 0),
-                        e.get("mime_type"),
-                    )
-                )
+            file_entries = self.scan_workspace_files(workspace_path)
 
             # Build manifest (handles sorting and deterministic JSON)
             manifest = WorkspaceManifest.from_file_list(file_entries)

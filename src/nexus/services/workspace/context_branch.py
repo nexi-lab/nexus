@@ -1003,21 +1003,10 @@ class ContextBranchService:
                     return False
                 existing_hash: str = snap.manifest_hash
 
-            # Build current workspace manifest
-            workspace_prefix = (
-                workspace_path if workspace_path.endswith("/") else workspace_path + "/"
-            )
-            from nexus.kernel_helpers import metastore_list_iter
-
-            files = metastore_list_iter(self._wm._kernel, prefix=workspace_prefix)
-            file_entries: list[tuple[str, str, int, str | None]] = []
-            for file_meta in files:
-                if file_meta.mime_type == "directory" or not file_meta.content_id:
-                    continue
-                rel_path = file_meta.path[len(workspace_prefix) :]
-                file_entries.append(
-                    (rel_path, file_meta.content_id, file_meta.size, file_meta.mime_type)
-                )
+            # Build current workspace manifest via the §2.5 syscall surface.
+            # Shares WorkspaceManager.scan_workspace_files so the snapshot
+            # hash here matches what create_snapshot would produce.
+            file_entries = self._wm.scan_workspace_files(workspace_path)
 
             manifest = WorkspaceManifest.from_file_list(file_entries)
             import hashlib

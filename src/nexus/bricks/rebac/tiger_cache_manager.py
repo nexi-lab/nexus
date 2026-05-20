@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class TigerCacheManager:
     def __init__(
         self,
         rebac_manager: Any,
-        nexus_fs: "NexusFilesystem",
+        nexus_fs: "NexusFS",
         default_zone_id: str,
         process_queue_fn: Callable | None = None,
         warm_cache_fn: Callable | None = None,

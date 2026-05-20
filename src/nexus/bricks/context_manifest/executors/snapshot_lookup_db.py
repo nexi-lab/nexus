@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from nexus.contracts.workspace_manifest import manifest_storage_path
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +57,10 @@ class SyscallManifestReader:
     brick tier is constructed before NexusFS exists.
     """
 
-    def __init__(self, nexus_fs: "NexusFilesystem | None" = None) -> None:
+    def __init__(self, nexus_fs: "NexusFS | None" = None) -> None:
         self._nexus_fs = nexus_fs
 
-    def attach_filesystem(self, nexus_fs: "NexusFilesystem") -> None:
+    def attach_filesystem(self, nexus_fs: "NexusFS") -> None:
         """Attach the NexusFS handle once it exists (post-kernel boot)."""
         self._nexus_fs = nexus_fs
 

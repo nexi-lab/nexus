@@ -400,7 +400,7 @@ def _boot_post_kernel_services(
 
         context_branch_service = ContextBranchService(
             workspace_manager=workspace_manager,
-            record_store=getattr(nx, "_record_store", None),
+            record_store=nx._record_store,
             rebac_manager=cast(ReBACBrickProtocol, services.get("rebac_manager")),
             default_zone_id=getattr(_nx_init_cred, "zone_id", None),
             default_agent_id=getattr(_nx_init_cred, "agent_id", None),

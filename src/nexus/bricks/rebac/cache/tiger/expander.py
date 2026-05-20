@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
-    from nexus.contracts.filesystem import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class DirectoryGrantExpander:
         self,
         engine: "Engine",
         tiger_cache: "TigerCache",
-        nexus_fs: "NexusFilesystem | None" = None,
+        nexus_fs: "NexusFS | None" = None,
         *,
         is_postgresql: bool = False,
     ):
@@ -74,7 +74,7 @@ class DirectoryGrantExpander:
         self._running = False
         self._stop_event: asyncio.Event | None = None
 
-    def set_nexus_fs(self, nexus_fs: "NexusFilesystem | None") -> None:
+    def set_nexus_fs(self, nexus_fs: "NexusFS | None") -> None:
         """Set the NexusFS instance for file listing."""
         self._nexus_fs = nexus_fs
 

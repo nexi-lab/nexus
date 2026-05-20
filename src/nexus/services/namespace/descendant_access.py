@@ -14,8 +14,8 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem import NexusFilesystem
     from nexus.contracts.types import Permission
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class DescendantAccessChecker:
         rebac_service: Any,
         dir_visibility_cache: Any | None,
         permission_enforcer: Any,
-        nexus_fs: "NexusFilesystem",
+        nexus_fs: "NexusFS",
     ) -> None:
         self._rebac_manager = rebac_manager
         self._rebac_service = rebac_service

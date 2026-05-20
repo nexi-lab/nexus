@@ -44,6 +44,7 @@ def mock_nexus_fs():
     fs.mkdir = MagicMock()
     fs.sys_write = MagicMock()
     fs.sys_unlink = MagicMock()
+    # §2.5: mount-removal cleanup lists the subtree via nexus_fs.sys_readdir.
     fs.sys_readdir = MagicMock(return_value=[])
     fs.rebac_add_tuple = MagicMock()
     fs.rebac_check = MagicMock(return_value=True)
@@ -207,9 +208,9 @@ class TestRemoveMount:
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
         assert result["removed"] is True
-        # Post-C10b/C11: mount_service iterates metastore_list_paginated +
-        # per-path sys_unlink (the kernel exposes no batch-delete primitive
-        # so the bulk wrapper became a loop).
+        # §2.5: mount_service lists the subtree via sys_readdir + per-path
+        # sys_unlink (the kernel exposes no batch-delete primitive so the
+        # bulk wrapper is a loop).
         mock_nexus_fs.sys_unlink.assert_called()
 
     def test_remove_mount_handles_cleanup_errors(self, mount_service, mock_nexus_fs):

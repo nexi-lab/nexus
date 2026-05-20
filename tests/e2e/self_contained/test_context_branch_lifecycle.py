@@ -11,7 +11,6 @@ Tests full workflows with real DB + mocked CAS:
 import hashlib
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -56,20 +55,26 @@ class FakeWorkspaceManager:
     """Simplified WM for integration tests — uses real snapshots + CAS."""
 
     def __init__(self, session_factory, cas: FakeCAS):
-        # Post-C24 the production WorkspaceManager exposes ``_kernel`` (a
-        # PyKernel handle); ``ContextBranchService`` reads via
-        # ``metastore_list_iter`` which calls ``metastore_list_paginated``
-        # so the fake must provide the same shape.
-        self._kernel = MagicMock()
-        self._kernel.metastore_list_paginated.return_value = {
-            "items": [],
-            "has_more": False,
-            "next_cursor": None,
-        }
-        self.backend = cas
+        # §2.5: ContextBranchService reaches manifests through the
+        # WorkspaceManager helpers — scan_workspace_files (sys_readdir),
+        # _write_manifest / _read_manifest (sys_write / sys_read). The fake
+        # implements those against an in-memory manifest store.
         self._session_factory = session_factory
         self._cas = cas
         self._snap_counter = 0
+        # (workspace_path, snapshot_id) -> manifest bytes
+        self._manifests: dict[tuple[str, str], bytes] = {}
+
+    def scan_workspace_files(self, workspace_path):
+        """Workspace content scan — empty for these branch-lifecycle tests."""
+        return []
+
+    def _write_manifest(self, workspace_path, snapshot_id, manifest_bytes):
+        self._manifests[(workspace_path, snapshot_id)] = manifest_bytes
+        return hashlib.sha256(manifest_bytes).hexdigest()
+
+    def _read_manifest(self, snapshot):
+        return self._manifests[(snapshot.workspace_path, snapshot.snapshot_id)]
 
     def create_snapshot(self, workspace_path, description=None, **kwargs):
         """Create a real snapshot with a simple manifest."""
@@ -88,6 +93,9 @@ class FakeWorkspaceManager:
         self._cas.store[manifest_hash] = manifest_bytes
 
         snap_id = f"snap-{self._snap_counter}"
+        # Manifests are addressed by (workspace_path, snapshot_id) — the
+        # §2.5 path scheme — so _read_manifest can serve them later.
+        self._manifests[(workspace_path, snap_id)] = manifest_bytes
         with self._session_factory() as session:
             from sqlalchemy import desc
 

@@ -19,8 +19,8 @@ from nexus.storage.models import WorkspaceSnapshotModel
 from .workspace_permissions import check_workspace_permission
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem import NexusFilesystem
     from nexus.contracts.protocols.rebac import ReBACBrickProtocol
+    from nexus.core.nexus_fs import NexusFS
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        nexus_fs: "NexusFilesystem",
+        nexus_fs: "NexusFS",
         rebac_manager: "ReBACBrickProtocol | None" = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
@@ -131,7 +131,8 @@ class WorkspaceManager:
         """
         sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         path = manifest_storage_path(snapshot.workspace_path, snapshot.snapshot_id)
-        return self._nexus_fs.sys_read(path, context=sys_ctx)
+        data: bytes = self._nexus_fs.sys_read(path, context=sys_ctx)
+        return data
 
     def _check_workspace_permission(
         self,

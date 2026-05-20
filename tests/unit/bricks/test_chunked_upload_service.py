@@ -79,21 +79,19 @@ class _MultipartMemoryBackend(_MemoryBackend, MultipartUpload):
         pass
 
 
-class _FlakyFinalWriteBackend(_MemoryBackend):
-    def __init__(self) -> None:
-        super().__init__()
-        self.write_calls = 0
-
-    def write_content(self, data: bytes) -> _WriteResult:
-        self.write_calls += 1
-        if self.write_calls == 2:
-            raise RuntimeError("final write failed")
-        return super().write_content(data)
-
-
 class _NexusFS:
-    def __init__(self) -> None:
+    """In-memory NexusFS fake exposing the §2.5 syscall surface.
+
+    Chunked upload stages chunks via sys_write under /__sys__/chunked-uploads/,
+    reassembles via sys_read, and writes the final user-facing file via
+    write(). sys_unlink clears the staging subtree.
+    """
+
+    def __init__(self, *, fail_final_write_once: bool = False) -> None:
         self.writes: list[dict[str, Any]] = []
+        self._paths: dict[str, bytes] = {}
+        self._fail_final_write_once = fail_final_write_once
+        self._final_write_calls = 0
 
     def write(
         self,
@@ -102,13 +100,49 @@ class _NexusFS:
         *,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        self.writes.append({"path": path, "buf": buf, "context": context})
+        self._final_write_calls += 1
+        if self._fail_final_write_once and self._final_write_calls == 1:
+            raise RuntimeError("final write failed")
+        self.writes.append({"path": path, "buf": bytes(buf), "context": context})
         return {
             "content_id": "fs-content",
             "version": 1,
             "modified_at": None,
             "size": len(buf),
         }
+
+    def sys_write(
+        self,
+        path: str,
+        buf: bytes,
+        *,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        self._paths[path] = bytes(buf)
+        return {"size": len(buf)}
+
+    def sys_read(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        if path not in self._paths:
+            raise FileNotFoundError(path)
+        return self._paths[path]
+
+    def sys_unlink(
+        self,
+        path: str,
+        *,
+        recursive: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        prefix = path.rstrip("/") + "/"
+        for key in list(self._paths):
+            if key == path or key.startswith(prefix):
+                del self._paths[key]
+        return {}
 
 
 def _service(
@@ -135,16 +169,22 @@ async def test_resume_after_service_restart_uses_persisted_part_metadata() -> No
     record_store = InMemoryRecordStore()
     backend = _MemoryBackend()
     metadata_store = _MetadataStore()
-    first_service = _service(record_store, backend, metadata_store)
+    # The restarted service shares the same NexusFS handle — staged chunks
+    # under /__sys__/chunked-uploads/ survive the "restart", same as a real
+    # persistent kernel namespace would.
+    nexus_fs = _NexusFS()
+    first_service = _service(record_store, backend, metadata_store, nexus_fs=nexus_fs)
 
     upload = await first_service.create_upload("/uploads/restarted.txt", upload_length=10)
     await first_service.receive_chunk(upload.upload_id, 0, b"hello")
 
-    restarted_service = _service(record_store, backend, metadata_store)
+    restarted_service = _service(record_store, backend, metadata_store, nexus_fs=nexus_fs)
     completed = await restarted_service.receive_chunk(upload.upload_id, 5, b"world")
 
-    assert completed.content_id is not None
-    assert backend.read_content(completed.content_id) == b"helloworld"
+    assert completed.content_id == "fs-content"
+    # The final assembled file is written through the syscall surface.
+    assert nexus_fs.writes[-1]["path"] == "/uploads/restarted.txt"
+    assert nexus_fs.writes[-1]["buf"] == b"helloworld"
 
 
 @pytest.mark.asyncio
@@ -190,9 +230,12 @@ async def test_attached_filesystem_disables_backend_multipart_path() -> None:
 @pytest.mark.asyncio
 async def test_final_chunk_failure_keeps_upload_retryable() -> None:
     record_store = InMemoryRecordStore()
-    backend = _FlakyFinalWriteBackend()
+    backend = _MemoryBackend()
     metadata_store = _MetadataStore()
-    service = _service(record_store, backend, metadata_store)
+    # The final assembled write (nexus_fs.write) fails on its first call;
+    # the upload must stay retryable and succeed on the second attempt.
+    nexus_fs = _NexusFS(fail_final_write_once=True)
+    service = _service(record_store, backend, metadata_store, nexus_fs=nexus_fs)
 
     upload = await service.create_upload("/uploads/retryable.txt", upload_length=4)
 
@@ -205,4 +248,5 @@ async def test_final_chunk_failure_keeps_upload_retryable() -> None:
 
     completed = await service.receive_chunk(upload.upload_id, 0, b"data")
     assert completed.status == UploadStatus.COMPLETED
-    assert backend.read_content(completed.content_id or "") == b"data"
+    assert completed.content_id == "fs-content"
+    assert nexus_fs.writes[-1]["buf"] == b"data"

@@ -30,7 +30,7 @@ from nexus.contracts.types import OperationContext
 from nexus.storage.models import FilePathModel, OperationLogModel
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
 
 # §2.5 syscall surface for versioning snapshots. Pattern C migration: each
 # snapshot of a file's pre-write bytes lives at
@@ -58,7 +58,7 @@ class TimeTravelService:
         self,
         *,
         session_factory: Callable[..., Any],
-        nexus_fs: "NexusFilesystem | None" = None,
+        nexus_fs: "NexusFS | None" = None,
         default_zone_id: str | None = None,
     ) -> None:
         """Initialise the time-travel service.
@@ -101,7 +101,8 @@ class TimeTravelService:
         path = _versioning_path(virtual_path, operation_id)
         sys_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         try:
-            return self._nexus_fs.sys_read(path, context=sys_ctx)
+            data: bytes = self._nexus_fs.sys_read(path, context=sys_ctx)
+            return data
         except (FileNotFoundError, NexusFileNotFoundError) as exc:
             raise NexusFileNotFoundError(
                 f"Snapshot for {virtual_path} at operation {operation_id} not found at {path}. "

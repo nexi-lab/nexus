@@ -11,7 +11,7 @@
 use super::{Kernel, KernelError};
 
 impl Kernel {
-    // ── Advisory lock primitive (§4.4) ──────────────────────────
+    // ── Advisory lock primitive ─────────────────────────────────
 
     /// Acquire or extend an advisory lock.
     ///

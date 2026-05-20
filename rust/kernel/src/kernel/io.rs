@@ -241,7 +241,8 @@ impl Kernel {
             }
         };
 
-        // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // 3a. DT_LINK transparent follow
+        // (KERNEL-ARCHITECTURE.md "DT_LINK — Path-Internal Symlink").
         // DT_LINK target requires its own §13 permission gate +
         // §11 native PRE-read hook. Always enters via `sys_read_single`
         // so auth fires on the target path.
@@ -574,7 +575,8 @@ impl Kernel {
             .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
             .flatten();
 
-        // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // 3a. DT_LINK transparent follow
+        // (KERNEL-ARCHITECTURE.md "DT_LINK — Path-Internal Symlink").
         // Recursive call with `max_link_hops=0` rejects chained links via
         // this same branch.
         if let Some(e) = &entry {

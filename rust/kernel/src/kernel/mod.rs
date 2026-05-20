@@ -1409,7 +1409,7 @@ impl Kernel {
         }
     }
 
-    // ── Advisory lock primitive (§4.4) ──────────────────────────
+    // ── Advisory lock primitive ─────────────────────────────────
     // (Moved to `kernel::locks` submodule.)
 
     /// DT_LINK transparent follow for `sys_read` / `sys_write` /
@@ -1698,7 +1698,8 @@ impl Kernel {
                 )
             }
             6 => {
-                // DT_LINK — VFS-internal symlink (KERNEL-ARCHITECTURE.md §4.5).
+                // DT_LINK — VFS-internal symlink
+                // (KERNEL-ARCHITECTURE.md "DT_LINK — Path-Internal Symlink").
                 let target = link_target.ok_or_else(|| {
                     KernelError::PermissionDenied(
                         "sys_setattr(DT_LINK): link_target is required".to_string(),

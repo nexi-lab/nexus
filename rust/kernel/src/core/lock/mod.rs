@@ -1,4 +1,5 @@
-//! Unified lock manager — kernel primitive §4.4.
+//! Unified lock manager — kernel primitive
+//! (KERNEL-ARCHITECTURE.md "Unified LockManager — I/O Lock + Advisory Lock").
 //!
 //! Single `LockManager` struct replaces both `VFSLockManagerInner` (I/O locks)
 //! and `LocalLockManager` / `DistributedLockManager` (advisory locks).

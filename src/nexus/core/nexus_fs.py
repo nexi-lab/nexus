@@ -1,5 +1,5 @@
 """Unified filesystem implementation for Nexus."""
-# Kernel interface unification — see KERNEL-ARCHITECTURE.md §4.5
+# Kernel interface unification — see KERNEL-ARCHITECTURE.md "User Contract — Syscall Interface"
 
 import builtins
 import contextlib

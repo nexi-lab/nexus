@@ -1178,293 +1178,327 @@ operations:
   owning_issue: null
 - id: async_files.batch_read
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: POST /batch/read
       source: src/nexus/server/api/v2/routers/async_files.py:1798
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.batch_write
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: POST /batch/write
       source: src/nexus/server/api/v2/routers/async_files.py:1749
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.copy
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: POST /copy
       source: src/nexus/server/api/v2/routers/async_files.py:1971
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.copy_bulk
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: POST /copy-bulk
       source: src/nexus/server/api/v2/routers/async_files.py:2070
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.delete
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: DELETE /delete
       source: src/nexus/server/api/v2/routers/async_files.py:1280
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.exists
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: GET /exists
       source: src/nexus/server/api/v2/routers/async_files.py:1356
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.glob
   module: search
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: GET /glob
       source: src/nexus/server/api/v2/routers/async_files.py:2145
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.grep
   module: search
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: GET /grep
       source: src/nexus/server/api/v2/routers/async_files.py:2196
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.list
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: GET /list
       source: src/nexus/server/api/v2/routers/async_files.py:1385
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.md_structure
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: GET /md-structure
       source: src/nexus/server/api/v2/routers/async_files.py:1182
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.metadata
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: GET /metadata
       source: src/nexus/server/api/v2/routers/async_files.py:1661
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.mkdir
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: POST /mkdir
       source: src/nexus/server/api/v2/routers/async_files.py:1623
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.read
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: GET /read
       source: src/nexus/server/api/v2/routers/async_files.py:813
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.rename
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: POST /rename
       source: src/nexus/server/api/v2/routers/async_files.py:1935
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.rename_batch
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: POST /rename-batch
       source: src/nexus/server/api/v2/routers/async_files.py:2028
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.stream
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: GET /stream
       source: src/nexus/server/api/v2/routers/async_files.py:1872
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: async_files.write
   module: filesystem
-  summary: ''
+  summary: HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.
   transports:
     http:
       name: POST /write
       source: src/nexus/server/api/v2/routers/async_files.py:621
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local
+    kernel/SDK surfaces instead.'
+  correctness_test: tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: route is intentionally unavailable; local read/write/list hot paths are benchmarked through
+    CLI/kernel surfaces.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: audit.export
   module: agent_log
   summary: ''
@@ -3000,7 +3034,8 @@ operations:
   owning_issue: null
 - id: delete.batch
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_expose:
       name: delete_batch
@@ -3009,10 +3044,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus rm-batch /a /b --json
-  correctness_test: tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent
-  perf_class: hot_path
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent; tests/unit/cli/test_fs_parity.py;
+    tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
   owning_issue: 4133
 - id: delete.connector
@@ -4115,7 +4152,8 @@ operations:
   owning_issue: null
 - id: filesystem.cat
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     cli:
       name: nexus cat
@@ -4124,12 +4162,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.close
   module: filesystem
   summary: ''
@@ -4183,7 +4222,8 @@ operations:
   owning_issue: null
 - id: filesystem.delete
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: delete
@@ -4192,12 +4232,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.edit
   module: filesystem
   summary: ''
@@ -4217,7 +4258,7 @@ operations:
   owning_issue: null
 - id: filesystem.exists
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace existence probe through the generic kernel filesystem surface.
   transports:
     cli:
       name: nexus exists
@@ -4229,12 +4270,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus exists /workspace/a.txt --json; sandbox kernel/RPC: Call(exists, {"path":"/zone/local/a.txt"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_exists_batch_parity_and_exit; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Existence probes are control-style local checks; read/write/list/stat are the named #4127 hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.is_directory
   module: filesystem
   summary: ''
@@ -4254,7 +4295,8 @@ operations:
   owning_issue: null
 - id: filesystem.list
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: list
@@ -4266,12 +4308,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus ls /workspace --json; sandbox kernel/RPC: Call(list, {"path":"/zone/local"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestListLocalDirectory
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.lock
   module: filesystem
   summary: ''
@@ -4308,7 +4351,8 @@ operations:
   owning_issue: null
 - id: filesystem.ls
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     cli:
       name: nexus ls
@@ -4317,12 +4361,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus ls /workspace --json; sandbox kernel/RPC: Call(list, {"path":"/zone/local"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestListLocalDirectory
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.metadata
   module: filesystem
   summary: ''
@@ -4342,7 +4387,8 @@ operations:
   owning_issue: null
 - id: filesystem.mkdir
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     cli:
       name: nexus mkdir
@@ -4354,12 +4400,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.move
   module: filesystem
   summary: ''
@@ -4430,7 +4477,8 @@ operations:
   owning_issue: null
 - id: filesystem.read
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: read
@@ -4439,12 +4487,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.read_bulk
   module: filesystem
   summary: ''
@@ -4482,7 +4531,8 @@ operations:
   owning_issue: 4126
 - id: filesystem.rename
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: rename
@@ -4491,12 +4541,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.rename_batch
   module: filesystem
   summary: ''
@@ -4516,7 +4567,8 @@ operations:
   owning_issue: null
 - id: filesystem.rm
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     cli:
       name: nexus rm
@@ -4525,12 +4577,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.rm_batch
   module: filesystem
   summary: ''
@@ -4550,7 +4603,8 @@ operations:
   owning_issue: null
 - id: filesystem.rmdir
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     cli:
       name: nexus rmdir
@@ -4562,12 +4616,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.size
   module: filesystem
   summary: ''
@@ -4587,7 +4642,8 @@ operations:
   owning_issue: null
 - id: filesystem.stat
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     cli:
       name: nexus stat
@@ -4599,12 +4655,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus stat /workspace/a.txt --json; sandbox kernel/RPC: Call(stat, {"path":"/zone/local/a.txt"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestStatBulkVsSequential and ::TestReadWithMetadata
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.status
   module: filesystem
   summary: Service health overview. Resolves the server URL from the runtime-state record persisted by `nexus up --profile
@@ -4676,7 +4733,8 @@ operations:
   owning_issue: null
 - id: filesystem.write
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     cli:
       name: nexus write
@@ -4688,15 +4746,17 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus write /workspace/a.txt "hello"; sandbox kernel/RPC: Call(write, {"path":"/zone/local/a.txt","buf":"hello"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.write-batch
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     cli:
       name: nexus write-batch
@@ -4705,15 +4765,17 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus write /workspace/a.txt "hello"; sandbox kernel/RPC: Call(write, {"path":"/zone/local/a.txt","buf":"hello"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: filesystem.write_batch
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     cli:
       name: nexus write-batch
@@ -4722,12 +4784,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus write /workspace/a.txt "hello"; sandbox kernel/RPC: Call(write, {"path":"/zone/local/a.txt","buf":"hello"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: flush.write_observer
   module: filesystem
   summary: ''
@@ -6686,7 +6749,8 @@ operations:
   owning_issue: null
 - id: metadata.batch
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_expose:
       name: metadata_batch
@@ -6695,10 +6759,11 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus metadata /a /b --json
-  correctness_test: tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity
-  perf_class: hot_path
-  perf_link: null
+  usage_example: 'CLI: nexus stat /workspace/a.txt --json; sandbox kernel/RPC: Call(stat, {"path":"/zone/local/a.txt"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestStatBulkVsSequential and ::TestReadWithMetadata
   gap_issue: null
   owning_issue: 4133
 - id: metastore.list_paginated
@@ -6977,7 +7042,8 @@ operations:
   owning_issue: null
 - id: nexus_fs.sys_mkdir
   module: nexus_fs
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: sys_mkdir
@@ -6986,15 +7052,17 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_fs.sys_read
   module: nexus_fs
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: sys_read
@@ -7003,15 +7071,17 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_fs.sys_readdir
   module: nexus_fs
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: sys_readdir
@@ -7020,15 +7090,17 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus ls /workspace --json; sandbox kernel/RPC: Call(list, {"path":"/zone/local"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestListLocalDirectory
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_fs.sys_rename
   module: nexus_fs
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: sys_rename
@@ -7037,15 +7109,17 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_fs.sys_rmdir
   module: nexus_fs
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: sys_rmdir
@@ -7054,12 +7128,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_fs.sys_setattr
   module: nexus_fs
   summary: ''
@@ -7079,7 +7154,8 @@ operations:
   owning_issue: null
 - id: nexus_fs.sys_stat
   module: nexus_fs
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: sys_stat
@@ -7088,15 +7164,17 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus stat /workspace/a.txt --json; sandbox kernel/RPC: Call(stat, {"path":"/zone/local/a.txt"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestStatBulkVsSequential and ::TestReadWithMetadata
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_fs.sys_unlink
   module: nexus_fs
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: sys_unlink
@@ -7105,12 +7183,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_fs.sys_unlock
   module: nexus_fs
   summary: ''
@@ -7130,7 +7209,8 @@ operations:
   owning_issue: null
 - id: nexus_fs.sys_write
   module: nexus_fs
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_call:
       name: sys_write
@@ -7139,122 +7219,127 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus write /workspace/a.txt "hello"; sandbox kernel/RPC: Call(write, {"path":"/zone/local/a.txt","buf":"hello"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_v_f_s_service.batch_read
   module: nexus_fs
-  summary: ''
+  summary: Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC
+    server.
   transports:
     grpc_typed:
       name: NexusVFSService.BatchRead
       source: proto/nexus/grpc/vfs/vfs.proto:32
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
+    instead.'
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_v_f_s_service.call
   module: nexus_fs
-  summary: ''
+  summary: Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC
+    server.
   transports:
     grpc_typed:
       name: NexusVFSService.Call
       source: proto/nexus/grpc/vfs/vfs.proto:20
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
+    instead.'
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_v_f_s_service.delete
   module: nexus_fs
-  summary: ''
+  summary: Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC
+    server.
   transports:
     grpc_typed:
       name: NexusVFSService.Delete
       source: proto/nexus/grpc/vfs/vfs.proto:25
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
+    instead.'
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_v_f_s_service.ping
   module: nexus_fs
-  summary: "gRPC liveness ping on NexusVFSService. Unavailable in sandbox by architecture: the typed VFS gRPC server is bound\
-    \ only by the cluster profile (single spawn call site rust/profiles/cluster/src/main.rs:422); the sandbox path never binds\
-    \ it (reproduced connection-refused on http_port+2). As of #4126 the sandbox path also no longer starts the Raft federation\
-    \ gRPC on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 (which reported an UNAUTHENTICATED Ping) does not\
-    \ reproduce in sandbox \u2014 close-recommended / reclassify as cluster-only."
+  summary: Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC
+    server.
   transports:
     grpc_typed:
       name: NexusVFSService.Ping
       source: proto/nexus/grpc/vfs/vfs.proto:28
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: 'Cluster-profile-only by architecture: NexusVFSService is spawned solely by the cluster binary (rust/profiles/cluster/src/main.rs:422).
-    Sandbox is HTTP-only for the VFS surface; the typed VFS gRPC port is never bound there (reproduced connection-refused
-    on http_port+2). #4148 = triage issue (close-recommended).'
-  correctness_test: tests/integration/test_sandbox_boot_smoke.py
-  perf_class: control
-  perf_link: "N/A in sandbox \u2014 the typed VFS gRPC server is cluster-profile-only and is never bound in the sandbox path\
-    \ (reproduced connection-refused on http_port+2). As of #4126 sandbox also no longer starts the Raft federation gRPC on\
-    \ :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 tracked for triage (close-recommended / reclassify as cluster-only)."
+  usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
+    instead.'
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: 4148
   owning_issue: 4126
 - id: nexus_v_f_s_service.read
   module: nexus_fs
-  summary: ''
+  summary: Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC
+    server.
   transports:
     grpc_typed:
       name: NexusVFSService.Read
       source: proto/nexus/grpc/vfs/vfs.proto:23
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
+    instead.'
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: nexus_v_f_s_service.write
   module: nexus_fs
-  summary: ''
+  summary: Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC
+    server.
   transports:
     grpc_typed:
       name: NexusVFSService.Write
       source: proto/nexus/grpc/vfs/vfs.proto:24
   profiles:
     lite: supported
-    sandbox: supported
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local
+    instead.'
+  correctness_test: tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'N/A in sandbox: typed VFS gRPC is intentionally not bound; #4148 tracks the prior Ping classification.'
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4127
 - id: oauth.exchange_code
   module: auth
   summary: ''
@@ -8353,7 +8438,8 @@ operations:
   owning_issue: null
 - id: read.batch
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_expose:
       name: read_batch
@@ -8365,15 +8451,18 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus read-bulk /a /b --atomic --json
-  correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing
-  perf_class: hot_path
-  perf_link: null
+  usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing; tests/unit/cli/test_fs_parity.py;
+    tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
   gap_issue: null
   owning_issue: 4133
 - id: read.bulk
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_expose:
       name: read_bulk
@@ -8382,10 +8471,11 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus read-bulk /a.txt /b.txt --json
-  correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_parity
-  perf_class: hot_path
-  perf_link: null
+  usage_example: 'CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {"path":"/zone/local/a.txt"})'
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_read_bulk_parity; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
   gap_issue: null
   owning_issue: 4133
 - id: read.file
@@ -8800,7 +8890,8 @@ operations:
   owning_issue: null
 - id: rename.batch
   module: filesystem
-  summary: ''
+  summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
+    is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.
   transports:
     grpc_expose:
       name: rename_batch
@@ -8809,10 +8900,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus rename-batch /a:/b /c:/d --json
-  correctness_test: tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent
-  perf_class: hot_path
-  perf_link: null
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent; tests/unit/cli/test_fs_parity.py;
+    tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
+  perf_class: not_perf_sensitive
+  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
   gap_issue: null
   owning_issue: 4133
 - id: rename.file

@@ -3814,10 +3814,10 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="async_files.batch_read" data-op-text="async_files.batch_read  POST /batch/read ">
+<div class="op" data-op-id="async_files.batch_read" data-op-text="async_files.batch_read HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. POST /batch/read ">
   <div class="op-header">
     <span class="op-id">async_files.batch_read</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /batch/read</span></span>
@@ -3825,20 +3825,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.batch_write" data-op-text="async_files.batch_write  POST /batch/write ">
+<div class="op" data-op-id="async_files.batch_write" data-op-text="async_files.batch_write HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. POST /batch/write ">
   <div class="op-header">
     <span class="op-id">async_files.batch_write</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /batch/write</span></span>
@@ -3846,20 +3846,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.copy" data-op-text="async_files.copy  POST /copy ">
+<div class="op" data-op-id="async_files.copy" data-op-text="async_files.copy HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. POST /copy ">
   <div class="op-header">
     <span class="op-id">async_files.copy</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /copy</span></span>
@@ -3867,20 +3867,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.copy_bulk" data-op-text="async_files.copy_bulk  POST /copy-bulk ">
+<div class="op" data-op-id="async_files.copy_bulk" data-op-text="async_files.copy_bulk HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. POST /copy-bulk ">
   <div class="op-header">
     <span class="op-id">async_files.copy_bulk</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /copy-bulk</span></span>
@@ -3888,20 +3888,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.delete" data-op-text="async_files.delete  DELETE /delete ">
+<div class="op" data-op-id="async_files.delete" data-op-text="async_files.delete HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. DELETE /delete ">
   <div class="op-header">
     <span class="op-id">async_files.delete</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>DELETE /delete</span></span>
@@ -3909,20 +3909,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.exists" data-op-text="async_files.exists  GET /exists ">
+<div class="op" data-op-id="async_files.exists" data-op-text="async_files.exists HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. GET /exists ">
   <div class="op-header">
     <span class="op-id">async_files.exists</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /exists</span></span>
@@ -3930,20 +3930,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.list" data-op-text="async_files.list  GET /list ">
+<div class="op" data-op-id="async_files.list" data-op-text="async_files.list HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. GET /list ">
   <div class="op-header">
     <span class="op-id">async_files.list</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /list</span></span>
@@ -3951,20 +3951,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.md_structure" data-op-text="async_files.md_structure  GET /md-structure ">
+<div class="op" data-op-id="async_files.md_structure" data-op-text="async_files.md_structure HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. GET /md-structure ">
   <div class="op-header">
     <span class="op-id">async_files.md_structure</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /md-structure</span></span>
@@ -3972,20 +3972,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.metadata" data-op-text="async_files.metadata  GET /metadata ">
+<div class="op" data-op-id="async_files.metadata" data-op-text="async_files.metadata HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. GET /metadata ">
   <div class="op-header">
     <span class="op-id">async_files.metadata</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /metadata</span></span>
@@ -3993,20 +3993,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.mkdir" data-op-text="async_files.mkdir  POST /mkdir ">
+<div class="op" data-op-id="async_files.mkdir" data-op-text="async_files.mkdir HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. POST /mkdir ">
   <div class="op-header">
     <span class="op-id">async_files.mkdir</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /mkdir</span></span>
@@ -4014,20 +4014,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.read" data-op-text="async_files.read  GET /read ">
+<div class="op" data-op-id="async_files.read" data-op-text="async_files.read HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. GET /read ">
   <div class="op-header">
     <span class="op-id">async_files.read</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /read</span></span>
@@ -4035,20 +4035,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.rename" data-op-text="async_files.rename  POST /rename ">
+<div class="op" data-op-id="async_files.rename" data-op-text="async_files.rename HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. POST /rename ">
   <div class="op-header">
     <span class="op-id">async_files.rename</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /rename</span></span>
@@ -4056,20 +4056,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.rename_batch" data-op-text="async_files.rename_batch  POST /rename-batch ">
+<div class="op" data-op-id="async_files.rename_batch" data-op-text="async_files.rename_batch HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. POST /rename-batch ">
   <div class="op-header">
     <span class="op-id">async_files.rename_batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /rename-batch</span></span>
@@ -4077,20 +4077,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.stream" data-op-text="async_files.stream  GET /stream ">
+<div class="op" data-op-id="async_files.stream" data-op-text="async_files.stream HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. GET /stream ">
   <div class="op-header">
     <span class="op-id">async_files.stream</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /stream</span></span>
@@ -4098,20 +4098,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.write" data-op-text="async_files.write  POST /write ">
+<div class="op" data-op-id="async_files.write" data-op-text="async_files.write HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. POST /write ">
   <div class="op-header">
     <span class="op-id">async_files.write</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /write</span></span>
@@ -4119,13 +4119,13 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4276,10 +4276,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="delete.batch" data-op-text="delete.batch  delete_batch ">
+<div class="op" data-op-id="delete.batch" data-op-text="delete.batch Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. delete_batch ">
   <div class="op-header">
     <span class="op-id">delete.batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>delete_batch</span></span>
@@ -4290,9 +4290,9 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>nexus rm-batch /a /b --json</code></span>
-    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent">tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent</a></span>
-    <span>perf: hot_path</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
@@ -4530,10 +4530,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.cat" data-op-text="filesystem.cat  nexus cat ">
+<div class="op" data-op-id="filesystem.cat" data-op-text="filesystem.cat Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus cat ">
   <div class="op-header">
     <span class="op-id">filesystem.cat</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus cat</span></span>
@@ -4544,10 +4544,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4614,10 +4614,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.delete" data-op-text="filesystem.delete  delete ">
+<div class="op" data-op-id="filesystem.delete" data-op-text="filesystem.delete Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. delete ">
   <div class="op-header">
     <span class="op-id">filesystem.delete</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>delete</span></span>
@@ -4628,10 +4628,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4656,10 +4656,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.exists" data-op-text="filesystem.exists  nexus exists exists ">
+<div class="op" data-op-id="filesystem.exists" data-op-text="filesystem.exists Sandbox local workspace existence probe through the generic kernel filesystem surface. nexus exists exists ">
   <div class="op-header">
     <span class="op-id">filesystem.exists</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace existence probe through the generic kernel filesystem surface.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus exists</span></span>
@@ -4671,10 +4671,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus exists /workspace/a.txt --json; sandbox kernel/RPC: Call(exists, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_exists_batch_parity_and_exit; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py::test_exists_batch_parity_and_exit; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4699,10 +4699,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.list" data-op-text="filesystem.list  list list ">
+<div class="op" data-op-id="filesystem.list" data-op-text="filesystem.list Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. list list ">
   <div class="op-header">
     <span class="op-id">filesystem.list</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>list</span></span>
@@ -4714,10 +4714,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus ls /workspace --json; sandbox kernel/RPC: Call(list, {&#34;path&#34;:&#34;/zone/local&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4763,10 +4763,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.ls" data-op-text="filesystem.ls  nexus ls ">
+<div class="op" data-op-id="filesystem.ls" data-op-text="filesystem.ls Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus ls ">
   <div class="op-header">
     <span class="op-id">filesystem.ls</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus ls</span></span>
@@ -4777,10 +4777,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus ls /workspace --json; sandbox kernel/RPC: Call(list, {&#34;path&#34;:&#34;/zone/local&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4805,10 +4805,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.mkdir" data-op-text="filesystem.mkdir  nexus mkdir mkdir ">
+<div class="op" data-op-id="filesystem.mkdir" data-op-text="filesystem.mkdir Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus mkdir mkdir ">
   <div class="op-header">
     <span class="op-id">filesystem.mkdir</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus mkdir</span></span>
@@ -4820,10 +4820,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4911,10 +4911,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.read" data-op-text="filesystem.read  read ">
+<div class="op" data-op-id="filesystem.read" data-op-text="filesystem.read Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. read ">
   <div class="op-header">
     <span class="op-id">filesystem.read</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>read</span></span>
@@ -4925,10 +4925,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4974,10 +4974,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.rename" data-op-text="filesystem.rename  rename ">
+<div class="op" data-op-id="filesystem.rename" data-op-text="filesystem.rename Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. rename ">
   <div class="op-header">
     <span class="op-id">filesystem.rename</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>rename</span></span>
@@ -4988,10 +4988,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -5016,10 +5016,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.rm" data-op-text="filesystem.rm  nexus rm ">
+<div class="op" data-op-id="filesystem.rm" data-op-text="filesystem.rm Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus rm ">
   <div class="op-header">
     <span class="op-id">filesystem.rm</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus rm</span></span>
@@ -5030,10 +5030,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -5058,10 +5058,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.rmdir" data-op-text="filesystem.rmdir  nexus rmdir rmdir ">
+<div class="op" data-op-id="filesystem.rmdir" data-op-text="filesystem.rmdir Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus rmdir rmdir ">
   <div class="op-header">
     <span class="op-id">filesystem.rmdir</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus rmdir</span></span>
@@ -5073,10 +5073,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -5101,10 +5101,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.stat" data-op-text="filesystem.stat  nexus stat stat ">
+<div class="op" data-op-id="filesystem.stat" data-op-text="filesystem.stat Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus stat stat ">
   <div class="op-header">
     <span class="op-id">filesystem.stat</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus stat</span></span>
@@ -5116,10 +5116,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus stat /workspace/a.txt --json; sandbox kernel/RPC: Call(stat, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -5207,10 +5207,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.write" data-op-text="filesystem.write  nexus write write ">
+<div class="op" data-op-id="filesystem.write" data-op-text="filesystem.write Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus write write ">
   <div class="op-header">
     <span class="op-id">filesystem.write</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus write</span></span>
@@ -5222,17 +5222,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus write /workspace/a.txt &#34;hello&#34;; sandbox kernel/RPC: Call(write, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;,&#34;buf&#34;:&#34;hello&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.write-batch" data-op-text="filesystem.write-batch  nexus write-batch ">
+<div class="op" data-op-id="filesystem.write-batch" data-op-text="filesystem.write-batch Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus write-batch ">
   <div class="op-header">
     <span class="op-id">filesystem.write-batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus write-batch</span></span>
@@ -5243,17 +5243,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus write /workspace/a.txt &#34;hello&#34;; sandbox kernel/RPC: Call(write, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;,&#34;buf&#34;:&#34;hello&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.write_batch" data-op-text="filesystem.write_batch  nexus write-batch ">
+<div class="op" data-op-id="filesystem.write_batch" data-op-text="filesystem.write_batch Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. nexus write-batch ">
   <div class="op-header">
     <span class="op-id">filesystem.write_batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus write-batch</span></span>
@@ -5264,10 +5264,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus write /workspace/a.txt &#34;hello&#34;; sandbox kernel/RPC: Call(write, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;,&#34;buf&#34;:&#34;hello&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -5986,10 +5986,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="metadata.batch" data-op-text="metadata.batch  metadata_batch ">
+<div class="op" data-op-id="metadata.batch" data-op-text="metadata.batch Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. metadata_batch ">
   <div class="op-header">
     <span class="op-id">metadata.batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>metadata_batch</span></span>
@@ -6000,9 +6000,9 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>nexus metadata /a /b --json</code></span>
-    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity">tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity</a></span>
-    <span>perf: hot_path</span>
+    <span>usage: <code>CLI: nexus stat /workspace/a.txt --json; sandbox kernel/RPC: Call(stat, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
@@ -6112,10 +6112,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="read.batch" data-op-text="read.batch  read_batch KernelClient.read_batch ">
+<div class="op" data-op-id="read.batch" data-op-text="read.batch Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. read_batch KernelClient.read_batch ">
   <div class="op-header">
     <span class="op-id">read.batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>read_batch</span></span>
@@ -6127,17 +6127,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>nexus read-bulk /a /b --atomic --json</code></span>
-    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing">tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing</a></span>
-    <span>perf: hot_path</span>
+    <span>usage: <code>CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="read.bulk" data-op-text="read.bulk  read_bulk ">
+<div class="op" data-op-id="read.bulk" data-op-text="read.bulk Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. read_bulk ">
   <div class="op-header">
     <span class="op-id">read.bulk</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>read_bulk</span></span>
@@ -6148,9 +6148,9 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>nexus read-bulk /a.txt /b.txt --json</code></span>
-    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_read_bulk_parity">tests/unit/cli/test_fs_parity.py::test_read_bulk_parity</a></span>
-    <span>perf: hot_path</span>
+    <span>usage: <code>CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_read_bulk_parity; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py::test_read_bulk_parity; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
@@ -6197,10 +6197,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="rename.batch" data-op-text="rename.batch  rename_batch ">
+<div class="op" data-op-id="rename.batch" data-op-text="rename.batch Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. rename_batch ">
   <div class="op-header">
     <span class="op-id">rename.batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>rename_batch</span></span>
@@ -6211,9 +6211,9 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>nexus rename-batch /a:/b /c:/d --json</code></span>
-    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent">tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent</a></span>
-    <span>perf: hot_path</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent; tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
@@ -8483,10 +8483,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.glob" data-op-text="async_files.glob  GET /glob ">
+<div class="op" data-op-id="async_files.glob" data-op-text="async_files.glob HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. GET /glob ">
   <div class="op-header">
     <span class="op-id">async_files.glob</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /glob</span></span>
@@ -8494,20 +8494,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="async_files.grep" data-op-text="async_files.grep  GET /grep ">
+<div class="op" data-op-id="async_files.grep" data-op-text="async_files.grep HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features. GET /grep ">
   <div class="op-header">
     <span class="op-id">async_files.grep</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP async file/search route exists in non-sandbox profiles, but sandbox filters HTTP to /health and /api/v2/features.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /grep</span></span>
@@ -8515,13 +8515,13 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: async file HTTP routes return 404 after the sandbox route allowlist; use /zone/local kernel/SDK surfaces instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot.py::test_sandbox_http_surface_is_restricted; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13237,10 +13237,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_fs.sys_mkdir" data-op-text="nexus_fs.sys_mkdir  sys_mkdir ">
+<div class="op" data-op-id="nexus_fs.sys_mkdir" data-op-text="nexus_fs.sys_mkdir Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. sys_mkdir ">
   <div class="op-header">
     <span class="op-id">nexus_fs.sys_mkdir</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>sys_mkdir</span></span>
@@ -13251,17 +13251,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_fs.sys_read" data-op-text="nexus_fs.sys_read  sys_read ">
+<div class="op" data-op-id="nexus_fs.sys_read" data-op-text="nexus_fs.sys_read Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. sys_read ">
   <div class="op-header">
     <span class="op-id">nexus_fs.sys_read</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>sys_read</span></span>
@@ -13272,17 +13272,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus cat /workspace/a.txt; sandbox kernel/RPC: Call(read, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_fs.sys_readdir" data-op-text="nexus_fs.sys_readdir  sys_readdir ">
+<div class="op" data-op-id="nexus_fs.sys_readdir" data-op-text="nexus_fs.sys_readdir Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. sys_readdir ">
   <div class="op-header">
     <span class="op-id">nexus_fs.sys_readdir</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>sys_readdir</span></span>
@@ -13293,17 +13293,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus ls /workspace --json; sandbox kernel/RPC: Call(list, {&#34;path&#34;:&#34;/zone/local&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_fs.sys_rename" data-op-text="nexus_fs.sys_rename  sys_rename ">
+<div class="op" data-op-id="nexus_fs.sys_rename" data-op-text="nexus_fs.sys_rename Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. sys_rename ">
   <div class="op-header">
     <span class="op-id">nexus_fs.sys_rename</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>sys_rename</span></span>
@@ -13314,17 +13314,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_fs.sys_rmdir" data-op-text="nexus_fs.sys_rmdir  sys_rmdir ">
+<div class="op" data-op-id="nexus_fs.sys_rmdir" data-op-text="nexus_fs.sys_rmdir Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. sys_rmdir ">
   <div class="op-header">
     <span class="op-id">nexus_fs.sys_rmdir</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>sys_rmdir</span></span>
@@ -13335,10 +13335,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13363,10 +13363,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_fs.sys_stat" data-op-text="nexus_fs.sys_stat  sys_stat ">
+<div class="op" data-op-id="nexus_fs.sys_stat" data-op-text="nexus_fs.sys_stat Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. sys_stat ">
   <div class="op-header">
     <span class="op-id">nexus_fs.sys_stat</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>sys_stat</span></span>
@@ -13377,17 +13377,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus stat /workspace/a.txt --json; sandbox kernel/RPC: Call(stat, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_fs.sys_unlink" data-op-text="nexus_fs.sys_unlink  sys_unlink ">
+<div class="op" data-op-id="nexus_fs.sys_unlink" data-op-text="nexus_fs.sys_unlink Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. sys_unlink ">
   <div class="op-header">
     <span class="op-id">nexus_fs.sys_unlink</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>sys_unlink</span></span>
@@ -13398,10 +13398,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {&#34;path&#34;:&#34;/zone/local/...&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -13426,10 +13426,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_fs.sys_write" data-op-text="nexus_fs.sys_write  sys_write ">
+<div class="op" data-op-id="nexus_fs.sys_write" data-op-text="nexus_fs.sys_write Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher. sys_write ">
   <div class="op-header">
     <span class="op-id">nexus_fs.sys_write</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity is covered by the local file command harness and kernel/RPC parity is covered through the same syscall dispatcher.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>sys_write</span></span>
@@ -13440,17 +13440,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus write /workspace/a.txt &#34;hello&#34;; sandbox kernel/RPC: Call(write, {&#34;path&#34;:&#34;/zone/local/a.txt&#34;,&#34;buf&#34;:&#34;hello&#34;})</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_v_f_s_service.batch_read" data-op-text="nexus_v_f_s_service.batch_read  NexusVFSService.BatchRead ">
+<div class="op" data-op-id="nexus_v_f_s_service.batch_read" data-op-text="nexus_v_f_s_service.batch_read Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server. NexusVFSService.BatchRead ">
   <div class="op-header">
     <span class="op-id">nexus_v_f_s_service.batch_read</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="rpc"><span class="label">RPC</span> <span>NexusVFSService.BatchRead</span></span>
@@ -13458,20 +13458,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_v_f_s_service.call" data-op-text="nexus_v_f_s_service.call  NexusVFSService.Call ">
+<div class="op" data-op-id="nexus_v_f_s_service.call" data-op-text="nexus_v_f_s_service.call Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server. NexusVFSService.Call ">
   <div class="op-header">
     <span class="op-id">nexus_v_f_s_service.call</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="rpc"><span class="label">RPC</span> <span>NexusVFSService.Call</span></span>
@@ -13479,20 +13479,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_v_f_s_service.delete" data-op-text="nexus_v_f_s_service.delete  NexusVFSService.Delete ">
+<div class="op" data-op-id="nexus_v_f_s_service.delete" data-op-text="nexus_v_f_s_service.delete Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server. NexusVFSService.Delete ">
   <div class="op-header">
     <span class="op-id">nexus_v_f_s_service.delete</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="rpc"><span class="label">RPC</span> <span>NexusVFSService.Delete</span></span>
@@ -13500,20 +13500,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_v_f_s_service.ping" data-op-text="nexus_v_f_s_service.ping gRPC liveness ping on NexusVFSService. Unavailable in sandbox by architecture: the typed VFS gRPC server is bound only by the cluster profile (single spawn call site rust/profiles/cluster/src/main.rs:422); the sandbox path never binds it (reproduced connection-refused on http_port+2). As of #4126 the sandbox path also no longer starts the Raft federation gRPC on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 (which reported an UNAUTHENTICATED Ping) does not reproduce in sandbox — close-recommended / reclassify as cluster-only. NexusVFSService.Ping ">
+<div class="op" data-op-id="nexus_v_f_s_service.ping" data-op-text="nexus_v_f_s_service.ping Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server. NexusVFSService.Ping ">
   <div class="op-header">
     <span class="op-id">nexus_v_f_s_service.ping</span>
-    <span class="op-summary">&mdash; gRPC liveness ping on NexusVFSService. Unavailable in sandbox by architecture: the typed VFS gRPC server is bound only by the cluster profile (single spawn call site rust/profiles/cluster/src/main.rs:422); the sandbox path never binds it (reproduced connection-refused on http_port+2). As of #4126 the sandbox path also no longer starts the Raft federation gRPC on :2126 (profile-gated via NEXUS_FEDERATION_DISABLED). #4148 (which reported an UNAUTHENTICATED Ping) does not reproduce in sandbox — close-recommended / reclassify as cluster-only.</span>
+    <span class="op-summary">&mdash; Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="rpc"><span class="label">RPC</span> <span>NexusVFSService.Ping</span></span>
@@ -13521,20 +13521,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>Cluster-profile-only by architecture: NexusVFSService is spawned solely by the cluster binary (rust/profiles/cluster/src/main.rs:422). Sandbox is HTTP-only for the VFS surface; the typed VFS gRPC port is never bound there (reproduced connection-refused on http_port+2). #4148 = triage issue (close-recommended).</code></span>
-    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py">tests/integration/test_sandbox_boot_smoke.py</a></span>
-    <span>perf: control</span>
+    <span>usage: <code>Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4126">#4126</a></span>
     <span>gap: <a href="https://github.com/nexi-lab/nexus/issues/4148">#4148</a></span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_v_f_s_service.read" data-op-text="nexus_v_f_s_service.read  NexusVFSService.Read ">
+<div class="op" data-op-id="nexus_v_f_s_service.read" data-op-text="nexus_v_f_s_service.read Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server. NexusVFSService.Read ">
   <div class="op-header">
     <span class="op-id">nexus_v_f_s_service.read</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="rpc"><span class="label">RPC</span> <span>NexusVFSService.Read</span></span>
@@ -13542,20 +13542,20 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="nexus_v_f_s_service.write" data-op-text="nexus_v_f_s_service.write  NexusVFSService.Write ">
+<div class="op" data-op-id="nexus_v_f_s_service.write" data-op-text="nexus_v_f_s_service.write Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server. NexusVFSService.Write ">
   <div class="op-header">
     <span class="op-id">nexus_v_f_s_service.write</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Typed NexusVFSService method is cluster/full-profile transport surface; sandbox does not bind the typed VFS gRPC server.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="rpc"><span class="label">RPC</span> <span>NexusVFSService.Write</span></span>
@@ -13563,13 +13563,13 @@ graph TB
   <div class="meta-row">
     <span class="profiles">
 <span class="profile-badge profile-supported">lite</span>
-<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-unavailable">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>Unavailable in sandbox: NexusVFSService is not bound, so use the local SDK/kernel syscall path for /zone/local instead.</code></span>
+    <span>test: <a href="../../tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py">tests/integration/test_sandbox_boot_smoke.py::test_sandbox_does_not_bind_typed_vfs_grpc; tests/architecture/test_issue_4127_sandbox_filesystem_surface.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4127">#4127</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>

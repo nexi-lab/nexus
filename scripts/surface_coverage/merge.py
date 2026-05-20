@@ -7,8 +7,8 @@ Human-owned fields preserved from existing YAML:
     perf_class, perf_link, gap_issue, owning_issue
 
 Extractor-owned fields refreshed from fresh:
-    transports, module (if extractor reassigned), profiles (extractor seeds;
-    humans override via overrides YAML applied separately).
+    transports, module (if extractor reassigned). Default profile assignments
+    refresh from the extractor; non-default profile statuses are human-owned.
 """
 
 from __future__ import annotations
@@ -17,14 +17,18 @@ from dataclasses import replace
 
 from scripts.surface_coverage.schema import (
     Operation,
+    ProfileStatus,
     StaleRow,
     SurfaceCoverage,
 )
+
+_DEFAULT_PROFILES = dict.fromkeys(("lite", "sandbox", "full"), ProfileStatus.SUPPORTED)
 
 
 def _merge_op(existing: Operation, fresh: Operation) -> Operation:
     return replace(
         fresh,
+        profiles=(existing.profiles if existing.profiles != _DEFAULT_PROFILES else fresh.profiles),
         summary=existing.summary if existing.summary.strip() else fresh.summary,
         usage_example=existing.usage_example,
         correctness_test=existing.correctness_test,

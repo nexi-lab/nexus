@@ -116,3 +116,17 @@ def test_merge_human_summary_wins():
     )
     op = next(o for o in merged.operations if o.id == "fs.read")
     assert op.summary == "human-curated description"
+
+
+def test_merge_preserves_non_default_profile_statuses():
+    existing = _op("fs.read", "vfs")
+    existing.profiles["sandbox"] = ProfileStatus.UNAVAILABLE
+    fresh = _op("fs.read", "vfs")
+
+    merged = merge_coverage(
+        existing=SurfaceCoverage(1, [], [existing]),
+        fresh=SurfaceCoverage(1, [], [fresh]),
+    )
+
+    op = next(o for o in merged.operations if o.id == "fs.read")
+    assert op.profiles["sandbox"] == ProfileStatus.UNAVAILABLE

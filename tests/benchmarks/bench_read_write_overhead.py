@@ -47,6 +47,16 @@ class TestReadBulkSequentialBaseline:
         assert all(v is not None for v in result.values())
 
 
+@pytest.mark.benchmark_file_ops
+class TestListLocalDirectory:
+    """Directory list latency for local workspace file surfaces (Issue #4127)."""
+
+    def test_sys_readdir_many_files(self, benchmark, populated_nexus):
+        nx = populated_nexus
+        result = benchmark(lambda: nx.sys_readdir("/many_files", recursive=False))
+        assert len(result) >= 100
+
+
 # =============================================================================
 # WRITE NEW-VS-EXISTING OVERHEAD
 # =============================================================================
@@ -86,6 +96,23 @@ class TestWriteExistingFile:
 
         result = benchmark(write_existing)
         assert "content_id" in result
+
+
+@pytest.mark.benchmark_file_ops
+class TestWriteBatchThroughput:
+    """Batch write throughput for agent-local edits (Issue #4127)."""
+
+    def test_write_batch_100(self, benchmark, benchmark_nexus):
+        nx = benchmark_nexus
+        counter = [0]
+
+        def write_batch():
+            counter[0] += 1
+            files = [(f"/batch_{counter[0]}/file_{i:04d}.txt", b"content") for i in range(100)]
+            return nx.write_batch(files)
+
+        result = benchmark(write_batch)
+        assert len(result) == 100
 
 
 # =============================================================================
@@ -213,3 +240,32 @@ class TestLockAcquireRelease:
             return lid
 
         benchmark(cycle)
+
+
+@pytest.mark.benchmark_file_ops
+class TestSandboxBootIndexerInitialWalk:
+    """Initial workspace indexing duration for sandbox startup (Issue #4127)."""
+
+    def test_boot_indexer_walk_100_files(self, benchmark, tmp_path):
+        from nexus.core.boot_indexer import BootIndexer
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        for i in range(100):
+            (workspace / f"file_{i:04d}.txt").write_text(f"content {i}", encoding="utf-8")
+
+        class _SearchDaemon:
+            indexed = 0
+
+            def index_file(self, path):
+                self.indexed += 1
+
+        daemon = _SearchDaemon()
+
+        def walk():
+            daemon.indexed = 0
+            indexer = BootIndexer(workspace, daemon, {"status": "indexing"})
+            indexer._walk_and_index()
+            return daemon.indexed
+
+        assert benchmark(walk) == 100

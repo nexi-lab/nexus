@@ -83,7 +83,7 @@ class SandboxBootstrapper:
         """Execute the sandbox boot sequence (synchronous, called at startup)."""
         # Step 1 & 2: local zone — PathLocalBackend has root_path so Rust
         # constructs a path_local backend natively and owns the I/O path.
-        local_backend = PathLocalBackend(self._workspace)
+        local_backend = PathLocalBackend(self._workspace, fsync=False)
         self._nexus_fs.sys_setattr(
             "/zone/local",
             entry_type=DT_MOUNT,

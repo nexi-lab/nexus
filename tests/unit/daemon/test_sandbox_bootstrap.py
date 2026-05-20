@@ -87,6 +87,26 @@ class TestSandboxBootstrapperSuccessWithHub:
         # then looked at /local/zone/local and missed the mount.
         assert local_call.kwargs["zone_id"] == "root"
 
+    def test_local_zone_mount_disables_fsync_for_sandbox_latency(self, tmp_path: Path) -> None:
+        """Sandbox workspace writes should not fsync every tiny file."""
+        sb, nexus_fs, search_registry, search_daemon = _make_bootstrapper(tmp_path)
+
+        mock_session = MagicMock()
+        mock_session.zones = []
+
+        with (
+            patch("nexus.daemon.sandbox_bootstrap.FederationHandshake") as MockHandshake,
+            patch("nexus.daemon.sandbox_bootstrap.BootIndexer"),
+        ):
+            MockHandshake.return_value.run.return_value = mock_session
+            sb.run()
+
+        local_call = next(
+            c for c in nexus_fs.sys_setattr.call_args_list if c.args[0] == "/zone/local"
+        )
+        backend = local_call.kwargs["backend"]
+        assert backend._transport._fsync is False
+
     def test_remote_zones_mounted_in_nexus_fs(self, tmp_path: Path) -> None:
         """For each HubZoneGrant, sys_setattr is called for /zone/<id>."""
         sb, nexus_fs, search_registry, search_daemon = _make_bootstrapper(tmp_path)

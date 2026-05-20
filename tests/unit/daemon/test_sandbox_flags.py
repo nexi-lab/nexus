@@ -491,6 +491,39 @@ class TestSandboxHubTokenEnvVar:
         kwargs = mock_bootstrapper_cls.call_args.kwargs
         assert kwargs.get("workspace") == workspace
 
+    def test_workspace_boot_attaches_health_state_to_filesystem(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+
+        mock_connect, mock_nx, mock_create_app, mock_run_server = _make_server_mocks(monkeypatch)
+        mock_nx._health_state = None
+        captured: dict = {}
+
+        def _capture_bootstrapper(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            patch("nexus.connect", mock_connect),
+            patch(
+                "nexus.daemon.main.SandboxBootstrapper",
+                side_effect=_capture_bootstrapper,
+            ),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                ["--profile", "sandbox", "--workspace", str(workspace)],
+            )
+
+        assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+        assert captured["health_state"]["status"] == "indexing"
+        assert mock_nx._health_state is captured["health_state"]
+
 
 # ---------------------------------------------------------------------------
 # Review r9 (Issue #4126 MEDIUM): the --hub-url/--hub-token pairing must hold

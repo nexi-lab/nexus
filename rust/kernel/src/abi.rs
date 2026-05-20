@@ -158,21 +158,6 @@ pub trait KernelAbi: Send + Sync + 'static {
         self.sys_readdir(parent_path, zone_id, is_admin)
     }
 
-    /// DT_PIPE creation helper. Used by `AcpSubprocess::spawn` to
-    /// surface the agent's stdio fds inside VFS as
-    /// `/{zone}/proc/{pid}/fd/{0,1,2}`. Stays a dedicated method
-    /// because the `read_fd` / `write_fd` shape is pipe-specific and
-    /// does not generalise into the generic `sys_setattr` matrix.
-    fn setattr_pipe(
-        &self,
-        path: &str,
-        capacity: usize,
-        io_profile: &str,
-        read_fd: Option<i32>,
-        write_fd: Option<i32>,
-        zone_id: &str,
-    ) -> Result<SysSetAttrResult, KernelError>;
-
     // ── Event watch (inotify equivalent) ──────────────────────────
 
     /// Block until a file event matching `pattern` fires, or timeout.
@@ -339,18 +324,6 @@ impl KernelAbi for crate::kernel::Kernel {
 
     fn sys_readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
         Self::sys_readdir(self, parent_path, zone_id, is_admin)
-    }
-
-    fn setattr_pipe(
-        &self,
-        path: &str,
-        capacity: usize,
-        io_profile: &str,
-        read_fd: Option<i32>,
-        write_fd: Option<i32>,
-        zone_id: &str,
-    ) -> Result<SysSetAttrResult, KernelError> {
-        Self::setattr_pipe(self, path, capacity, io_profile, read_fd, write_fd, zone_id)
     }
 
     fn sys_watch(&self, pattern: &str, timeout_ms: u64) -> Option<FileEvent> {

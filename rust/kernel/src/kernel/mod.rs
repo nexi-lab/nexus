@@ -1806,13 +1806,19 @@ impl Kernel {
 
     /// DT_PIPE: create pipe buffer, or idempotent-open if it already exists.
     ///
+    /// Private `sys_setattr` helper — the DT_PIPE arm of the
+    /// `sys_setattr` matrix dispatches here. Not a standalone syscall:
+    /// callers reach DT_PIPE creation through `sys_setattr(entry_type=
+    /// DT_PIPE, read_fd=…, write_fd=…, capacity=…)`, the same way
+    /// `setattr_stream` backs the DT_STREAM arm.
+    ///
     /// `io_profile`:
     /// - `"memory"` (default) → MemoryPipeBackend
     /// - `"shared_memory"` → SharedMemoryPipeBackend (mmap, cross-process)
     /// - `"stdio"` → StdioPipeBackend (subprocess fd, newline-framed)
     /// - `"wal"` → WalPipeCore (raft-replicated, cross-node, single-consumer)
     #[allow(unused_variables)]
-    pub fn setattr_pipe(
+    fn setattr_pipe(
         &self,
         path: &str,
         capacity: usize,

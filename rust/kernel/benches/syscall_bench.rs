@@ -263,7 +263,9 @@ fn bench_sys_read(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("host_os", label), &size, |b, &sz| {
             b.iter(|| unsafe {
                 libc::lseek(fd, 0, libc::SEEK_SET);
-                libc::read(fd, buf.as_mut_ptr() as *mut _, sz);
+                // `count` is `size_t` on Unix, `c_uint` on Windows —
+                // `as _` lets the cast infer the platform-correct type.
+                libc::read(fd, buf.as_mut_ptr() as *mut _, sz as _);
                 black_box(&buf);
             })
         });
@@ -501,23 +503,29 @@ fn bench_pipe_roundtrip(c: &mut Criterion) {
         })
     });
 
-    // OS pipe baseline
-    let (r_fd, w_fd) = unsafe {
-        let mut fds = [0i32; 2];
-        assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
-        (fds[0], fds[1])
-    };
-    let mut read_buf = [0u8; 128];
-    group.bench_function("host_os_pipe", |b| {
-        b.iter(|| unsafe {
-            libc::write(w_fd, payload.as_ptr() as *const _, payload.len());
-            libc::read(r_fd, read_buf.as_mut_ptr() as *mut _, payload.len());
-            black_box(&read_buf);
-        })
-    });
-    unsafe {
-        libc::close(r_fd);
-        libc::close(w_fd);
+    // OS pipe baseline — Unix only. Windows `libc::pipe` has a
+    // different arity (`_pipe(fds, size, mode)`), so the raw-OS
+    // comparison column is dropped there; the nexus DT_PIPE
+    // measurement stands on its own.
+    #[cfg(unix)]
+    {
+        let (r_fd, w_fd) = unsafe {
+            let mut fds = [0i32; 2];
+            assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
+            (fds[0], fds[1])
+        };
+        let mut read_buf = [0u8; 128];
+        group.bench_function("host_os_pipe", |b| {
+            b.iter(|| unsafe {
+                libc::write(w_fd, payload.as_ptr() as *const _, payload.len() as _);
+                libc::read(r_fd, read_buf.as_mut_ptr() as *mut _, payload.len() as _);
+                black_box(&read_buf);
+            })
+        });
+        unsafe {
+            libc::close(r_fd);
+            libc::close(w_fd);
+        }
     }
 
     group.finish();

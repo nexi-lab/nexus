@@ -200,7 +200,7 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
                     MetastoreSettingsStore,
                 )
 
-                _identity_settings_store = MetastoreSettingsStore(svc.nexus_fs._kernel)
+                _identity_settings_store = MetastoreSettingsStore(svc.nexus_fs)
             except Exception:
                 pass
             _identity_oauth_crypto = OAuthCrypto(

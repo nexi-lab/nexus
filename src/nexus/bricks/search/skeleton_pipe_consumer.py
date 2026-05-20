@@ -196,10 +196,11 @@ class SkeletonPipeConsumer:
             if self._nx is not None and self._pipe_ready:
                 with contextlib.suppress(Exception):
                     # sys_unlink signals consumer to exit (NexusFileNotFoundError)
-                    from nexus_runtime import PyOperationContext
+                    from nexus.contracts.types import OperationContext
 
-                    self._nx._kernel.sys_unlink(
-                        _SKELETON_PIPE_PATH, PyOperationContext(is_system=True)
+                    self._nx.sys_unlink(
+                        _SKELETON_PIPE_PATH,
+                        context=OperationContext(user_id="system", groups=[], is_system=True),
                     )
             try:
                 await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)

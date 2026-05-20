@@ -412,7 +412,7 @@ async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[
                     expander = DirectoryGrantExpander(
                         engine=_rebac_engine,
                         tiger_cache=tiger_cache,
-                        metadata_store=svc.nexus_fs._kernel,
+                        metadata_store=svc.nexus_fs,
                     )
                     app.state.directory_grant_expander = expander
 

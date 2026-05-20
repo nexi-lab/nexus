@@ -28,15 +28,13 @@ class WirableFS(Protocol):
     Do NOT use ``isinstance()`` checks in hot paths.
 
     Note: NexusFS no longer exposes a global ``backend`` property;
-    all I/O is routed through ``router.route(path).backend``. Post-W3
-    the ``metadata`` proxy field is gone too — services that need the
-    metastore reach it via ``self._kernel`` (a ``PyKernel`` exposing
-    the ``metastore_*`` PyO3 surface).
+    all I/O is routed through ``router.route(path).backend``. Post-gRPC
+    the ``metadata`` proxy field is gone too — services interact with
+    the kernel exclusively through public ``sys_*()`` methods on NexusFS.
     """
 
     def sys_read(self, path: str, **kwargs: Any) -> bytes: ...
 
-    _kernel: Any  # PyKernel — the metastore SSOT post-W3
     _record_store: "RecordStoreABC | None"
     _init_cred: "OperationContext | None"
     _config: Any

@@ -470,7 +470,7 @@ class ZoneImportService:
         target_zone_id = options.target_zone_id or record.zone_id
 
         # Check if file already exists
-        existing = self.nexus_fs._kernel.sys_stat(remapped_path, ROOT_ZONE_ID)
+        existing = self.nexus_fs.sys_stat(remapped_path)
 
         if existing is not None:
             # Handle conflict
@@ -625,14 +625,13 @@ class ZoneImportService:
             _modified_at = record.updated_at if options.preserve_timestamps else None
 
             # Store metadata via sys_setattr DT_REG upsert
-            self.nexus_fs._kernel.sys_setattr(
+            self.nexus_fs.sys_setattr(
                 path,
                 entry_type=0,  # DT_REG upsert
                 content_id=record.content_id,
                 size=record.size_bytes,
                 mime_type=record.file_type,
                 version=record.current_version if options.preserve_ids else 1,
-                zone_id=ROOT_ZONE_ID,
                 created_at_ms=int(_created_at.timestamp() * 1000) if _created_at else None,
                 modified_at_ms=int(_modified_at.timestamp() * 1000) if _modified_at else None,
             )

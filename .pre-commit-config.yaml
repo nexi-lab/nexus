@@ -61,6 +61,13 @@ repos:
         files: \.py$
         pass_filenames: true
 
+      - id: check-kernel-leak
+        name: Kernel Boundary Leak Check
+        entry: python .pre-commit-hooks/check_kernel_leak.py
+        language: python
+        files: ^src/nexus/(server|bricks)/.*\.py$
+        pass_filenames: false
+
       - id: extensions-index-verify
         name: Verify extensions.json is up to date
         entry: bash -c 'PYTHONPATH=src python -m nexus.extensions.index verify'

@@ -85,6 +85,16 @@ _MARKDOWN_EXTENSIONS: tuple[str, ...] = (".md", ".markdown", ".mdown", ".mkd")
 _BLOCK_TYPE_OVERFETCH_FACTOR = 5
 _BLOCK_TYPE_OVERFETCH_CAP = 2000
 
+# Directory-like entry_type values in the sys_readdir detail dict
+# (DT_DIR=1, DT_MOUNT=5). The list pipeline treats both as "directory".
+_DIR_ENTRY_TYPES: frozenset[int] = frozenset({1, 5})
+
+
+def _entry_is_dir(entry: dict[str, Any]) -> bool:
+    """True when a sys_readdir detail dict represents a directory or mount."""
+    return entry.get("entry_type") in _DIR_ENTRY_TYPES
+
+
 # Zone-aware path prefixes for cross-zone filtering (Issue #899)
 ZONE_AWARE_PREFIXES: tuple[str, ...] = ("/zones/", "/shared/", "/archives/")
 
@@ -580,7 +590,7 @@ class SearchService:
                 _revision_before,
                 _rebac_manager,
             )
-            sample_paths = [m.path for m in all_files[:5]]
+            sample_paths = [m["path"] for m in all_files[:5]]
             logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
 
         # Issue #3779 follow-up: when the caller is in a specific zone, drop
@@ -592,11 +602,7 @@ class SearchService:
         # _get_cross_zone_shared_paths.
         _is_admin_caller = bool(getattr(context, "is_admin", False)) if context else False
         if list_zone_id and list_zone_id != ROOT_ZONE_ID and not _is_admin_caller:
-            all_files = [
-                m
-                for m in all_files
-                if (getattr(m, "zone_id", None) or ROOT_ZONE_ID) == list_zone_id
-            ]
+            all_files = [m for m in all_files if (m.get("zone_id") or ROOT_ZONE_ID) == list_zone_id]
 
         # Issue #904: Fetch cross-zone shared files
         if list_zone_id and subject_type and subject_id:
@@ -612,23 +618,27 @@ class SearchService:
                 f"{len(cross_zone_paths) if cross_zone_paths else 0} paths"
             )
             if cross_zone_paths:
-                from nexus.contracts.metadata import FileMetadata
+                from nexus.contracts.types import OperationContext as _OC
 
-                existing_paths = {meta.path for meta in all_files}
+                _xz_ctx = _OC(user_id="system", groups=[], is_system=True)
+                existing_paths = {meta["path"] for meta in all_files}
                 for ct_path in cross_zone_paths:
                     if ct_path not in existing_paths:
                         try:
-                            ct_stat = self._kernel.sys_stat(ct_path, ROOT_ZONE_ID)
+                            ct_stat = self._nexus_fs.sys_stat(ct_path, context=_xz_ctx)
                             if ct_stat:
                                 all_files.append(
-                                    FileMetadata(
-                                        path=ct_path,
-                                        size=ct_stat.get("size", 0),
-                                        content_id=ct_stat.get("content_id"),
-                                        version=ct_stat.get("version", 1),
-                                        entry_type=ct_stat.get("entry_type", 0),
-                                        zone_id=ct_stat.get("zone_id"),
-                                    )
+                                    {
+                                        "path": ct_path,
+                                        "size": ct_stat.get("size", 0),
+                                        "content_id": ct_stat.get("content_id"),
+                                        "version": ct_stat.get("version", 1),
+                                        "entry_type": ct_stat.get("entry_type", 0),
+                                        "zone_id": ct_stat.get("zone_id"),
+                                        "mime_type": ct_stat.get("mime_type"),
+                                        "modified_at": ct_stat.get("modified_at"),
+                                        "created_at": ct_stat.get("created_at"),
+                                    }
                                 )
                         except Exception:
                             logger.debug("Skipping deleted cross-zone path: %s", ct_path)
@@ -636,7 +646,7 @@ class SearchService:
         # Filter out internal system entries
         from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
-        all_files = [m for m in all_files if not m.path.startswith(SYSTEM_PATH_PREFIX)]
+        all_files = [m for m in all_files if not str(m["path"]).startswith(SYSTEM_PATH_PREFIX)]
 
         # Apply recursive filter
         if recursive:
@@ -644,7 +654,8 @@ class SearchService:
         else:
             results = []
             for meta in all_files:
-                rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                _mp = str(meta["path"])
+                rel_path = _mp[len(path) :] if path != "/" else _mp[1:]
                 if "/" not in rel_path:
                     results.append(meta)
             logger.info(
@@ -664,7 +675,7 @@ class SearchService:
         )
         if self._enforce_permissions:
             results_before = len(results)
-            results = [meta for meta in results if meta.path in allowed_set]
+            results = [meta for meta in results if meta["path"] in allowed_set]
             logger.info(
                 f"[LIST-DEBUG] after perm filter: {len(results)} results (was {results_before})"
             )
@@ -674,7 +685,7 @@ class SearchService:
 
         # Sort by path
         _sort_start = _time.time()
-        results.sort(key=lambda m: m.path)
+        results.sort(key=lambda m: str(m["path"]))
         logger.info(f"[LIST-TIMING] sort_results: {(_time.time() - _sort_start) * 1000:.1f}ms")
 
         # Add directories to results
@@ -974,8 +985,6 @@ class SearchService:
         _rebac_manager: Any,
     ) -> tuple[builtins.list[Any], set[str], bool, int | None]:
         """Non-recursive list using sparse directory index + Tiger bitmap."""
-        from nexus.contracts.metadata import FileMetadata
-
         _preapproved_dirs: set[str] = set()
         _revision_before: int | None = None
 
@@ -1026,23 +1035,25 @@ class SearchService:
                 if _accessible_dirs.get(entry_path, True):
                     _preapproved_dirs.add(entry_path)
                     all_files.append(
-                        FileMetadata(
-                            path=entry_path,
-                            size=0,
-                            created_at=entry.get("created_at"),
-                            content_id=None,
-                            mime_type="inode/directory",
-                        )
+                        {
+                            "path": entry_path,
+                            "size": 0,
+                            "created_at": entry.get("created_at"),
+                            "content_id": None,
+                            "mime_type": "inode/directory",
+                            "entry_type": 1,
+                        }
                     )
             else:
                 all_files.append(
-                    FileMetadata(
-                        path=entry_path,
-                        size=0,
-                        created_at=entry.get("created_at"),
-                        content_id=None,
-                        mime_type=None,
-                    )
+                    {
+                        "path": entry_path,
+                        "size": 0,
+                        "created_at": entry.get("created_at"),
+                        "content_id": None,
+                        "mime_type": None,
+                        "entry_type": 0,
+                    }
                 )
         logger.info(
             f"[LIST-TIMING] has_accessible_descendants_batch(): "
@@ -1067,16 +1078,16 @@ class SearchService:
 
         return all_files, _preapproved_dirs, _use_fast_path, _revision_before
 
-    def _sys_readdir_as_metadata(self, list_prefix: str) -> builtins.list[Any]:
-        """Recursive sys_readdir → list of FileMetadata for the slow-path scan.
+    def _sys_readdir_entries(self, list_prefix: str) -> builtins.list[dict[str, Any]]:
+        """Recursive sys_readdir → list of detail dicts for the slow-path scan.
 
-        Bridges the §2.5 syscall surface to the downstream pipeline, which
-        consumes FileMetadata attributes (.path, .zone_id, etc). Runs under
-        is_system=True so the wrapper's zone filter is skipped — the service
-        applies its own stronger filter (zone post-filter + tiger_cache
-        predicate-pushdown) downstream.
+        The detail dict (sys_readdir details=True) is the §2.5 syscall's
+        native output shape and the single shape the list pipeline works
+        in — no conversion to FileMetadata. Runs under is_system=True so
+        the wrapper's zone filter is skipped — the service applies its own
+        stronger filter (zone post-filter + tiger_cache predicate-pushdown)
+        downstream.
         """
-        from nexus.contracts.metadata import FileMetadata
         from nexus.contracts.types import OperationContext
 
         if self._nexus_fs is None:
@@ -1088,23 +1099,7 @@ class SearchService:
             details=True,
             context=ctx,
         )
-        out: builtins.list[FileMetadata] = []
-        for e in entries:
-            if not isinstance(e, dict):
-                continue
-            out.append(
-                FileMetadata(
-                    path=e.get("path", ""),
-                    size=int(e.get("size") or 0),
-                    content_id=e.get("content_id"),
-                    entry_type=int(e.get("entry_type") or 0),
-                    zone_id=e.get("zone_id"),
-                    owner_id=e.get("owner_id"),
-                    version=int(e.get("version") or 1),
-                    gen=int(e.get("gen") or 0),
-                )
-            )
-        return out
+        return [e for e in entries if isinstance(e, dict)]
 
     def _list_slow_path(
         self,
@@ -1162,7 +1157,7 @@ class SearchService:
         # wrapper's zone filter — the service applies its own stronger
         # filter below (zone post-filter + tiger_cache predicate-pushdown),
         # so the wrapper filter would only add cost.
-        all_files = self._sys_readdir_as_metadata(list_prefix)
+        all_files = self._sys_readdir_entries(list_prefix)
         logger.info(
             f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
             f"{len(all_files)} files"
@@ -1178,11 +1173,11 @@ class SearchService:
         # filter's ``router.validate_path`` call rejects them with
         # ``InvalidPathError: Path must be absolute: ns:rebac:memory``.
         #
-        # The correct fix is to scope them: any FileMetadata whose path does
+        # The correct fix is to scope them: any entry whose path does
         # not start with ``/`` is a synthetic/pseudo-path that should never
         # enter the filesystem filter pipeline.
         _pre_synthetic = len(all_files)
-        all_files = [f for f in all_files if f.path.startswith("/")]
+        all_files = [f for f in all_files if str(f.get("path", "")).startswith("/")]
         if len(all_files) != _pre_synthetic:
             logger.debug(
                 f"[LIST-SYNTHETIC] dropped {_pre_synthetic - len(all_files)} "
@@ -1197,7 +1192,7 @@ class SearchService:
                 all_files = [
                     f
                     for f in all_files
-                    if tiger_cache._resource_map.get_or_create_int_id("file", f.path)
+                    if tiger_cache._resource_map.get_or_create_int_id("file", f["path"])
                     in _accessible_int_ids
                 ]
                 logger.info(
@@ -1218,10 +1213,10 @@ class SearchService:
                         "[PREDICATE-PUSHDOWN] Revision changed, re-running without filter"
                     )
                     _meta_start = _time.time()
-                    all_files = self._sys_readdir_as_metadata(list_prefix)
+                    all_files = self._sys_readdir_entries(list_prefix)
                     # Fix nexi-lab/nexus#3733 Bug B: same synthetic-entry
                     # guard as the primary list path above.
-                    all_files = [f for f in all_files if f.path.startswith("/")]
+                    all_files = [f for f in all_files if str(f.get("path", "")).startswith("/")]
                     logger.info(
                         f"[LIST-TIMING] metadata.list() retry: "
                         f"{(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
@@ -1257,7 +1252,7 @@ class SearchService:
         ctx: OperationContext = ctx_raw
 
         candidate_paths: set[str] = set()
-        candidate_paths.update(meta.path for meta in all_files)
+        candidate_paths.update(meta["path"] for meta in all_files)
 
         if not recursive:
             backend_dirs = self._get_backend_directory_entries(path)
@@ -1266,7 +1261,7 @@ class SearchService:
         # Single permission filter call
         filter_start = time.time()
         if _accessible_int_ids is not None:
-            allowed_set = {meta.path for meta in all_files}
+            allowed_set = {meta["path"] for meta in all_files}
             # Issue #3786 / Codex Round 9 finding #3: predicate-pushdown
             # via _accessible_int_ids reflects ReBAC visibility for the
             # subject — but multi-zone federation tokens can scope to a
@@ -1328,18 +1323,15 @@ class SearchService:
         directories: set[str] = set()
 
         for meta in results:
-            if (
-                meta.mime_type == "inode/directory"
-                or getattr(meta, "is_dir", False)
-                or getattr(meta, "is_mount", False)
-            ):
-                directories.add(meta.path)
+            if _entry_is_dir(meta):
+                directories.add(meta["path"])
 
         if not recursive:
             if self._enforce_permissions and context:
                 for meta in all_files:
-                    if meta.path in allowed_set:
-                        rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                    _mp = str(meta["path"])
+                    if _mp in allowed_set:
+                        rel_path = _mp[len(path) :] if path != "/" else _mp[1:]
                         if "/" in rel_path:
                             dir_name = rel_path.split("/")[0]
                             dir_path = path + dir_name if path != "/" else "/" + dir_name
@@ -1354,7 +1346,8 @@ class SearchService:
                 )
             else:
                 for meta in all_files:
-                    rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                    _mp = str(meta["path"])
+                    rel_path = _mp[len(path) :] if path != "/" else _mp[1:]
                     if "/" in rel_path:
                         dir_name = rel_path.split("/")[0]
                         dir_path = path + dir_name if path != "/" else "/" + dir_name
@@ -1469,18 +1462,16 @@ class SearchService:
         _details_start = _time.time()
         file_results = [
             {
-                "path": meta.path,
-                "size": meta.size,
-                "modified_at": meta.modified_at,
-                "created_at": meta.created_at,
-                "content_id": meta.content_id,
-                "mime_type": meta.mime_type,
+                "path": meta["path"],
+                "size": meta.get("size", 0),
+                "modified_at": meta.get("modified_at"),
+                "created_at": meta.get("created_at"),
+                "content_id": meta.get("content_id"),
+                "mime_type": meta.get("mime_type"),
                 "is_directory": False,
             }
             for meta in results
-            if meta.mime_type != "inode/directory"
-            and not getattr(meta, "is_dir", False)
-            and not getattr(meta, "is_mount", False)
+            if not _entry_is_dir(meta)
         ]
         dir_results = [
             {
@@ -1513,13 +1504,7 @@ class SearchService:
         """Build path-only results."""
         import time as _time
 
-        file_paths = [
-            meta.path
-            for meta in results
-            if meta.mime_type != "inode/directory"
-            and not getattr(meta, "is_dir", False)
-            and not getattr(meta, "is_mount", False)
-        ]
+        file_paths = [meta["path"] for meta in results if not _entry_is_dir(meta)]
         all_paths = file_paths + sorted(directories)
         all_paths.sort()
         logger.info(

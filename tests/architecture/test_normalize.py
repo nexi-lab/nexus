@@ -60,6 +60,8 @@ def test_normalize_http(method, path, expected):
     [
         ("nexus_fs_read", "fs.read"),
         ("nexus_rebac_grant", "rebac.grant"),
+        ("nexus_glob", "search.glob"),
+        ("nexus_grep", "search.grep"),
     ],
 )
 def test_normalize_mcp(raw, expected):

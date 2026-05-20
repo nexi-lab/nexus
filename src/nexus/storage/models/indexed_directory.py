@@ -15,7 +15,7 @@ See the architecture review in Issue #3698 for rationale:
 
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.contracts.exceptions import ValidationError
@@ -32,7 +32,11 @@ class IndexedDirectoryModel(Base):
 
     __tablename__ = "indexed_directories"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
 
     # Zone this directory registration belongs to. Not a FK so the search
     # daemon can tolerate zones that get created/deleted without cascading

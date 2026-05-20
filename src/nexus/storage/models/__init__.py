@@ -99,6 +99,9 @@ from nexus.storage.models.metadata_change_log import (
 )
 from nexus.storage.models.operation_log import OperationLogModel as OperationLogModel
 
+# Domain: Path Contexts (Issue #3773)
+from nexus.storage.models.path_context import PathContextModel as PathContextModel
+
 # Domain: Path Registration (Issue #189 — merged WorkspaceConfig + MemoryConfig)
 from nexus.storage.models.path_registration import PathRegistrationModel as PathRegistrationModel
 

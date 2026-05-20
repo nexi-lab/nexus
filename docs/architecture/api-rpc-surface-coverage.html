@@ -4869,10 +4869,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.path_context" data-op-text="filesystem.path_context  nexus path-context ">
+<div class="op" data-op-id="filesystem.path_context" data-op-text="filesystem.path_context Manage path-level descriptions that the search daemon can attach to retrieval results. nexus path-context ">
   <div class="op-header">
     <span class="op-id">filesystem.path_context</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Manage path-level descriptions that the search daemon can attach to retrieval results.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus path-context</span></span>
@@ -4883,10 +4883,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus path-context set src/nexus/bricks/search &#34;Search, semantic indexing, RRF, and parser-backed retrieval&#34;</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_path_context_cli.py; tests/integration/server/api/v2/routers/test_path_contexts_router.py">tests/unit/cli/test_path_context_cli.py; tests/integration/server/api/v2/routers/test_path_contexts_router.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6028,10 +6028,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="path_contexts.api_v2" data-op-text="path_contexts.api_v2  PUT /api/v2/path-contexts/ ">
+<div class="op" data-op-id="path_contexts.api_v2" data-op-text="path_contexts.api_v2 HTTP API for zone-scoped path-context CRUD used to annotate search results. PUT /api/v2/path-contexts/ ">
   <div class="op-header">
     <span class="op-id">path_contexts.api_v2</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP API for zone-scoped path-context CRUD used to annotate search results.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>PUT /api/v2/path-contexts/</span></span>
@@ -6042,10 +6042,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>PUT /api/v2/path-contexts/ {&#34;path_prefix&#34;:&#34;src/nexus/bricks/search&#34;,&#34;description&#34;:&#34;Search brick&#34;}</code></span>
+    <span>test: <a href="../../tests/integration/server/api/v2/routers/test_path_contexts_router.py; tests/integration/bricks/search/test_path_context.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/server/api/v2/routers/test_path_contexts_router.py; tests/integration/bricks/search/test_path_context.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6064,8 +6064,8 @@ graph TB
 <span class="profile-badge profile-supported">full</span>
     </span>
     <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
     <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
@@ -6085,8 +6085,8 @@ graph TB
 <span class="profile-badge profile-supported">full</span>
     </span>
     <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
     <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
@@ -6106,8 +6106,8 @@ graph TB
 <span class="profile-badge profile-supported">full</span>
     </span>
     <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
+    <span>test: <a href="../../tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
     <span>owner: &mdash;</span>
     <span>gap: &mdash;</span>
   </div>
@@ -8568,10 +8568,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="initialize.semantic_search" data-op-text="initialize.semantic_search  initialize_semantic_search ">
+<div class="op" data-op-id="initialize.semantic_search" data-op-text="initialize.semantic_search Initialize semantic-search dependencies from RPC/control-plane configuration. initialize_semantic_search ">
   <div class="op-header">
     <span class="op-id">initialize.semantic_search</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Initialize semantic-search dependencies from RPC/control-plane configuration.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>initialize_semantic_search</span></span>
@@ -8582,10 +8582,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: initialize_semantic_search(embedding_provider=&#34;openai&#34;)</code></span>
+    <span>test: <a href="../../tests/integration/services/test_search_semantic.py::TestInitializeSemanticSearch">tests/integration/services/test_search_semantic.py::TestInitializeSemanticSearch</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8631,10 +8631,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.cli" data-op-text="search.cli  nexus search ">
+<div class="op" data-op-id="search.cli" data-op-text="search.cli CLI command group for search init, index, query, and stats workflows. nexus search ">
   <div class="op-header">
     <span class="op-id">search.cli</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; CLI command group for search init, index, query, and stats workflows.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus search</span></span>
@@ -8645,17 +8645,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus search query &#34;auth flow&#34; --mode hybrid --limit 5</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_search_index_cli.py; tests/unit/cli/test_commands_smoke.py">tests/unit/cli/test_search_index_cli.py; tests/unit/cli/test_commands_smoke.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.expand" data-op-text="search.expand  POST /api/v2/search/expand ">
+<div class="op" data-op-id="search.expand" data-op-text="search.expand HTTP query-expansion endpoint for improving weak search queries through provider-backed expansion. POST /api/v2/search/expand ">
   <div class="op-header">
     <span class="op-id">search.expand</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP query-expansion endpoint for improving weak search queries through provider-backed expansion.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/expand</span></span>
@@ -8666,22 +8666,23 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>POST /api/v2/search/expand {&#34;query&#34;:&#34;kubernetes deployment troubleshooting&#34;}</code></span>
+    <span>test: <a href="../../tests/e2e/server/test_query_expansion_e2e.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/e2e/server/test_query_expansion_e2e.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.glob" data-op-text="search.glob  nexus glob glob POST /api/v2/search/glob ">
+<div class="op" data-op-id="search.glob" data-op-text="search.glob Find accessible file paths by glob pattern across CLI, HTTP, RPC, and MCP surfaces. nexus glob glob POST /api/v2/search/glob nexus_glob ">
   <div class="op-header">
     <span class="op-id">search.glob</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Find accessible file paths by glob pattern across CLI, HTTP, RPC, and MCP surfaces.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus glob</span></span>
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>glob</span></span>
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/glob</span></span>
+    <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_glob</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -8689,22 +8690,23 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus glob &#34;**/*.py&#34; /workspace --plain; POST /api/v2/search/glob</code></span>
+    <span>test: <a href="../../tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.grep" data-op-text="search.grep  nexus grep grep POST /api/v2/search/grep ">
+<div class="op" data-op-id="search.grep" data-op-text="search.grep Find accessible text matches by regex or literal search, including raw and parsed search modes. nexus grep grep POST /api/v2/search/grep nexus_grep ">
   <div class="op-header">
     <span class="op-id">search.grep</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Find accessible text matches by regex or literal search, including raw and parsed search modes.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus grep</span></span>
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>grep</span></span>
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/grep</span></span>
+    <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_grep</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -8712,17 +8714,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus grep &#34;TODO&#34; /workspace --search-mode raw; POST /api/v2/search/grep</code></span>
+    <span>test: <a href="../../tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.health" data-op-text="search.health  GET /api/v2/search/health ">
+<div class="op" data-op-id="search.health" data-op-text="search.health Report whether the search daemon is initialized and healthy. GET /api/v2/search/health ">
   <div class="op-header">
     <span class="op-id">search.health</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Report whether the search daemon is initialized and healthy.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/search/health</span></span>
@@ -8733,17 +8735,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>GET /api/v2/search/health</code></span>
+    <span>test: <a href="../../tests/integration/services/test_search_router.py::TestSearchQueryEndpoint::test_health_endpoint; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/services/test_search_router.py::TestSearchQueryEndpoint::test_health_endpoint; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.index" data-op-text="search.index  POST /api/v2/search/index ">
+<div class="op" data-op-id="search.index" data-op-text="search.index Explicitly index supplied documents through the server-side search daemon. POST /api/v2/search/index ">
   <div class="op-header">
     <span class="op-id">search.index</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Explicitly index supplied documents through the server-side search daemon.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/index</span></span>
@@ -8754,17 +8756,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>POST /api/v2/search/index {&#34;documents&#34;:[{&#34;path&#34;:&#34;/docs/a.md&#34;,&#34;content&#34;:&#34;...&#34;}]}</code></span>
+    <span>test: <a href="../../tests/integration/bricks/search/test_indexing_service.py; tests/integration/search/test_zone_isolation.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/bricks/search/test_indexing_service.py; tests/integration/search/test_zone_isolation.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.index_directory" data-op-text="search.index_directory  POST /api/v2/search/index-directory ">
+<div class="op" data-op-id="search.index_directory" data-op-text="search.index_directory Register or unregister a directory as indexed for a zone-scoped search daemon. POST /api/v2/search/index-directory ">
   <div class="op-header">
     <span class="op-id">search.index_directory</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Register or unregister a directory as indexed for a zone-scoped search daemon.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/index-directory</span></span>
@@ -8775,17 +8777,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>POST /api/v2/search/index-directory {&#34;path&#34;:&#34;/workspace/docs&#34;,&#34;action&#34;:&#34;add&#34;}</code></span>
+    <span>test: <a href="../../tests/unit/bricks/search/test_daemon_scope_crud.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/unit/bricks/search/test_daemon_scope_crud.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.indexed_dirs" data-op-text="search.indexed_dirs  GET /api/v2/search/indexed-dirs ">
+<div class="op" data-op-id="search.indexed_dirs" data-op-text="search.indexed_dirs List zone-scoped directories currently registered for search indexing. GET /api/v2/search/indexed-dirs ">
   <div class="op-header">
     <span class="op-id">search.indexed_dirs</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List zone-scoped directories currently registered for search indexing.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/search/indexed-dirs</span></span>
@@ -8796,17 +8798,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>GET /api/v2/search/indexed-dirs?zone_id=root</code></span>
+    <span>test: <a href="../../tests/unit/bricks/search/test_daemon_scope_crud.py::test_policy3_overlapping_directories_coexist; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/unit/bricks/search/test_daemon_scope_crud.py::test_policy3_overlapping_directories_coexist; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.indexing_mode" data-op-text="search.indexing_mode  POST /api/v2/search/indexing-mode ">
+<div class="op" data-op-id="search.indexing_mode" data-op-text="search.indexing_mode Switch a zone between all-files and scoped-directory search indexing modes. POST /api/v2/search/indexing-mode ">
   <div class="op-header">
     <span class="op-id">search.indexing_mode</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Switch a zone between all-files and scoped-directory search indexing modes.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/indexing-mode</span></span>
@@ -8817,17 +8819,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>POST /api/v2/search/indexing-mode {&#34;zone_id&#34;:&#34;root&#34;,&#34;mode&#34;:&#34;scoped&#34;}</code></span>
+    <span>test: <a href="../../tests/unit/bricks/search/test_daemon_scope_crud.py::test_set_zone_indexing_mode_toggle; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/unit/bricks/search/test_daemon_scope_crud.py::test_set_zone_indexing_mode_toggle; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.locate" data-op-text="search.locate  POST /api/v2/search/locate ">
+<div class="op" data-op-id="search.locate" data-op-text="search.locate Locate likely files or skeleton candidates by query while preserving permission filtering. POST /api/v2/search/locate ">
   <div class="op-header">
     <span class="op-id">search.locate</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Locate likely files or skeleton candidates by query while preserving permission filtering.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/locate</span></span>
@@ -8838,17 +8840,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>POST /api/v2/search/locate {&#34;q&#34;:&#34;authentication&#34;}</code></span>
+    <span>test: <a href="../../tests/integration/bricks/search/test_skeleton_rebac.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/bricks/search/test_skeleton_rebac.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.purge_unscoped" data-op-text="search.purge_unscoped  POST /api/v2/search/purge-unscoped ">
+<div class="op" data-op-id="search.purge_unscoped" data-op-text="search.purge_unscoped Remove unscoped vector chunks after switching a zone to scoped indexing. POST /api/v2/search/purge-unscoped ">
   <div class="op-header">
     <span class="op-id">search.purge_unscoped</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Remove unscoped vector chunks after switching a zone to scoped indexing.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/purge-unscoped</span></span>
@@ -8859,17 +8861,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>POST /api/v2/search/purge-unscoped {&#34;zone_id&#34;:&#34;root&#34;}</code></span>
+    <span>test: <a href="../../tests/unit/bricks/search/test_daemon_sqlite_vec_wiring.py; tests/unit/bricks/search/test_indexing_sqlite_vec_sidewrite.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/unit/bricks/search/test_daemon_sqlite_vec_wiring.py; tests/unit/bricks/search/test_indexing_sqlite_vec_sidewrite.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.query" data-op-text="search.query  GET /api/v2/search/query ">
+<div class="op" data-op-id="search.query" data-op-text="search.query HTTP query endpoint for keyword, semantic, hybrid, graph, and federated retrieval. GET /api/v2/search/query ">
   <div class="op-header">
     <span class="op-id">search.query</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP query endpoint for keyword, semantic, hybrid, graph, and federated retrieval.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/search/query</span></span>
@@ -8880,17 +8882,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>GET /api/v2/search/query?q=database%20migration&amp;type=hybrid&amp;limit=5</code></span>
+    <span>test: <a href="../../tests/integration/services/test_search_router.py; tests/integration/bricks/search/test_fusion.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/services/test_search_router.py; tests/integration/bricks/search/test_fusion.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.query_batch" data-op-text="search.query_batch  POST /api/v2/search/query/batch ">
+<div class="op" data-op-id="search.query_batch" data-op-text="search.query_batch Bulk query endpoint used by benchmarks and evaluations to run multiple daemon searches together. POST /api/v2/search/query/batch ">
   <div class="op-header">
     <span class="op-id">search.query_batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Bulk query endpoint used by benchmarks and evaluations to run multiple daemon searches together.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/query/batch</span></span>
@@ -8901,17 +8903,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>POST /api/v2/search/query/batch {&#34;queries&#34;:[{&#34;q&#34;:&#34;auth&#34;},{&#34;q&#34;:&#34;billing&#34;}]}</code></span>
+    <span>test: <a href="../../tests/integration/bricks/search/test_daemon_context_attach.py::TestBatchSearchContextAttach; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/bricks/search/test_daemon_context_attach.py::TestBatchSearchContextAttach; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.refresh" data-op-text="search.refresh  POST /api/v2/search/refresh ">
+<div class="op" data-op-id="search.refresh" data-op-text="search.refresh Notify the daemon that a file changed so search indexes can refresh. POST /api/v2/search/refresh ">
   <div class="op-header">
     <span class="op-id">search.refresh</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Notify the daemon that a file changed so search indexes can refresh.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/search/refresh</span></span>
@@ -8922,17 +8924,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>POST /api/v2/search/refresh {&#34;path&#34;:&#34;/workspace/docs/readme.md&#34;,&#34;change_type&#34;:&#34;update&#34;}</code></span>
+    <span>test: <a href="../../tests/integration/search/test_zone_isolation.py; tests/integration/bricks/search/test_search_mutation_flow.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/search/test_zone_isolation.py; tests/integration/bricks/search/test_search_mutation_flow.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.reindex" data-op-text="search.reindex  nexus reindex ">
+<div class="op" data-op-id="search.reindex" data-op-text="search.reindex CLI workflow for rebuilding search indexes from durable filesystem mutation state. nexus reindex ">
   <div class="op-header">
     <span class="op-id">search.reindex</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; CLI workflow for rebuilding search indexes from durable filesystem mutation state.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus reindex</span></span>
@@ -8943,17 +8945,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus reindex --zone-id root --limit 1000</code></span>
+    <span>test: <a href="../../tests/integration/bricks/search/test_search_mutation_flow.py; tests/unit/bricks/search/test_pipeline_scope_gate.py">tests/integration/bricks/search/test_search_mutation_flow.py; tests/unit/bricks/search/test_pipeline_scope_gate.py</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="search.stats" data-op-text="search.stats  GET /api/v2/search/stats ">
+<div class="op" data-op-id="search.stats" data-op-text="search.stats Expose search daemon and semantic indexing statistics. GET /api/v2/search/stats ">
   <div class="op-header">
     <span class="op-id">search.stats</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Expose search daemon and semantic indexing statistics.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/search/stats</span></span>
@@ -8964,17 +8966,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>GET /api/v2/search/stats; nexus search stats</code></span>
+    <span>test: <a href="../../tests/integration/bricks/search/test_search_service.py::test_semantic_search_stats_prefers_search_daemon; tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/bricks/search/test_search_service.py::test_semantic_search_stats_prefers_search_daemon; tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="semantic.search" data-op-text="semantic.search  semantic_search nexus_semantic_search ">
+<div class="op" data-op-id="semantic.search" data-op-text="semantic.search RPC/MCP semantic and hybrid search over indexed documents. semantic_search nexus_semantic_search ">
   <div class="op-header">
     <span class="op-id">semantic.search</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; RPC/MCP semantic and hybrid search over indexed documents.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>semantic_search</span></span>
@@ -8986,17 +8988,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>MCP: nexus_semantic_search(query=&#34;auth flow&#34;, search_mode=&#34;hybrid&#34;, limit=5)</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="semantic.search_index" data-op-text="semantic.search_index  semantic_search_index ">
+<div class="op" data-op-id="semantic.search_index" data-op-text="semantic.search_index RPC semantic-search indexing entry point for paths and directories. semantic_search_index ">
   <div class="op-header">
     <span class="op-id">semantic.search_index</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; RPC semantic-search indexing entry point for paths and directories.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>semantic_search_index</span></span>
@@ -9007,17 +9009,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: semantic_search_index(path=&#34;/workspace/docs&#34;, recursive=True)</code></span>
+    <span>test: <a href="../../tests/integration/services/test_search_semantic.py::TestSemanticSearchIndex; tests/unit/server/rpc/handlers/test_semantic_search_index.py">tests/integration/services/test_search_semantic.py::TestSemanticSearchIndex; tests/unit/server/rpc/handlers/test_semantic_search_index.py</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="semantic.search_stats" data-op-text="semantic.search_stats  semantic_search_stats ">
+<div class="op" data-op-id="semantic.search_stats" data-op-text="semantic.search_stats RPC semantic-search statistics entry point. semantic_search_stats ">
   <div class="op-header">
     <span class="op-id">semantic.search_stats</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; RPC semantic-search statistics entry point.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>semantic_search_stats</span></span>
@@ -9028,10 +9030,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: semantic_search_stats()</code></span>
+    <span>test: <a href="../../tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/integration/bricks/search/test_search_service.py">tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/integration/bricks/search/test_search_service.py</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -15416,7 +15418,7 @@ graph TB
           <div class="op">
             <div class="op-header">
               <span class="op-id">parsers.list</span>
-              <span class="op-summary">&mdash; Enumerate registered parsers + their detected formats.</span>
+              <span class="op-summary">&mdash; Missing parser introspection surface for listing registered parser providers and formats.</span>
             </div>
             <div class="meta-row">
               <span class="profiles">
@@ -15424,13 +15426,13 @@ graph TB
                 <span class="profile-badge profile-other">sandbox: missing_needed</span>
                 <span class="profile-badge profile-other">full: missing_needed</span>
               </span>
-<span><em>WANTED: Parsers brick has rich plugin system but no introspection surface.</em></span>              <span>gap: <span class="todo">open one</span></span>
+<span><em>WANTED: nexus parsers list</em></span>              <span>gap: <a href="https://github.com/nexi-lab/nexus/issues/4187">#4187</a></span>
             </div>
           </div>
           <div class="op">
             <div class="op-header">
               <span class="op-id">parsers.run_parse</span>
-              <span class="op-summary">&mdash; Force-parse a path with a given parser (debug/inspection).</span>
+              <span class="op-summary">&mdash; Missing run-parse surface for forcing a parser on a path and inspecting normalized output.</span>
             </div>
             <div class="meta-row">
               <span class="profiles">
@@ -15438,7 +15440,7 @@ graph TB
                 <span class="profile-badge profile-other">sandbox: missing_needed</span>
                 <span class="profile-badge profile-other">full: missing_needed</span>
               </span>
-<span><em>WANTED: Useful for parser debugging; currently requires Python REPL.</em></span>              <span>gap: <span class="todo">open one</span></span>
+<span><em>WANTED: nexus parsers run /workspace/report.pdf --provider pdf-inspector --format markdown</em></span>              <span>gap: <a href="https://github.com/nexi-lab/nexus/issues/4187">#4187</a></span>
             </div>
           </div>
         </div>
@@ -15518,7 +15520,7 @@ graph TB
                 <span class="profile-badge profile-other">sandbox: missing_needed</span>
                 <span class="profile-badge profile-other">full: missing_needed</span>
               </span>
-<span><em>WANTED: Users commonly want to grep within a heading scope; current grep is whole-file only.</em></span>              <span>gap: <span class="todo">open one</span></span>
+<span><em>WANTED: nexus grep PATTERN /workspace/spec.md --in-section &#34;## API&#34;</em></span>              <span>gap: <a href="https://github.com/nexi-lab/nexus/issues/4186">#4186</a></span>
             </div>
           </div>
         </div>

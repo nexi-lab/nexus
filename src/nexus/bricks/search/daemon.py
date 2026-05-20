@@ -2007,11 +2007,11 @@ class SearchDaemon:
 
         Issue #3699: writes are owned by ``ChunkStore.replace_document_chunks``
         via the indexing pipeline. Each document is treated as ``(path,
-        text)`` — we resolve ``path_id`` from ``file_paths`` and dispatch
-        to ``IndexingPipeline.index_document`` which chunks, embeds, and
-        bulk-inserts into ``document_chunks``. Failures bubble up so the
-        HTTP boundary returns 500 (Decision #18) instead of silently
-        returning count=0.
+        text)`` — we resolve or create ``path_id`` in ``file_paths`` and
+        dispatch to ``IndexingPipeline.index_document`` which chunks, embeds,
+        and bulk-inserts into ``document_chunks``. Failures bubble up so the
+        HTTP boundary returns 500 (Decision #18) instead of silently returning
+        count=0.
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
@@ -2044,12 +2044,19 @@ class SearchDaemon:
             text_clean = _scrub(text_field)
             vp_clean = strip_zone_prefix(virtual_path)
 
-            # Resolve path_id from file_paths so the indexing pipeline can
-            # write document_chunks. Without a path_id we cannot persist —
-            # surface that as an exception so the caller (router) returns
-            # 500 instead of silently dropping the doc.
+            # Resolve or create path_id from file_paths so the indexing
+            # pipeline can write document_chunks through its FK. Some live
+            # NexusFS setups expose freshly-written VFS paths to sys_readdir
+            # before a SQL metadata row exists; explicit indexing should make
+            # the row durable rather than report a misleading count=0.
             path_id: str | None = None
             if self._async_session is not None:
+                import hashlib
+                import uuid
+
+                now = datetime.now(UTC).replace(tzinfo=None)
+                content_id = hashlib.sha256(text_clean.encode("utf-8")).hexdigest()
+                size_bytes = len(text_clean.encode("utf-8"))
                 async with self._async_session() as session:
                     row = (
                         await session.execute(
@@ -2057,7 +2064,6 @@ class SearchDaemon:
                                 "SELECT path_id FROM file_paths "
                                 "WHERE virtual_path = :vp "
                                 "  AND zone_id = :zid "
-                                "  AND deleted_at IS NULL "
                                 "LIMIT 1"
                             ),
                             {"vp": vp_clean, "zid": target_zone},
@@ -2065,18 +2071,51 @@ class SearchDaemon:
                     ).first()
                     if row is not None:
                         path_id = str(row[0])
+                        await session.execute(
+                            sa_text(
+                                "UPDATE file_paths "
+                                "SET deleted_at = NULL, "
+                                "    size_bytes = :size_bytes, "
+                                "    content_id = :content_id, "
+                                "    file_type = COALESCE(file_type, 'file'), "
+                                "    updated_at = :updated_at "
+                                "WHERE path_id = :path_id"
+                            ),
+                            {
+                                "path_id": path_id,
+                                "size_bytes": size_bytes,
+                                "content_id": content_id,
+                                "updated_at": now,
+                            },
+                        )
+                    else:
+                        path_id = str(uuid.uuid4())
+                        await session.execute(
+                            sa_text(
+                                "INSERT INTO file_paths "
+                                "(path_id, zone_id, virtual_path, file_type, size_bytes, "
+                                " content_id, created_at, updated_at, current_version) "
+                                "VALUES "
+                                "(:path_id, :zone_id, :virtual_path, 'file', :size_bytes, "
+                                " :content_id, :created_at, :updated_at, 1)"
+                            ),
+                            {
+                                "path_id": path_id,
+                                "zone_id": target_zone,
+                                "virtual_path": vp_clean,
+                                "size_bytes": size_bytes,
+                                "content_id": content_id,
+                                "created_at": now,
+                                "updated_at": now,
+                            },
+                        )
+                    await session.commit()
 
             if path_id is None:
-                # No file_paths row — this happens for synthetic docs
-                # (skill READMEs, connector schemas) that aren't backed
-                # by NexusFS. Skip rather than fail so best-effort callers
-                # in mount/connector wiring don't error out.
-                logger.debug(
-                    "index_documents: no file_paths row for %s in zone %s; skipping",
-                    vp_clean,
-                    target_zone,
+                raise RuntimeError(
+                    "index_documents: async session unavailable; cannot persist "
+                    f"file_paths row for {vp_clean!r}"
                 )
-                continue
 
             # Drive the canonical write path. Pass the zone-scoped form
             # so the pipeline's scope filter sees the same shape mutation
@@ -2365,7 +2404,74 @@ class SearchDaemon:
             return []
 
         try:
+            import re
+
             from sqlalchemy import text
+
+            dialect_name = (
+                getattr(getattr(self._async_engine, "dialect", None), "name", "")
+                or getattr(
+                    getattr(getattr(self._async_engine, "sync_engine", None), "dialect", None),
+                    "name",
+                    "",
+                )
+            ).lower()
+
+            if dialect_name == "sqlite":
+                terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
+                if not terms:
+                    return []
+
+                sqlite_params: dict[str, Any] = {"limit": limit}
+                where_parts = ["fp.deleted_at IS NULL"]
+                score_parts: list[str] = []
+                for index, term in enumerate(terms):
+                    key = f"term_{index}"
+                    sqlite_params[key] = f"%{term}%"
+                    where_parts.append(f"LOWER(c.chunk_text) LIKE :{key}")
+                    score_parts.append(
+                        f"CASE WHEN LOWER(c.chunk_text) LIKE :{key} THEN 1.0 ELSE 0.0 END"
+                    )
+                if path_filter:
+                    where_parts.append("fp.virtual_path LIKE :path_pattern")
+                    sqlite_params["path_pattern"] = f"{path_filter}%"
+                if zone_id:
+                    where_parts.append("fp.zone_id = :zone_id")
+                    sqlite_params["zone_id"] = zone_id
+
+                where_clause = " AND ".join(where_parts)
+                score_expr = " + ".join(score_parts) or "1.0"
+                sql = text(f"""
+                    SELECT
+                        c.chunk_index, c.chunk_text,
+                        c.start_offset, c.end_offset, c.line_start, c.line_end,
+                        fp.virtual_path,
+                        ({score_expr}) as score
+                    FROM document_chunks c
+                    JOIN file_paths fp ON c.path_id = fp.path_id
+                    WHERE {where_clause}
+                    ORDER BY score DESC, fp.virtual_path ASC, c.chunk_index ASC
+                    LIMIT :limit
+                """)
+
+                async with self._async_session() as session:
+                    result = await session.execute(sql, sqlite_params)
+
+                    return [
+                        SearchResult(
+                            path=row.virtual_path,
+                            chunk_index=row.chunk_index,
+                            chunk_text=row.chunk_text,
+                            score=float(row.score),
+                            start_offset=row.start_offset,
+                            end_offset=row.end_offset,
+                            line_start=row.line_start,
+                            line_end=row.line_end,
+                            keyword_score=float(row.score),
+                            search_type="keyword",
+                        )
+                        for row in result
+                    ]
 
             async with self._async_session() as session:
                 # Build WHERE clause dynamically to avoid asyncpg
@@ -2373,13 +2479,14 @@ class SearchDaemon:
                 where_parts = [
                     "to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)"
                 ]
-                params: dict[str, Any] = {"query": query, "limit": limit}
+                pg_params: dict[str, Any] = {"query": query, "limit": limit}
                 if path_filter:
                     where_parts.append("fp.virtual_path LIKE :path_pattern")
-                    params["path_pattern"] = f"{path_filter}%"
+                    pg_params["path_pattern"] = f"{path_filter}%"
                 if zone_id:
                     where_parts.append("fp.zone_id = :zone_id")
-                    params["zone_id"] = zone_id
+                    pg_params["zone_id"] = zone_id
+                where_parts.append("fp.deleted_at IS NULL")
 
                 where_clause = " AND ".join(where_parts)
                 sql = text(f"""
@@ -2395,7 +2502,7 @@ class SearchDaemon:
                     LIMIT :limit
                 """)
 
-                result = await session.execute(sql, params)
+                result = await session.execute(sql, pg_params)
 
                 return [
                     SearchResult(

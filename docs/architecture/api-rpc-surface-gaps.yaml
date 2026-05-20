@@ -10,6 +10,8 @@ missing_operations:
     module: search
     summary: "Section-aware grep: `nexus grep PATTERN /file.md --in-section '## API'`. Lets users target markdown / code section without piping cat -> head -> grep."
     wanted_why: "Users commonly want to grep within a heading scope; current grep is whole-file only."
+    gap_issue: 4186
+    owning_issue: 4135
 
   - id: raft.cluster_status
     module: raft
@@ -50,11 +52,15 @@ missing_operations:
     module: parsers
     summary: "Enumerate registered parsers + their detected formats."
     wanted_why: "Parsers brick has rich plugin system but no introspection surface."
+    gap_issue: 4187
+    owning_issue: 4135
 
   - id: parsers.run_parse
     module: parsers
     summary: "Force-parse a path with a given parser (debug/inspection)."
     wanted_why: "Useful for parser debugging; currently requires Python REPL."
+    gap_issue: 4187
+    owning_issue: 4135
 
   - id: upload.cancel
     module: upload

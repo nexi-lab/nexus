@@ -145,6 +145,62 @@ def _apply_boot_tweaks() -> None:
     gc.set_threshold(50_000, 10)
 
 
+def _ensure_lifespan_record_store(app: "FastAPI", svc: LifespanServices) -> None:
+    """Create a shared RecordStore when create_app() only supplied database_url.
+
+    ``create_app(database_url=...)`` enables DB-backed routers and the search
+    daemon, but there is not always a NexusFS-owned ``_record_store`` to expose
+    on ``app.state``. Build one shared store here so routers, path-context
+    stores, and the daemon all use the same schema/bootstrap path.
+    """
+    if svc.record_store is not None or not svc.database_url:
+        return
+
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
+    record_store = SQLAlchemyRecordStore(db_url=svc.database_url)
+    app.state.record_store = record_store
+    app.state.session_factory = record_store.session_factory
+    app.state.read_session_factory = record_store.read_session_factory
+    try:
+        app.state.async_session_factory = record_store.async_session_factory
+    except NotImplementedError:
+        app.state.async_session_factory = None
+    try:
+        app.state.async_read_session_factory = record_store.async_read_session_factory
+    except NotImplementedError:
+        app.state.async_read_session_factory = None
+    app.state._lifespan_owned_record_store = record_store
+
+    svc.record_store = record_store
+    svc.session_factory = record_store.session_factory
+    svc.sql_engine = record_store.engine
+
+    logger.info("RecordStore initialized from create_app(database_url=...)")
+
+
+async def _close_lifespan_record_store(app: "FastAPI") -> None:
+    record_store = getattr(app.state, "_lifespan_owned_record_store", None)
+    if record_store is None:
+        return
+
+    aclose = getattr(record_store, "aclose", None)
+    if callable(aclose):
+        try:
+            await aclose()
+        except Exception:
+            logger.warning("lifespan-owned record_store.aclose failed", exc_info=True)
+
+    close = getattr(record_store, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.warning("lifespan-owned record_store.close failed", exc_info=True)
+
+    app.state._lifespan_owned_record_store = None
+
+
 async def _idle_trimmer() -> None:
     """Background task: every 60s, gc.collect() + malloc_trim(0) (Issue #3997).
 
@@ -214,6 +270,9 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         # raises RuntimeError if called from within a running event loop (Python
         # 3.10+). Running in a thread executor gives it a loop-free context.
         await asyncio.get_event_loop().run_in_executor(None, nx.bootstrap)
+        svc = LifespanServices.from_app(app)
+
+    _ensure_lifespan_record_store(app, svc)
 
     await startup_observability(app, svc)
     # Re-extract observability_registry after startup_observability writes it
@@ -285,6 +344,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     await shutdown_approvals(app, svc)
     await shutdown_search(app, svc)
     await shutdown_services(app, svc)
+    await _close_lifespan_record_store(app)
     await shutdown_realtime(app, svc)
     await shutdown_zone_runners(app, svc)
 

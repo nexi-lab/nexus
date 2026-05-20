@@ -17,8 +17,8 @@ from scripts.surface_coverage.render import render_html
 from scripts.surface_coverage.schema import dump_yaml, load_yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
-_COVERAGE_HTML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.html"
+_COVERAGE_YAML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.yaml"
+_COVERAGE_HTML = _REPO_ROOT / "docs/surface-coverage/api-rpc-surface-coverage.html"
 
 
 @pytest.fixture(scope="module")

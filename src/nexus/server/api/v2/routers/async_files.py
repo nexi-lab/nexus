@@ -1057,21 +1057,31 @@ def create_async_files_router(
                 # Check If-None-Match header for caching. Pass the
                 # caller's ``context`` to ``sys_stat`` so the early
                 # 304 short-circuit cannot return ETag/freshness info
-                # to a caller that lacks READ permission on the path
-                # (the same class of bypass the late-304 fix in
-                # ``core/rpc.py`` explicitly avoids).
+                # to a caller that lacks READ permission on the path.
+                #
+                # ``NexusFS.sys_stat`` returns a dict (not an object) —
+                # using ``meta.content_id`` directly raises
+                # AttributeError → 500. Use the same dict-or-attr
+                # accessor pattern as ``_metadata_field``.
                 if_none_match = request.headers.get("If-None-Match")
                 if if_none_match:
                     try:
                         meta = fs.sys_stat(path, context=context)
                     except Exception:
                         meta = None
-                    if meta and meta.content_id:
+                    meta_cid = None
+                    if meta is not None:
+                        meta_cid = (
+                            meta.get("content_id")
+                            if isinstance(meta, dict)
+                            else getattr(meta, "content_id", None)
+                        )
+                    if meta_cid:
                         client_etag = if_none_match.strip('"')
-                        if client_etag == meta.content_id:
+                        if client_etag == meta_cid:
                             return Response(
                                 status_code=304,
-                                headers={"ETag": f'"{meta.content_id}"'},
+                                headers={"ETag": f'"{meta_cid}"'},
                             )
 
                 # Issue #3266: For connector display paths (/mnt/*), resolve

@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from nexus.contracts.exceptions import (
@@ -389,6 +389,13 @@ async def rpc_endpoint(
     except NexusError as e:
         logger.warning("NexusError in method %s: %s", method, e)
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
+    except HTTPException:
+        # Preserve FastAPI HTTPException (e.g. 412 Precondition Failed
+        # from weak-only If-Match) — without this the generic
+        # ``except Exception`` below would map it to JSON-RPC
+        # INTERNAL_ERROR and clients couldn't distinguish a precondition
+        # failure from a server fault.
+        raise
     except Exception:
         logger.exception(f"Error executing method {method}")
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")

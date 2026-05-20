@@ -483,14 +483,23 @@ def _boot_full_stack(
     #     so the running server is the worktree commit by construction.
     #   * NEXUS_E2E_ALLOW_VERSION_DRIFT=1  — opt-in "validate the
     #     released image" smoke-test mode, not branch validation.
-    if not (os.environ.get("NEXUS_E2E_BUILD") or os.environ.get("NEXUS_E2E_ALLOW_VERSION_DRIFT")):
+    def _env_truthy(name: str) -> bool:
+        # Strict boolean parse: matches the ``force_build = ... == "1"``
+        # check above. A bare ``os.environ.get(...)`` check treats "0"
+        # or "false" as truthy (any non-empty string), defeating the
+        # gate.
+        v = (os.environ.get(name) or "").strip().lower()
+        return v in ("1", "true", "yes", "on")
+
+    if not (_env_truthy("NEXUS_E2E_BUILD") or _env_truthy("NEXUS_E2E_ALLOW_VERSION_DRIFT")):
         _teardown_stack(nexus_bin, project_dir)
         pytest.skip(
             "E2E hermeticity gate: pull-only (default) cannot prove the "
             "running server is the worktree commit. Set NEXUS_E2E_BUILD=1 "
             "to build the server image from HEAD (slow, ~5–10 min) or "
             "NEXUS_E2E_ALLOW_VERSION_DRIFT=1 to accept release-image-vs-"
-            "branch drift (smoke-test mode)."
+            "branch drift (smoke-test mode). Values 0/false/no are NOT "
+            "treated as opt-in."
         )
 
     try:

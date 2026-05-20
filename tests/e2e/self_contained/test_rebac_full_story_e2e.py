@@ -67,10 +67,44 @@ class _ServiceBackedFilesystem:
         self.closed = True
 
 
+class _SyncRemoteReBACProxy:
+    """RemoteServiceProxy-shaped service: RPC methods return sync values."""
+
+    def rebac_list_objects(
+        self,
+        *,
+        relation: str,  # noqa: ARG002
+        subject: tuple[str, str],  # noqa: ARG002
+        zone_id: str | None = None,  # noqa: ARG002
+    ) -> list[list[str]]:
+        return [["file", RESOURCE[1]]]
+
+
+class _SyncRemoteFilesystem:
+    def __init__(self) -> None:
+        self._service = _SyncRemoteReBACProxy()
+        self.closed = False
+
+    def service(self, name: str) -> _SyncRemoteReBACProxy | None:
+        return self._service if name == "rebac" else None
+
+    def close(self) -> None:
+        self.closed = True
+
+
 @pytest.fixture
 def cli_runner(monkeypatch: pytest.MonkeyPatch, rebac_service: ReBACService) -> CliRunner:
     async def _get_filesystem(*_args: Any, **_kwargs: Any) -> _ServiceBackedFilesystem:
         return _ServiceBackedFilesystem(rebac_service)
+
+    monkeypatch.setattr(rebac_cli, "get_filesystem", _get_filesystem)
+    return CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
+
+
+@pytest.fixture
+def remote_cli_runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
+    async def _get_filesystem(*_args: Any, **_kwargs: Any) -> _SyncRemoteFilesystem:
+        return _SyncRemoteFilesystem()
 
     monkeypatch.setattr(rebac_cli, "get_filesystem", _get_filesystem)
     return CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
@@ -120,6 +154,13 @@ async def test_rpc_share_list_revoke_round_trip_uses_shared_relations(
     incoming = await rebac_service.list_incoming_shares(("user", "bob"), zone_id=ZONE_ID)
     assert [(share["resource_id"], share["permission_level"]) for share in incoming] == [
         (RESOURCE[1], "viewer")
+    ]
+
+    group_incoming = await rebac_service.list_incoming_shares(
+        ("group", "analysts"), zone_id=ZONE_ID
+    )
+    assert [(share["resource_id"], share["permission_level"]) for share in group_incoming] == [
+        (RESOURCE[1], "editor")
     ]
 
     assert await rebac_service.revoke_share(
@@ -333,6 +374,27 @@ def test_cli_rebac_share_and_list_objects_use_real_service(cli_runner: CliRunner
     )
     assert empty.exit_code == 0, empty.output
     assert _json_from_output(empty.output)["items"] == []
+
+
+def test_cli_rebac_list_objects_accepts_remote_sync_proxy(
+    remote_cli_runner: CliRunner,
+) -> None:
+    listed = remote_cli_runner.invoke(
+        rebac_cli.rebac,
+        [
+            "list-objects",
+            "shared-viewer",
+            "user",
+            "bob",
+            "--zone-id",
+            ZONE_ID,
+            "--format",
+            "json",
+        ],
+    )
+
+    assert listed.exit_code == 0, listed.output
+    assert _json_from_output(listed.output)["objects"] == [["file", RESOURCE[1]]]
 
 
 def test_cli_dynamic_viewer_config_and_read_use_real_service(

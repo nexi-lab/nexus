@@ -1545,8 +1545,7 @@ class ReBACService(ReBACShareMixin):
         """
         if not self._rebac_manager:
             return []
-        if subject[0] != "user":
-            return []
+        subject = _coerce_subject_tuple(subject, "subject")
 
         def _list_incoming_sync() -> list[dict[str, Any]]:
             relation_to_level = {

@@ -28,17 +28,11 @@ def _mock_nexus_fs(*, permission_ok: bool = True) -> MagicMock:
     rebac_svc.rebac_check_sync.return_value = permission_ok
     rebac_svc.rebac_delete_object_tuples_sync.return_value = 0
     nx.service.return_value = rebac_svc
-    # kernel mocks (post-C10a/C11: mount_service routes through
-    # access, metastore_list_paginated, sys_unlink instead of the
-    # legacy metastore ABIs)
-    nx._kernel.metastore_list_paginated.return_value = {
-        "items": [],
-        "has_more": False,
-        "next_cursor": None,
-        "total_count": 0,
-    }
-    nx._kernel.access.return_value = False
-    nx._kernel.sys_unlink.return_value = {}
+    # Public API mocks (post-C10a/C11: mount_service routes through
+    # NexusFS public API instead of _kernel internals)
+    nx.sys_readdir.return_value = []
+    nx.access.return_value = True
+    nx.sys_unlink.return_value = {}
     nx._record_store = None
     return nx
 
@@ -118,7 +112,19 @@ class TestAddMountRollback:
     def test_mkdir_failure_is_best_effort_no_rollback(self) -> None:
         """metadata.put failure is non-critical -- mount stays active (best effort)."""
         service, nx = _build_service()
-        nx._kernel.sys_setattr.side_effect = RuntimeError("Metastore down")
+        # access returns False → _setup_mount_point tries to create dirs
+        nx.access.return_value = False
+        # First sys_setattr call (mount registration in add_mount_sync) succeeds;
+        # subsequent calls (directory creation in _setup_mount_point) fail.
+        _call_count = 0
+
+        def _setattr_side_effect(*args, **kwargs):
+            nonlocal _call_count
+            _call_count += 1
+            if _call_count > 1:
+                raise RuntimeError("Metastore down")
+
+        nx.sys_setattr.side_effect = _setattr_side_effect
 
         # metadata.put fails but is caught in _setup_mount_point -- mount succeeds
         result = service.add_mount_sync(
@@ -225,7 +231,7 @@ class TestRemoveMountErrorCollection:
     def test_metadata_failure_does_not_block_permission_cleanup(self) -> None:
         """Even if metadata list fails, permission cleanup still runs."""
         service, nx = _build_service()
-        nx._kernel.metastore_list_paginated.side_effect = RuntimeError("metadata DB error")
+        nx.sys_readdir.side_effect = RuntimeError("metadata DB error")
 
         result = service.remove_mount_sync("/mnt/test")
 
@@ -237,7 +243,7 @@ class TestRemoveMountErrorCollection:
         """Multiple cleanup failures are all reported in result["errors"]."""
         service, nx = _build_service()
         # Metadata list_paginated failure
-        nx._kernel.metastore_list_paginated.side_effect = RuntimeError("metadata failure")
+        nx.sys_readdir.side_effect = RuntimeError("metadata failure")
         # Directory-index cleanup is now a no-op (W1.5: kernel doesn't expose
         # ``delete_directory_entries_recursive``); the side-effect is no
         # longer reachable but kept here as a documentation marker.

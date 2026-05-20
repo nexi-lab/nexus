@@ -711,13 +711,10 @@ class MountService:
         if not self._check_permission(mount_point, "read", context):
             return None
 
-        _rust_kernel = getattr(self.nexus_fs, "_kernel", None) if self.nexus_fs else None
+        if not self.nexus_fs:
+            return None
         try:
-            _has_mount = (
-                _rust_kernel.sys_stat(mount_point, "root").get("entry_type") == 2
-                if _rust_kernel
-                else False
-            )
+            _has_mount = self.nexus_fs.sys_stat(mount_point).get("entry_type") == 2
         except Exception:
             _has_mount = False
         if _has_mount:
@@ -735,11 +732,10 @@ class MountService:
         Returns:
             True if mount exists
         """
-        _rust_kernel = getattr(self.nexus_fs, "_kernel", None) if self.nexus_fs else None
-        if not _rust_kernel:
+        if not self.nexus_fs:
             return False
         try:
-            return _rust_kernel.sys_stat(mount_point, "root").get("entry_type") == 2
+            return self.nexus_fs.sys_stat(mount_point).get("entry_type") == 2
         except Exception:
             return False
 

@@ -61,12 +61,25 @@ repos:
         files: \.py$
         pass_filenames: true
 
+      # §2.5 boundary enforcement — two complementary checks:
+      #  - check-kernel-leak: blocks `X._kernel` attribute access (the
+      #    kernel handle) from the service tier.
+      #  - check-syscall-boundary: blocks MetaStore/ObjectStore HAL-pillar
+      #    calls (metastore_list*, backend.read_content/write_content),
+      #    which a `self._kernel` receiver would slip past the leak check.
       - id: check-kernel-leak
         name: Kernel Boundary Leak Check
         entry: python .pre-commit-hooks/check_kernel_leak.py
         language: python
         files: ^src/nexus/(server|bricks)/.*\.py$
         pass_filenames: false
+
+      - id: check-syscall-boundary
+        name: Syscall Boundary Check (§2.5)
+        entry: python .pre-commit-hooks/check_syscall_boundary.py
+        language: python
+        files: ^src/nexus/(bricks|services|server)/.*\.py$
+        pass_filenames: true
 
       - id: extensions-index-verify
         name: Verify extensions.json is up to date

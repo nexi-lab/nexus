@@ -171,6 +171,29 @@ mod tests {
         assert_eq!(result.tier, "cache");
     }
 
+    #[test]
+    fn expired_stale_entry_is_not_returned_on_transient_revalidation_error() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("POST", "/api/nfs/read")
+            .match_header("if-none-match", "\"stale-etag\"")
+            .with_status(503)
+            .with_body("temporarily unavailable")
+            .create();
+        let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+        let cache = test_cache("revalidation-expired-stale");
+        cache.put("/cached.txt", b"too-old", Some("stale-etag"), 0);
+        cache.backdate_for_test("/cached.txt", 3600 * 24 + 1);
+
+        let err = read_with_cache(&client, Some(&cache), "/cached.txt", 0).unwrap_err();
+
+        assert!(matches!(
+            err,
+            NexusClientError::ServerError { status: 503, .. }
+        ));
+        assert!(matches!(cache.get("/cached.txt", 0), CacheLookup::Miss));
+    }
+
     /// #4056 R5: Conflict (-32006) is technically `is_transient()` so the
     /// caller can retry with a fresh generation, but it carries an
     /// explicit "your view is stale" signal — serving the cached bytes

@@ -205,9 +205,7 @@ async fn handle_connection(
         }
 
         let response = match serde_json::from_str::<JsonRpcRequest>(&line) {
-            Ok(request) => {
-                handle_request(request, &client, file_cache.clone()).await
-            }
+            Ok(request) => handle_request(request, &client, file_cache.clone()).await,
             Err(e) => {
                 error!("Failed to parse JSON-RPC request: {}", e);
                 JsonRpcResponse::error(None, -32700, format!("Parse error: {}", e), None)
@@ -391,10 +389,7 @@ fn handle_stat(params: &Value, client: &NexusClient) -> Result<Value, NexusClien
         .map_err(|e| NexusClientError::InvalidResponse(format!("Serialization error: {}", e)))
 }
 
-fn handle_mkdir(
-    params: &Value,
-    client: &NexusClient,
-) -> Result<Value, NexusClientError> {
+fn handle_mkdir(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
     struct P {
         path: String,

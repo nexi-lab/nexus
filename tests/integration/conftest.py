@@ -291,7 +291,14 @@ def _boot_full_stack(
     # Opt in to a source build only when explicitly iterating on the image.
     up_env = _nexus_env()
     force_build = os.environ.get("NEXUS_E2E_BUILD") == "1"
-    up_cmd = [*nexus_bin, "up"] + (["--build"] if force_build else [])
+    # The in-tree ``nexus-stack.yml`` carries a ``build:`` directive, so
+    # ``nexus up`` (no flag) defaults to a from-scratch build for
+    # repo-checkouts — minutes, blew the prior 300s timeout. Pass
+    # ``--no-build`` unless the caller explicitly opts into building
+    # (NEXUS_E2E_BUILD=1) so the fixture is pull-only by default and
+    # actually matches the "pull-only" promise in the comment above.
+    up_cmd = [*nexus_bin, "up"]
+    up_cmd.append("--build" if force_build else "--no-build")
 
     try:
         up_result = subprocess.run(

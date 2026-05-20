@@ -650,6 +650,7 @@ def create_async_files_router(
     @router.post("/write", response_model=WriteResponse)
     async def write_file(
         request: WriteRequest,
+        http_request: Request,
         transaction_id: str | None = Query(
             None,
             description="Active transaction ID to track this write in (from snapshots API)",
@@ -720,23 +721,44 @@ def create_async_files_router(
                     "buf": content,
                     "context": context,
                 }
-                # Honor OCC fields (#4133 round-2 review): if either
-                # ``if_match`` (stale ETag → reject) or ``if_none_match``
-                # (create-only) is set, route through the OCC helper so
-                # the compare-and-swap is atomic. Bypassing this lets a
-                # stale ``if_match`` silently overwrite a newer version.
-                if request.if_match is not None or request.if_none_match:
+                # Honor OCC from either the JSON body (``request.if_match``
+                # / ``request.if_none_match``) or the standard HTTP headers
+                # ``If-Match`` / ``If-None-Match``. Header form is what
+                # generic HTTP clients (curl, browsers, jQuery, axios)
+                # use — accepting body-only would silently overwrite a
+                # caller who supplied the ETag via header.
+                hdr_if_match = http_request.headers.get("If-Match")
+                if hdr_if_match:
+                    # Strip surrounding quotes (W/"..." weak ETags +
+                    # standard double-quoted strong ETags).
+                    hdr_if_match = hdr_if_match.strip()
+                    if hdr_if_match.startswith("W/"):
+                        hdr_if_match = hdr_if_match[2:].strip()
+                    hdr_if_match = hdr_if_match.strip('"')
+                hdr_if_none_match = http_request.headers.get("If-None-Match")
+                # "If-None-Match: *" → create-only (same as if_none_match=True).
+                header_create_only = (
+                    hdr_if_none_match is not None and hdr_if_none_match.strip().strip('"') == "*"
+                )
+
+                if_match = request.if_match or hdr_if_match
+                if_none_match = request.if_none_match or header_create_only
+
+                if if_match is not None or if_none_match:
                     from nexus.contracts.exceptions import ConflictError
-                    from nexus.lib.occ import occ_write_sync
+                    from nexus.lib.occ import occ_write
 
                     try:
-                        result = occ_write_sync(
+                        # Async helper: offloads stat+write to a thread so
+                        # the event loop is never blocked by a slow
+                        # backend during the compare-and-swap window.
+                        result = await occ_write(
                             fs,
                             request.path,
                             content,
                             context=context,
-                            if_match=request.if_match,
-                            if_none_match=request.if_none_match,
+                            if_match=if_match,
+                            if_none_match=if_none_match,
                         )
                     except ConflictError as exc:
                         raise HTTPException(status_code=409, detail=str(exc)) from exc

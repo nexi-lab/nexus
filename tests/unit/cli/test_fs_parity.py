@@ -627,6 +627,84 @@ def test_etag_if_match_occ_http_v2_write(inproc_nexus):
     assert nx.read("/occhttp/a.txt") == b"v2"
 
 
+def test_etag_if_match_occ_http_header_form(inproc_nexus):
+    """The HTTP write route must honor the standard ``If-Match`` HEADER
+    (what curl / browsers / generic HTTP clients send), not only the
+    JSON ``if_match`` body field. Sending a stale ETag via header must
+    return 409 and leave bytes unchanged.
+    """
+    import base64
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from nexus.server.api.v2.routers.async_files import create_async_files_router
+    from nexus.server.dependencies import require_auth as _require_auth_dep
+
+    nx = inproc_nexus
+    nx.write("/occhttp/h.txt", b"v1")
+    good_id = nx.stat("/occhttp/h.txt")["content_id"]
+
+    app = FastAPI()
+    app.include_router(create_async_files_router(nexus_fs=nx), prefix="/api/v2/files")
+
+    async def _fake_require_auth():
+        return {
+            "authenticated": True,
+            "is_admin": True,
+            "subject_id": "root",
+            "subject_type": "user",
+            "zone_id": "root",
+        }
+
+    app.dependency_overrides[_require_auth_dep] = _fake_require_auth
+    client = TestClient(app)
+
+    body = {
+        "path": "/occhttp/h.txt",
+        "content": base64.b64encode(b"v2").decode(),
+        "encoding": "base64",
+    }
+
+    # Stale ETag via HTTP header (quoted form is the standard).
+    stale = client.post("/api/v2/files/write", json=body, headers={"If-Match": '"sha256:stale"'})
+    assert stale.status_code == 409, (
+        f"HTTP If-Match header was not honored: status={stale.status_code} body={stale.text[:200]}"
+    )
+    assert nx.read("/occhttp/h.txt") == b"v1"
+
+    # Matching ETag via header → success.
+    fresh = client.post("/api/v2/files/write", json=body, headers={"If-Match": f'"{good_id}"'})
+    assert fresh.status_code in (200, 201), fresh.text
+    assert nx.read("/occhttp/h.txt") == b"v2"
+
+
+def test_parse_context_accepts_cli_zone_subject_keys():
+    """The CLI's ``create_operation_context`` emits ``zone`` and
+    ``subject`` (tuple), but ``parse_context`` previously only read
+    ``zone_id`` / ``user_id`` — so a CLI-built context lost its zone
+    and subject identity when handed to the kernel, causing the
+    auto-stream branch's stat probe to silently mis-scope.
+    """
+    from nexus.lib.context_utils import parse_context
+
+    ctx = parse_context({"zone": "z-eng", "subject": ("user", "alice"), "is_admin": False})
+    assert ctx.zone_id == "z-eng"
+    assert ctx.user_id == "alice"
+    assert ctx.is_admin is False
+
+    # Agent subject routes into both user_id and agent_id.
+    actx = parse_context({"zone": "z-bots", "subject": ("agent", "bot-1")})
+    assert actx.zone_id == "z-bots"
+    assert actx.agent_id == "bot-1"
+    assert actx.user_id == "bot-1"
+
+    # Canonical keys still work + win when both present.
+    bctx = parse_context({"zone_id": "canon", "zone": "ignored", "user_id": "u1"})
+    assert bctx.zone_id == "canon"
+    assert bctx.user_id == "u1"
+
+
 def test_etag_if_match_occ_conflict(inproc_nexus):
     """Spec correctness assertion #8: ``write`` with a stale ``content_id``
     via :func:`nexus.lib.occ.occ_write_sync` is rejected with

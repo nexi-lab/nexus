@@ -31,6 +31,13 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+def _isolated_sandbox_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    """Environment for sandbox-up tests that intentionally omit --data-dir."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    return {"PATH": "/usr/bin", "HOME": str(home), **extra}
+
+
 # ---------------------------------------------------------------------------
 # Happy-path tests
 # ---------------------------------------------------------------------------
@@ -48,6 +55,7 @@ class TestSandboxShortcutHappyPath:
         with (
             patch("shutil.which", return_value=fake_nexusd),
             patch("subprocess.run", return_value=mock_proc) as mock_run,
+            patch.dict("os.environ", _isolated_sandbox_env(tmp_path), clear=True),
         ):
             result = runner.invoke(up, ["--profile", "sandbox", "--workspace", ws])
 
@@ -75,6 +83,7 @@ class TestSandboxShortcutHappyPath:
         with (
             patch("shutil.which", return_value=fake_nexusd),
             patch("subprocess.run", return_value=mock_proc) as mock_run,
+            patch.dict("os.environ", _isolated_sandbox_env(tmp_path), clear=True),
         ):
             result = runner.invoke(
                 up,
@@ -115,6 +124,7 @@ class TestSandboxShortcutHappyPath:
         with (
             patch("shutil.which", return_value=None),
             patch("subprocess.run", return_value=mock_proc) as mock_run,
+            patch.dict("os.environ", _isolated_sandbox_env(tmp_path), clear=True),
         ):
             result = runner.invoke(up, ["--profile", "sandbox", "--workspace", ws])
 
@@ -138,13 +148,14 @@ class TestSandboxShortcutHappyPath:
         with (
             patch("shutil.which", return_value=fake_nexusd),
             patch("subprocess.run", return_value=mock_proc) as mock_run,
-            patch(
+            patch.dict(
                 "os.environ",
-                {
-                    **__import__("os").environ,
-                    "NEXUS_HUB_URL": "grpc://hub.env.example.com:50051",
-                    "NEXUS_HUB_TOKEN": "envtoken",
-                },
+                _isolated_sandbox_env(
+                    tmp_path,
+                    NEXUS_HUB_URL="grpc://hub.env.example.com:50051",
+                    NEXUS_HUB_TOKEN="envtoken",
+                ),
+                clear=True,
             ),
         ):
             result = runner.invoke(up, ["--profile", "sandbox", "--workspace", ws])

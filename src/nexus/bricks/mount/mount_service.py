@@ -593,12 +593,24 @@ class MountService:
 
         # --- NexusFS-based cleanup ---
         if self.nexus_fs is not None:
-            # Delete all metadata entries (mount point + children)
+            # Delete all metadata entries (mount point + children). The
+            # child listing goes through the §2.5 syscall surface
+            # (sys_readdir), not kernel.metastore_list_paginated — MetaStore
+            # is a kernel-internal HAL pillar. is_system=True: this is an
+            # admin mount-removal cleanup walking the whole mount subtree.
             try:
+                from nexus.contracts.types import OperationContext as _OC
+
                 dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
-                child_paths = self.nexus_fs.sys_readdir(dir_prefix, recursive=True)
-                paths_to_delete = list(child_paths) if child_paths else []
-                paths_to_delete.append(mount_point)  # Include mount point itself
+                _sys_ctx = _OC(user_id="system", groups=[], is_system=True)
+                child_paths = [
+                    str(p)
+                    for p in self.nexus_fs.sys_readdir(
+                        dir_prefix, recursive=True, details=False, context=_sys_ctx
+                    )
+                    if p
+                ]
+                paths_to_delete = [*child_paths, mount_point]  # incl. mount point itself
                 for path in paths_to_delete:
                     with contextlib.suppress(Exception):
                         self.nexus_fs.sys_unlink(path, context=context)

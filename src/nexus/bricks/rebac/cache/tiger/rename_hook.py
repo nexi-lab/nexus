@@ -23,7 +23,8 @@ class TigerCacheRenameHook:
 
     Dependencies injected at construction:
       - tiger_cache:   The TigerCache instance (may be None)
-      - metadata_list: (prefix, recursive, zone_id) -> Iterator[FileMetadata]
+      - metadata_list: (prefix, recursive, zone_id) -> Iterable[dict] of
+        sys_readdir(details=True) entries (``entry["path"]``)
     """
 
     # ── Hook spec (duck-typed) (Issue #1610) ──────────────────────────

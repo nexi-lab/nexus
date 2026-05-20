@@ -114,8 +114,8 @@ async def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     if _rebac_mgr is not None:
         engine = _rebac_mgr.engine
         add_migration_tables(engine)
-        # Connect the metadata store to ReBAC manager for directory expansion
-        _rebac_mgr.set_metadata_store(nx.metadata)
+        # Connect NexusFS to the ReBAC manager for directory expansion
+        _rebac_mgr.set_nexus_fs(nx)
 
     # Create admin context for tests
     admin_context = OperationContext(

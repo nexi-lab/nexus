@@ -31,9 +31,9 @@ def build_appendix(*, issue_number: int, owned_op_ids: list[str]) -> str:
 
 This story slice contributes rows to the shared surface map:
 
-- Map: `docs/architecture/api-rpc-surface-coverage.html`
-- Data: `docs/architecture/api-rpc-surface-coverage.yaml`
-- Contract: `docs/architecture/api-rpc-surface-contract.md`
+- Map: `docs/surface-coverage/api-rpc-surface-coverage.html`
+- Data: `docs/surface-coverage/api-rpc-surface-coverage.yaml`
+- Contract: `docs/surface-coverage/api-rpc-surface-contract.md`
 
 ### Owned surfaces (filter map by `owner: #{issue_number}`)
 

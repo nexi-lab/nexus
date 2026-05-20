@@ -74,7 +74,7 @@ const FILE_METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("
 /// pre-PR global `Kernel.dcache` — there is no longer a separate
 /// metadata cache that callers can consult; cache management is
 /// metastore-internal and transparent to callers.
-pub(crate) struct LocalMetaStore {
+pub struct LocalMetaStore {
     db: Arc<Database>,
     cache: DashMap<String, FileMetadata>,
 }

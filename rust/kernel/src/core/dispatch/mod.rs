@@ -140,6 +140,27 @@ impl FileEvent {
         &self.path
     }
 
+    /// Kernel namespace partition. Public accessor for the same reason
+    /// as `path()` — peer crates (services-tier MutationObservers like
+    /// `services::audit::ZoneAuditAutoWire`) need to read the zone an
+    /// event belongs to without `crate::` access to the raw field.
+    pub fn zone_id(&self) -> Option<&str> {
+        self.zone_id.as_deref()
+    }
+
+    /// Construct a `FileEvent` carrying a zone id. Public helper for
+    /// peer-crate observer tests (services-tier MutationObservers
+    /// fire `on_mutation` against a constructed event when exercising
+    /// the observer body without going through the kernel's full
+    /// sys_setattr dispatch path). Production callers go through
+    /// `Kernel::dispatch_mutation` which builds the event from an
+    /// `OperationContext`.
+    pub fn with_zone(event_type: FileEventType, path: impl Into<String>, zone_id: &str) -> Self {
+        let mut event = Self::new(event_type, path);
+        event.zone_id = Some(zone_id.to_string());
+        event
+    }
+
     /// Serialize to compact JSON for DT_STREAM / audit trail.
     ///
     /// Uses `serde_json` so arbitrary control characters in path/new_path

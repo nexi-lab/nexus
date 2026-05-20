@@ -15,7 +15,7 @@
 //! ## Boot wiring (Linux LSM analogue)
 //!
 //! ```ignore
-//! services::audit::install(&kernel, "root", "/audit/traces/")?;
+//! services::audit::install(&kernel, "root", "/__sys__/audit/traces/")?;
 //! // 1. kernel.sys_setattr(stream_path, DT_STREAM, …, "wal", zone)
 //! //    — service-side syscall; kernel composes the WAL stream.
 //! // 2. AuditHook::new(kernel, stream_path, zone)
@@ -24,16 +24,18 @@
 //! //    — install-time control plane (LSM-style EXPORT_SYMBOL).
 //! ```
 
+use std::collections::HashSet;
 use std::sync::mpsc;
 use std::sync::Arc;
 
 use chrono::SecondsFormat;
 use contracts::{is_system_path, OperationContext};
+use parking_lot::Mutex;
 use serde::Serialize;
 
 use kernel::abi::KernelAbi;
-use kernel::core::dispatch::{HookContext, NativeInterceptHook};
-use kernel::kernel::KernelError;
+use kernel::core::dispatch::{FileEvent, FileEventType, HookContext, MutationObserver, NativeInterceptHook};
+use kernel::kernel::{Kernel, KernelError};
 
 /// DT_STREAM entry-type discriminant (mirrors `kernel::core::dcache::DT_STREAM`).
 const DT_STREAM: i32 = 4;
@@ -265,6 +267,95 @@ pub fn prepare_stream_only<K: KernelAbi>(
     setup_audit_stream(kernel, zone_id, stream_path)
 }
 
+/// Boot-time install for the root zone + auto-wire for every zone
+/// that mounts later. Companion to [`install`] for deployments that
+/// want audit on every zone, not just the one named at boot.
+///
+/// Steps:
+///   1. Install AuditHook + DT_STREAM for `root_zone_id` (one call
+///      to [`install`]) so the boot-time stream is ready before any
+///      VFS op fires.
+///   2. Register a [`ZoneAuditAutoWire`] [`MutationObserver`] on
+///      `kernel` filtering [`FileEventType::Mount`]. Each Mount
+///      event maps to a per-zone [`install`] call (the same code
+///      path used at boot for `root_zone_id`), guarded by an
+///      internal `HashSet<String>` so a re-mount is a harmless
+///      no-op.
+///
+/// `K = Kernel`-specific (not generic over `K: KernelAbi`) because
+/// `kernel.register_observer` is a kernel-internal accessor — same
+/// reason `ManagedAgentService::install_returning` is gated to
+/// `K = Kernel`. Slim builds that ship a non-Kernel `K` use
+/// [`install`] for the single boot zone and don't get the auto-wire.
+///
+/// See `docs/architecture/nexus-integration-architecture.md` §5.3
+/// for the architectural rationale.
+pub fn install_root(
+    kernel: &Arc<Kernel>,
+    root_zone_id: &str,
+    stream_path: &str,
+) -> Result<(), KernelError> {
+    install(Arc::clone(kernel), root_zone_id, stream_path)?;
+
+    let mut seeded = HashSet::new();
+    seeded.insert(root_zone_id.to_string());
+
+    let auto_wire = Arc::new(ZoneAuditAutoWire {
+        kernel: Arc::clone(kernel),
+        installed: Mutex::new(seeded),
+        stream_path: stream_path.to_string(),
+    });
+    kernel.register_observer(
+        auto_wire,
+        ZoneAuditAutoWire::OBSERVER_NAME.to_string(),
+        FileEventType::Mount as u32,
+    );
+    Ok(())
+}
+
+/// [`MutationObserver`] that auto-installs AuditHook for newly
+/// mounted zones. Registered exactly once by [`install_root`] and
+/// keeps its own `HashSet` of zones it has already installed for so
+/// re-mount events are no-ops.
+struct ZoneAuditAutoWire {
+    kernel: Arc<Kernel>,
+    /// Zones the observer has already wired AuditHook for. The
+    /// root zone is seeded into this set by [`install_root`] before
+    /// the observer is registered, so a re-mount of the root zone
+    /// also no-ops.
+    installed: Mutex<HashSet<String>>,
+    stream_path: String,
+}
+
+impl ZoneAuditAutoWire {
+    pub(crate) const OBSERVER_NAME: &'static str = "audit-zone-auto-wire";
+}
+
+impl MutationObserver for ZoneAuditAutoWire {
+    fn on_mutation(&self, event: &FileEvent) {
+        let zone_id = match event.zone_id() {
+            Some(z) if !z.is_empty() => z.to_string(),
+            _ => return,
+        };
+        // First-writer wins on the HashSet — drop the lock before
+        // calling install() so a re-entrant Mount event (impossible
+        // today, defensive) wouldn't deadlock.
+        {
+            let mut guard = self.installed.lock();
+            if !guard.insert(zone_id.clone()) {
+                return;
+            }
+        }
+        if let Err(e) = install(Arc::clone(&self.kernel), &zone_id, &self.stream_path) {
+            tracing::warn!(
+                zone = %zone_id,
+                error = ?e,
+                "audit auto-wire install_for_zone failed",
+            );
+        }
+    }
+}
+
 fn setup_audit_stream<K: KernelAbi>(
     kernel: &K,
     zone_id: &str,
@@ -294,4 +385,401 @@ fn setup_audit_stream<K: KernelAbi>(
         /* remote_metastore */ None,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use kernel::kernel::Kernel;
+
+    fn fresh_kernel() -> Arc<Kernel> {
+        Arc::new(Kernel::new())
+    }
+
+    // ── Test federation fixture ──────────────────────────────────────
+    //
+    // `audit::install`'s `io_profile="wal"` codepath requires a
+    // `DistributedCoordinator` so the WAL stream backend can route
+    // through `coordinator.metastore_for_zone(zone)`. A bare
+    // `Kernel::new()` ships with `NoopDistributedCoordinator` which
+    // returns `is_initialized=false` — the stream setattr rejects
+    // with `"io_profile=wal requires federation"`.
+    //
+    // `TestFederationCoordinator` is the minimal stub: reports
+    // `is_initialized=true` and hands back a per-zone tempdir-backed
+    // `LocalMetaStore` from `metastore_for_zone` (lazily created and
+    // cached per zone, so cross-zone tests get the production-style
+    // "different zones have different metastores" semantics rather
+    // than sharing one store across zones). Inspired by the kernel's
+    // own federation_wal_e2e fixture (`rust/kernel/src/kernel/mod.rs:
+    // 3991-4065`) but with multi-zone support, kept local to audit
+    // tests to avoid promoting it to the kernel public surface.
+    mod federation_stub {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        use kernel::abc::meta_store::MetaStore;
+        use kernel::hal::distributed_coordinator::{
+            ClusterInfo, CoordinatorResult, DistributedCoordinator, ShareInfo,
+        };
+        use kernel::kernel::Kernel;
+        use kernel::meta_store::LocalMetaStore;
+        use parking_lot::Mutex;
+        use tempfile::TempDir;
+
+        pub(super) struct TestFederationCoordinator {
+            tempdir: TempDir,
+            /// Per-zone metastore cache. Lazily populated on each
+            /// `metastore_for_zone(zone)` call so the test fixture
+            /// matches production's "every zone owns its own
+            /// metastore" semantics.
+            stores: Mutex<HashMap<String, Arc<dyn MetaStore>>>,
+        }
+
+        impl TestFederationCoordinator {
+            pub(super) fn new() -> Self {
+                Self {
+                    tempdir: TempDir::new().expect("tempdir for audit fed-stub"),
+                    stores: Mutex::new(HashMap::new()),
+                }
+            }
+        }
+
+        impl DistributedCoordinator for TestFederationCoordinator {
+            fn list_zones(&self, _kernel: &Kernel) -> Vec<String> {
+                self.stores.lock().keys().cloned().collect()
+            }
+            fn is_initialized(&self, _kernel: &Kernel) -> bool {
+                true
+            }
+            fn cluster_info(&self, _: &Kernel, _: &str) -> CoordinatorResult<ClusterInfo> {
+                Err("test coordinator: cluster_info unused".into())
+            }
+            fn create_zone(&self, _: &Kernel, _: &str) -> CoordinatorResult<()> {
+                Ok(())
+            }
+            fn remove_zone(&self, _: &Kernel, _: &str, _: bool) -> CoordinatorResult<()> {
+                Err("test coordinator: remove_zone unused".into())
+            }
+            fn join_zone(&self, _: &Kernel, _: &str, _: bool) -> CoordinatorResult<()> {
+                Err("test coordinator: join_zone unused".into())
+            }
+            fn wire_mount(&self, _: &Kernel, _: &str, _: &str, _: &str) -> CoordinatorResult<()> {
+                Ok(())
+            }
+            fn unwire_mount(&self, _: &Kernel, _: &str, _: &str) -> CoordinatorResult<()> {
+                Err("test coordinator: unwire_mount unused".into())
+            }
+            fn share_zone(&self, _: &Kernel, _: &str, _: &str) -> CoordinatorResult<ShareInfo> {
+                Err("test coordinator: share_zone unused".into())
+            }
+            fn lookup_share(
+                &self,
+                _: &Kernel,
+                _: &str,
+            ) -> CoordinatorResult<Option<ShareInfo>> {
+                Ok(None)
+            }
+            fn metastore_for_zone(
+                &self,
+                _: &Kernel,
+                zone_id: &str,
+            ) -> CoordinatorResult<Arc<dyn MetaStore>> {
+                let mut stores = self.stores.lock();
+                if let Some(existing) = stores.get(zone_id) {
+                    return Ok(Arc::clone(existing));
+                }
+                let path = self
+                    .tempdir
+                    .path()
+                    .join(format!("zone-{zone_id}.redb"));
+                let store: Arc<dyn MetaStore> = Arc::new(
+                    LocalMetaStore::open(&path)
+                        .map_err(|e| format!("LocalMetaStore::open({path:?}): {e:?}"))?,
+                );
+                stores.insert(zone_id.to_string(), Arc::clone(&store));
+                Ok(store)
+            }
+            fn locks_for_zone(
+                &self,
+                _: &Kernel,
+                _: &str,
+            ) -> CoordinatorResult<Arc<dyn contracts::lock_state::Locks>> {
+                Err("test coordinator: locks_for_zone unused".into())
+            }
+        }
+    }
+
+    /// Build a `Kernel` with `TestFederationCoordinator` installed
+    /// so `is_federation_initialized()` returns true and the WAL
+    /// stream backend can route through the per-zone metastore.
+    fn fresh_federated_kernel() -> Arc<Kernel> {
+        let kernel = Arc::new(Kernel::new());
+        kernel.set_distributed_coordinator(Arc::new(
+            federation_stub::TestFederationCoordinator::new(),
+        )
+            as Arc<dyn kernel::hal::distributed_coordinator::DistributedCoordinator>);
+        kernel
+    }
+
+    /// Smoke test for the federation stub: `install_root` against a
+    /// federated kernel composes the root-zone audit DT_STREAM
+    /// successfully (and is idempotent on re-install).
+    #[test]
+    fn install_root_against_federated_kernel_composes_root_audit_stream() {
+        let kernel = fresh_federated_kernel();
+        install_root(&kernel, "root", "/__sys__/audit/traces/").expect("install_root");
+
+        // Idempotent: a second install_root call surfaces — install()
+        // re-uses the existing DT_STREAM (sys_setattr DT_STREAM is a
+        // no-op re-open), the auto-wire HashSet has "root" seeded
+        // again (no-op insert), and a second observer registration is
+        // harmless beyond a slight per-dispatch cost.
+        install_root(&kernel, "root", "/__sys__/audit/traces/").expect("install_root idempotent");
+    }
+
+    /// Helper that issues `sys_setattr DT_MOUNT` for a new zone with
+    /// the federated-test-friendly default args (empty backend_name,
+    /// `None` for backend / metastore / raft_backend, `"memory"`
+    /// io_profile for the mount itself — the per-zone audit DT_STREAM
+    /// `install()` creates is what uses `"wal"`).
+    fn mount_zone(kernel: &Arc<Kernel>, path: &str, zone_id: &str) {
+        use kernel::meta_store::DT_MOUNT;
+        kernel
+            .sys_setattr(
+                path,
+                DT_MOUNT as i32,
+                /* backend_name */ "",
+                /* backend */ None,
+                /* metastore */ None,
+                /* raft_backend */ None,
+                /* io_profile */ "memory",
+                zone_id,
+                /* is_external */ false,
+                /* capacity */ 0,
+                /* read_fd */ None,
+                /* write_fd */ None,
+                /* mime_type */ None,
+                /* modified_at_ms */ None,
+                /* content_id */ None,
+                /* size */ None,
+                /* version */ None,
+                /* created_at_ms */ None,
+                /* link_target */ None,
+                /* source */ None,
+                /* remote_metastore */ None,
+            )
+            .expect("sys_setattr DT_MOUNT");
+    }
+
+    /// Mount → auto-wire → observer-records-zone integration test.
+    ///
+    /// `install_root` registers a private `ZoneAuditAutoWire`
+    /// instance internally, so the test can't get a handle to that
+    /// one. Instead the test constructs its own `ZoneAuditAutoWire`,
+    /// registers it on the kernel with the same `FileEventType::Mount`
+    /// mask `install_root` would use, and asserts that a real
+    /// `sys_setattr DT_MOUNT` reaches `on_mutation` with the new
+    /// zone's id — proving the kernel's Mount-dispatch wiring (C7) +
+    /// observer dispatch path land at the auto-wire correctly.
+    ///
+    /// Re-mount idempotency is exercised end-to-end too: a second
+    /// `sys_setattr DT_MOUNT` for the same zone fires the observer
+    /// again, but the `installed` HashSet still has exactly one
+    /// entry per zone afterwards.
+    #[test]
+    fn dt_mount_dispatch_reaches_zone_audit_auto_wire_observer() {
+        let kernel = fresh_federated_kernel();
+
+        // Pre-seed the audit DT_STREAM for the root zone via
+        // `install` so the observer's per-zone `install` calls can
+        // succeed against the federated kernel.
+        install(Arc::clone(&kernel), "root", "/__sys__/audit/traces/").expect("install root");
+
+        // Construct + register the auto-wire ourselves so we can
+        // inspect its `installed` HashSet after the dispatch fires.
+        let auto_wire = Arc::new(ZoneAuditAutoWire {
+            kernel: Arc::clone(&kernel),
+            installed: Mutex::new({
+                let mut s = HashSet::new();
+                s.insert("root".to_string());
+                s
+            }),
+            stream_path: "/__sys__/audit/traces/".to_string(),
+        });
+        kernel.register_observer(
+            Arc::clone(&auto_wire) as Arc<dyn MutationObserver>,
+            ZoneAuditAutoWire::OBSERVER_NAME.to_string(),
+            FileEventType::Mount as u32,
+        );
+
+        // Mount audit-z1 through the real syscall path — dispatches
+        // FileEventType::Mount → auto-wire on_mutation fires.
+        mount_zone(&kernel, "/mnt/audit-z1", "audit-z1");
+        assert!(
+            auto_wire.installed.lock().contains("audit-z1"),
+            "auto-wire HashSet should contain audit-z1 after Mount dispatch",
+        );
+
+        // Mount audit-z2 — fires for the new zone too.
+        mount_zone(&kernel, "/mnt/audit-z2", "audit-z2");
+        assert!(auto_wire.installed.lock().contains("audit-z2"));
+
+        // Re-mount audit-z1 — fires again, but HashSet entries don't
+        // multiply: still exactly 3 (root + audit-z1 + audit-z2).
+        mount_zone(&kernel, "/mnt/audit-z1", "audit-z1");
+        let installed = auto_wire.installed.lock();
+        assert_eq!(
+            installed.len(),
+            3,
+            "re-mount of audit-z1 must not duplicate the HashSet entry",
+        );
+    }
+
+    /// Write-captured integration test: a `sys_write` to a non-
+    /// system DT_STREAM fires the AuditHook installed by
+    /// `install_root` for the root zone, which serialises the op
+    /// into an `AuditRecord` and (on the background flush thread)
+    /// appends it to `/__sys__/audit/traces/`. A subsequent
+    /// `sys_read` on the audit stream returns the captured record.
+    ///
+    /// Async note: `AuditHook` ships records to its background
+    /// flush thread via `mpsc::SyncSender::try_send`; the actual
+    /// `sys_write` to the audit stream runs off the syscall hot
+    /// path. The test polls `sys_read` for up to ~200 ms (20 × 10
+    /// ms) before giving up — the loop typically terminates on the
+    /// first or second iteration.
+    #[test]
+    fn audit_hook_captures_sys_write_through_to_audit_stream() {
+        let kernel = fresh_federated_kernel();
+
+        // Mount both the test path and /__sys__/ at root zone BEFORE
+        // install_root. Unrouted paths land in stream_manager but
+        // their metastore_get / write_stream_inode bookkeeping
+        // misses, making subsequent sys_write a no-op (`hit=false`)
+        // and sys_read return `FileNotFound`. /__sys__/ matters here
+        // because that's where install_root composes the audit
+        // DT_STREAM; we need to be able to read it back.
+        let router = kernel.vfs_router_arc();
+        router.add_mount("/test-audit", "root", None, false);
+        router.add_mount("/__sys__", "root", None, false);
+
+        install_root(&kernel, "root", "/__sys__/audit/traces/").expect("install_root");
+
+        // Create a non-system DT_STREAM to write into. AuditHook's
+        // is_system_path() short-circuit means writes to /__sys__/...
+        // are excluded from audit (self-write recursion break), so
+        // the target lives outside that prefix.
+        let target = "/test-audit/target";
+        kernel
+            .sys_setattr(
+                target,
+                DT_STREAM,
+                /* backend_name */ "",
+                /* backend */ None,
+                /* metastore */ None,
+                /* raft_backend */ None,
+                /* io_profile */ "wal",
+                /* zone_id */ "root",
+                /* is_external */ false,
+                /* capacity */ 0,
+                None, None, None, None, None, None, None, None, None, None, None,
+            )
+            .expect("setattr DT_STREAM target");
+
+        let writer_ctx = OperationContext::new(
+            /* user_id */ "alice",
+            /* zone_id */ "root",
+            /* is_admin */ false,
+            /* agent_id */ Some("agent-test"),
+            /* is_system */ false,
+        );
+        KernelAbi::sys_write(kernel.as_ref(), target, &writer_ctx, b"payload", 0)
+            .expect("sys_write target payload");
+
+        // Poll the audit stream until the flush thread has drained
+        // the record (or fail after ~200 ms).
+        let reader_ctx = OperationContext::new(
+            /* user_id */ "audit-reader",
+            /* zone_id */ "root",
+            /* is_admin */ true,
+            /* agent_id */ Some("audit-reader"),
+            /* is_system */ true,
+        );
+        let mut captured: Option<Vec<u8>> = None;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            if let Ok(read) =
+                KernelAbi::sys_read(kernel.as_ref(), "/__sys__/audit/traces/", &reader_ctx, 0, 0)
+            {
+                if let Some(data) = read.data {
+                    if !data.is_empty() {
+                        captured = Some(data);
+                        break;
+                    }
+                }
+            }
+        }
+        let bytes = captured.expect("AuditHook drained at least one record to the audit stream");
+
+        // First record decodes as JSON with the expected op + path
+        // + agent_id stamped by build_record from the writer ctx.
+        let mut decoder = serde_json::Deserializer::from_slice(&bytes).into_iter::<serde_json::Value>();
+        let record = decoder
+            .next()
+            .expect("at least one JSON record present")
+            .expect("first audit record decodes as JSON");
+        assert_eq!(record["op"], "write");
+        assert_eq!(record["path"], target);
+        assert_eq!(record["agent_id"], "agent-test");
+        assert_eq!(record["zone_id"], "root");
+    }
+
+    /// `ZoneAuditAutoWire` records each zone in its HashSet exactly
+    /// once and no-ops on a re-mount. Drives the observer directly
+    /// (skipping the `install` call by short-circuiting through the
+    /// HashSet-already-contains check) so the test doesn't depend on
+    /// federation being wired — `install`'s `io_profile="wal"`
+    /// requires `DistributedCoordinator`, which a bare
+    /// `Kernel::new()` doesn't have.
+    #[test]
+    fn zone_audit_auto_wire_dedups_by_zone_id() {
+        let kernel = fresh_kernel();
+        let mut seeded = HashSet::new();
+        // Pre-seed every zone we'll fire events for — the HashSet
+        // check short-circuits before install() runs, so we exercise
+        // only the dedup logic without needing federation.
+        seeded.insert("z1".to_string());
+        seeded.insert("z2".to_string());
+
+        let auto_wire = ZoneAuditAutoWire {
+            kernel,
+            installed: Mutex::new(seeded),
+            stream_path: "/__sys__/audit/traces/".to_string(),
+        };
+
+        // Fire Mount events for already-seeded zones — short-circuits
+        // via HashSet check, install() never runs, no panic on missing
+        // federation.
+        auto_wire.on_mutation(&FileEvent::with_zone(FileEventType::Mount, "/mnt/z1", "z1"));
+        auto_wire.on_mutation(&FileEvent::with_zone(FileEventType::Mount, "/mnt/z1", "z1"));
+        auto_wire.on_mutation(&FileEvent::with_zone(FileEventType::Mount, "/mnt/z2", "z2"));
+
+        // Events with an empty zone_id are ignored (early return);
+        // proves the observer doesn't index `installed` on a blank
+        // key.
+        auto_wire.on_mutation(&FileEvent::with_zone(
+            FileEventType::Mount,
+            "/mnt/no-zone",
+            "",
+        ));
+
+        let installed = auto_wire.installed.lock();
+        assert!(installed.contains("z1"));
+        assert!(installed.contains("z2"));
+        // Still exactly the two we seeded — no spurious inserts from
+        // re-mounts or from zone-less events.
+        assert_eq!(installed.len(), 2);
+    }
 }

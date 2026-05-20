@@ -1655,6 +1655,20 @@ impl Kernel {
                     let canonical_key = format!("/{zone_id}{path}");
                     self.vfs_router.install_metastore(&canonical_key, rms);
                 }
+                // Dispatch FileEventType::Mount to MutationObservers so
+                // services-tier consumers (e.g. services::audit's
+                // ZoneAuditAutoWire — see docs/architecture/
+                // nexus-integration-architecture.md §5.3) can wire
+                // per-zone state before any caller issues a sys_*
+                // mutation against the new mount. Fire AFTER routing +
+                // metastore install so observers see a fully-routable
+                // mount on read-back.
+                let mut event = crate::core::dispatch::FileEvent::new(
+                    crate::core::dispatch::FileEventType::Mount,
+                    path,
+                );
+                event.zone_id = Some(zone_id.to_string());
+                self.dispatch_observers(&event);
                 Ok(SysSetAttrResult {
                     path: path.to_string(),
                     created: true,
@@ -3249,6 +3263,38 @@ mod tests {
         // Idempotent open
         let r2 = setattr(&k, "/test-stream", 4).unwrap();
         assert!(!r2.created);
+    }
+
+    /// `sys_setattr DT_MOUNT` dispatches a `FileEventType::Mount`
+    /// event through `MutationObserver`. Wired for services-tier
+    /// consumers (e.g. `services::audit::ZoneAuditAutoWire`) to
+    /// auto-wire per-zone state on new mounts — see
+    /// docs/architecture/nexus-integration-architecture.md §5.3.
+    #[test]
+    fn sys_setattr_mount_dispatches_mount_event() {
+        let kernel = Kernel::new();
+        let captured = Arc::new(parking_lot::Mutex::new(None));
+        kernel.register_observer(
+            Arc::new(CapturingObserver {
+                captured: Arc::clone(&captured),
+            }),
+            "mount-probe".to_string(),
+            FileEventType::Mount.bit(),
+        );
+
+        let r = setattr(&kernel, "/zone-new", 2).unwrap();
+        assert!(r.created);
+        assert_eq!(r.entry_type, 2);
+
+        let event = captured
+            .lock()
+            .clone()
+            .expect("Mount observer received event");
+        assert_eq!(event.event_type, FileEventType::Mount);
+        assert_eq!(event.path, "/zone-new");
+        // The `setattr` test helper passes zone_id = "root"; observer
+        // sees that zone identity so per-zone wiring has the right key.
+        assert_eq!(event.zone_id(), Some("root"));
     }
 
     #[test]

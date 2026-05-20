@@ -172,7 +172,12 @@ class _HttpResponse:
 # ---------------------------------------------------------------------------
 
 
-def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullStack]:
+def _boot_full_stack(
+    tmp_path: Path,
+    preset: str = "shared",
+    *,
+    bug_b_tolerant: bool = False,
+) -> Iterator[FullStack]:
     """Internal: boot a FULL nexus stack and yield a FullStack handle.
 
     Shared by the ``full_stack`` fixture and sibling integration fixtures
@@ -225,6 +230,21 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
         pytest.skip("nexus init timed out after 60s")
     if init_result.returncode != 0:
         pytest.skip(f"nexus init failed: {init_result.stderr[-400:]!r}")
+
+    # ---- post-init normalize (tolerant mode) -------------------------------
+    # When tolerant, strip the zoekt-style service entries that cause Bug B
+    # (nexus up rc=1 waiting on an unstarted service). Restrict services /
+    # compose_profiles to the three the in-tree compose actually defines.
+    # Mirrors tests/e2e/self_contained/conftest.py::_normalize_running_nexus_config.
+    if bug_b_tolerant:
+        import yaml as _yaml
+
+        with open(config_path) as _cf:
+            _cfg = _yaml.safe_load(_cf) or {}
+        _cfg["services"] = ["nexus", "postgres", "dragonfly"]
+        _cfg["compose_profiles"] = ["core", "cache"]
+        with open(config_path, "w") as _cf:
+            _yaml.safe_dump(_cfg, _cf, sort_keys=False)
 
     # ---- nexus up ----------------------------------------------------------
     # Use the documented prebuilt path (matches docs/deployment/full-profile.md
@@ -337,12 +357,16 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
             )
         # Hub PROVEN healthy; only `nexus up`'s aggregate exit is wrong
         # because of the out-of-scope zoekt health gate (Bug B).
-        _teardown_stack(nexus_bin, project_dir)
-        pytest.xfail(
-            "Bug B: `nexus up --preset shared` rc=1 (health gate waits on "
-            "unstarted `zoekt`) BUT the hub was verified serving /health + "
-            f"/api/v2/features directly. Out of #4132 scope. log: {debug_path}"
-        )
+        if not bug_b_tolerant:
+            _teardown_stack(nexus_bin, project_dir)
+            pytest.xfail(
+                "Bug B: `nexus up --preset shared` rc=1 (health gate waits on "
+                "unstarted `zoekt`) BUT the hub was verified serving /health + "
+                f"/api/v2/features directly. Out of #4132 scope. log: {debug_path}"
+            )
+        # Tolerant path (#4133 E2E): hub is proven serving; continue to
+        # capture env + yield the handle so over-the-wire tests can run
+        # against the real gRPC port even though Bug B is unresolved.
 
     # ---- nexus env --json --------------------------------------------------
     env_result = subprocess.run(
@@ -421,6 +445,17 @@ def _boot_full_stack(tmp_path: Path, preset: str = "shared") -> Iterator[FullSta
 # ---------------------------------------------------------------------------
 # full_stack fixture (thin wrapper around _boot_full_stack)
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="function")
+def full_stack_tolerant(tmp_path: Path) -> Iterator[FullStack]:
+    """Like ``full_stack``, but tolerates Bug B (out-of-scope `nexus up`
+    rc=1 due to zoekt health gate) when the hub itself is proven serving.
+
+    Used by #4133 FS E2E so we can verify CLI/RPC parity over the wire
+    while Bug B remains tracked separately under #4132.
+    """
+    yield from _boot_full_stack(tmp_path, preset="shared", bug_b_tolerant=True)
 
 
 @pytest.fixture(scope="function")

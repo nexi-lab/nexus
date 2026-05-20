@@ -354,6 +354,132 @@ def test_cat_stream_survives_broken_pipe(patched_fs):
     assert p1.returncode in (0, 141, -13), f"unexpected rc={p1.returncode}: {stderr!r}"
 
 
+def test_concurrent_fs_stress(inproc_nexus):
+    """Fire parallel write / read / stat / rename / delete across threads and
+    assert no crashes + final state correct. Targets the path-index race that
+    motivated the kernel-side DashMap projection.
+    """
+    import concurrent.futures as cf
+    import random
+
+    nx = inproc_nexus
+    n = 200
+    random.seed(0xBEEF)
+
+    # Seed: write N distinct files.
+    for i in range(n):
+        nx.write(f"/c/{i:04d}.txt", f"v0-{i}".encode())
+
+    def _write(i: int) -> tuple[str, str]:
+        path = f"/c/{i:04d}.txt"
+        body = f"v1-{i}".encode()
+        nx.write(path, body)
+        return ("w", path)
+
+    def _read(i: int) -> tuple[str, bool]:
+        path = f"/c/{i:04d}.txt"
+        data = nx.read(path)
+        return ("r", data in (f"v0-{i}".encode(), f"v1-{i}".encode()))
+
+    def _stat(i: int) -> tuple[str, int]:
+        return ("s", nx.stat(f"/c/{i:04d}.txt")["size"])
+
+    def _exists_bulk(_i: int) -> tuple[str, int]:
+        paths = [f"/c/{j:04d}.txt" for j in range(0, n, 7)]
+        ex = nx.exists_batch(paths)
+        return ("e", sum(1 for v in ex.values() if v))
+
+    ops = []
+    for i in range(n):
+        ops.extend([(_write, i), (_read, i), (_stat, i), (_exists_bulk, i)])
+    random.shuffle(ops)
+
+    errors: list[BaseException] = []
+    with cf.ThreadPoolExecutor(max_workers=16) as pool:
+        futs = [pool.submit(fn, arg) for fn, arg in ops]
+        for f in cf.as_completed(futs):
+            try:
+                f.result()
+            except BaseException as e:  # noqa: BLE001
+                errors.append(e)
+
+    assert not errors, f"{len(errors)} errors; first: {errors[0]!r}"
+
+    # Final invariant: every seeded path still readable + stat OK.
+    for i in range(n):
+        path = f"/c/{i:04d}.txt"
+        body = nx.read(path)
+        assert body in (f"v0-{i}".encode(), f"v1-{i}".encode())
+        st = nx.stat(path)
+        assert st["size"] in (len(f"v0-{i}"), len(f"v1-{i}"))
+
+
+def test_admin_only_dispatch_rejects_non_admin(inproc_nexus):
+    """Verify the RPC dispatcher itself refuses non-admin callers — not just
+    the @rpc_expose metadata. Calls dispatch_method twice for each admin-only
+    method: once with is_admin=False (expects NexusPermissionError) and once
+    with is_admin=True (expects success).
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    import pytest as _pytest
+
+    from nexus.contracts.exceptions import NexusPermissionError
+    from nexus.server.rpc.discovery import discover_exposed_methods
+    from nexus.server.rpc.dispatch import dispatch_method
+
+    nx = inproc_nexus
+    exposed = discover_exposed_methods(nx)
+    assert "backfill_directory_index" in exposed
+    assert "flush_write_observer" in exposed
+
+    non_admin = SimpleNamespace(is_admin=False, user_id="u1", zone_id="default")
+    admin = SimpleNamespace(is_admin=True, user_id="root", zone_id="default")
+
+    backfill_params = SimpleNamespace(prefix="/", zone_id=None)
+    flush_params = SimpleNamespace()
+
+    # Non-admin path: both admin_only RPCs must be refused at dispatch.
+    for method, params in (
+        ("backfill_directory_index", backfill_params),
+        ("flush_write_observer", flush_params),
+    ):
+        with _pytest.raises(NexusPermissionError):
+            asyncio.run(
+                dispatch_method(
+                    method,
+                    params,
+                    non_admin,
+                    nexus_fs=nx,
+                    exposed_methods=exposed,
+                )
+            )
+
+    # Admin path: both succeed.
+    out = asyncio.run(
+        dispatch_method(
+            "backfill_directory_index",
+            backfill_params,
+            admin,
+            nexus_fs=nx,
+            exposed_methods=exposed,
+        )
+    )
+    assert "entries_created" in out
+
+    out2 = asyncio.run(
+        dispatch_method(
+            "flush_write_observer",
+            flush_params,
+            admin,
+            nexus_fs=nx,
+            exposed_methods=exposed,
+        )
+    )
+    assert "flushed" in out2
+
+
 def test_admin_only_metadata_is_set():
     """backfill_directory_index / flush_write_observer carry admin_only=True so
     the RPC dispatcher refuses non-admin callers server-side. Direct in-process

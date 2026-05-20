@@ -188,22 +188,25 @@ gRPC `Call`, and the CLI (a thin wrapper). The deprecated HTTP
 |------------------------------------------|-------------|----------------------------------------------------|
 | CLI ↔ in-process kernel parity           | ✅ verified | 19 tests in `test_fs_parity.py` (serial, 7s)       |
 | Auth CLI parity                          | ✅ verified | 4 tests in `test_auth_cli_parity.py`               |
+| Admin-only enforcement (dispatcher)      | ✅ verified | `test_admin_only_dispatch_rejects_non_admin` exercises `dispatch_method` with non-admin context → `NexusPermissionError` |
 | Admin-only enforcement metadata          | ✅ verified | `test_admin_only_metadata_is_set` (source-level)   |
 | Stream broken-pipe exit                  | ✅ verified | `test_cat_stream_survives_broken_pipe` (subprocess + real pipe) |
 | Smoke regression (cat / write existing)  | ✅ verified | 34 tests in `test_commands_smoke.py`               |
-| CLI ↔ gRPC parity over wire (real stack) | ⚠️ XFAIL    | `test_full_profile_fs.py` blocked by Bug B (`nexus up` rc=1 / zoekt health gate, out of #4133 scope) |
-| Benchmark execution (numbers above)      | ⚠️ not run  | Code present in `tests/benchmarks/`; medians documented but not gated in CI |
-| Concurrent / large-file (>10MB) stress   | ⚠️ not run  | 10 MB threshold triggers stream auto; no stress harness |
-| Auth-enforced mode                       | ⚠️ not run  | Parity fixture uses `PermissionConfig(enforce=False)` |
+| Concurrent multi-thread FS stress        | ✅ verified | `test_concurrent_fs_stress`: 200 files × 4 ops × 16 threads, no errors, post-state correct |
+| Benchmark numbers above                  | ✅ executed | `tests/benchmarks/bench_read_write_overhead.py` with `--benchmark-min-rounds=20` |
+| Over-the-wire FS parity (real stack)     | ✅ verified | `test_full_profile_fs.py::test_full_fs_lifecycle_batch_range_lock` exercises 12 RPC methods (write/read/stat/read_range/read_bulk/exists_batch/metadata_batch/rename_batch/sys_lock/sys_unlock/delete_batch/admin) over real HTTP JSON-RPC against a booted Docker stack (Bug B from #4132 bypassed by the `full_stack_tolerant` fixture, which strips zoekt from the service list so `nexus up` exits 0) |
+| Large-file (>10MB) end-to-end            | ⚠️ not run  | 10 MB threshold flips `cat` to streaming; no stress harness explicitly above the boundary |
+| Auth-enforced mode with non-admin caller | ⚠️ partial  | Dispatcher gate verified for `admin_only=True`; ReBAC path-level deny coverage tracked separately under the rebac suite |
 
-**Benchmark guidance** (dev-laptop medians, not CI gates; from
-`tests/benchmarks/bench_read_write_overhead.py`):
+**Benchmark guidance** (dev-laptop medians on Apple Silicon, in-process
+kernel; from `tests/benchmarks/bench_read_write_overhead.py`,
+`--benchmark-min-rounds=20`). Numbers are reference points, not CI gates:
 
-| Operation                       | Median   | Class                  |
-|---------------------------------|----------|------------------------|
-| Typed `nx.read` (1 KiB file)    | ~165 µs  | hot path               |
-| `read_range(64 KiB)` of 1 MiB   | ~2.9 ms  | hot path               |
-| `stat_bulk` of 100 files        | ~1.7 ms  | hot path (≈17 µs/path) |
-| `sys_lock` + `sys_unlock` cycle | ~1.0 ms  | control plane          |
-| `backfill_directory_index`      | —        | not perf-sensitive     |
-| `flush_write_observer`          | —        | not perf-sensitive     |
+| Operation                       | Median   | Rounds | Class                  |
+|---------------------------------|----------|--------|------------------------|
+| Typed `nx.read` (1 KiB file)    | ~595 µs  | 1460   | hot path               |
+| `read_range(64 KiB)` of 1 MiB   | ~3.1 ms  |  191   | hot path               |
+| `stat_bulk` of 100 files        | ~1.9 ms  |  381   | hot path (≈19 µs/path) |
+| `sys_lock` + `sys_unlock` cycle | ~956 µs  |  561   | control plane          |
+| `backfill_directory_index`      | —        |  —     | not perf-sensitive     |
+| `flush_write_observer`          | —        |  —     | not perf-sensitive     |

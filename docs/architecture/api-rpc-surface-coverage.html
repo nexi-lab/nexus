@@ -140,7 +140,7 @@
     <a href="#m-delegation">delegation<span class="count">12</span></a>
     <a href="#m-access_manifest">access_manifest<span class="count">10</span></a>
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">Storage &amp; layout</h2>
-    <a href="#m-filesystem">filesystem<span class="count">125</span></a>
+    <a href="#m-filesystem">filesystem<span class="count">129</span></a>
     <a href="#m-mount">mount<span class="count">38</span></a>
     <a href="#m-share_link">share_link<span class="count">6</span></a>
     <a href="#m-workspace">workspace<span class="count">16</span></a>
@@ -184,7 +184,7 @@
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
       <div class="stat"><div class="stat-value">28</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">transports</div></div>
-      <div class="stat"><div class="stat-value">687</div><div class="stat-label">operations</div></div>
+      <div class="stat"><div class="stat-value">691</div><div class="stat-label">operations</div></div>
       <div class="stat"><div class="stat-value">14</div><div class="stat-label">missing</div></div>
     </div>
 
@@ -3810,7 +3810,7 @@ graph TB
           <span class="mod-name">filesystem</span>
           <span class="mod-desc">&mdash; Path-scoping wrappers for NexusFS.</span>
           <span class="mod-meta">
-<span class="tier-badge tier-independent">independent</span>            <span>125 ops</span>
+<span class="tier-badge tier-independent">independent</span>            <span>129 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -4290,10 +4290,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rm-batch /a /b --json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent">tests/unit/cli/test_fs_parity.py::test_rm_batch_per_item_independent</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4459,10 +4459,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus exists /a /b --json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_exists_batch_parity_and_exit">tests/unit/cli/test_fs_parity.py::test_exists_batch_parity_and_exit</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -4656,12 +4656,13 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.exists" data-op-text="filesystem.exists  exists ">
+<div class="op" data-op-id="filesystem.exists" data-op-text="filesystem.exists  nexus exists exists ">
   <div class="op-header">
     <span class="op-id">filesystem.exists</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus exists</span></span>
     <span class="transport-pill" data-t="call"><span class="label">Call</span> <span>exists</span></span>
   </div>
   <div class="meta-row">
@@ -4769,6 +4770,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus ls</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="filesystem.metadata" data-op-text="filesystem.metadata  nexus metadata ">
+  <div class="op-header">
+    <span class="op-id">filesystem.metadata</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus metadata</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -4910,6 +4932,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="filesystem.read_bulk" data-op-text="filesystem.read_bulk  nexus read-bulk ">
+  <div class="op-header">
+    <span class="op-id">filesystem.read_bulk</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus read-bulk</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="filesystem.ready" data-op-text="filesystem.ready CLI readiness probe: blocks until the daemon serves /health, or times out. Generic probe across all profiles (not brick-gated). nexus ready ">
   <div class="op-header">
     <span class="op-id">filesystem.ready</span>
@@ -4952,6 +4995,27 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
+<div class="op" data-op-id="filesystem.rename_batch" data-op-text="filesystem.rename_batch  nexus rename-batch ">
+  <div class="op-header">
+    <span class="op-id">filesystem.rename_batch</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus rename-batch</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
 <div class="op" data-op-id="filesystem.rm" data-op-text="filesystem.rm  nexus rm ">
   <div class="op-header">
     <span class="op-id">filesystem.rm</span>
@@ -4959,6 +5023,27 @@ graph TB
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus rm</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <span class="todo">TODO</span></span>
+    <span>test: <span class="todo">TODO</span></span>
+    <span>perf: <span class="todo">TODO</span></span>
+    <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="filesystem.rm_batch" data-op-text="filesystem.rm_batch  nexus rm-batch ">
+  <div class="op-header">
+    <span class="op-id">filesystem.rm_batch</span>
+    <span class="op-summary">&mdash; (no summary yet)</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus rm-batch</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
@@ -5016,12 +5101,13 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="filesystem.stat" data-op-text="filesystem.stat  stat ">
+<div class="op" data-op-id="filesystem.stat" data-op-text="filesystem.stat  nexus stat stat ">
   <div class="op-header">
     <span class="op-id">filesystem.stat</span>
     <span class="op-summary">&mdash; (no summary yet)</span>
   </div>
   <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus stat</span></span>
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>stat</span></span>
   </div>
   <div class="meta-row">
@@ -5072,10 +5158,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus cat /f --stream --chunk-size 65536</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_cat_stream_matches_full">tests/unit/cli/test_fs_parity.py::test_cat_stream_matches_full</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -5199,10 +5285,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus admin fs flush-write-observer</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_admin_fs_flush_and_backfill">tests/unit/cli/test_fs_parity.py::test_admin_fs_flush_and_backfill</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -5914,10 +6000,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus metadata /a /b --json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity">tests/unit/cli/test_fs_parity.py::test_metadata_extended_parity</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6041,10 +6127,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus read-bulk /a /b --atomic --json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing">tests/unit/cli/test_fs_parity.py::test_read_bulk_atomic_raises_on_missing</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6062,10 +6148,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus read-bulk /a.txt /b.txt --json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_read_bulk_parity">tests/unit/cli/test_fs_parity.py::test_read_bulk_parity</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6104,10 +6190,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus cat /f --offset 0 --length 1024</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_cat_range_equals_slice">tests/unit/cli/test_fs_parity.py::test_cat_range_equals_slice</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6125,10 +6211,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus rename-batch /a:/b /c:/d --json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent">tests/unit/cli/test_fs_parity.py::test_rename_batch_per_item_independent</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6251,10 +6337,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus stat /a /b --json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_stat_multi_uses_stat_bulk">tests/unit/cli/test_fs_parity.py::test_stat_multi_uses_stat_bulk</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6293,10 +6379,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus cat /f --stream --offset 0 --length 1048576</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_cat_stream_matches_full">tests/unit/cli/test_fs_parity.py::test_cat_stream_matches_full</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6441,10 +6527,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>cat local.bin | nexus write /f --stream</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_write_stream_from_stdin">tests/unit/cli/test_fs_parity.py::test_write_stream_from_stdin</a></span>
+    <span>perf: hot_path</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8454,10 +8540,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>nexus admin fs backfill-index /</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_fs_parity.py::test_admin_fs_flush_and_backfill">tests/unit/cli/test_fs_parity.py::test_admin_fs_flush_and_backfill</a></span>
+    <span>perf: not_perf_sensitive</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4133">#4133</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>

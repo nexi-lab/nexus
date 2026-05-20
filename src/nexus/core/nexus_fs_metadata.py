@@ -577,13 +577,21 @@ class MetadataMixin:
             else:
                 _local_type = "cas-local"  # CASLocalBackend (canonical name)
 
+            _transport = getattr(backend, "_transport", None)
+            _fsync_attr = attrs.get("fsync")
+            _fsync = (
+                bool(getattr(_transport, "_fsync", True))
+                if _fsync_attr is None
+                else bool(_fsync_attr)
+            )
+
             result = self._kernel.sys_setattr(
                 path,
                 entry_type=entry_type,
                 backend_name=_backend_name,
                 local_root=_local_root,
                 backend_type=_local_type,
-                fsync=True,
+                fsync=_fsync,
                 zone_id=zone_id,
                 metastore_path=_ms_path_str,
                 is_external=_is_external,

@@ -912,6 +912,9 @@ def main(
             _health_state: dict[str, Any] = (
                 _health_state_raw if _health_state_raw is not None else {"status": "indexing"}
             )
+            if _health_state_raw is None:
+                nx_dynamic: Any = nx
+                nx_dynamic._health_state = _health_state
             bootstrapper = SandboxBootstrapper(
                 workspace=_workspace_path,
                 hub_url=hub_url,

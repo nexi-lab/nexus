@@ -348,6 +348,83 @@ to persistent state. `nexus ready` remains a complementary readiness
 probe (waits for `~/.nexus/nexusd.ready`, polls `/health` +
 `/api/v2/features`, exits `0` when ready). No build issue is required.
 
+### Sandbox local file workflow (agent-local edits)
+
+**Goal:** let an agent inspect and edit the operator's local project through
+the sandbox runtime without starting Postgres, Redis/Dragonfly, Zoekt, or the
+full shared stack.
+
+When the daemon is started with `--profile sandbox --workspace ~/app`, the
+workspace is mounted inside Nexus at `/zone/local`. That mount is the
+workspace-local path for kernel callers and embedded agents:
+
+```bash
+nexus up --profile sandbox --workspace ~/app \
+  --host 127.0.0.1 --port 2026 --data-dir ~/.nexus/sandbox
+
+nexus ready --timeout 60
+curl -s http://127.0.0.1:2026/health | jq .
+```
+
+The equivalent SDK / kernel-call shape for an embedded agent running inside
+that sandbox node is:
+
+```python
+def edit_workspace(nx):
+    # In a sandbox daemon booted with --workspace, SandboxBootstrapper mounts
+    # the operator workspace at /zone/local before serving traffic.
+    nx.write("/zone/local/notes/todo.txt", b"first task")
+    assert nx.read("/zone/local/notes/todo.txt") == b"first task"
+    assert nx.stat("/zone/local/notes/todo.txt")["size"] == 10
+    nx.sys_rename("/zone/local/notes/todo.txt", "/zone/local/notes/done.txt")
+    nx.sys_unlink("/zone/local/notes/done.txt")
+```
+
+CLI file commands have the same command shapes as the full/local file
+surface and are covered for parity:
+
+```bash
+nexus mkdir /workspace/notes
+nexus write /workspace/notes/todo.txt "first task"
+nexus stat /workspace/notes/todo.txt --json
+nexus cat /workspace/notes/todo.txt
+nexus ls /workspace/notes --json
+nexus rename-batch /workspace/notes/todo.txt:/workspace/notes/done.txt --json
+nexus rm-batch /workspace/notes/done.txt --json
+nexus rmdir /workspace/notes
+```
+
+For the sandbox daemon specifically, remote file access over HTTP or typed
+VFS gRPC is **unavailable by architecture**: sandbox HTTP is allowlisted to
+`/health` and `/api/v2/features`, and `NexusVFSService` is not bound. Use the
+embedded SDK/kernel path for `/zone/local` file work. A remote CLI pointed at
+the sandbox daemon should treat file commands as unavailable rather than
+silently falling back to another server.
+
+**Success:** reads and writes under `/zone/local/...` affect the local
+workspace directory, and `/health` includes `workspace_index_status`
+(`indexing` during the initial walk, then `ready`).
+
+**Denied or failed:** missing paths raise the normal file-not-found error;
+invalid paths are rejected by the VFS validator; OS-level workspace
+permission problems are logged by `BootIndexer`, and the health state still
+transitions to `ready` because a partial index must not block the daemon.
+
+**Correctness assertion you can run:** write bytes through Nexus, stat the
+same path, then read it back. The returned bytes must match exactly and the
+`stat.size` must equal the byte length. The daemon-local disk assertion is
+covered by
+`tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk`;
+CLI/RPC parity is covered by `tests/unit/cli/test_fs_parity.py`.
+
+**Performance classification:** read, write, list, stat, and batch read/write
+are hot local edit paths. Guidance benchmarks live in
+`tests/benchmarks/bench_read_write_overhead.py`:
+`TestTypedVsGenericRead`, `TestWriteNewFile`, `TestListLocalDirectory`,
+`TestReadBulkOverhead`, `TestWriteBatchThroughput`, and
+`TestSandboxBootIndexerInitialWalk`. Rename/delete/mkdir/rmdir are tested
+behaviorally and treated as non-hot local edit mutations.
+
 ## 2.1 Capability checklist for a serious demo
 
 If you are evaluating Nexus as more than a toy filesystem, the first real

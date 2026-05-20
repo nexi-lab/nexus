@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use kernel::abi::KernelAbi;
 use kernel::kernel::convenience::KernelConvenience;
-use kernel::kernel::{Kernel, KernelError, OperationContext};
+use kernel::kernel::{Kernel, KernelError, OperationContext, WriteRequest};
 use kernel::kernel::vfs_proto::{CallResponse};
 use tonic::{Response, Status};
 
@@ -220,14 +220,70 @@ fn do_sys_setattr(
         &zone_id_str
     };
 
-    // DT_MOUNT (2) via Call RPC: the subprocess binary already owns its
-    // mount table (auto-created at startup from NEXUS_DATA_DIR).  Python
-    // factory sends sys_setattr(DT_MOUNT) during boot but cannot pass a
-    // Rust ObjectStore through JSON.  Rather than overwriting the live
-    // mount with backend=None (which breaks all I/O), return a synthetic
-    // success — the mount already exists.
     if entry_type == 2 {
-        // DT_MOUNT — acknowledge without touching the existing mount.
+        let backend_type = s(params, "backend_type");
+        let local_root = s(params, "local_root");
+        let backend_name_str = s(params, "backend_name");
+        let backend_name = if backend_name_str.is_empty() {
+            backend_type.as_str()
+        } else {
+            backend_name_str.as_str()
+        };
+        let is_external = bool_or(params, "is_external", false);
+        let fsync = bool_or(params, "fsync", false);
+
+        // The Python subprocess client can only describe mounts as JSON.
+        // Honor the sandbox/workspace path-local case by constructing the
+        // Rust backend here. Keep returning synthetic success for other
+        // mount calls, especially the root CAS mount sent during generic
+        // NexusFS boot, because the cluster process already mounted its
+        // own root filesystem at startup.
+        if backend_type == "path_local" && !local_root.is_empty() {
+            let backend = backends::storage::path_local::PathLocalBackend::new(
+                std::path::Path::new(&local_root),
+                fsync,
+            )
+            .map_err(|e| {
+                call_err(
+                    RpcErrorCode::InternalError,
+                    &format!("path_local mount init failed for {local_root}: {e}"),
+                )
+            })?;
+            match kernel.sys_setattr(
+                &path,
+                entry_type,
+                backend_name,
+                Some(Arc::new(backend)),
+                None,
+                None,
+                "",
+                zone_id,
+                is_external,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ) {
+                Ok(r) => {
+                    return ok_json(serde_json::json!({
+                        "path": r.path,
+                        "created": r.created,
+                        "entry_type": r.entry_type,
+                        "backend_name": r.backend_name,
+                    }));
+                }
+                Err(e) => return Err(kernel_err_to_payload(e)),
+            }
+        }
+
         return ok_json(serde_json::json!({
             "path": path,
             "created": false,
@@ -652,7 +708,7 @@ fn do_write_batch(
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let mut results = Vec::new();
+    let mut reqs = Vec::with_capacity(files.len());
     for item in &files {
         let path = item
             .as_array()
@@ -664,7 +720,16 @@ fn do_write_batch(
             .and_then(|a| a.get(1))
             .map(|v| decode_bytes_value(v))
             .unwrap_or_default();
-        match KernelAbi::sys_write(kernel, path, ctx, &data, 0) {
+        reqs.push(WriteRequest {
+            path: path.to_string(),
+            content: data,
+            offset: 0,
+        });
+    }
+
+    let mut results = Vec::with_capacity(reqs.len());
+    for item in kernel.sys_write(&reqs, ctx) {
+        match item {
             Ok(r) => results.push(serde_json::json!({
                 "content_id": r.content_id,
                 "size": r.size,
@@ -713,4 +778,34 @@ fn encode_bytes(data: &[u8]) -> serde_json::Value {
         "__type__": "bytes",
         "data": base64::engine::general_purpose::STANDARD.encode(data),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sys_setattr_path_local_mount_from_json_routes_io_to_local_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let kernel = Arc::new(Kernel::new());
+        let ctx = OperationContext::new("test", kernel::ROOT_ZONE_ID, true, None, true);
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "path": "/zone/local",
+            "entry_type": 2,
+            "backend_type": "path_local",
+            "backend_name": "path_local",
+            "local_root": tmp.path().to_string_lossy(),
+            "zone_id": kernel::ROOT_ZONE_ID,
+        }))
+        .expect("payload");
+
+        let response = dispatch(&kernel, &ctx, "sys_setattr", &payload)
+            .expect("dispatch")
+            .into_inner();
+
+        assert!(!response.is_error, "mount returned error payload");
+        KernelAbi::sys_write(&*kernel, "/zone/local/live/a.txt", &ctx, b"abc", 0)
+            .expect("write through path-local mount");
+        assert_eq!(std::fs::read(tmp.path().join("live/a.txt")).unwrap(), b"abc");
+    }
 }

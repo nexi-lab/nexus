@@ -545,12 +545,7 @@ impl Kernel {
         let replacement =
             self.dispatch_native_pre_with_replacement(&HookContext::Write(WriteHookCtx {
                 path: path.to_string(),
-                identity: HookIdentity {
-                    user_id: ctx.user_id.clone(),
-                    zone_id: ctx.zone_id.clone(),
-                    agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                    is_admin: ctx.is_admin,
-                },
+                identity: HookIdentity::from(ctx),
                 content: hook_content,
                 is_new_file: false,
                 content_id: None,
@@ -610,12 +605,7 @@ impl Kernel {
                             // observer's own sys_write would re-enter.
                             self.dispatch_native_post(&HookContext::Write(WriteHookCtx {
                                 path: path.to_string(),
-                                identity: HookIdentity {
-                                    user_id: ctx.user_id.clone(),
-                                    zone_id: ctx.zone_id.clone(),
-                                    agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                                    is_admin: ctx.is_admin,
-                                },
+                                identity: HookIdentity::from(ctx),
                                 content: effective_content.to_vec(),
                                 is_new_file: false,
                                 content_id: None,
@@ -659,12 +649,7 @@ impl Kernel {
                             // observer's own sys_write would re-enter.
                             self.dispatch_native_post(&HookContext::Write(WriteHookCtx {
                                 path: path.to_string(),
-                                identity: HookIdentity {
-                                    user_id: ctx.user_id.clone(),
-                                    zone_id: ctx.zone_id.clone(),
-                                    agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                                    is_admin: ctx.is_admin,
-                                },
+                                identity: HookIdentity::from(ctx),
                                 content: effective_content.to_vec(),
                                 is_new_file: false,
                                 content_id: None,
@@ -879,12 +864,7 @@ impl Kernel {
                 // in ~100 ns; no content clone on post path).
                 self.dispatch_native_post(&HookContext::Write(WriteHookCtx {
                     path: input.path.to_string(),
-                    identity: HookIdentity {
-                        user_id: input.ctx.user_id.clone(),
-                        zone_id: input.ctx.zone_id.clone(),
-                        agent_id: input.ctx.agent_id.clone().unwrap_or_default(),
-                        is_admin: input.ctx.is_admin,
-                    },
+                    identity: HookIdentity::from(input.ctx),
                     content: vec![],
                     is_new_file: result_is_new,
                     content_id: None,
@@ -1154,12 +1134,7 @@ impl Kernel {
         // 1d. Native INTERCEPT PRE hooks (§11 native hooks)
         self.dispatch_native_pre(&HookContext::Delete(DeleteHookCtx {
             path: path.to_string(),
-            identity: HookIdentity {
-                user_id: ctx.user_id.clone(),
-                zone_id: ctx.zone_id.clone(),
-                agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                is_admin: ctx.is_admin,
-            },
+            identity: HookIdentity::from(ctx),
         }))?;
 
         // 2. Route (check write access)
@@ -1326,12 +1301,7 @@ impl Kernel {
         // 11. Return hit=true with metadata for event payload
         self.dispatch_native_post(&HookContext::Delete(DeleteHookCtx {
             path: path.to_string(),
-            identity: HookIdentity {
-                user_id: ctx.user_id.clone(),
-                zone_id: ctx.zone_id.clone(),
-                agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                is_admin: ctx.is_admin,
-            },
+            identity: HookIdentity::from(ctx),
         }));
         Ok(SysUnlinkResult {
             hit: true,
@@ -1380,12 +1350,7 @@ impl Kernel {
         self.dispatch_native_pre(&HookContext::Rename(RenameHookCtx {
             old_path: old_path.to_string(),
             new_path: new_path.to_string(),
-            identity: HookIdentity {
-                user_id: ctx.user_id.clone(),
-                zone_id: ctx.zone_id.clone(),
-                agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                is_admin: ctx.is_admin,
-            },
+            identity: HookIdentity::from(ctx),
             is_directory: false,
         }))?;
 
@@ -1621,12 +1586,7 @@ impl Kernel {
         self.dispatch_native_post(&HookContext::Rename(RenameHookCtx {
             old_path: old_path.to_string(),
             new_path: new_path.to_string(),
-            identity: HookIdentity {
-                user_id: ctx.user_id.clone(),
-                zone_id: ctx.zone_id.clone(),
-                agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                is_admin: ctx.is_admin,
-            },
+            identity: HookIdentity::from(ctx),
             is_directory,
         }));
 
@@ -2446,12 +2406,7 @@ impl Kernel {
             };
             match self.dispatch_native_pre_with_replacement(&HookContext::Write(WriteHookCtx {
                 path: req.path.clone(),
-                identity: HookIdentity {
-                    user_id: ctx.user_id.clone(),
-                    zone_id: ctx.zone_id.clone(),
-                    agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                    is_admin: ctx.is_admin,
-                },
+                identity: HookIdentity::from(ctx),
                 content: hook_content,
                 is_new_file: false,
                 content_id: None,
@@ -2646,12 +2601,7 @@ impl Kernel {
                     });
                     self.dispatch_native_post(&HookContext::Write(WriteHookCtx {
                         path: req.path.clone(),
-                        identity: HookIdentity {
-                            user_id: ctx.user_id.clone(),
-                            zone_id: ctx.zone_id.clone(),
-                            agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                            is_admin: ctx.is_admin,
-                        },
+                        identity: HookIdentity::from(ctx),
                         content: vec![],
                         is_new_file: r.is_new,
                         content_id: None,

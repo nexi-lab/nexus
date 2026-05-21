@@ -39,7 +39,11 @@ async def health_check(request: Request) -> HealthResponse | Any:
 
     nx_fs = request.app.state.nexus_fs
     if nx_fs:
-        enforce_permissions = getattr(getattr(nx_fs, "_perm_config", None), "enforce", None)
+        # Infer permission state from public service() API — avoid reading
+        # private _perm_config across the boundary.
+        enforce_permissions = (
+            nx_fs.service("permission_enforcer") is not None if hasattr(nx_fs, "service") else None
+        )
         enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
     # Read workspace index status from app.state (set by daemon main,
     # not from NexusFS — health_state is daemon lifecycle, not kernel).

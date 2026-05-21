@@ -660,7 +660,7 @@ async def search_query_batch(
             formatted.append(entry)
         response_queries.append(
             {
-                "query": q_spec.get("q") or q_spec.get("query", ""),
+                "query": q_spec.get("query") or q_spec.get("q", ""),
                 "results": formatted,
                 "total": len(formatted),
             }

@@ -908,10 +908,7 @@ def main(
             _search_daemon = getattr(nx, "_search_daemon", None)
             if _search_daemon is None:
                 _search_daemon = getattr(nx, "search_daemon", None)
-            _health_state_raw: dict[str, Any] | None = getattr(nx, "_health_state", None)
-            _health_state: dict[str, Any] = (
-                _health_state_raw if _health_state_raw is not None else {"status": "indexing"}
-            )
+            _health_state: dict[str, Any] = {"status": "indexing"}
             bootstrapper = SandboxBootstrapper(
                 workspace=_workspace_path,
                 hub_url=hub_url,

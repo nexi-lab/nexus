@@ -520,9 +520,9 @@ class TestSandboxHubTokenEnvVar:
             )
 
         assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+        # health_state is a fresh dict created by daemon, not read from NexusFS
+        assert isinstance(captured["health_state"], dict)
         assert captured["health_state"]["status"] == "indexing"
-        # health_state should NOT be monkey-patched onto NexusFS
-        assert not hasattr(mock_nx, "_health_state") or mock_nx._health_state is None
 
 
 # ---------------------------------------------------------------------------

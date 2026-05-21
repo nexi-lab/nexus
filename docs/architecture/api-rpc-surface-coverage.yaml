@@ -3173,7 +3173,8 @@ operations:
   owning_issue: null
 - id: discovery.get_tool_details
   module: discovery
-  summary: ''
+  summary: MCP discovery tool details are filtered through the caller's ReBAC-derived tool namespace; invisible tools return
+    not found.
   transports:
     mcp:
       name: nexus_discovery_get_tool_details
@@ -3182,15 +3183,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'MCP: nexus_discovery_get_tool_details("nexus_write_file") returns details only when /tools/nexus_write_file
+    is visible to the subject.'
+  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4128
 - id: discovery.list_servers
   module: discovery
-  summary: ''
+  summary: MCP discovery server listing reports tool counts after the caller's ReBAC-derived tool namespace filter.
   transports:
     mcp:
       name: nexus_discovery_list_servers
@@ -3199,15 +3201,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'MCP: nexus_discovery_list_servers() reports only tools visible through the caller''s assigned tool profile.'
+  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4128
 - id: discovery.load_tools
   module: discovery
-  summary: ''
+  summary: MCP discovery load treats tools outside the caller's ReBAC-derived namespace as not found before loading.
   transports:
     mcp:
       name: nexus_discovery_load_tools
@@ -3216,15 +3218,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'MCP: nexus_discovery_load_tools(["nexus_write_file"]) loads only if the assigned profile grants /tools/nexus_write_file.'
+  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4128
 - id: discovery.search_tools
   module: discovery
-  summary: ''
+  summary: MCP discovery search over-fetches then filters results through the caller's ReBAC-derived tool namespace.
   transports:
     mcp:
       name: nexus_discovery_search_tools
@@ -3233,12 +3235,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'MCP: nexus_discovery_search_tools("write file") returns nexus_write_file only after the subject has a profile
+    grant for /tools/nexus_write_file.'
+  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4128
 - id: dispatch.post_hooks
   module: uncategorized
   summary: ''
@@ -3911,7 +3914,8 @@ operations:
   owning_issue: null
 - id: federation.client_whoami
   module: federation
-  summary: ''
+  summary: Sandbox hub-token grant discovery; returns the remote zones and r/rw permissions used to mount read-only and read-write
+    hub zones.
   transports:
     grpc_expose:
       name: federation_client_whoami
@@ -3920,12 +3924,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: federation_client_whoami({}) with the sandbox hub token returns zones like [{"zone_id":"company","permission":"r"},{"zone_id":"shared","permission":"rw"}].'
+  correctness_test: tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones
+  perf_class: control
+  perf_link: control-plane startup/discovery path; not on the per-file read/write hot path
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4128
 - id: federation.cluster_info
   module: federation
   summary: ''
@@ -4747,10 +4751,12 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'CLI: nexus write /workspace/a.txt "hello"; sandbox kernel/RPC: Call(write, {"path":"/zone/local/a.txt","buf":"hello"})'
-  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/unit/backends/test_remote_zone.py::TestRemoteZoneBackendReadOnly::test_all_write_mutations_fail_before_remote_transport_call;
+    tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_readonly_company_zone_rejected;
     tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestWriteNewFile and ::TestWriteBatchThroughput; tests/benchmarks/bench_permission_hotpath.py::TestRemoteZoneDeniedWriteFastFail::test_readonly_remote_zone_write_fast_fails_before_transport_call
   gap_issue: null
   owning_issue: 4127
 - id: filesystem.write-batch
@@ -6613,7 +6619,7 @@ operations:
   owning_issue: null
 - id: mcp.list_tools
   module: mcp
-  summary: ''
+  summary: List mounted MCP tools; the sandbox tool namespace middleware filters the visible set by ReBAC /tools/... grants.
   transports:
     grpc_expose:
       name: mcp_list_tools
@@ -6622,12 +6628,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC/MCP: mcp_list_tools("github") or MCP tools/list returns only tools visible to the current subject after
+    profile grants are materialized.'
+  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  perf_class: hot
+  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4128
 - id: mcp.llm
   module: mcp
   summary: ''
@@ -6730,6 +6737,25 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: mcp.tool_profile_assign
+  module: mcp
+  summary: '`nexus mcp profile assign SUBJECT_TYPE SUBJECT_ID PROFILE --zone-id ZONE`: assign a configured MCP tool profile
+    to an agent or user; `nexus mcp profile inspect SUBJECT_TYPE SUBJECT_ID --zone-id ZONE` shows the resulting
+    effective /tools/... ReBAC grants.'
+  transports:
+    cli:
+      name: nexus mcp profile assign
+      source: src/nexus/cli/commands/mcp.py:462
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: 'CLI: nexus mcp profile assign agent alice coding --zone-id sandbox-agent-1; nexus mcp profile inspect agent alice --zone-id sandbox-agent-1 --format json'
+  correctness_test: tests/unit/cli/test_mcp_profile_cli.py; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  perf_class: setup
+  perf_link: setup/control-plane operation; effective tools/list filtering remains the hot path and is benchmarked in tests/benchmarks/bench_permission_hotpath.py
+  gap_issue: null
+  owning_issue: 4128
 - id: mcp.unmount
   module: mcp
   summary: ''

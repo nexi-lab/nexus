@@ -422,6 +422,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
+"nexus" = ["config/*.yaml"]
 "nexus.cli" = ["data/*.yml", "data/*.Dockerfile", "data/*.sql"]
 "nexus.backends.connectors.gws" = ["configs/*.yaml"]
 "nexus.backends.connectors.github" = ["*.yaml"]

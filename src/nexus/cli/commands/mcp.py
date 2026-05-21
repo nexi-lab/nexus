@@ -6,9 +6,12 @@ This module contains MCP-related CLI commands for:
 """
 
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from inspect import isawaitable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import click
+from rich.table import Table
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from nexus.cli.utils import (
@@ -21,6 +24,15 @@ from nexus.cli.utils import (
 if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
+
+    from nexus.bricks.mcp.profiles import ToolProfile, ToolProfileConfig
+
+
+class _ProfilePayload(TypedDict):
+    name: str
+    description: str | None
+    extends: str | None
+    tools: list[str]
 
 
 def _add_health_check_route(mcp_server: Any) -> None:
@@ -260,6 +272,375 @@ def mcp() -> None:
         }
     """
     pass
+
+
+def _default_tool_profiles_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "config" / "tool_profiles.yaml"
+
+
+def _load_tool_profile_config(config_path: str | None) -> "ToolProfileConfig":
+    from nexus.bricks.mcp.profiles import load_profiles
+
+    return load_profiles(Path(config_path) if config_path else _default_tool_profiles_path())
+
+
+def _profile_payload(profile: "ToolProfile") -> _ProfilePayload:
+    return {
+        "name": profile.name,
+        "description": profile.description,
+        "extends": profile.extends,
+        "tools": sorted(profile.tools),
+    }
+
+
+def _print_json(payload: Any) -> None:
+    import json
+
+    click.echo(json.dumps(payload, indent=2, default=str))
+
+
+async def _maybe_await(result: Any) -> Any:
+    if isawaitable(result):
+        return await result
+    return result
+
+
+def _extract_tuple_id(result: Any) -> str:
+    if isinstance(result, dict):
+        return str(result.get("tuple_id", ""))
+    return str(getattr(result, "tuple_id", result))
+
+
+def _has_declared_method(obj: Any, name: str) -> bool:
+    return callable(getattr(type(obj), name, None))
+
+
+def _resolve_rebac_surface(nx: Any) -> Any:
+    rebac = None
+    if hasattr(nx, "service"):
+        try:
+            rebac = nx.service("rebac_manager")
+        except Exception:
+            rebac = None
+        if rebac is None:
+            try:
+                rebac_service = nx.service("rebac")
+                rebac = getattr(rebac_service, "_rebac_manager", None) or rebac_service
+            except Exception:
+                rebac = None
+    if rebac is None:
+        rebac = getattr(nx, "_rebac_manager", None)
+    if rebac is None:
+        raise click.ClickException("ReBAC service is not available")
+    return rebac
+
+
+async def _grant_tool_profile(
+    rebac: Any,
+    *,
+    subject: tuple[str, str],
+    profile: "ToolProfile",
+    zone_id: str | None,
+) -> list[str]:
+    tuple_ids: list[str] = []
+    for tool_name in sorted(profile.tools):
+        tool_path = f"/tools/{tool_name}"
+        if _has_declared_method(rebac, "rebac_write"):
+            result = rebac.rebac_write(
+                subject=subject,
+                relation="direct_viewer",
+                object=("file", tool_path),
+                zone_id=zone_id,
+            )
+        elif _has_declared_method(rebac, "rebac_create_sync") or not _has_declared_method(
+            rebac, "rebac_create"
+        ):
+            result = rebac.rebac_create_sync(
+                subject=subject,
+                relation="direct_viewer",
+                object=("file", tool_path),
+                zone_id=zone_id,
+            )
+        elif _has_declared_method(rebac, "rebac_create"):
+            result = rebac.rebac_create(
+                subject=subject,
+                relation="direct_viewer",
+                object=("file", tool_path),
+                zone_id=zone_id,
+            )
+        else:
+            raise click.ClickException("ReBAC surface does not support tuple writes")
+        tuple_ids.append(_extract_tuple_id(await _maybe_await(result)))
+    return tuple_ids
+
+
+async def _list_effective_tool_grants(
+    rebac: Any,
+    *,
+    subject: tuple[str, str],
+    zone_id: str | None,
+) -> list[str]:
+    if _has_declared_method(rebac, "rebac_write"):
+        result = rebac.rebac_list_objects(
+            subject=subject,
+            permission="read",
+            object_type="file",
+            zone_id=zone_id,
+            limit=10000,
+        )
+    else:
+        result = rebac.rebac_list_objects(
+            relation="direct_viewer",
+            subject=subject,
+            zone_id=zone_id,
+        )
+    objects = await _maybe_await(result)
+
+    tools: set[str] = set()
+    for object_type, object_id in objects:
+        if object_type == "file" and str(object_id).startswith("/tools/"):
+            tools.add(str(object_id)[len("/tools/") :])
+    return sorted(tools)
+
+
+def _matching_profiles(config: "ToolProfileConfig", tools: list[str]) -> list[str]:
+    granted = set(tools)
+    return [
+        name
+        for name, profile in sorted(config.profiles.items())
+        if profile.tools and profile.tools.issubset(granted)
+    ]
+
+
+@mcp.group(name="profile")
+def mcp_profile() -> None:
+    """Inspect and assign MCP tool profiles."""
+    pass
+
+
+@mcp_profile.command(name="list")
+@click.option("--config", "config_path", type=click.Path(), default=None)
+@click.option("--format", "output_format", type=click.Choice(["table", "json"]), default="table")
+def mcp_profile_list(config_path: str | None, output_format: str) -> None:
+    """List configured MCP tool profiles."""
+    config = _load_tool_profile_config(config_path)
+    profiles = [_profile_payload(config.profiles[name]) for name in config.profile_names]
+    payload = {
+        "default_profile": config.default_profile,
+        "profiles": profiles,
+    }
+    if output_format == "json":
+        _print_json(payload)
+        return
+
+    table = Table(title="MCP Tool Profiles")
+    table.add_column("Name", style="nexus.value")
+    table.add_column("Extends", style="nexus.muted")
+    table.add_column("Tools")
+    table.add_column("Description")
+    for item in profiles:
+        table.add_row(
+            item["name"],
+            item["extends"] or "",
+            str(len(item["tools"])),
+            item["description"] or "",
+        )
+    console.print(table)
+
+
+@mcp_profile.command(name="show")
+@click.argument("profile_name", type=str)
+@click.option("--config", "config_path", type=click.Path(), default=None)
+@click.option("--format", "output_format", type=click.Choice(["table", "json"]), default="table")
+def mcp_profile_show(profile_name: str, config_path: str | None, output_format: str) -> None:
+    """Show one MCP tool profile."""
+    config = _load_tool_profile_config(config_path)
+    profile = config.get_profile(profile_name)
+    if profile is None:
+        raise click.ClickException(f"Unknown MCP tool profile '{profile_name}'")
+    payload = _profile_payload(profile)
+    if output_format == "json":
+        _print_json(payload)
+        return
+
+    console.print(f"[bold nexus.value]{profile.name}[/bold nexus.value]")
+    if profile.description:
+        console.print(f"  Description: {profile.description}")
+    if profile.extends:
+        console.print(f"  Extends: [nexus.muted]{profile.extends}[/nexus.muted]")
+    console.print("  Tools:")
+    for tool in sorted(profile.tools):
+        console.print(f"    - [nexus.value]{tool}[/nexus.value]")
+
+
+@mcp_profile.command(name="assign")
+@click.argument("subject_type", type=str)
+@click.argument("subject_id", type=str)
+@click.argument("profile_name", type=str)
+@click.option("--zone-id", type=str, default=None, envvar="NEXUS_ZONE_ID")
+@click.option("--config", "config_path", type=click.Path(), default=None)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@add_backend_options
+def mcp_profile_assign(
+    subject_type: str,
+    subject_id: str,
+    profile_name: str,
+    zone_id: str | None,
+    config_path: str | None,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Assign a configured MCP tool profile to a subject."""
+    import asyncio
+
+    asyncio.run(
+        _async_mcp_profile_assign(
+            subject_type,
+            subject_id,
+            profile_name,
+            zone_id,
+            config_path,
+            output_format,
+            remote_url,
+            remote_api_key,
+        )
+    )
+
+
+async def _async_mcp_profile_assign(
+    subject_type: str,
+    subject_id: str,
+    profile_name: str,
+    zone_id: str | None,
+    config_path: str | None,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    config = _load_tool_profile_config(config_path)
+    profile = config.get_profile(profile_name)
+    if profile is None:
+        raise click.ClickException(f"Unknown MCP tool profile '{profile_name}'")
+
+    nx = None
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac = _resolve_rebac_surface(nx)
+        subject = (subject_type, subject_id)
+        tuple_ids = await _grant_tool_profile(
+            rebac,
+            subject=subject,
+            profile=profile,
+            zone_id=zone_id,
+        )
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        if nx is not None and hasattr(nx, "close"):
+            nx.close()
+
+    payload = {
+        "profile": profile.name,
+        "subject": [subject_type, subject_id],
+        "zone_id": zone_id,
+        "tools": sorted(profile.tools),
+        "tuple_ids": tuple_ids,
+    }
+    if output_format == "json":
+        _print_json(payload)
+        return
+
+    console.print("[nexus.success]✓[/nexus.success] Assigned MCP tool profile")
+    console.print(f"  Profile: [nexus.value]{profile.name}[/nexus.value]")
+    console.print(f"  Subject: [nexus.warning]{subject_type}:{subject_id}[/nexus.warning]")
+    if zone_id:
+        console.print(f"  Zone: [nexus.reference]{zone_id}[/nexus.reference]")
+    console.print(f"  Tools: {len(profile.tools)}")
+
+
+@mcp_profile.command(name="inspect")
+@click.argument("subject_type", type=str)
+@click.argument("subject_id", type=str)
+@click.option("--zone-id", type=str, default=None, envvar="NEXUS_ZONE_ID")
+@click.option("--config", "config_path", type=click.Path(), default=None)
+@click.option("--format", "output_format", type=click.Choice(["table", "json"]), default="table")
+@add_backend_options
+def mcp_profile_inspect(
+    subject_type: str,
+    subject_id: str,
+    zone_id: str | None,
+    config_path: str | None,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Inspect effective MCP tool grants for a subject."""
+    import asyncio
+
+    asyncio.run(
+        _async_mcp_profile_inspect(
+            subject_type,
+            subject_id,
+            zone_id,
+            config_path,
+            output_format,
+            remote_url,
+            remote_api_key,
+        )
+    )
+
+
+async def _async_mcp_profile_inspect(
+    subject_type: str,
+    subject_id: str,
+    zone_id: str | None,
+    config_path: str | None,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    config = _load_tool_profile_config(config_path)
+    nx = None
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        rebac = _resolve_rebac_surface(nx)
+        subject = (subject_type, subject_id)
+        tools = await _list_effective_tool_grants(
+            rebac,
+            subject=subject,
+            zone_id=zone_id,
+        )
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        if nx is not None and hasattr(nx, "close"):
+            nx.close()
+
+    payload = {
+        "subject": [subject_type, subject_id],
+        "zone_id": zone_id,
+        "tools": tools,
+        "matching_profiles": _matching_profiles(config, tools),
+    }
+    if output_format == "json":
+        _print_json(payload)
+        return
+
+    table = Table(title=f"MCP tool grants for {subject_type}:{subject_id}")
+    table.add_column("Tool", style="nexus.value")
+    for tool in tools:
+        table.add_row(tool)
+    console.print(table)
+    if payload["matching_profiles"]:
+        console.print(
+            "Matching profiles: "
+            + ", ".join(f"[nexus.value]{p}[/nexus.value]" for p in payload["matching_profiles"])
+        )
 
 
 @mcp.command(name="serve")

@@ -99,6 +99,27 @@ class TestBootIndexerSuccessfulWalk:
         assert health_state["status"] == "ready"
         search_daemon.index_file.assert_not_called()
 
+    def test_missing_search_daemon_skips_indexing_without_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A sandbox without a search daemon still becomes ready without per-file errors."""
+        (tmp_path / "file.txt").write_text("content")
+        health_state: dict[str, str] = {"status": "indexing"}
+
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="nexus.core.boot_indexer"):
+            indexer = BootIndexer(tmp_path, None, health_state)
+            indexer.start_async()
+
+            deadline = time.monotonic() + 5.0
+            while health_state["status"] != "ready" and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        assert health_state["status"] == "ready"
+        assert any("search daemon unavailable" in r.message for r in caplog.records)
+        assert not any("failed to index" in r.message for r in caplog.records)
+
 
 class TestBootIndexerWalkFailure:
     """BootIndexer handles walk errors gracefully — partial index is acceptable."""

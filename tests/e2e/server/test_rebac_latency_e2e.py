@@ -13,6 +13,7 @@ Run with:
     pytest tests/e2e/server/test_rebac_latency_e2e.py -v -s
 """
 
+import base64
 import os
 import shutil
 import signal
@@ -21,8 +22,10 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +35,10 @@ import pytest
 pytestmark = pytest.mark.quarantine
 
 PYTHON = sys.executable
-SERVER_STARTUP_TIMEOUT = 30
+# Cold lite-profile startup can cross 30s on developer machines because this
+# fixture starts the Rust kernel and the full FastAPI lifespan before measuring
+# permission-operation latency. Startup time itself is not the benchmark target.
+SERVER_STARTUP_TIMEOUT = 60
 
 # Clear proxy env vars so localhost connections work
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
@@ -52,6 +58,10 @@ def _find_free_port() -> int:
 
 def _make_client() -> httpx.Client:
     return httpx.Client(timeout=60)
+
+
+def _rpc_bytes(data: bytes) -> dict[str, str]:
+    return {"__type__": "bytes", "data": base64.b64encode(data).decode("utf-8")}
 
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
@@ -129,7 +139,7 @@ def server():
             (
                 "from nexus.daemon.main import main; "
                 f"main(['--host', '127.0.0.1', '--port', '{port}', "
-                f"'--data-dir', '{data_dir}'])"
+                f"'--data-dir', '{data_dir}', '--profile', 'lite'])"
             ),
         ],
         env=env,
@@ -138,6 +148,20 @@ def server():
         text=True,
         preexec_fn=os.setsid if sys.platform != "win32" else None,
     )
+    server_output: deque[str] = deque(maxlen=500)
+
+    def _drain_stdout() -> None:
+        if proc.stdout is None:
+            return
+        for line in proc.stdout:
+            server_output.append(line)
+
+    stdout_reader = threading.Thread(
+        target=_drain_stdout,
+        name="nexus-rebac-latency-e2e-stdout",
+        daemon=True,
+    )
+    stdout_reader.start()
 
     try:
         _wait_for_health(base_url)
@@ -160,7 +184,8 @@ def server():
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=3)
-        stdout = proc.stdout.read() if proc.stdout else ""
+        stdout_reader.join(timeout=1)
+        stdout = "".join(server_output)
         pytest.fail(f"Server failed to start. Output:\n{stdout}")
     finally:
         if proc.poll() is None:
@@ -176,6 +201,7 @@ def server():
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=5)
+        stdout_reader.join(timeout=1)
         shutil.rmtree(data_dir, ignore_errors=True)
 
 
@@ -187,12 +213,19 @@ def client(server: dict) -> httpx.Client:
 
 @pytest.fixture(scope="module")
 def admin_headers() -> dict[str, str]:
-    return {"X-Agent-ID": "admin", "X-Zone-ID": "rebac-latency-e2e"}
+    return {
+        "X-Nexus-Subject": "user:admin",
+        "X-Agent-ID": "admin",
+        "X-Nexus-Zone-ID": "rebac-latency-e2e",
+    }
 
 
 @pytest.fixture(scope="module")
 def alice_headers() -> dict[str, str]:
-    return {"X-Agent-ID": "alice", "X-Zone-ID": "rebac-latency-e2e"}
+    return {
+        "X-Nexus-Subject": "agent:alice",
+        "X-Nexus-Zone-ID": "rebac-latency-e2e",
+    }
 
 
 @pytest.fixture(scope="module")
@@ -205,13 +238,13 @@ def setup_permissions(server, client, admin_headers):
         client,
         base_url,
         "write",
-        {"path": "/latency_test/file.txt", "content_b64": "SGVsbG8gV29ybGQ="},
+        {"path": "/latency_test/file.txt", "content": _rpc_bytes(b"Hello World")},
         headers=admin_headers,
     )
     assert result.get("error") is None, f"Admin write failed: {result}"
 
     # Grant alice viewer on the file
-    _rpc(
+    result = _rpc(
         client,
         base_url,
         "rebac_create",
@@ -223,20 +256,23 @@ def setup_permissions(server, client, admin_headers):
         },
         headers=admin_headers,
     )
+    assert result.get("error") is None, f"Grant alice viewer failed: {result}"
 
     # Write 10 files for batch testing
     for i in range(10):
-        _rpc(
+        result = _rpc(
             client,
             base_url,
             "write",
             {
                 "path": f"/latency_test/batch/file_{i:02d}.txt",
-                "content_b64": "SGVsbG8=",
+                "content": _rpc_bytes(b"Hello"),
             },
             headers=admin_headers,
         )
-        _rpc(
+        assert result.get("error") is None, f"Admin batch write {i} failed: {result}"
+
+        result = _rpc(
             client,
             base_url,
             "rebac_create",
@@ -248,6 +284,7 @@ def setup_permissions(server, client, admin_headers):
             },
             headers=admin_headers,
         )
+        assert result.get("error") is None, f"Grant alice batch viewer {i} failed: {result}"
 
     return True
 
@@ -336,7 +373,7 @@ class TestPermissionCheckedWriteLatency:
                 "write",
                 {
                     "path": f"/latency_test/write_{counter[0]}.txt",
-                    "content_b64": "SGVsbG8=",
+                    "content": _rpc_bytes(b"Hello"),
                 },
                 headers=admin_headers,
             )
@@ -362,8 +399,8 @@ class TestPermissionDenialLatency:
         """Unknown user attempting to read should be denied quickly."""
         base_url = server["base_url"]
         unknown_headers = {
-            "X-Agent-ID": "unknown_intruder",
-            "X-Zone-ID": "rebac-latency-e2e",
+            "X-Nexus-Subject": "agent:unknown_intruder",
+            "X-Nexus-Zone-ID": "rebac-latency-e2e",
         }
 
         denial_times: list[float] = []

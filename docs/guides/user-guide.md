@@ -425,6 +425,115 @@ are hot local edit paths. Guidance benchmarks live in
 `TestSandboxBootIndexerInitialWalk`. Rename/delete/mkdir/rmdir are tested
 behaviorally and treated as non-hot local edit mutations.
 
+### Sandbox ReBAC, hub-zone, and MCP tool boundaries
+
+**Goal:** let an agent platform owner prove what a sandboxed agent may read,
+write, call, and discover across the local workspace, hub-backed zones, and
+MCP tools.
+
+**Why this profile:** the sandbox profile includes `permissions`, `mcp`, and
+`search`, so the same lightweight runtime can enforce local ReBAC tuples,
+mount hub zones with token-scoped `r` or `rw` grants, and filter MCP tools by
+`/tools/...` ReBAC grants. The sandbox-provisioning brick remains disabled;
+this is about the per-agent Nexus runtime's own access boundary.
+
+Current CLI surface for the ReBAC part is the tuple-level `nexus rebac`
+workflow:
+
+```bash
+nexus rebac create agent alice direct_owner file /zone/local/notes/todo.txt \
+  --zone-id sandbox-agent-1
+nexus rebac check agent alice write file /zone/local/notes/todo.txt \
+  --zone-id sandbox-agent-1
+nexus rebac check agent charlie write file /zone/local/notes/todo.txt \
+  --zone-id sandbox-agent-1
+nexus rebac explain agent alice write file /zone/local/notes/todo.txt \
+  --zone-id sandbox-agent-1 --verbose
+```
+
+MCP tool grants use named profiles from `src/nexus/config/tool_profiles.yaml`.
+The profile CLI materializes those profiles into the same `/tools/...` ReBAC
+namespace used by MCP `tools/list` and `tools/call` filtering:
+
+```bash
+nexus mcp profile list
+nexus mcp profile show minimal
+nexus mcp profile assign agent alice minimal \
+  --zone-id sandbox-agent-1
+nexus mcp profile inspect agent alice \
+  --zone-id sandbox-agent-1 --format json
+```
+
+The tuple-level equivalent remains available when you need to inspect or
+debug the raw grants:
+
+```bash
+nexus rebac list --subject-type agent --subject-id alice \
+  --object-type file --zone-id sandbox-agent-1 --format json
+nexus rebac create agent alice direct_viewer file /tools/nexus_read_file \
+  --zone-id sandbox-agent-1
+```
+
+Equivalent RPC / SDK shape:
+
+```python
+rebac = nx.service("rebac")
+
+await rebac.rebac_create(
+    subject=("agent", "alice"),
+    relation="direct_owner",
+    object=("file", "/zone/local/notes/todo.txt"),
+    zone_id="sandbox-agent-1",
+)
+assert await rebac.rebac_check(
+    subject=("agent", "alice"),
+    permission="write",
+    object=("file", "/zone/local/notes/todo.txt"),
+    zone_id="sandbox-agent-1",
+)
+
+# Tool-profile helper used by provisioning code:
+from pathlib import Path
+
+from nexus.bricks.mcp.profiles import grant_tools_for_profile, load_profiles
+
+profile = load_profiles(Path("src/nexus/config/tool_profiles.yaml")).get_profile("minimal")
+grant_tools_for_profile(
+    rebac_manager=nx.service("rebac")._rebac_manager,
+    subject=("agent", "alice"),
+    profile=profile,
+    zone_id="sandbox-agent-1",
+)
+```
+
+Expected behavior:
+
+- **Success:** Alice's local write check is granted after the tuple exists,
+  and MCP `tools/list` or discovery tools show only tools whose
+  `/tools/<name>` paths are visible to Alice.
+- **Denied:** Charlie's write check is false until a tuple grants access.
+  A write to a hub zone mounted with permission `r` fails before a remote
+  transport mutation is attempted; the `rw` hub zone path can write.
+- **Unavailable:** invisible MCP tools return `not found`, not a permission
+  detail, so the agent does not learn restricted tool names.
+
+**Correctness assertions:** the ReBAC tuple/check/list/explain RPC and CLI
+rows are covered by `tests/unit/services/test_rebac_service.py` and the
+ReBAC story gate in `tests/architecture/test_rebac_surface_story.py`.
+Read-only hub-zone fast-fail is covered by
+`tests/unit/backends/test_remote_zone.py::TestRemoteZoneBackendReadOnly::test_all_write_mutations_fail_before_remote_transport_call`
+and the sandbox federation E2E. Tool-profile assignment and grants affecting
+visible and callable tools are covered by `tests/unit/cli/test_mcp_profile_cli.py`
+and
+`tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial`.
+
+**Performance classification:** permission checks are hot path and benchmarked
+in `tests/benchmarks/test_rebac_latency.py` and
+`tests/benchmarks/bench_rebac_scale.py`. MCP cached `tools/list` filtering
+and read-only hub-zone write fast-fail are hot-path guardrails in
+`tests/benchmarks/bench_permission_hotpath.py`. Tool-profile assignment is a
+control-plane setup operation and is not performance-sensitive.
+
 ## 2.1 Capability checklist for a serious demo
 
 If you are evaluating Nexus as more than a toy filesystem, the first real

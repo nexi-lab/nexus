@@ -104,6 +104,12 @@ class BootIndexer:
             raise FileNotFoundError(
                 f"workspace directory does not exist or is not a directory: {self._workspace}"
             )
+        if self._search_daemon is None or not hasattr(self._search_daemon, "index_file"):
+            logger.info(
+                "[BootIndexer] search daemon unavailable, skipping workspace indexing for %s",
+                self._workspace,
+            )
+            return
 
         indexed = 0
         errors = 0

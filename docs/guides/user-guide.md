@@ -1684,6 +1684,119 @@ nexus connectors info gcs_connector
 If your build exposes `nexus mounts`, that is the persistent mount management
 group for attaching external backends under virtual paths.
 
+#### Mount External Data Source, List Tools, And Use Them
+
+Goal: in the `full` profile, attach an external source under a Nexus virtual
+path, expose the resulting filesystem/search tools through MCP, and verify that
+auth and SSRF boundaries fail closed.
+
+CLI flow:
+
+```bash
+export NEXUS_PROFILE=full
+export NEXUS_URL="http://localhost:2026"
+export NEXUS_API_KEY="..."
+
+nexus connectors list --category api
+nexus mounts add /sources/hn hn '{}'
+nexus mounts list --json
+nexus mcp serve --transport http --port 8081 --remote-url "$NEXUS_URL"
+```
+
+Use any MCP client against `http://localhost:8081/mcp` with
+`Authorization: Bearer $NEXUS_API_KEY`, call `tools/list`, then call a file or
+search tool such as `nexus_list_files` with `{"path": "/sources/hn"}`. The mount
+is correct when `/sources/hn` appears in `nexus mounts list` and the MCP tool
+call can read or list under that path without leaking sibling zones.
+
+Equivalent RPC/SDK flow:
+
+```python
+import nexus
+from nexus.remote.domain import MCPClient, OAuthClient
+
+nx = nexus.connect(
+    config={"profile": "remote", "url": "http://localhost:2026", "api_key": "..."}
+)
+
+connectors = nx.list_connectors(category="api")
+assert any(c["name"] == "hn" for c in connectors)
+
+mount_id = nx.add_mount(
+    mount_point="/sources/hn",
+    backend_type="hn",
+    backend_config={},
+)
+assert mount_id == "/sources/hn"
+
+mounts = nx.list_mounts()
+assert {"mount_point": "/sources/hn"} in mounts
+```
+
+For an external MCP server, use the MCP service RPCs directly:
+
+```python
+mcp = MCPClient(nx._call_rpc)
+mcp.mount(name="github", url="https://mcp.example.com/sse", transport="sse")
+tools = mcp.list_tools("github")
+mcp.sync("github")
+mcp.unmount("github")
+```
+
+These SDK helpers call the underlying RPC names `mcp_mount`, `mcp_list_tools`,
+`mcp_sync`, and `mcp_unmount`.
+
+OAuth-backed connectors use the OAuth credential RPCs or CLI helpers:
+
+```bash
+nexus oauth list
+nexus oauth setup-gdrive --user-email alice@example.com
+nexus oauth test google alice@example.com
+nexus oauth revoke google alice@example.com
+```
+
+```python
+oauth = OAuthClient(nx._call_rpc)
+auth_url = oauth.get_auth_url(
+    provider="google-drive",
+    redirect_uri="http://localhost:2026/oauth/callback",
+)
+oauth.exchange_code(
+    provider="google-drive",
+    code="4/...",
+    user_email="alice@example.com",
+)
+oauth.list_credentials(provider="google-drive")
+```
+
+The helper methods map to `oauth_get_auth_url`, `oauth_exchange_code`,
+`oauth_list_credentials`, `oauth_revoke_credential`, and `oauth_test_credential`.
+
+Expected behavior:
+
+- Success: `add_mount` returns the mount point, `list_mounts` returns only mounts
+  visible to the caller, and MCP `tools/list`/`tools/call` run with the caller's
+  bearer identity.
+- Denial: a caller without write permission on the parent path cannot add or
+  remove a mount; MCP HTTP with `NEXUS_MCP_REQUIRE_BEARER=true` returns 401
+  without a bearer token and 403 for non-admin mount administration.
+- SSRF: remote MCP `sse`/`http` URLs are validated before connection. Private,
+  loopback, link-local, or operator-denied CIDRs are blocked unless an approval
+  policy explicitly allows the host and re-validation still passes.
+- Unavailable: `reauth_mount` and `update_mount` preserve stable unavailable or
+  no-change results when the runtime has no retained Python backend object for
+  that mount; refresh credentials through `nexus oauth setup-*` or
+  `oauth_exchange_code` before remounting.
+
+Correctness assertion: after mounting, `nexus mounts list --json` contains the
+mount point, `tools/list` shows only tools granted to the subject, and an MCP
+tool call under `/sources/hn` succeeds with the same zone visibility as the
+equivalent RPC read/list operation.
+
+Performance classification: connector and OAuth setup is control-plane work;
+mount add/list is a setup/control-plane path. MCP `tools/list` and `tools/call`
+are request hot paths and use the permission hot-path benchmark coverage.
+
 ### 12.2 OAuth-backed integrations
 
 ```bash

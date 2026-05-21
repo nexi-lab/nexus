@@ -439,7 +439,7 @@ operations:
   owning_issue: null
 - id: add.mount
   module: mount
-  summary: ''
+  summary: Activate a backend connector under a Nexus virtual path and grant the creator owner permissions.
   transports:
     grpc_expose:
       name: add_mount
@@ -448,12 +448,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts add /sources/hn hn ''{}''; RPC: add_mount(mount_point=''/sources/hn'', backend_type=''hn'',
+    backend_config={}) returns ''/sources/hn''.'
+  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: admin.reindex
   module: search
   summary: ''
@@ -528,7 +530,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.agent_registry
-      source: src/nexus/remote/kernel_client.py:738
+      source: src/nexus/remote/kernel_client.py:794
   profiles:
     lite: supported
     sandbox: supported
@@ -1671,7 +1673,7 @@ operations:
   owning_issue: null
 - id: auth.oauth
   module: auth
-  summary: ''
+  summary: CLI command group for OAuth credential discovery, setup, validation, and revocation.
   transports:
     cli:
       name: nexus oauth
@@ -1680,12 +1682,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus oauth list; nexus oauth setup-gdrive --user-email alice@example.com; RPC: oauth_list_credentials/oauth_get_auth_url/oauth_exchange_code
+    provide the same lifecycle.'
+  correctness_test: tests/unit/cli/test_auth_cli.py; tests/unit/services/test_oauth_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: auth.tls
   module: auth
   summary: ''
@@ -2100,7 +2103,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:1912
+      source: src/nexus/core/nexus_fs_metadata.py:2027
     sdk:
       name: MCPClient.backfill_directory_index
       source: src/nexus/remote/domain/mcp.py:91
@@ -2290,7 +2293,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_pipes
-      source: src/nexus/remote/kernel_client.py:661
+      source: src/nexus/remote/kernel_client.py:717
   profiles:
     lite: supported
     sandbox: supported
@@ -2307,7 +2310,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_streams
-      source: src/nexus/remote/kernel_client.py:697
+      source: src/nexus/remote/kernel_client.py:753
   profiles:
     lite: supported
     sandbox: supported
@@ -2324,7 +2327,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_pipe
-      source: src/nexus/remote/kernel_client.py:655
+      source: src/nexus/remote/kernel_client.py:711
   profiles:
     lite: supported
     sandbox: supported
@@ -2341,7 +2344,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_stream
-      source: src/nexus/remote/kernel_client.py:691
+      source: src/nexus/remote/kernel_client.py:747
   profiles:
     lite: supported
     sandbox: supported
@@ -2354,7 +2357,7 @@ operations:
   owning_issue: null
 - id: connectors.api_v2
   module: mount
-  summary: ''
+  summary: HTTP endpoint listing registered connector types and capabilities for mount selection.
   transports:
     http:
       name: GET /api/v2/connectors
@@ -2363,15 +2366,17 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus connectors list --json; RPC: GET /api/v2/connectors returns connectors used by list_connectors(category).'
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+    tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: connectors.auth_init
   module: auth
-  summary: ''
+  summary: Start connector authentication flow and return the next OAuth or secret-collection step.
   transports:
     http:
       name: POST /api/v2/connectors/auth/init
@@ -2380,15 +2385,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus oauth setup-gdrive --user-email alice@example.com; RPC: POST /api/v2/connectors/auth/init starts
+    connector auth for UI clients.'
+  correctness_test: tests/integration/services/test_connectors_auth.py; tests/unit/services/test_oauth_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: connectors.auth_status
   module: auth
-  summary: ''
+  summary: Report whether a connector has usable stored, native, or missing credentials for the caller.
   transports:
     http:
       name: GET /api/v2/connectors/auth/status
@@ -2397,15 +2403,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus oauth test google alice@example.com; RPC: GET /api/v2/connectors/auth/status reports authed,
+    expired, missing, or unavailable states.'
+  correctness_test: tests/integration/services/test_connectors_auth.py; tests/unit/auth/test_unified_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: connectors.available
   module: mount
-  summary: ''
+  summary: HTTP endpoint listing connectors with current auth status for the caller.
   transports:
     http:
       name: GET /api/v2/connectors/available
@@ -2414,12 +2421,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus connectors list shows available types; RPC: GET /api/v2/connectors/available includes auth_status/auth_source
+    for connector setup UI.'
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+    tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: connectors.get
   module: mount
   summary: ''
@@ -2439,7 +2449,7 @@ operations:
   owning_issue: null
 - id: connectors.mount
   module: mount
-  summary: ''
+  summary: HTTP connector mount endpoint used by the mounts CLI to attach an external backend path.
   transports:
     http:
       name: POST /api/v2/connectors/mount
@@ -2448,15 +2458,18 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts add /sources/hn hn ''{}''; RPC: POST /api/v2/connectors/mount with connector_type, mount_point,
+    and config returns mounted=true.'
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+    tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: connectors.mounts
   module: mount
-  summary: ''
+  summary: HTTP endpoint listing mounted connectors for remote CLI and UI clients.
   transports:
     http:
       name: GET /api/v2/connectors/mounts
@@ -2465,12 +2478,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts list --json; RPC: GET /api/v2/connectors/mounts returns mounted connector records.'
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+    tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: connectors.name_capabilities
   module: mount
   summary: ''
@@ -2558,7 +2573,7 @@ operations:
   owning_issue: null
 - id: connectors.unmount
   module: mount
-  summary: ''
+  summary: HTTP endpoint used by the mounts CLI to remove an active connector mount.
   transports:
     http:
       name: POST /api/v2/connectors/unmount
@@ -2567,12 +2582,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts remove /sources/hn; RPC: POST /api/v2/connectors/unmount removes the mount_point.'
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+    tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: connectors.write_mount_path:path
   module: mount
   summary: ''
@@ -2664,7 +2681,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_pipe
-      source: src/nexus/remote/kernel_client.py:649
+      source: src/nexus/remote/kernel_client.py:705
   profiles:
     lite: supported
     sandbox: supported
@@ -2698,7 +2715,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_stream
-      source: src/nexus/remote/kernel_client.py:666
+      source: src/nexus/remote/kernel_client.py:722
   profiles:
     lite: supported
     sandbox: supported
@@ -3039,7 +3056,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1434
+      source: src/nexus/core/nexus_fs_metadata.py:1433
   profiles:
     lite: supported
     sandbox: supported
@@ -3088,7 +3105,7 @@ operations:
   owning_issue: null
 - id: delete.saved_mount
   module: mount
-  summary: ''
+  summary: Delete persisted mount configuration without necessarily deactivating an active runtime mount.
   transports:
     grpc_expose:
       name: delete_saved_mount
@@ -3097,12 +3114,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: no dedicated saved-delete command yet, use nexus mounts remove for runtime cleanup; RPC: delete_saved_mount(mount_point="/sources/hn")
+    removes stored config.'
+  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: deprovision.user
   module: identity
   summary: ''
@@ -3126,7 +3145,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_pipe
-      source: src/nexus/remote/kernel_client.py:652
+      source: src/nexus/remote/kernel_client.py:708
   profiles:
     lite: supported
     sandbox: supported
@@ -3143,7 +3162,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_stream
-      source: src/nexus/remote/kernel_client.py:694
+      source: src/nexus/remote/kernel_client.py:750
   profiles:
     lite: supported
     sandbox: supported
@@ -3248,7 +3267,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_post_hooks
-      source: src/nexus/remote/kernel_client.py:455
+      source: src/nexus/remote/kernel_client.py:511
   profiles:
     lite: supported
     sandbox: supported
@@ -3265,7 +3284,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks
-      source: src/nexus/remote/kernel_client.py:462
+      source: src/nexus/remote/kernel_client.py:518
   profiles:
     lite: supported
     sandbox: supported
@@ -3282,7 +3301,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks_batch_stat
-      source: src/nexus/remote/kernel_client.py:490
+      source: src/nexus/remote/kernel_client.py:546
   profiles:
     lite: supported
     sandbox: supported
@@ -3744,10 +3763,10 @@ operations:
   transports:
     grpc_expose:
       name: exists_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1329
+      source: src/nexus/core/nexus_fs_metadata.py:1328
     sdk:
       name: KernelClient.exists_batch
-      source: src/nexus/remote/kernel_client.py:516
+      source: src/nexus/remote/kernel_client.py:572
   profiles:
     lite: supported
     sandbox: supported
@@ -4654,7 +4673,7 @@ operations:
       source: src/nexus/cli/commands/file_ops.py:1
     grpc_expose:
       name: stat
-      source: src/nexus/core/nexus_fs_metadata.py:1109
+      source: src/nexus/core/nexus_fs_metadata.py:1108
   profiles:
     lite: supported
     sandbox: supported
@@ -4803,7 +4822,7 @@ operations:
   transports:
     grpc_expose:
       name: flush_write_observer
-      source: src/nexus/core/nexus_fs_metadata.py:1942
+      source: src/nexus/core/nexus_fs_metadata.py:2057
   profiles:
     lite: supported
     sandbox: supported
@@ -4956,7 +4975,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.open
-      source: src/nexus/remote/kernel_client.py:73
+      source: src/nexus/remote/kernel_client.py:120
   profiles:
     lite: supported
     sandbox: supported
@@ -4990,7 +5009,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register
-      source: src/nexus/remote/kernel_client.py:915
+      source: src/nexus/remote/kernel_client.py:971
   profiles:
     lite: supported
     sandbox: supported
@@ -5126,7 +5145,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister
-      source: src/nexus/remote/kernel_client.py:918
+      source: src/nexus/remote/kernel_client.py:974
   profiles:
     lite: supported
     sandbox: supported
@@ -5242,7 +5261,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:627
     sdk:
       name: KernelClient.get_content_id
-      source: src/nexus/remote/kernel_client.py:507
+      source: src/nexus/remote/kernel_client.py:563
   profiles:
     lite: supported
     sandbox: supported
@@ -5310,7 +5329,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_mount_points
-      source: src/nexus/remote/kernel_client.py:521
+      source: src/nexus/remote/kernel_client.py:577
   profiles:
     lite: supported
     sandbox: supported
@@ -5432,7 +5451,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:268
     sdk:
       name: KernelClient.get_top_level_mounts
-      source: src/nexus/remote/kernel_client.py:525
+      source: src/nexus/remote/kernel_client.py:581
   profiles:
     lite: supported
     sandbox: supported
@@ -5483,7 +5502,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_xattr
-      source: src/nexus/remote/kernel_client.py:622
+      source: src/nexus/remote/kernel_client.py:678
   profiles:
     lite: supported
     sandbox: supported
@@ -5500,7 +5519,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_xattr_bulk
-      source: src/nexus/remote/kernel_client.py:637
+      source: src/nexus/remote/kernel_client.py:693
   profiles:
     lite: supported
     sandbox: supported
@@ -5517,7 +5536,7 @@ operations:
   transports:
     grpc_expose:
       name: glob_batch
-      source: src/nexus/bricks/search/search_service.py:1923
+      source: src/nexus/bricks/search/search_service.py:1882
   profiles:
     lite: supported
     sandbox: supported
@@ -5721,7 +5740,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_pipe
-      source: src/nexus/remote/kernel_client.py:658
+      source: src/nexus/remote/kernel_client.py:714
   profiles:
     lite: supported
     sandbox: supported
@@ -5738,7 +5757,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_stream
-      source: src/nexus/remote/kernel_client.py:669
+      source: src/nexus/remote/kernel_client.py:725
   profiles:
     lite: supported
     sandbox: supported
@@ -5773,7 +5792,7 @@ operations:
   transports:
     http:
       name: GET /health/detailed
-      source: src/nexus/server/api/core/health.py:65
+      source: src/nexus/server/api/core/health.py:67
   profiles:
     lite: supported
     sandbox: supported
@@ -5790,7 +5809,7 @@ operations:
   transports:
     http:
       name: GET /metrics/pool
-      source: src/nexus/server/api/core/health.py:203
+      source: src/nexus/server/api/core/health.py:205
   profiles:
     lite: supported
     sandbox: supported
@@ -5807,7 +5826,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.hook_count
-      source: src/nexus/remote/kernel_client.py:452
+      source: src/nexus/remote/kernel_client.py:508
   profiles:
     lite: supported
     sandbox: supported
@@ -5971,7 +5990,7 @@ operations:
   transports:
     grpc_expose:
       name: initialize_semantic_search
-      source: src/nexus/bricks/search/search_service.py:4191
+      source: src/nexus/bricks/search/search_service.py:4150
   profiles:
     lite: supported
     sandbox: supported
@@ -5989,7 +6008,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.is_directory
-      source: src/nexus/remote/kernel_client.py:498
+      source: src/nexus/remote/kernel_client.py:554
   profiles:
     lite: supported
     sandbox: supported
@@ -6145,7 +6164,7 @@ operations:
       source: src/nexus/services/agents/agent_rpc_service.py:497
     sdk:
       name: _AgentRegistryProxy.list_agents
-      source: src/nexus/remote/kernel_client.py:921
+      source: src/nexus/remote/kernel_client.py:977
   profiles:
     lite: supported
     sandbox: supported
@@ -6158,7 +6177,7 @@ operations:
   owning_issue: null
 - id: list.connectors
   module: mount
-  summary: ''
+  summary: List connector backend types available for dynamic mounts, optionally filtered by category.
   transports:
     grpc_expose:
       name: list_connectors
@@ -6167,12 +6186,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus connectors list --category api --json; RPC: list_connectors(category="api") returns connector
+    metadata and user_scoped flags.'
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+    tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: list.credentials
   module: filesystem
   summary: ''
@@ -6243,7 +6265,7 @@ operations:
   owning_issue: null
 - id: list.mounts
   module: mount
-  summary: ''
+  summary: List active backend mounts visible to the caller after permission filtering.
   transports:
     grpc_expose:
       name: list_mounts
@@ -6255,12 +6277,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts list --json; RPC: list_mounts() returns [{"mount_point": "/sources/hn"}] for visible mounts.'
+  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: list.outgoing_shares
   module: rebac
   summary: List shared-* tuples granted on a resource with immediate revoke visibility.
@@ -6399,7 +6422,7 @@ operations:
   owning_issue: null
 - id: load.mount
   module: mount
-  summary: ''
+  summary: Load a saved mount configuration and activate it through the normal add_mount path.
   transports:
     grpc_expose:
       name: load_mount
@@ -6408,12 +6431,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: no dedicated saved-load command yet, use nexus mounts add for normal UX; RPC: load_mount(mount_point="/sources/hn")
+    activates stored config.'
+  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: load.workspace_config
   module: workspace
   summary: ''
@@ -6586,52 +6611,58 @@ operations:
   owning_issue: null
 - id: mcp.connect
   module: mcp
-  summary: ''
+  summary: Create a hosted MCP provider connection, reusing stored OAuth credentials when possible.
   transports:
     grpc_expose:
       name: mcp_connect
       source: src/nexus/bricks/mcp/mcp_service.py:528
   profiles:
-    lite: supported
+    lite: unavailable
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mcp serve --transport http exposes the MCP frontend; RPC: mcp_connect(provider="google_drive",
+    redirect_url="http://localhost:2026/oauth/callback") returns strata_url or oauth_url.'
+  correctness_test: tests/unit/services/test_smoke.py; tests/unit/bricks/mcp/test_oauth_mappings.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: setup
+  perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
+    operations.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: mcp.list_mounts
   module: mcp
-  summary: ''
+  summary: List configured MCP server mounts, optionally filtered by user/zone/system tier.
   transports:
     grpc_expose:
       name: mcp_list_mounts
       source: src/nexus/bricks/mcp/mcp_service.py:139
   profiles:
-    lite: supported
+    lite: unavailable
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mcp serve --transport http then MCP clients can inspect mounted tools; RPC: mcp_list_mounts(include_unmounted=true,
+    tier="system") returns mount metadata.'
+  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py;
+    tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
+    operations.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: mcp.list_tools
   module: mcp
-  summary: List mounted MCP tools; the sandbox tool namespace middleware filters the visible set by ReBAC /tools/... grants.
+  summary: List mounted MCP tools; the tool namespace middleware filters the visible set by ReBAC /tools/... grants.
   transports:
     grpc_expose:
       name: mcp_list_tools
       source: src/nexus/bricks/mcp/mcp_service.py:205
   profiles:
-    lite: supported
+    lite: unavailable
     sandbox: supported
     full: supported
-  usage_example: 'RPC/MCP: mcp_list_tools("github") or MCP tools/list returns only tools visible to the current subject after
-    profile grants are materialized.'
-  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  usage_example: 'CLI: nexus mcp serve --transport http exposes tools/list to MCP clients; RPC: mcp_list_tools("github") returns
+    only tools visible to the current subject after profile grants are materialized.'
+  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial;
+    tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: null
@@ -6655,38 +6686,43 @@ operations:
   owning_issue: null
 - id: mcp.mount
   module: mcp
-  summary: ''
+  summary: Mount an external MCP server over stdio, SSE, HTTP, or Klavis and discover its tools.
   transports:
     grpc_expose:
       name: mcp_mount
       source: src/nexus/bricks/mcp/mcp_service.py:297
   profiles:
-    lite: supported
+    lite: unavailable
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mcp serve exposes the frontend while MCP mount administration is RPC/HTTP; RPC: mcp_mount(name="github",
+    url="https://mcp.example.com/sse", transport="sse") returns mounted=true and tool_count.'
+  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py;
+    tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: setup
+  perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
+    operations.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: mcp.mounts
   module: mcp
-  summary: ''
+  summary: HTTP admin endpoint for creating MCP mounts with bearer/admin checks and SSRF validation delegated to MCPService.
   transports:
     http:
       name: POST /api/v2/mcp/mounts
       source: src/nexus/server/api/v2/routers/mcp.py:105
   profiles:
-    lite: supported
+    lite: unavailable
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mcp serve --transport http runs the frontend; RPC: POST /api/v2/mcp/mounts calls mcp_mount for
+    admin users and rejects missing/non-admin bearers.'
+  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/integration/mcp/test_ssrf_wiring.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: setup
+  perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
+    operations.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: mcp.mounts_name
   module: mcp
   summary: ''
@@ -6723,26 +6759,29 @@ operations:
   owning_issue: null
 - id: mcp.sync
   module: mcp
-  summary: ''
+  summary: Refresh tool definitions from a mounted MCP server after its advertised tools change.
   transports:
     grpc_expose:
       name: mcp_sync
       source: src/nexus/bricks/mcp/mcp_service.py:469
   profiles:
-    lite: supported
+    lite: unavailable
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: restart or keep nexus mcp serve running for clients; RPC: mcp_sync(name="github") refreshes tool files
+    and returns tool_count.'
+  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py;
+    tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
+    operations.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: mcp.tool_profile_assign
   module: mcp
   summary: '`nexus mcp profile assign SUBJECT_TYPE SUBJECT_ID PROFILE --zone-id ZONE`: assign a configured MCP tool profile
-    to an agent or user; `nexus mcp profile inspect SUBJECT_TYPE SUBJECT_ID --zone-id ZONE` shows the resulting
-    effective /tools/... ReBAC grants.'
+    to an agent or user; `nexus mcp profile inspect SUBJECT_TYPE SUBJECT_ID --zone-id ZONE` shows the resulting effective
+    /tools/... ReBAC grants.'
   transports:
     cli:
       name: nexus mcp profile assign
@@ -6751,7 +6790,8 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus mcp profile assign agent alice coding --zone-id sandbox-agent-1; nexus mcp profile inspect agent alice --zone-id sandbox-agent-1 --format json'
+  usage_example: 'CLI: nexus mcp profile assign agent alice coding --zone-id sandbox-agent-1; nexus mcp profile inspect agent
+    alice --zone-id sandbox-agent-1 --format json'
   correctness_test: tests/unit/cli/test_mcp_profile_cli.py; tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
   perf_class: setup
   perf_link: setup/control-plane operation; effective tools/list filtering remains the hot path and is benchmarked in tests/benchmarks/bench_permission_hotpath.py
@@ -6759,21 +6799,24 @@ operations:
   owning_issue: 4128
 - id: mcp.unmount
   module: mcp
-  summary: ''
+  summary: Unmount an MCP server and close its active client/subprocess connection.
   transports:
     grpc_expose:
       name: mcp_unmount
       source: src/nexus/bricks/mcp/mcp_service.py:420
   profiles:
-    lite: supported
+    lite: unavailable
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: stop nexus mcp serve to remove the frontend process; RPC: mcp_unmount(name="github") returns success=true
+    for an existing mount.'
+  correctness_test: tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py;
+    tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: tests/benchmarks/bench_permission_hotpath.py covers MCP tools/list; mount/connect/sync/unmount are setup/control-plane
+    operations.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: metadata.batch
   module: filesystem
   summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
@@ -6781,7 +6824,7 @@ operations:
   transports:
     grpc_expose:
       name: metadata_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1339
+      source: src/nexus/core/nexus_fs_metadata.py:1338
   profiles:
     lite: supported
     sandbox: supported
@@ -6799,7 +6842,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.metastore_list_paginated
-      source: src/nexus/remote/kernel_client.py:533
+      source: src/nexus/remote/kernel_client.py:589
   profiles:
     lite: supported
     sandbox: supported
@@ -6880,7 +6923,7 @@ operations:
   owning_issue: null
 - id: mount.connectors
   module: mount
-  summary: ''
+  summary: CLI command group for discovering connector types before mounting external sources.
   transports:
     cli:
       name: nexus connectors
@@ -6889,12 +6932,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus connectors list --category api; RPC: list_connectors(category="api") returns the same connector
+    inventory shape.'
+  correctness_test: tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py;
+    tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: mount.down
   module: mount
   summary: ''
@@ -6914,7 +6960,7 @@ operations:
   owning_issue: null
 - id: mount.mounts
   module: mount
-  summary: ''
+  summary: 'CLI command group for connector mount lifecycle: add, list, info, remove, update, and reauth.'
   transports:
     cli:
       name: nexus mounts
@@ -6923,12 +6969,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts add /sources/hn hn ''{}'' && nexus mounts list --json; RPC: add_mount/list_mounts/remove_mount
+    provide the equivalent lifecycle.'
+  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: mount.restart
   module: mount
   summary: ''
@@ -7369,7 +7417,7 @@ operations:
   owning_issue: 4127
 - id: oauth.exchange_code
   module: auth
-  summary: ''
+  summary: Exchange an OAuth authorization code for encrypted stored credentials scoped to user and zone.
   transports:
     grpc_expose:
       name: oauth_exchange_code
@@ -7378,15 +7426,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus oauth setup-gdrive --user-email alice@example.com completes code exchange; RPC: oauth_exchange_code(provider="google-drive",
+    code="4/...", user_email="alice@example.com") stores the credential.'
+  correctness_test: tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: oauth.get_auth_url
   module: auth
-  summary: ''
+  summary: Create an OAuth authorization URL and PKCE state for a provider.
   transports:
     grpc_expose:
       name: oauth_get_auth_url
@@ -7395,15 +7444,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus oauth setup-gdrive --user-email alice@example.com opens the provider flow; RPC: oauth_get_auth_url(provider="google-drive",
+    redirect_uri="http://localhost:2026/oauth/callback") returns auth_url and state.'
+  correctness_test: tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: oauth.list_credentials
   module: auth
-  summary: ''
+  summary: List non-revoked OAuth credentials visible to the caller, with admin/user filtering.
   transports:
     grpc_expose:
       name: oauth_list_credentials
@@ -7412,15 +7462,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus oauth list --zone-id org_acme; RPC: oauth_list_credentials(provider="google-drive") returns stored
+    credential metadata without tokens.'
+  correctness_test: tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: oauth.list_providers
   module: auth
-  summary: ''
+  summary: List configured OAuth providers, scopes, PKCE requirements, and display metadata.
   transports:
     grpc_expose:
       name: oauth_list_providers
@@ -7429,15 +7480,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus oauth list shows stored credentials; RPC: oauth_list_providers() returns available OAuth provider
+    definitions for setup UI.'
+  correctness_test: tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: oauth.revoke_credential
   module: auth
-  summary: ''
+  summary: Revoke a stored OAuth credential after ownership checks.
   transports:
     grpc_expose:
       name: oauth_revoke_credential
@@ -7446,15 +7498,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus oauth revoke google alice@example.com; RPC: oauth_revoke_credential(provider="google", user_email="alice@example.com")
+    returns success=true.'
+  correctness_test: tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: oauth.test_credential
   module: auth
-  summary: ''
+  summary: Validate an OAuth credential and report whether it can be used or refreshed.
   transports:
     grpc_expose:
       name: oauth_test_credential
@@ -7463,12 +7516,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus oauth test google alice@example.com; RPC: oauth_test_credential(provider="google", user_email="alice@example.com")
+    returns valid/error metadata.'
+  correctness_test: tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: operations.agents_agent_id
   module: uncategorized
   summary: ''
@@ -8475,7 +8529,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1600
     sdk:
       name: KernelClient.read_batch
-      source: src/nexus/remote/kernel_client.py:367
+      source: src/nexus/remote/kernel_client.py:423
   profiles:
     lite: supported
     sandbox: supported
@@ -8561,7 +8615,7 @@ operations:
   owning_issue: 4134
 - id: reauth.mount
   module: mount
-  summary: ''
+  summary: Refresh or rotate OAuth credentials for a mounted connector when a runtime backend supports token refresh.
   transports:
     grpc_expose:
       name: reauth_mount
@@ -8570,12 +8624,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts reauth /sources/drive --provider google --email alice@example.com; RPC: reauth_mount(mount_point="/sources/drive",
+    provider="google", user_email="alice@example.com") refreshes or returns a stable unavailable error.'
+  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: rebac.access
   module: rebac
   summary: ''
@@ -8804,7 +8859,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_hook
-      source: src/nexus/remote/kernel_client.py:469
+      source: src/nexus/remote/kernel_client.py:525
   profiles:
     lite: supported
     sandbox: supported
@@ -8838,7 +8893,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_native_hook
-      source: src/nexus/remote/kernel_client.py:716
+      source: src/nexus/remote/kernel_client.py:772
   profiles:
     lite: supported
     sandbox: supported
@@ -8902,7 +8957,7 @@ operations:
   owning_issue: null
 - id: remove.mount
   module: mount
-  summary: ''
+  summary: Deactivate a backend mount and clean up routing, metadata, and permission tuples.
   transports:
     grpc_expose:
       name: remove_mount
@@ -8911,12 +8966,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts remove /sources/hn; RPC: remove_mount(mount_point=''/sources/hn'') returns removal details
+    with removed=true.'
+  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: rename.batch
   module: filesystem
   summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
@@ -8924,7 +8981,7 @@ operations:
   transports:
     grpc_expose:
       name: rename_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1573
+      source: src/nexus/core/nexus_fs_metadata.py:1572
   profiles:
     lite: supported
     sandbox: supported
@@ -9162,7 +9219,7 @@ operations:
   owning_issue: null
 - id: save.mount
   module: mount
-  summary: ''
+  summary: Persist a mount configuration so it can be loaded on demand or restored after restart.
   transports:
     grpc_expose:
       name: save_mount
@@ -9171,12 +9228,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts add /sources/hn hn ''{}'' persists through the connector HTTP path; RPC: save_mount(''/sources/hn'',
+    ''hn'', {}) stores reusable config.'
+  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: scheduler.classify
   module: task_manager
   summary: ''
@@ -9302,7 +9361,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1322
+      source: src/nexus/server/api/v2/routers/search.py:1340
   profiles:
     lite: supported
     sandbox: supported
@@ -9323,10 +9382,10 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: glob
-      source: src/nexus/bricks/search/search_service.py:1738
+      source: src/nexus/bricks/search/search_service.py:1697
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1203
+      source: src/nexus/server/api/v2/routers/search.py:1221
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -9350,10 +9409,10 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: grep
-      source: src/nexus/bricks/search/search_service.py:1980
+      source: src/nexus/bricks/search/search_service.py:1939
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1082
+      source: src/nexus/server/api/v2/routers/search.py:1100
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -9406,7 +9465,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1265
+      source: src/nexus/server/api/v2/routers/search.py:1283
   profiles:
     lite: supported
     sandbox: supported
@@ -9424,7 +9483,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index-directory
-      source: src/nexus/server/api/v2/routers/search.py:1464
+      source: src/nexus/server/api/v2/routers/search.py:1482
   profiles:
     lite: supported
     sandbox: supported
@@ -9441,7 +9500,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/indexed-dirs
-      source: src/nexus/server/api/v2/routers/search.py:1682
+      source: src/nexus/server/api/v2/routers/search.py:1700
   profiles:
     lite: supported
     sandbox: supported
@@ -9458,7 +9517,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/indexing-mode
-      source: src/nexus/server/api/v2/routers/search.py:1719
+      source: src/nexus/server/api/v2/routers/search.py:1737
   profiles:
     lite: supported
     sandbox: supported
@@ -9475,7 +9534,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/locate
-      source: src/nexus/server/api/v2/routers/search.py:1900
+      source: src/nexus/server/api/v2/routers/search.py:1918
   profiles:
     lite: supported
     sandbox: supported
@@ -9492,7 +9551,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/purge-unscoped
-      source: src/nexus/server/api/v2/routers/search.py:1846
+      source: src/nexus/server/api/v2/routers/search.py:1864
   profiles:
     lite: supported
     sandbox: supported
@@ -9528,7 +9587,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:558
+      source: src/nexus/server/api/v2/routers/search.py:569
   profiles:
     lite: supported
     sandbox: supported
@@ -9545,7 +9604,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1301
+      source: src/nexus/server/api/v2/routers/search.py:1319
   profiles:
     lite: supported
     sandbox: supported
@@ -9836,7 +9895,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search
-      source: src/nexus/bricks/search/search_service.py:3791
+      source: src/nexus/bricks/search/search_service.py:3750
     mcp:
       name: nexus_semantic_search
       source: src/nexus/config/tool_profiles.yaml:1
@@ -9856,7 +9915,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_index
-      source: src/nexus/bricks/search/search_service.py:4106
+      source: src/nexus/bricks/search/search_service.py:4065
   profiles:
     lite: supported
     sandbox: supported
@@ -9873,7 +9932,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_stats
-      source: src/nexus/bricks/search/search_service.py:4143
+      source: src/nexus/bricks/search/search_service.py:4102
   profiles:
     lite: supported
     sandbox: supported
@@ -9890,7 +9949,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_close_all
-      source: src/nexus/remote/kernel_client.py:444
+      source: src/nexus/remote/kernel_client.py:500
   profiles:
     lite: supported
     sandbox: supported
@@ -9907,7 +9966,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_enlist
-      source: src/nexus/remote/kernel_client.py:431
+      source: src/nexus/remote/kernel_client.py:487
   profiles:
     lite: supported
     sandbox: supported
@@ -9924,7 +9983,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_lookup
-      source: src/nexus/remote/kernel_client.py:419
+      source: src/nexus/remote/kernel_client.py:475
   profiles:
     lite: supported
     sandbox: supported
@@ -9941,7 +10000,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_mark_bootstrapped
-      source: src/nexus/remote/kernel_client.py:416
+      source: src/nexus/remote/kernel_client.py:472
   profiles:
     lite: supported
     sandbox: supported
@@ -9958,7 +10017,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_start_all
-      source: src/nexus/remote/kernel_client.py:413
+      source: src/nexus/remote/kernel_client.py:469
   profiles:
     lite: supported
     sandbox: supported
@@ -9975,7 +10034,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_stop_all
-      source: src/nexus/remote/kernel_client.py:441
+      source: src/nexus/remote/kernel_client.py:497
   profiles:
     lite: supported
     sandbox: supported
@@ -9992,7 +10051,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_swap
-      source: src/nexus/remote/kernel_client.py:423
+      source: src/nexus/remote/kernel_client.py:479
   profiles:
     lite: supported
     sandbox: supported
@@ -10009,7 +10068,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_unregister
-      source: src/nexus/remote/kernel_client.py:603
+      source: src/nexus/remote/kernel_client.py:659
   profiles:
     lite: supported
     sandbox: supported
@@ -10026,7 +10085,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_hook_count
-      source: src/nexus/remote/kernel_client.py:486
+      source: src/nexus/remote/kernel_client.py:542
   profiles:
     lite: supported
     sandbox: supported
@@ -10043,7 +10102,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_metastore_path
-      source: src/nexus/remote/kernel_client.py:704
+      source: src/nexus/remote/kernel_client.py:760
   profiles:
     lite: supported
     sandbox: supported
@@ -10060,7 +10119,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_permission_provider
-      source: src/nexus/remote/kernel_client.py:720
+      source: src/nexus/remote/kernel_client.py:776
   profiles:
     lite: supported
     sandbox: supported
@@ -10094,7 +10153,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_vfs_lock
-      source: src/nexus/remote/kernel_client.py:712
+      source: src/nexus/remote/kernel_client.py:768
   profiles:
     lite: supported
     sandbox: supported
@@ -10111,7 +10170,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_xattr
-      source: src/nexus/remote/kernel_client.py:630
+      source: src/nexus/remote/kernel_client.py:686
   profiles:
     lite: supported
     sandbox: supported
@@ -10502,7 +10561,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stat_batch
-      source: src/nexus/remote/kernel_client.py:400
+      source: src/nexus/remote/kernel_client.py:456
   profiles:
     lite: supported
     sandbox: supported
@@ -10519,7 +10578,7 @@ operations:
   transports:
     grpc_expose:
       name: stat_bulk
-      source: src/nexus/core/nexus_fs_metadata.py:1197
+      source: src/nexus/core/nexus_fs_metadata.py:1196
   profiles:
     lite: supported
     sandbox: supported
@@ -10536,7 +10595,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_collect_all
-      source: src/nexus/remote/kernel_client.py:687
+      source: src/nexus/remote/kernel_client.py:743
   profiles:
     lite: supported
     sandbox: supported
@@ -10570,7 +10629,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at
-      source: src/nexus/remote/kernel_client.py:684
+      source: src/nexus/remote/kernel_client.py:740
   profiles:
     lite: supported
     sandbox: supported
@@ -10587,7 +10646,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at_blocking
-      source: src/nexus/remote/kernel_client.py:672
+      source: src/nexus/remote/kernel_client.py:728
   profiles:
     lite: supported
     sandbox: supported
@@ -10604,7 +10663,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_write_nowait
-      source: src/nexus/remote/kernel_client.py:681
+      source: src/nexus/remote/kernel_client.py:737
   profiles:
     lite: supported
     sandbox: supported
@@ -10757,7 +10816,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_copy
-      source: src/nexus/remote/kernel_client.py:305
+      source: src/nexus/remote/kernel_client.py:361
   profiles:
     lite: supported
     sandbox: supported
@@ -10774,7 +10833,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_lock
-      source: src/nexus/remote/kernel_client.py:340
+      source: src/nexus/remote/kernel_client.py:396
   profiles:
     lite: supported
     sandbox: supported
@@ -10791,7 +10850,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_mkdir
-      source: src/nexus/remote/kernel_client.py:284
+      source: src/nexus/remote/kernel_client.py:340
   profiles:
     lite: supported
     sandbox: supported
@@ -10808,7 +10867,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_read
-      source: src/nexus/remote/kernel_client.py:192
+      source: src/nexus/remote/kernel_client.py:248
   profiles:
     lite: supported
     sandbox: supported
@@ -10825,7 +10884,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_readdir
-      source: src/nexus/remote/kernel_client.py:317
+      source: src/nexus/remote/kernel_client.py:373
   profiles:
     lite: supported
     sandbox: supported
@@ -10842,7 +10901,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_rename
-      source: src/nexus/remote/kernel_client.py:293
+      source: src/nexus/remote/kernel_client.py:349
   profiles:
     lite: supported
     sandbox: supported
@@ -10859,7 +10918,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_setattr
-      source: src/nexus/remote/kernel_client.py:270
+      source: src/nexus/remote/kernel_client.py:326
   profiles:
     lite: supported
     sandbox: supported
@@ -10876,7 +10935,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_stat
-      source: src/nexus/remote/kernel_client.py:244
+      source: src/nexus/remote/kernel_client.py:300
   profiles:
     lite: supported
     sandbox: supported
@@ -10893,7 +10952,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_unlink
-      source: src/nexus/remote/kernel_client.py:277
+      source: src/nexus/remote/kernel_client.py:333
   profiles:
     lite: supported
     sandbox: supported
@@ -10910,7 +10969,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_unlock
-      source: src/nexus/remote/kernel_client.py:363
+      source: src/nexus/remote/kernel_client.py:419
   profiles:
     lite: supported
     sandbox: supported
@@ -10930,7 +10989,7 @@ operations:
       source: src/nexus/core/nexus_fs_watch.py:26
     sdk:
       name: KernelClient.sys_watch
-      source: src/nexus/remote/kernel_client.py:407
+      source: src/nexus/remote/kernel_client.py:463
   profiles:
     lite: supported
     sandbox: supported
@@ -10947,7 +11006,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_write
-      source: src/nexus/remote/kernel_client.py:228
+      source: src/nexus/remote/kernel_client.py:284
   profiles:
     lite: supported
     sandbox: supported
@@ -11032,7 +11091,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_lookup
-      source: src/nexus/remote/kernel_client.py:614
+      source: src/nexus/remote/kernel_client.py:670
   profiles:
     lite: supported
     sandbox: supported
@@ -11049,7 +11108,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_register
-      source: src/nexus/remote/kernel_client.py:611
+      source: src/nexus/remote/kernel_client.py:667
   profiles:
     lite: supported
     sandbox: supported
@@ -11066,7 +11125,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_unregister
-      source: src/nexus/remote/kernel_client.py:617
+      source: src/nexus/remote/kernel_client.py:673
   profiles:
     lite: supported
     sandbox: supported
@@ -11442,7 +11501,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.unregister_hook
-      source: src/nexus/remote/kernel_client.py:474
+      source: src/nexus/remote/kernel_client.py:530
   profiles:
     lite: supported
     sandbox: supported
@@ -11506,7 +11565,7 @@ operations:
   owning_issue: null
 - id: update.mount
   module: mount
-  summary: ''
+  summary: Attempt to update runtime mount backend configuration while preserving mount metadata and permissions.
   transports:
     grpc_expose:
       name: update_mount
@@ -11515,12 +11574,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus mounts update /sources/crm ''{"api_url":"https://crm-v2.internal"}''; RPC: update_mount(''/sources/crm'',
+    {''api_url'': ''https://crm-v2.internal''}) returns changed_keys or a stable no-change result.'
+  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
+  perf_class: control
+  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
+    and covered by connector/search benchmarks when enabled.
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4136
 - id: update.workspace
   module: workspace
   summary: ''
@@ -12020,7 +12081,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1438
     sdk:
       name: KernelClient.write_batch
-      source: src/nexus/remote/kernel_client.py:724
+      source: src/nexus/remote/kernel_client.py:780
   profiles:
     lite: supported
     sandbox: supported
@@ -16226,4 +16287,6 @@ stale_rows:
 - operation_id: zone_routes.post
   reason: present in committed YAML but not detected by extractor
 - operation_id: zone_routes.zone_id
+  reason: present in committed YAML but not detected by extractor
+- operation_id: mcp.tool_profile_assign
   reason: present in committed YAML but not detected by extractor

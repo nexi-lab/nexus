@@ -208,8 +208,32 @@ class TestListProviders:
 
 
 # ===========================================================================
-# OAuthCredentialService — OAuth Flow (exchange_code)
+# OAuthCredentialService — OAuth Flow (get_auth_url / exchange_code)
 # ===========================================================================
+
+
+class TestGetAuthUrl:
+    """Tests for get_auth_url."""
+
+    @pytest.mark.asyncio
+    async def test_get_auth_url_does_not_require_token_manager(self) -> None:
+        factory = MagicMock()
+        factory.get_provider_config.return_value = FakeProviderConfig(
+            name="google-drive",
+            requires_pkce=False,
+        )
+        factory.create_provider.return_value = FakeOAuthProvider("google-drive")
+        service = OAuthCredentialService(oauth_factory=factory, token_manager=None)
+
+        with patch.object(
+            service,
+            "_get_token_manager",
+            side_effect=AssertionError("get_auth_url must not require token storage"),
+        ):
+            result = await service.get_auth_url(provider="google-drive")
+
+        assert result["url"].startswith("https://accounts.google.com")
+        assert result["state"]
 
 
 class TestExchangeCode:
@@ -425,6 +449,21 @@ class TestRevokeCredential:
         with (
             patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"),
             pytest.raises(ValueError, match="Credential not found"),
+        ):
+            await service.revoke_credential(
+                provider="google-drive",
+                user_email="unknown@example.com",
+                context=ctx,
+            )
+
+    @pytest.mark.asyncio
+    async def test_revoke_without_token_manager_reports_unconfigured_store(self) -> None:
+        service = OAuthCredentialService(token_manager=None, database_url=None)
+        ctx = MagicMock(user_id="user-alice", is_admin=True)
+
+        with (
+            patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"),
+            pytest.raises(ValueError, match="OAuth credential store not configured"),
         ):
             await service.revoke_credential(
                 provider="google-drive",

@@ -76,11 +76,19 @@ def live_search_app(
     import nexus
     from nexus.server.fastapi_server import create_app
 
-    nx = nexus.connect(config={"data_dir": str(tmp_path / "data"), "profile": "full"})
+    database_url = f"sqlite:///{tmp_path / 'records.db'}"
+    nx = nexus.connect(
+        config={
+            "data_dir": str(tmp_path / "data"),
+            "profile": "full",
+            "database_url": database_url,
+            "enforce_permissions": False,
+        }
+    )
     app = create_app(
         nexus_fs=nx,
         api_key="live-search-secret",
-        database_url=f"sqlite:///{tmp_path / 'records.db'}",
+        database_url=database_url,
         data_dir=str(tmp_path),
     )
     headers = {"Authorization": "Bearer live-search-secret"}
@@ -131,6 +139,12 @@ def test_live_search_http_surface_correctness_and_latency(live_search_app: LiveS
         "/workspace/docs.md",
         b"# Retrieval Guide\nneedle retrieval semantic index\n",
     )
+    recursive_paths = {
+        entry["path"]
+        for entry in live.nx.sys_readdir("/workspace", recursive=True, details=True)
+        if isinstance(entry, dict)
+    }
+    assert "/workspace/src/main.py" in recursive_paths
 
     health_response, health = _request(live, "get", "/api/v2/search/health")
     assert health_response.status_code == 200

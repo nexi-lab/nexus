@@ -1682,6 +1682,81 @@ class MetadataMixin:
             "gen": entry.gen,
         }
 
+    @staticmethod
+    def _readdir_item_path(item: Any) -> str | None:
+        """Extract a path from a sys_readdir result item."""
+        path = item.get("path") if isinstance(item, dict) else item
+        return path if isinstance(path, str) and path else None
+
+    def _readdir_item_is_dir(
+        self,
+        item: Any,
+        *,
+        context: OperationContext | None,
+    ) -> bool:
+        """Return True when a sys_readdir result item is a directory-like entry."""
+        if isinstance(item, dict):
+            entry_type = item.get("entry_type")
+            return bool(item.get("is_directory")) or entry_type in (DT_DIR, DT_MOUNT)
+
+        path = self._readdir_item_path(item)
+        if path is None:
+            return False
+        try:
+            stat = self.sys_stat(path, context=context)
+        except Exception as exc:
+            logger.debug("sys_readdir recursive stat skipped for %s: %s", path, exc)
+            return False
+        return bool(stat and stat.get("is_directory"))
+
+    def _expand_recursive_readdir(
+        self,
+        entries: builtins.list[Any],
+        *,
+        details: bool,
+        context: OperationContext | None,
+    ) -> builtins.list[Any]:
+        """Expand explicit child directories that live behind their own metastore route."""
+        from collections import deque
+
+        by_path: dict[str, Any] = {}
+        pending_dirs: deque[str] = deque()
+
+        def remember(item: Any) -> None:
+            path = self._readdir_item_path(item)
+            if path is None or path in by_path:
+                return
+            by_path[path] = item
+            if self._readdir_item_is_dir(item, context=context):
+                pending_dirs.append(path)
+
+        for entry in entries:
+            remember(entry)
+
+        max_entries = 100_000
+        while pending_dirs and len(by_path) < max_entries:
+            directory = pending_dirs.popleft()
+            try:
+                child_entries = self.sys_readdir(
+                    directory,
+                    recursive=True,
+                    details=details,
+                    context=context,
+                )
+            except Exception as exc:
+                logger.debug("recursive sys_readdir expansion skipped for %s: %s", directory, exc)
+                continue
+            for child in child_entries:
+                remember(child)
+
+        if pending_dirs:
+            logger.warning(
+                "recursive sys_readdir expansion truncated at %d entries under explicit dirs",
+                max_entries,
+            )
+
+        return [by_path[path] for path in sorted(by_path)]
+
     # Issue #3388: Internal metastore prefixes that must not appear in
     # user-facing directory listings (search checkpoints, ReBAC namespaces).
     # These are bare keys (no leading "/") — user paths always start with "/".
@@ -1863,6 +1938,36 @@ class MetadataMixin:
             return entry_zone == caller_zone
 
         if limit is not None:
+            if recursive:
+                from nexus.core.pagination import PaginatedResult
+
+                expanded_items = self.sys_readdir(
+                    path,
+                    recursive=True,
+                    details=details,
+                    context=context,
+                )
+                expanded_items = sorted(
+                    expanded_items,
+                    key=lambda item: self._readdir_item_path(item) or "",
+                )
+                if cursor:
+                    expanded_items = [
+                        item
+                        for item in expanded_items
+                        if (self._readdir_item_path(item) or "") > cursor
+                    ]
+                page = expanded_items[: limit + 1]
+                has_more = len(page) > limit
+                items = page[:limit]
+                next_cursor = self._readdir_item_path(items[-1]) if has_more and items else None
+                return PaginatedResult(
+                    items=items,
+                    next_cursor=next_cursor,
+                    has_more=has_more,
+                    total_count=len(expanded_items),
+                )
+
             from nexus.core.pagination import paginate_iter
 
             items_iter = (
@@ -1903,9 +2008,20 @@ class MetadataMixin:
                 ]
             else:
                 _result = [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
+                _result = self._expand_recursive_readdir(
+                    _result,
+                    details=True,
+                    context=context,
+                )
             _emit_list()
             return _result
         _result = [e.path for e in entries_iter]
+        if recursive:
+            _result = self._expand_recursive_readdir(
+                _result,
+                details=False,
+                context=context,
+            )
         _emit_list()
         return _result
 

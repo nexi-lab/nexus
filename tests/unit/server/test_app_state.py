@@ -97,6 +97,17 @@ class TestInitAppState:
         assert app.state.observability_subsystem == "obs"
         assert app.state.eviction_manager == "em"
 
+    def test_disabled_permissions_do_not_expose_enforcer(self) -> None:
+        """Disabled filesystem permissions should disable route-level ReBAC filtering too."""
+        app = _make_app()
+        mock_fs = MagicMock()
+        mock_fs._perm_config = SimpleNamespace(enforce=False)
+        mock_fs.service = lambda name: "pe" if name == "permission_enforcer" else None
+
+        init_app_state(app, nexus_fs=mock_fs)
+
+        assert app.state.permission_enforcer is None
+
     def test_none_nexus_fs_does_not_crash(self) -> None:
         """init_app_state should work fine with nexus_fs=None."""
         app = _make_app()

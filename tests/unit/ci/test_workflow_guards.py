@@ -50,6 +50,35 @@ def _step_by_name(job: dict[str, Any], name: str) -> dict[str, Any]:
     raise AssertionError(f"step {name!r} not found; have: {names}")
 
 
+def _workflow_env(workflow: dict[str, Any]) -> dict[str, Any]:
+    env = workflow.get("env") or {}
+    assert isinstance(env, dict), f"workflow env must be a mapping, got: {env!r}"
+    return env
+
+
+def _assert_pyo3_forward_compat_enabled(workflow_name: str) -> None:
+    workflow = _load_workflow(workflow_name)
+    env = _workflow_env(workflow)
+    assert env.get("PYO3_USE_ABI3_FORWARD_COMPATIBILITY") == "1", (
+        f"{workflow_name} installs the project under Python 3.14. "
+        "pdf-inspector may build its PyO3 sdist there, so the workflow "
+        "must export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1."
+    )
+
+
+def _assert_gha_cache_export_non_blocking(workflow_name: str, job_id: str, step_name: str) -> None:
+    workflow = _load_workflow(workflow_name)
+    step = _step_by_name(_job(workflow, job_id), step_name)
+    with_block = step.get("with") or {}
+    cache_to = with_block.get("cache-to", "")
+    assert "type=gha" in cache_to, f"{workflow_name}:{step_name} should export a GHA build cache"
+    assert "ignore-error=true" in cache_to, (
+        f"{workflow_name}:{step_name} must set ignore-error=true on cache-to. "
+        "The image build/push is the required artifact; a transient GitHub "
+        "Actions cache export failure must not fail the job after the image is built."
+    )
+
+
 # ---------------------------------------------------------------------------
 # cluster-binary-build.yml
 # ---------------------------------------------------------------------------
@@ -89,6 +118,14 @@ def test_cluster_binary_uses_single_rust_cache_layer() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_docker_publish_gha_cache_export_is_non_blocking() -> None:
+    _assert_gha_cache_export_non_blocking(
+        "docker-publish.yml",
+        "build-platform",
+        "Build and push by digest",
+    )
+
+
 _VFS_GRPC_GATE = "steps.vfs_grpc.outputs.available == 'true'"
 
 
@@ -125,3 +162,29 @@ def test_docker_edge_smoke_skips_grpc_dependent_steps_without_vfs_grpc() -> None
             f"otherwise it will fail against an edge image without VFS gRPC. "
             f"Got: if={condition!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# docs.yml
+# ---------------------------------------------------------------------------
+
+
+def test_docs_workflow_exports_pyo3_forward_compatibility() -> None:
+    _assert_pyo3_forward_compat_enabled("docs.yml")
+
+
+# ---------------------------------------------------------------------------
+# demo-memory.yml
+# ---------------------------------------------------------------------------
+
+
+def test_demo_memory_workflow_exports_pyo3_forward_compatibility() -> None:
+    _assert_pyo3_forward_compat_enabled("demo-memory.yml")
+
+
+def test_demo_memory_gha_cache_export_is_non_blocking() -> None:
+    _assert_gha_cache_export_non_blocking(
+        "demo-memory.yml",
+        "demo-memory",
+        "Build nexus image",
+    )

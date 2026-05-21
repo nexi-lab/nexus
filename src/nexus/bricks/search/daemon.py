@@ -2007,9 +2007,9 @@ class SearchDaemon:
 
         Issue #3699: writes are owned by ``ChunkStore.replace_document_chunks``
         via the indexing pipeline. Each document is treated as ``(path,
-        text)`` — we resolve or create ``path_id`` in ``file_paths`` and
-        dispatch to ``IndexingPipeline.index_document`` which chunks, embeds,
-        and bulk-inserts into ``document_chunks``. Failures bubble up so the
+        text)`` — we resolve ``path_id`` from ``file_paths`` and dispatch to
+        ``IndexingPipeline.index_document`` which chunks, embeds, and
+        bulk-inserts into ``document_chunks``. Failures bubble up so the
         HTTP boundary returns 500 (Decision #18) instead of silently returning
         count=0.
         """
@@ -2044,16 +2044,14 @@ class SearchDaemon:
             text_clean = _scrub(text_field)
             vp_clean = strip_zone_prefix(virtual_path)
 
-            # Resolve or create path_id from file_paths so the indexing
-            # pipeline can write document_chunks through its FK. Some live
-            # NexusFS setups expose freshly-written VFS paths to sys_readdir
-            # before a SQL metadata row exists; explicit indexing should make
-            # the row durable rather than report a misleading count=0.
+            # Resolve path_id from file_paths so the indexing pipeline can
+            # write document_chunks. Without a path_id we cannot persist —
+            # skip rather than fail so best-effort callers in mount/connector
+            # wiring don't error out. The search daemon is a READER of
+            # filesystem metadata — it must not create or modify file_paths
+            # rows (that ownership belongs to the kernel/metastore).
             path_id: str | None = None
             if self._async_session is not None:
-                import hashlib
-                import uuid
-
                 async with self._async_session() as session:
                     row = (
                         await session.execute(
@@ -2061,6 +2059,7 @@ class SearchDaemon:
                                 "SELECT path_id FROM file_paths "
                                 "WHERE virtual_path = :vp "
                                 "  AND zone_id = :zid "
+                                "  AND deleted_at IS NULL "
                                 "LIMIT 1"
                             ),
                             {"vp": vp_clean, "zid": target_zone},
@@ -2068,48 +2067,18 @@ class SearchDaemon:
                     ).first()
                     if row is not None:
                         path_id = str(row[0])
-                        await session.execute(
-                            sa_text(
-                                "UPDATE file_paths "
-                                "SET deleted_at = NULL, "
-                                "    file_type = COALESCE(file_type, 'file') "
-                                "WHERE path_id = :path_id"
-                            ),
-                            {
-                                "path_id": path_id,
-                            },
-                        )
-                    else:
-                        now = datetime.now(UTC).replace(tzinfo=None)
-                        content_id = hashlib.sha256(text_clean.encode("utf-8")).hexdigest()
-                        size_bytes = len(text_clean.encode("utf-8"))
-                        path_id = str(uuid.uuid4())
-                        await session.execute(
-                            sa_text(
-                                "INSERT INTO file_paths "
-                                "(path_id, zone_id, virtual_path, file_type, size_bytes, "
-                                " content_id, created_at, updated_at, current_version) "
-                                "VALUES "
-                                "(:path_id, :zone_id, :virtual_path, 'file', :size_bytes, "
-                                " :content_id, :created_at, :updated_at, 1)"
-                            ),
-                            {
-                                "path_id": path_id,
-                                "zone_id": target_zone,
-                                "virtual_path": vp_clean,
-                                "size_bytes": size_bytes,
-                                "content_id": content_id,
-                                "created_at": now,
-                                "updated_at": now,
-                            },
-                        )
-                    await session.commit()
 
             if path_id is None:
-                raise RuntimeError(
-                    "index_documents: async session unavailable; cannot persist "
-                    f"file_paths row for {vp_clean!r}"
+                # No file_paths row — this happens for synthetic docs
+                # (skill READMEs, connector schemas) that aren't backed
+                # by NexusFS. Skip rather than fail so best-effort callers
+                # in mount/connector wiring don't error out.
+                logger.debug(
+                    "index_documents: no file_paths row for %s in zone %s; skipping",
+                    vp_clean,
+                    target_zone,
                 )
+                continue
 
             # Drive the canonical write path. Pass the zone-scoped form
             # so the pipeline's scope filter sees the same shape mutation

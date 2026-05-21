@@ -98,6 +98,17 @@ fn parse_write_result(path: &str, result: &serde_json::Value) -> Result<WriteRes
     })
 }
 
+fn parse_stat_size_from_response(
+    path: &str,
+    response: &serde_json::Value,
+) -> Result<u64, StorageError> {
+    let result = response.get("result").unwrap_or(response);
+    result
+        .get("size")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| StorageError::NotFound(path.to_string()))
+}
+
 impl ObjectStore for RemoteBackend {
     fn name(&self) -> &str {
         "remote"
@@ -308,10 +319,7 @@ impl ObjectStore for RemoteBackend {
         }
         let value: serde_json::Value = serde_json::from_slice(&resp)
             .map_err(|e| StorageError::IOError(std::io::Error::other(e.to_string())))?;
-        value
-            .get("size")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| StorageError::NotFound(content_id.to_string()))
+        parse_stat_size_from_response(content_id, &value)
     }
 
     fn mkdir(&self, path: &str, parents: bool, exist_ok: bool) -> Result<(), StorageError> {
@@ -429,5 +437,20 @@ mod tests {
         assert_eq!(parsed.content_id, "zone/shared/readback.txt");
         assert_eq!(parsed.version, "zone/shared/readback.txt");
         assert_eq!(parsed.size, 18);
+    }
+
+    #[test]
+    fn parse_stat_size_accepts_call_result_envelope() {
+        let response = serde_json::json!({
+            "result": {
+                "path": "/zone/shared/existing.txt",
+                "size": 42
+            }
+        });
+
+        assert_eq!(
+            parse_stat_size_from_response("/zone/shared/existing.txt", &response).unwrap(),
+            42
+        );
     }
 }

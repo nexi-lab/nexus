@@ -37,3 +37,11 @@ def test_kernel_missing_skip_reason_matches_late_daemon_exit() -> None:
 
     assert reason
     assert "nexus-cluster" in reason
+
+
+def test_kernel_missing_skip_reason_does_not_mask_unrelated_import_error() -> None:
+    reason = sandbox_e2e._kernel_missing_skip_reason(
+        "ModuleNotFoundError: No module named 'nexus.bricks.some_dependency'"
+    )
+
+    assert reason is None

@@ -180,7 +180,7 @@ def _poll_health_until_ready_or_exit(
 
 
 def _kernel_missing_skip_reason(stderr: str) -> str | None:
-    if "nexus-cluster" in stderr or "nexus_kernel" in stderr or "No module named" in stderr:
+    if "nexus-cluster" in stderr or "nexus_kernel" in stderr:
         return "nexusd requires nexus-cluster binary — run cargo build --release -p nexus-cluster"
     return None
 

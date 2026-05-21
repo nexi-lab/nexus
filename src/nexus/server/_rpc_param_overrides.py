@@ -20,7 +20,7 @@ that still flow through ``dispatch.py`` + ``parse_method_params``:
 from dataclasses import dataclass, field
 from typing import Any
 
-from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
+from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI, ROOT_ZONE_ID
 
 # ============================================================
 # 1. Constant-default overrides
@@ -57,7 +57,7 @@ class AdminCreateKeyParams:
     """Parameters for admin_create_key() method."""
 
     name: str
-    zone_id: str
+    zone_id: str = ROOT_ZONE_ID
     user_id: str | None = None
     is_admin: bool = False
     expires_days: int | None = None

@@ -240,6 +240,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     from nexus.server.lifespan.search import shutdown_search, startup_search
     from nexus.server.lifespan.services import shutdown_services, startup_services
     from nexus.server.lifespan.uploads import startup_uploads
+    from nexus.server.lifespan.vfs_grpc import shutdown_vfs_grpc, startup_vfs_grpc
 
     # Collect all background tasks for clean shutdown
     bg_tasks: list[asyncio.Task] = []
@@ -315,6 +316,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     # parallel-layers PR — `nexus.bricks.ipc` removed; PR #3912 ships
     # the Rust replacement.
 
+    await startup_vfs_grpc(app)
     _done(StartupPhase.GRPC)
 
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
@@ -341,6 +343,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
             await asyncio.gather(*[t for t in bg_tasks if t], return_exceptions=True)
         logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
+    await shutdown_vfs_grpc(app)
     await shutdown_approvals(app, svc)
     await shutdown_search(app, svc)
     await shutdown_services(app, svc)

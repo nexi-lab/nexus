@@ -11,6 +11,7 @@ _COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
 _USER_GUIDE = _REPO_ROOT / "docs/guides/user-guide.md"
 
 OWNING_ISSUE = 4135
+PREEXISTING_SANDBOX_SEARCH_ISSUE = 4129
 
 SUPPORTED_ROWS = {
     "filesystem.path_context",
@@ -43,6 +44,18 @@ MISSING_ROWS = {
     "search.grep_section",
 }
 
+PREEXISTING_SANDBOX_SEARCH_ROWS = {
+    "initialize.semantic_search",
+    "search.cli",
+    "search.glob",
+    "search.grep",
+    "semantic.search",
+    "semantic.search_index",
+    "semantic.search_stats",
+}
+
+OWNED_ROWS = (SUPPORTED_ROWS | MISSING_ROWS) - PREEXISTING_SANDBOX_SEARCH_ROWS
+
 
 def test_search_story_rows_have_owner_tests_perf_and_gap_state() -> None:
     coverage = load_yaml(_COVERAGE_YAML)
@@ -51,7 +64,10 @@ def test_search_story_rows_have_owner_tests_perf_and_gap_state() -> None:
     for op_id in sorted(SUPPORTED_ROWS | MISSING_ROWS):
         assert op_id in by_id
         op = by_id[op_id]
-        assert op.owning_issue == OWNING_ISSUE, op_id
+        if op_id in OWNED_ROWS:
+            assert op.owning_issue == OWNING_ISSUE, op_id
+        else:
+            assert op.owning_issue == PREEXISTING_SANDBOX_SEARCH_ISSUE, op_id
         assert op.summary, op_id
         assert op.usage_example, op_id
         assert op.correctness_test, op_id

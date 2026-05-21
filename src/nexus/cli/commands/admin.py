@@ -444,6 +444,7 @@ def revoke_key(
 @click.argument("user_id")
 @click.option("--name", required=True, help="Human-readable name for the new key")
 @click.option("--expires-days", type=int, help="API key expiry in days")
+@click.option("--zone-id", default=ROOT_ZONE_ID, help="Zone ID (default: root)")
 @click.option("--grant", "grants", multiple=True, help="Path grant as PATH:ROLE (repeatable)")
 @add_output_options
 @REMOTE_API_KEY_OPTION
@@ -452,6 +453,7 @@ def create_key(
     user_id: str,
     name: str,
     expires_days: int | None,
+    zone_id: str,
     grants: tuple[str, ...],
     output_opts: OutputOptions,
     remote_url: str | None,
@@ -475,6 +477,7 @@ def create_key(
         params: dict[str, Any] = {
             "user_id": user_id,
             "name": name,
+            "zone_id": zone_id,
         }
 
         if expires_days is not None:
@@ -601,6 +604,7 @@ def get_user(
 @click.argument("agent_id")
 @click.option("--name", help="Human-readable name for the API key (default: 'Agent: <agent_id>')")
 @click.option("--expires-days", type=int, help="API key expiry in days")
+@click.option("--zone-id", default=ROOT_ZONE_ID, help="Zone ID (default: root)")
 @click.option("--grant", "grants", multiple=True, help="Path grant as PATH:ROLE (repeatable)")
 @add_output_options
 @REMOTE_API_KEY_OPTION
@@ -610,6 +614,7 @@ def create_agent_key(
     agent_id: str,
     name: str | None,
     expires_days: int | None,
+    zone_id: str,
     grants: tuple[str, ...],
     output_opts: OutputOptions,
     remote_url: str | None,
@@ -642,6 +647,7 @@ def create_agent_key(
         params: dict[str, Any] = {
             "user_id": user_id,
             "name": name,
+            "zone_id": zone_id,
             "subject_type": "agent",
             "subject_id": agent_id,
         }

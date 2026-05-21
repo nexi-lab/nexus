@@ -6,11 +6,14 @@
 //! `{"code": N, "message": "..."}` for errors.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use kernel::abi::KernelAbi;
 use kernel::kernel::convenience::KernelConvenience;
 use kernel::kernel::vfs_proto::CallResponse;
 use kernel::kernel::{Kernel, KernelError, OperationContext, WriteRequest};
+use kernel::meta_store::remote::RemoteMetaStore;
+use kernel::rpc_transport::RpcTransport;
 use tonic::{Response, Status};
 
 use crate::grpc::{encode_rpc_error, RpcErrorCode};
@@ -283,6 +286,80 @@ fn do_sys_setattr(
                 None,
                 None,
                 None,
+            ) {
+                Ok(r) => {
+                    return ok_json(serde_json::json!({
+                        "path": r.path,
+                        "created": r.created,
+                        "entry_type": r.entry_type,
+                        "backend_name": r.backend_name,
+                    }));
+                }
+                Err(e) => return Err(kernel_err_to_payload(e)),
+            }
+        }
+
+        if backend_type == "remote" {
+            if !ctx.is_admin && !ctx.is_system {
+                return Err(call_err(
+                    RpcErrorCode::PermissionError,
+                    "sys_setattr DT_MOUNT remote requires admin or system context",
+                ));
+            }
+            let server_address = s(params, "server_address");
+            if server_address.is_empty() {
+                return Err(call_err(
+                    RpcErrorCode::InternalError,
+                    "sys_setattr DT_MOUNT remote requires server_address",
+                ));
+            }
+            let remote_auth_token = s(params, "remote_auth_token");
+            let remote_timeout = params
+                .get("remote_timeout")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(90.0);
+            let transport = Arc::new(
+                RpcTransport::new(
+                    Arc::clone(kernel.runtime()),
+                    &server_address,
+                    &remote_auth_token,
+                    None,
+                    Duration::from_secs_f64(remote_timeout),
+                )
+                .map_err(|e| {
+                    call_err(
+                        RpcErrorCode::InternalError,
+                        &format!("remote transport init failed for {server_address}: {e}"),
+                    )
+                })?,
+            );
+            let backend = backends::storage::remote::RemoteBackend::with_zone_path(
+                Arc::clone(&transport),
+                path.clone(),
+            );
+            let remote_metastore = RemoteMetaStore::new(transport);
+            match kernel.sys_setattr(
+                &path,
+                entry_type,
+                backend_name,
+                Some(Arc::new(backend)),
+                None,
+                None,
+                "",
+                zone_id,
+                is_external,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(Arc::new(remote_metastore)),
             ) {
                 Ok(r) => {
                     return ok_json(serde_json::json!({
@@ -827,6 +904,19 @@ mod tests {
         serde_json::to_vec(&serde_json::json!({ "files": files })).expect("payload")
     }
 
+    fn remote_mount_payload() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "path": "/zone/company",
+            "entry_type": 2,
+            "backend_type": "remote",
+            "backend_name": "remote_zone:company",
+            "server_address": "127.0.0.1:9",
+            "remote_auth_token": "sk-test",
+            "zone_id": kernel::ROOT_ZONE_ID,
+        }))
+        .expect("payload")
+    }
+
     struct DenyBlockedWriteHook;
 
     impl NativeInterceptHook for DenyBlockedWriteHook {
@@ -876,6 +966,22 @@ mod tests {
             .into_inner();
 
         assert!(response.is_error, "non-admin path_local mount succeeded");
+    }
+
+    #[test]
+    fn sys_setattr_remote_mount_from_json_installs_mount() {
+        let kernel = Arc::new(Kernel::new());
+        let ctx = OperationContext::new("test", kernel::ROOT_ZONE_ID, true, None, true);
+
+        let response = dispatch(&kernel, &ctx, "sys_setattr", &remote_mount_payload())
+            .expect("dispatch")
+            .into_inner();
+
+        assert!(!response.is_error, "remote mount returned error payload");
+        assert!(
+            kernel.has_mount("/zone/company", kernel::ROOT_ZONE_ID),
+            "remote mount call returned success without installing a route"
+        );
     }
 
     #[test]

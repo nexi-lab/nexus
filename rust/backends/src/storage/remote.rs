@@ -22,7 +22,7 @@ use kernel::rpc_transport::RpcTransport;
 /// expects the original absolute path, so `to_server_path` re-prepends
 /// the mount point.  For REMOTE-profile root mounts (`zone_path="/"`)
 /// the backend_path is already the full path — no prefix is added.
-pub(crate) struct RemoteBackend {
+pub struct RemoteBackend {
     transport: Arc<RpcTransport>,
     /// Mount point of this backend (e.g. "/zone/shared" or "/").
     /// Used to reconstruct the absolute path sent to the hub.
@@ -36,6 +36,13 @@ impl RemoteBackend {
         Self {
             transport,
             zone_path: String::new(),
+        }
+    }
+
+    pub fn with_zone_path(transport: Arc<RpcTransport>, zone_path: impl Into<String>) -> Self {
+        Self {
+            transport,
+            zone_path: zone_path.into(),
         }
     }
 }
@@ -56,9 +63,39 @@ fn to_server_path(zone_path: &str, backend_path: &str) -> String {
     };
     if zone_path.is_empty() || zone_path == "/" {
         bp
+    } else if bp
+        .trim_start_matches('/')
+        .starts_with(zone_path.trim_start_matches('/'))
+    {
+        bp
     } else {
         format!("{zone_path}{bp}")
     }
+}
+
+fn parse_write_result(path: &str, result: &serde_json::Value) -> Result<WriteResult, StorageError> {
+    let content_id = result
+        .get("content_id")
+        .or_else(|| result.get("etag"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(path)
+        .to_string();
+    let size = result
+        .get("size")
+        .or_else(|| result.get("bytes_written"))
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| {
+            StorageError::IOError(std::io::Error::other(format!(
+                "sys_write({path}): response missing size"
+            )))
+        })?;
+
+    Ok(WriteResult {
+        content_id: content_id.clone(),
+        version: content_id,
+        size,
+    })
 }
 
 impl ObjectStore for RemoteBackend {
@@ -228,7 +265,7 @@ impl ObjectStore for RemoteBackend {
             ))));
         }
 
-        // Response envelope: {"result": {"bytes_written": N, "etag": "...", "size": N, ...}}
+        // Response envelope: {"result": {"bytes_written": N, "content_id": "...", "size": N, ...}}
         let value: serde_json::Value = serde_json::from_slice(&resp)
             .map_err(|e| StorageError::IOError(std::io::Error::other(e.to_string())))?;
         let result = value.get("result").ok_or_else(|| {
@@ -237,27 +274,15 @@ impl ObjectStore for RemoteBackend {
             )))
         })?;
 
-        let etag = result
-            .get("etag")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let size = result
-            .get("size")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(content.len() as u64);
+        let write_result = parse_write_result(&path, result)?;
 
         tracing::debug!(
             path = %path,
-            etag = %etag,
-            size = size,
+            content_id = %write_result.content_id,
+            size = write_result.size,
             "RemoteBackend::write_content ok"
         );
-        Ok(WriteResult {
-            content_id: etag.clone(),
-            version: etag,
-            size,
-        })
+        Ok(write_result)
     }
 
     fn delete_content(&self, _content_id: &str) -> Result<(), StorageError> {
@@ -385,5 +410,24 @@ impl ObjectStore for RemoteBackend {
             ))));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_write_result_accepts_current_sys_write_content_id_shape() {
+        let result = serde_json::json!({
+            "content_id": "zone/shared/readback.txt",
+            "size": 18
+        });
+
+        let parsed = parse_write_result("/zone/shared/readback.txt", &result).unwrap();
+
+        assert_eq!(parsed.content_id, "zone/shared/readback.txt");
+        assert_eq!(parsed.version, "zone/shared/readback.txt");
+        assert_eq!(parsed.size, 18);
     }
 }

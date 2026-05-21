@@ -98,6 +98,17 @@ impl VfsServiceImpl {
             KernelError::FileNotFound(p) => (RpcErrorCode::FileNotFound, p),
             KernelError::PermissionDenied(m) => (RpcErrorCode::PermissionError, m),
             KernelError::InvalidPath(m) => (RpcErrorCode::InvalidPath, m),
+            KernelError::BackendError(m) => {
+                let lower = m.to_ascii_lowercase();
+                if lower.contains("permission")
+                    || lower.contains("denied")
+                    || lower.contains("read-only")
+                {
+                    (RpcErrorCode::PermissionError, m)
+                } else {
+                    (RpcErrorCode::InternalError, m)
+                }
+            }
             KernelError::PipeClosed(m) | KernelError::StreamClosed(m) => {
                 (RpcErrorCode::InternalError, m)
             }

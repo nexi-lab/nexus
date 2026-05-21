@@ -51,6 +51,14 @@ class SandboxHandle:
     hub_token: str = ""  # bearer token the sandbox was configured with
 
 
+@dataclasses.dataclass
+class HealthPollResult:
+    ready: bool
+    exited: bool = False
+    returncode: int | None = None
+    stderr: str = ""
+
+
 def _nexus_bin() -> str:
     return str(Path(sys.executable).parent / "nexus")
 
@@ -127,6 +135,54 @@ def _poll_health(url: str, timeout: int = 60) -> bool:
             pass
         time.sleep(1)
     return False
+
+
+def _read_process_stderr(proc: object) -> str:
+    stderr = getattr(proc, "stderr", None)
+    if stderr is None:
+        return ""
+    try:
+        return str(stderr.read())
+    except Exception:
+        return ""
+
+
+def _poll_health_until_ready_or_exit(
+    url: str,
+    proc: object,
+    timeout: int = 60,
+) -> HealthPollResult:
+    """Poll /health until ready, timeout, or daemon exit.
+
+    The sandbox daemon can fail after startup begins, for example when the local
+    environment lacks the Rust kernel binary. Detect that during polling so E2E
+    reports the real environment problem instead of timing out as a product
+    readiness failure.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        returncode = proc.poll()
+        if returncode is not None:
+            return HealthPollResult(
+                ready=False,
+                exited=True,
+                returncode=returncode,
+                stderr=_read_process_stderr(proc),
+            )
+        try:
+            resp = httpx.get(url, timeout=3)
+            if resp.status_code == 200 and resp.json().get("status") in ("healthy", "ready"):
+                return HealthPollResult(ready=True)
+        except Exception:
+            pass
+        time.sleep(1)
+    return HealthPollResult(ready=False)
+
+
+def _kernel_missing_skip_reason(stderr: str) -> str | None:
+    if "nexus-cluster" in stderr or "nexus_kernel" in stderr or "No module named" in stderr:
+        return "nexusd requires nexus-cluster binary — run cargo build --release -p nexus-cluster"
+    return None
 
 
 def _terminate(proc: subprocess.Popen[str]) -> None:
@@ -292,11 +348,19 @@ def sandbox(
     )
 
     health_url = f"http://localhost:{port}/health"
-    ready = _poll_health(health_url, timeout=60)
+    poll = _poll_health_until_ready_or_exit(health_url, proc, timeout=60)
 
-    if not ready:
+    if not poll.ready:
         _terminate(proc)
-        stderr = proc.stderr.read() if proc.stderr else ""
+        stderr = poll.stderr or (proc.stderr.read() if proc.stderr else "")
+        skip_reason = _kernel_missing_skip_reason(stderr)
+        if skip_reason:
+            pytest.skip(skip_reason)
+        if poll.exited:
+            pytest.fail(
+                "Sandbox daemon exited before reaching healthy "
+                f"(returncode={poll.returncode})\nstderr: {stderr[:2000]}"
+            )
         pytest.fail(f"Sandbox did not reach healthy within 60s\nstderr: {stderr[:2000]}")
 
     # gRPC port is HTTP port + 2 by nexusd convention (main.py always sets NEXUS_GRPC_PORT=port+2)
@@ -502,7 +566,21 @@ class TestSandboxLocalOnlyFallback:
                     )
                 pytest.skip(f"nexusd exited immediately: {stderr[:500]}")
 
-            ready = _poll_health(f"http://localhost:{port}/health", timeout=60)
-            assert ready, "Sandbox should start in local-only mode even if hub is unreachable"
+            poll = _poll_health_until_ready_or_exit(
+                f"http://localhost:{port}/health",
+                proc,
+                timeout=60,
+            )
+            if not poll.ready:
+                stderr = poll.stderr or (proc.stderr.read() if proc.stderr else "")
+                skip_reason = _kernel_missing_skip_reason(stderr)
+                if skip_reason:
+                    pytest.skip(skip_reason)
+                if poll.exited:
+                    pytest.fail(
+                        "Sandbox daemon exited before reaching healthy "
+                        f"(returncode={poll.returncode})\nstderr: {stderr[:2000]}"
+                    )
+            assert poll.ready, "Sandbox should start in local-only mode even if hub is unreachable"
         finally:
             _terminate(proc)

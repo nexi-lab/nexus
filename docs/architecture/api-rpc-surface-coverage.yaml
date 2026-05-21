@@ -3944,14 +3944,16 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: federation_client_whoami({}) with the sandbox hub token returns zones like [{"zone_id":"company","permission":"r"},{"zone_id":"shared","permission":"rw"}].'
-  correctness_test: tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones
+  correctness_test: tests/unit/grpc/test_federation_whoami_rpc.py::TestFederationClientWhoami; tests/unit/remote/test_federation_handshake.py;
+    tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones
   perf_class: control
-  perf_link: control-plane startup/discovery path; not on the per-file read/write hot path
+  perf_link: tests/benchmarks/bench_sandbox_federation_latency.py::TestSandboxFederationHandshakeLatency; control-plane startup/discovery
+    path, not on the per-file read/write hot path
   gap_issue: null
-  owning_issue: 4128
+  owning_issue: 4130
 - id: federation.cluster_info
   module: federation
-  summary: ''
+  summary: Federation zone topology/status RPC used by `nexus federation info <zone-id>` to show leader and membership state.
   transports:
     grpc_expose:
       name: federation_cluster_info
@@ -3960,12 +3962,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: federation_cluster_info({"zone_id":"corp"}); CLI equivalent: nexus federation info <zone-id>'
+  correctness_test: tests/e2e/docker/test_federation_e2e.py::TestFederationCLIWorkflow::test_status_zones_info_consistent_view
+  perf_class: control
+  perf_link: federation status/inspection path; no per-file or search hot-path budget
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4130
 - id: federation.create_zone
   module: federation
   summary: ''
@@ -4036,7 +4038,7 @@ operations:
   owning_issue: null
 - id: federation.list_zones
   module: federation
-  summary: ''
+  summary: Federation zone listing RPC used by `nexus federation zones` and operator status workflows.
   transports:
     grpc_expose:
       name: federation_list_zones
@@ -4045,12 +4047,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: federation_list_zones({}); CLI equivalent: nexus federation zones'
+  correctness_test: tests/e2e/docker/test_federation_e2e.py::TestFederationCLIWorkflow::test_status_zones_info_consistent_view
+  perf_class: control
+  perf_link: federation status/inspection path; no per-file or search hot-path budget
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4130
 - id: federation.mount
   module: federation
   summary: ''
@@ -4189,7 +4191,7 @@ operations:
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
     tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead; tests/benchmarks/bench_sandbox_federation_latency.py::TestSandboxFederationReadLatency
   gap_issue: null
   owning_issue: 4127
 - id: filesystem.close
@@ -4514,7 +4516,7 @@ operations:
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
     tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead; tests/benchmarks/bench_sandbox_federation_latency.py::TestSandboxFederationReadLatency
   gap_issue: null
   owning_issue: 4127
 - id: filesystem.read_bulk
@@ -5887,18 +5889,27 @@ operations:
   owning_issue: null
 - id: hub.status
   module: hub
-  summary: '`nexus hub status`: show connected nodes, zones served, federation peers.'
-  transports: {}
+  summary: Hub health and zone/token status surface. Local `--detail` includes zones, tokens, rate limits, and search; `--remote`
+    calls the hub MCP admin tool.
+  transports:
+    cli:
+      name: nexus hub status
+      source: src/nexus/cli/commands/hub.py:425
+    mcp:
+      name: nexus_hub_status
+      source: src/nexus/bricks/mcp/server.py:509
   profiles:
-    lite: missing_needed
-    sandbox: missing_needed
-    full: missing_needed
-  usage_example: 'WANTED: Hub-mode operators currently have no top-level health view.'
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+    lite: unavailable
+    sandbox: supported
+    full: supported
+  usage_example: 'CLI: nexus hub status --detail --json; remote hub: nexus hub status --remote https://hub.example.com/mcp --admin-token
+    "$NEXUS_HUB_ADMIN_TOKEN" --json'
+  correctness_test: tests/unit/cli/test_hub.py::test_hub_status_detail_json_includes_token_last_seen_and_zones; tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json;
+    tests/e2e/self_contained/cli/test_hub_flow.py::test_hub_end_to_end_token_lifecycle
+  perf_class: control
+  perf_link: hub status is a control-plane inspection path; not a hot data path
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4130
 - id: identity.agent_id_identity
   module: identity
   summary: ''
@@ -7150,7 +7161,7 @@ operations:
   correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
     tests/architecture/test_issue_4127_sandbox_filesystem_surface.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead
+  perf_link: tests/benchmarks/bench_read_write_overhead.py::TestTypedVsGenericRead and ::TestReadBulkOverhead; tests/benchmarks/bench_sandbox_federation_latency.py::TestSandboxFederationReadLatency
   gap_issue: null
   owning_issue: 4127
 - id: nexus_fs.sys_readdir
@@ -9904,9 +9915,10 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'MCP: nexus_semantic_search(query="auth flow", search_mode="hybrid", limit=5)'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch;
+    tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch; tests/unit/bricks/search/test_federated_degraded.py::TestSearchServiceSandboxFallback
   perf_class: hot
-  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md
+  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/benchmarks/bench_sandbox_federation_latency.py::TestFederatedSearchFanoutLatency
   gap_issue: null
   owning_issue: 4129
 - id: semantic.search_index

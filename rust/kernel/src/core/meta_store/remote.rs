@@ -36,6 +36,10 @@ impl RemoteMetaStore {
     }
 }
 
+fn unwrap_result_envelope(value: &serde_json::Value) -> &serde_json::Value {
+    value.get("result").unwrap_or(value)
+}
+
 impl MetaStore for RemoteMetaStore {
     fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetaStoreError> {
         if let Some(cached) = self.cache.get(path) {
@@ -58,40 +62,38 @@ impl MetaStore for RemoteMetaStore {
         let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
             .map_err(|e| MetaStoreError::IOError(format!("decode sys_stat response: {e}")))?;
 
+        let value = unwrap_result_envelope(&value);
+
         // Server returns None/null for missing paths
         if value.is_null() {
             return Ok(None);
         }
 
-        let meta = parse_metadata_from_json(&value)?;
+        let meta = parse_metadata_from_json(value)?;
         self.cache.insert(path.to_string(), meta.clone());
         Ok(Some(meta))
     }
 
     fn put(&self, path: &str, metadata: FileMetadata) -> Result<(), MetaStoreError> {
-        // Wire format expected by the hub's `handle_set_metadata` (#3786):
-        //     {"path": ..., "metadata": { ...flat fields... }}
-        // The handler reads `params.path` + `params.metadata` (a dict) and
-        // reconstructs the FileMetadata via MetadataMapper.from_json.  Sending
-        // flat fields at the top level fails parse_method_params(SetMetadataParams)
-        // and the SimpleNamespace fallback has no `metadata` attribute.
+        // Use the kernel-syscall wire shape, not the old set_metadata handler
+        // shape. The Python gRPC Call path routes `sys_setattr` through
+        // `_kernel_syscall_dispatch`, which forwards flat kwargs into
+        // NexusFS.sys_setattr.
         let payload = serde_json::json!({
             "path": path,
-            "metadata": {
-                "entry_type": metadata.entry_type,
-                "size": metadata.size,
-                "content_id": metadata.content_id,
-                "gen": metadata.gen,
-                "version": metadata.version,
-                "zone_id": metadata.zone_id,
-                "mime_type": metadata.mime_type,
-                "last_writer_address": metadata.last_writer_address,
-                "created_at_ms": metadata.created_at_ms,
-                "modified_at_ms": metadata.modified_at_ms,
-                "target_zone_id": metadata.target_zone_id,
-                "link_target": metadata.link_target,
-                "owner_id": metadata.owner_id,
-            },
+            "entry_type": metadata.entry_type,
+            "size": metadata.size,
+            "content_id": metadata.content_id,
+            "gen": metadata.gen,
+            "version": metadata.version,
+            "zone_id": metadata.zone_id,
+            "mime_type": metadata.mime_type,
+            "last_writer_address": metadata.last_writer_address,
+            "created_at_ms": metadata.created_at_ms,
+            "modified_at_ms": metadata.modified_at_ms,
+            "target_zone_id": metadata.target_zone_id,
+            "link_target": metadata.link_target,
+            "owner_id": metadata.owner_id,
         });
         let bytes =
             serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
@@ -148,8 +150,11 @@ impl MetaStore for RemoteMetaStore {
         let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
             .map_err(|e| MetaStoreError::IOError(format!("decode sys_readdir: {e}")))?;
 
+        let value = unwrap_result_envelope(&value);
+        let files = value.get("files").unwrap_or(value);
+
         // Server returns an array of entries (path, entry_type pairs or full metadata)
-        let entries = match value.as_array() {
+        let entries = match files.as_array() {
             Some(arr) => arr
                 .iter()
                 .filter_map(|v| parse_metadata_from_json(v).ok())
@@ -176,6 +181,7 @@ impl MetaStore for RemoteMetaStore {
 
         // Server returns a bool or a JSON object with an "exists" field
         let value: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap_or_default();
+        let value = unwrap_result_envelope(&value);
         Ok(value.as_bool().unwrap_or_else(|| {
             value
                 .get("exists")
@@ -199,6 +205,7 @@ impl MetaStore for RemoteMetaStore {
         }
 
         let value: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap_or_default();
+        let value = unwrap_result_envelope(&value);
         Ok(value.as_bool().unwrap_or(false))
     }
 
@@ -231,10 +238,12 @@ impl MetaStore for RemoteMetaStore {
 
         let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
             .map_err(|e| MetaStoreError::IOError(format!("decode paginated readdir: {e}")))?;
+        let value = unwrap_result_envelope(&value);
 
         let items: Vec<FileMetadata> = value
             .get("items")
-            .or(Some(&value))
+            .or_else(|| value.get("files"))
+            .or(Some(value))
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()

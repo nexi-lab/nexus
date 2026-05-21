@@ -316,6 +316,11 @@ def _has_declared_method(obj: Any, name: str) -> bool:
 
 
 def _resolve_rebac_surface(nx: Any) -> Any:
+    """Resolve the ReBAC surface via the public service() API only.
+
+    Never read private attributes like ``_rebac_manager`` — that bypasses
+    the service registry boundary.
+    """
     rebac = None
     if hasattr(nx, "service"):
         try:
@@ -324,12 +329,9 @@ def _resolve_rebac_surface(nx: Any) -> Any:
             rebac = None
         if rebac is None:
             try:
-                rebac_service = nx.service("rebac")
-                rebac = getattr(rebac_service, "_rebac_manager", None) or rebac_service
+                rebac = nx.service("rebac")
             except Exception:
                 rebac = None
-    if rebac is None:
-        rebac = getattr(nx, "_rebac_manager", None)
     if rebac is None:
         raise click.ClickException("ReBAC service is not available")
     return rebac

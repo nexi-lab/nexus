@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 from scripts.surface_coverage.schema import PerfClass, ProfileStatus, load_yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COVERAGE_YAML = _REPO_ROOT / "docs/architecture/api-rpc-surface-coverage.yaml"
+_PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
 _REBAC_SANDBOX_ROWS = {
     "rebac.create",
@@ -83,3 +85,10 @@ def test_issue_4128_tool_profile_assignment_cli_is_supported() -> None:
     assert "tests/unit/cli/test_mcp_profile_cli.py" in op.correctness_test
     assert op.perf_class == PerfClass.SETUP
     assert "bench_permission_hotpath.py" in op.perf_link
+
+
+def test_issue_4128_default_mcp_tool_profiles_are_packaged() -> None:
+    pyproject = tomllib.loads(_PYPROJECT.read_text())
+    package_data = pyproject["tool"]["setuptools"]["package-data"]
+
+    assert "config/*.yaml" in package_data["nexus"]

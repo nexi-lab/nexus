@@ -36,7 +36,7 @@ from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
-from nexus.server.dependencies import require_auth
+from nexus.server.dependencies import get_operation_context, require_auth
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
@@ -292,6 +292,7 @@ async def _handle_single_zone_search(
     # --- Standard single-zone search path ---
     # ReBAC file-level permission enforcer (Decision #17)
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+    op_context = get_operation_context(auth_result)
 
     routing_info: dict[str, Any] | None = None
     effective_graph_mode = graph_mode
@@ -358,7 +359,11 @@ async def _handle_single_zone_search(
             # ReBAC file-level filtering (Decision #17)
             pre_filter_count = len(results)
             results, filter_ms = _apply_rebac_filter(
-                results, permission_enforcer, auth_result, zone_id
+                results,
+                permission_enforcer,
+                auth_result,
+                zone_id,
+                operation_context=op_context,
             )
             post_filter_count = len(results)
             results = results[:effective_limit]
@@ -399,7 +404,13 @@ async def _handle_single_zone_search(
 
         # ReBAC file-level filtering (Decision #17)
         pre_filter_count = len(results)
-        results, filter_ms = _apply_rebac_filter(results, permission_enforcer, auth_result, zone_id)
+        results, filter_ms = _apply_rebac_filter(
+            results,
+            permission_enforcer,
+            auth_result,
+            zone_id,
+            operation_context=op_context,
+        )
         post_filter_count = len(results)
         results = results[:effective_limit]
 
@@ -595,6 +606,7 @@ async def search_query_batch(
 
     # Same ReBAC hook the single-query endpoint uses.
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+    op_context = get_operation_context(auth_result)
     overfetch_multiplier = 3 if permission_enforcer is not None else 1
 
     # Over-fetch per-query so ReBAC filtering does not strip us below the
@@ -624,7 +636,11 @@ async def search_query_batch(
     for q_spec, results, orig_limit in zip(raw_queries, raw_results, requested_limits, strict=True):
         # File-level ReBAC filtering (Decision #17) — same enforcement as /query.
         filtered, filter_ms = _apply_rebac_filter(
-            results, permission_enforcer, auth_result, zone_id
+            results,
+            permission_enforcer,
+            auth_result,
+            zone_id,
+            operation_context=op_context,
         )
         filter_ms_total += filter_ms
         trimmed = filtered[:orig_limit]
@@ -799,6 +815,7 @@ async def _do_grep_operation(
             auth_result,
             zone_id,
             path_extractor=lambda r: r.get("file", ""),
+            operation_context=op_context,
         )
         post_filter_count = len(filtered_results)
 
@@ -921,6 +938,7 @@ async def _do_glob_operation(
             auth_result,
             zone_id,
             path_extractor=lambda p: p,
+            operation_context=op_context,
         )
         post_filter_count = len(filtered_paths)
 
@@ -1982,6 +2000,7 @@ async def search_locate(
         permission_enforcer,
         auth_result,
         zone_id,
+        operation_context=get_operation_context(auth_result),
     )
 
     # Unpack back to dicts and truncate to effective_limit

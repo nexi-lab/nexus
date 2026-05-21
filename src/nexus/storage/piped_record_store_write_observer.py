@@ -44,6 +44,27 @@ def _metadata_from_dict(d: dict[str, Any]) -> Any:
     return FileMetadata(**d)
 
 
+def _metadata_content_id(metadata: Any | None) -> str | None:
+    if metadata is None:
+        return None
+    if isinstance(metadata, dict):
+        value = metadata.get("content_id")
+        return value if isinstance(value, str) else None
+    value = getattr(metadata, "content_id", None)
+    return value if isinstance(value, str) else None
+
+
+def _metadata_snapshot(metadata: Any | None) -> dict[str, Any] | None:
+    if metadata is None:
+        return None
+    if isinstance(metadata, dict):
+        return metadata
+    if hasattr(metadata, "to_dict"):
+        snapshot = metadata.to_dict()
+        return snapshot if isinstance(snapshot, dict) else None
+    return None
+
+
 class RecordStoreWriteObserver:
     """OBSERVE-phase observer for RecordStore audit trail + versioning.
 
@@ -180,10 +201,8 @@ class RecordStoreWriteObserver:
                 "path": path,
                 "zone_id": zone_id,
                 "agent_id": agent_id,
-                "snapshot_hash": metadata.content_id if metadata else None,
-                "metadata_snapshot": metadata.to_dict()
-                if metadata and hasattr(metadata, "to_dict")
-                else None,
+                "snapshot_hash": _metadata_content_id(metadata),
+                "metadata_snapshot": _metadata_snapshot(metadata),
             }
         )
 
@@ -204,10 +223,8 @@ class RecordStoreWriteObserver:
                 "new_path": new_path,
                 "zone_id": zone_id,
                 "agent_id": agent_id,
-                "snapshot_hash": metadata.content_id if metadata else None,
-                "metadata_snapshot": metadata.to_dict()
-                if metadata and hasattr(metadata, "to_dict")
-                else None,
+                "snapshot_hash": _metadata_content_id(metadata),
+                "metadata_snapshot": _metadata_snapshot(metadata),
             }
         )
 

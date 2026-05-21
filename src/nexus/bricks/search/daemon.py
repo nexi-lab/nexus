@@ -2550,6 +2550,14 @@ class SearchDaemon:
         if change_type == "delete":
             self._pending_delete_paths.add(path)
             self._pending_refresh_paths.discard(path)
+            try:
+                await self._delete_indexes_for_paths([path])
+            except Exception:
+                logger.warning(
+                    "Immediate search delete propagation failed for %s; queued for retry",
+                    path,
+                    exc_info=True,
+                )
         else:
             self._pending_refresh_paths.add(path)
             self._pending_delete_paths.discard(path)

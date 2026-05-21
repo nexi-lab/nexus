@@ -22,6 +22,8 @@ import pytest
 # Use the current Python interpreter (needs all nexus deps installed)
 PYTHON = sys.executable
 SERVER_STARTUP_TIMEOUT = 30
+API_KEY = "test-e2e-api-key-12345"
+AUTH_HEADERS = {"Authorization": f"Bearer {API_KEY}", "X-Nexus-Zone-Id": "root"}
 
 # Clear proxy env vars so localhost connections work
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
@@ -77,6 +79,7 @@ def server():
         "NO_PROXY": "*",
         "PYTHONPATH": src_path,
         "NEXUS_BACKEND_ROOT": backend_root,
+        "NEXUS_API_KEY": API_KEY,
         "NEXUS_TENANT_ID": "registry-e2e-test",
         "NEXUS_SEARCH_DAEMON": "false",
         "NEXUS_RATE_LIMIT_ENABLED": "false",
@@ -87,13 +90,13 @@ def server():
     server_script = f"""
 import sys, os, asyncio
 sys.path.insert(0, '{src_path}')
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.factory import create_nexus_fs
 from nexus.server.fastapi_server import create_app
 import uvicorn
 
-backend = LocalBackend(root_path='{backend_root}')
+backend = CASLocalBackend(root_path='{backend_root}')
 metadata_store = '{meta_dir}'
 record_store = SQLAlchemyRecordStore(db_path='{db_path}')
 
@@ -101,7 +104,7 @@ nx = create_nexus_fs(
     backend=backend,
     metadata_store=metadata_store,
     record_store=record_store,
-))
+)
 app = create_app(nexus_fs=nx)
 uvicorn.run(app, host='127.0.0.1', port={port}, log_level='warning')
 """
@@ -123,10 +126,11 @@ uvicorn.run(app, host='127.0.0.1', port={port}, log_level='warning')
             "process": proc,
         }
     except Exception:
-        if sys.platform != "win32":
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        else:
-            proc.terminate()
+        if proc.poll() is None:
+            if sys.platform != "win32":
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            else:
+                proc.terminate()
         stdout, _ = proc.communicate(timeout=5)
         print(f"Server output:\n{stdout}")
         raise
@@ -145,7 +149,7 @@ uvicorn.run(app, host='127.0.0.1', port={port}, log_level='warning')
 @pytest.fixture
 def client(server):
     """HTTP client pointed at the running server."""
-    with httpx.Client(base_url=server["base_url"], timeout=10) as c:
+    with httpx.Client(base_url=server["base_url"], timeout=10, headers=AUTH_HEADERS) as c:
         yield c
 
 

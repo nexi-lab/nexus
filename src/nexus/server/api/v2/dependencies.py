@@ -58,6 +58,11 @@ async def get_workspace_registry(
 ) -> Any:
     """Get WorkspaceRegistry instance from NexusFS."""
     registry = getattr(nexus_fs, "_workspace_registry", None)
+    if registry is None and hasattr(nexus_fs, "service"):
+        registry = nexus_fs.service("workspace_registry")
+    if registry is None and hasattr(nexus_fs, "service"):
+        workspace_rpc = nexus_fs.service("workspace_rpc")
+        registry = getattr(workspace_rpc, "_wr", None)
     if registry is None:
         raise HTTPException(status_code=503, detail="WorkspaceRegistry not initialized")
     return registry

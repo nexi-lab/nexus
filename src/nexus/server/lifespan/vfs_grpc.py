@@ -157,6 +157,7 @@ class VFSGrpcServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             NexusPermissionError,
             ValidationError,
         )
+        from nexus.contracts.process_types import AgentError, InvalidTransitionError
 
         if isinstance(exc, PermissionError | NexusPermissionError):
             return _error_payload(RPCErrorCode.PERMISSION_ERROR, str(exc))
@@ -176,6 +177,10 @@ class VFSGrpcServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                     "current_content_id": exc.current_content_id,
                 },
             )
+        if isinstance(exc, InvalidTransitionError):
+            return _error_payload(RPCErrorCode.CONFLICT, str(exc))
+        if isinstance(exc, AgentError):
+            return _error_payload(RPCErrorCode.VALIDATION_ERROR, str(exc))
         logger.exception("VFS gRPC call failed")
         return _error_payload(RPCErrorCode.INTERNAL_ERROR, "Internal server error")
 

@@ -1,8 +1,11 @@
 """Workspace snapshot and versioning commands."""
 
 import asyncio
+import inspect
+import json
 import re
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import click
@@ -10,6 +13,27 @@ from rich.table import Table
 
 from nexus.cli.theme import console
 from nexus.cli.utils import add_backend_options, handle_error, open_filesystem
+
+
+def _parse_metadata(items: tuple[str, ...]) -> dict[str, str] | None:
+    metadata: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise click.BadParameter(
+                f"metadata must be KEY=VALUE, got {item!r}",
+                param_hint="--metadata",
+            )
+        key, value = item.split("=", 1)
+        if not key:
+            raise click.BadParameter("metadata key must not be empty", param_hint="--metadata")
+        metadata[key] = value
+    return metadata or None
+
+
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 @click.group(name="workspace")
@@ -164,6 +188,56 @@ def list_cmd(
         handle_error(e)
 
 
+@workspace_group.command(name="update")
+@click.argument("path", type=str)
+@click.option("--name", "-n", default=None, help="Updated friendly name")
+@click.option("--description", "-d", default=None, help="Updated description")
+@click.option(
+    "--metadata",
+    "metadata_items",
+    multiple=True,
+    help="Metadata entry as KEY=VALUE. Can be specified multiple times.",
+)
+@add_backend_options
+def update_cmd(
+    path: str,
+    name: str | None,
+    description: str | None,
+    metadata_items: tuple[str, ...],
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Update a registered workspace configuration.
+
+    Examples:
+        nexus workspace update /my-workspace --name main --metadata owner=alice
+    """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as _nx:
+            nx: Any = _nx
+            metadata = _parse_metadata(metadata_items)
+            result = await _maybe_await(
+                nx.service("workspace_rpc").update_workspace(
+                    path=path,
+                    name=name,
+                    description=description,
+                    metadata=metadata,
+                )
+            )
+
+            console.print(f"[nexus.success]✓[/nexus.success] Updated workspace: {path}")
+            if result.get("name"):
+                console.print(f"  Name: {result['name']}")
+            if result.get("description"):
+                console.print(f"  Description: {result['description']}")
+
+    try:
+        asyncio.run(_impl())
+    except Exception as e:
+        handle_error(e)
+
+
 @workspace_group.command(name="unregister")
 @click.argument("path", type=str)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
@@ -218,6 +292,54 @@ def unregister_cmd(
                 console.print(
                     f"[nexus.error]✗[/nexus.error] Failed to unregister workspace: {path}"
                 )
+
+    try:
+        asyncio.run(_impl())
+    except Exception as e:
+        handle_error(e)
+
+
+@workspace_group.group(name="config")
+def config_group() -> None:
+    """Workspace configuration helpers."""
+
+
+@config_group.command(name="load")
+@click.argument("config_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@add_backend_options
+def config_load_cmd(
+    config_file: Path,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Load workspace registrations from a JSON or YAML config file.
+
+    The file may be a list of workspace objects or an object with a
+    ``workspaces`` list.
+    """
+
+    async def _impl() -> None:
+        raw = config_file.read_text(encoding="utf-8")
+        if config_file.suffix.lower() == ".json":
+            data = json.loads(raw)
+        else:
+            import yaml
+
+            data = yaml.safe_load(raw)
+
+        workspaces = data.get("workspaces", data) if isinstance(data, dict) else data
+        if not isinstance(workspaces, list):
+            raise ValueError("workspace config must be a list or contain a 'workspaces' list")
+
+        async with open_filesystem(remote_url, remote_api_key) as _nx:
+            nx: Any = _nx
+            result = await _maybe_await(
+                nx.service("workspace_rpc").load_workspace_config(workspaces=workspaces)
+            )
+
+            console.print("[nexus.success]✓[/nexus.success] Loaded workspace config")
+            console.print(f"  Registered: {result.get('workspaces_registered', 0)}")
+            console.print(f"  Skipped:    {result.get('workspaces_skipped', 0)}")
 
     try:
         asyncio.run(_impl())

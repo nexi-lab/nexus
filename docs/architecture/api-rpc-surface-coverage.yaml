@@ -492,45 +492,45 @@ operations:
   owning_issue: null
 - id: agent.heartbeat
   module: agent_log
-  summary: ''
+  summary: Record agent liveness heartbeat in the runtime agent registry.
   transports:
     grpc_expose:
       name: agent_heartbeat
-      source: src/nexus/services/agents/agent_rpc_service.py:781
+      source: src/nexus/services/agents/agent_rpc_service.py:818
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus agent heartbeat alice_bot; RPC: agent_heartbeat("alice_bot")'
+  correctness_test: tests/unit/services/test_agent_rpc_service_lifecycle.py:96
+  perf_class: hot
+  perf_link: tests/benchmarks/test_lifecycle_surface_latency.py:45
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: agent.list_by_zone
   module: agent_log
-  summary: ''
+  summary: List runtime agents in a zone, optionally filtered by lifecycle state.
   transports:
     grpc_expose:
       name: agent_list_by_zone
-      source: src/nexus/services/agents/agent_rpc_service.py:789
+      source: src/nexus/services/agents/agent_rpc_service.py:826
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: agent_list_by_zone("root", state="READY")'
+  correctness_test: tests/unit/services/test_agent_rpc_service_lifecycle.py:114
+  perf_class: hot
+  perf_link: tests/benchmarks/test_lifecycle_surface_latency.py:92
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: agent.registry
   module: agent_log
   summary: ''
   transports:
     sdk:
       name: KernelClient.agent_registry
-      source: src/nexus/remote/kernel_client.py:794
+      source: src/nexus/remote/kernel_client.py:805
   profiles:
     lite: supported
     sandbox: supported
@@ -543,24 +543,26 @@ operations:
   owning_issue: null
 - id: agent.transition
   module: agent_log
-  summary: ''
+  summary: Transition agent lifecycle state with optional generation-based stale-agent rejection.
   transports:
     grpc_expose:
       name: agent_transition
-      source: src/nexus/services/agents/agent_rpc_service.py:715
+      source: src/nexus/services/agents/agent_rpc_service.py:752
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus agent transition alice_bot CONNECTED --expected-generation 7; RPC: await agent_transition("alice_bot",
+    "CONNECTED", expected_generation=7)'
+  correctness_test: tests/unit/services/test_agent_rpc_service_lifecycle.py:106
+  perf_class: control
+  perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
+    and :92
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: agent_log.agent
   module: agent_log
-  summary: ''
+  summary: CLI group for registering, updating, listing, inspecting, deleting, transitioning, and heartbeating agents.
   transports:
     cli:
       name: nexus agent
@@ -569,12 +571,14 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus agent register alice_bot "Alice Bot"; nexus agent update alice_bot --metadata tier=gold; nexus
+    agent transition alice_bot CONNECTED; nexus agent heartbeat alice_bot'
+  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:33
+  perf_class: control
+  perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
+    and :92
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: agent_log.audit
   module: agent_log
   summary: ''
@@ -2103,7 +2107,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:2027
+      source: src/nexus/core/nexus_fs_metadata.py:2034
     sdk:
       name: MCPClient.backfill_directory_index
       source: src/nexus/remote/domain/mcp.py:91
@@ -2293,7 +2297,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_pipes
-      source: src/nexus/remote/kernel_client.py:717
+      source: src/nexus/remote/kernel_client.py:727
   profiles:
     lite: supported
     sandbox: supported
@@ -2310,7 +2314,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_streams
-      source: src/nexus/remote/kernel_client.py:753
+      source: src/nexus/remote/kernel_client.py:763
   profiles:
     lite: supported
     sandbox: supported
@@ -2327,7 +2331,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_pipe
-      source: src/nexus/remote/kernel_client.py:711
+      source: src/nexus/remote/kernel_client.py:721
   profiles:
     lite: supported
     sandbox: supported
@@ -2344,7 +2348,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_stream
-      source: src/nexus/remote/kernel_client.py:747
+      source: src/nexus/remote/kernel_client.py:757
   profiles:
     lite: supported
     sandbox: supported
@@ -2361,7 +2365,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/connectors
-      source: src/nexus/server/api/v2/routers/connectors.py:204
+      source: src/nexus/server/api/v2/routers/connectors.py:209
   profiles:
     lite: supported
     sandbox: supported
@@ -2380,7 +2384,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/connectors/auth/init
-      source: src/nexus/server/api/v2/routers/connectors.py:304
+      source: src/nexus/server/api/v2/routers/connectors.py:309
   profiles:
     lite: supported
     sandbox: supported
@@ -2398,7 +2402,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/connectors/auth/status
-      source: src/nexus/server/api/v2/routers/connectors.py:500
+      source: src/nexus/server/api/v2/routers/connectors.py:505
   profiles:
     lite: supported
     sandbox: supported
@@ -2416,7 +2420,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/connectors/available
-      source: src/nexus/server/api/v2/routers/connectors.py:227
+      source: src/nexus/server/api/v2/routers/connectors.py:232
   profiles:
     lite: supported
     sandbox: supported
@@ -2453,7 +2457,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/connectors/mount
-      source: src/nexus/server/api/v2/routers/connectors.py:591
+      source: src/nexus/server/api/v2/routers/connectors.py:596
   profiles:
     lite: supported
     sandbox: supported
@@ -2473,7 +2477,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/connectors/mounts
-      source: src/nexus/server/api/v2/routers/connectors.py:765
+      source: src/nexus/server/api/v2/routers/connectors.py:761
   profiles:
     lite: supported
     sandbox: supported
@@ -2526,7 +2530,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/connectors/schema/{mount_path:path}/{operation}
-      source: src/nexus/server/api/v2/routers/connectors.py:891
+      source: src/nexus/server/api/v2/routers/connectors.py:889
   profiles:
     lite: supported
     sandbox: supported
@@ -2560,7 +2564,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/connectors/skill/{mount_path:path}
-      source: src/nexus/server/api/v2/routers/connectors.py:835
+      source: src/nexus/server/api/v2/routers/connectors.py:833
   profiles:
     lite: supported
     sandbox: supported
@@ -2577,7 +2581,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/connectors/unmount
-      source: src/nexus/server/api/v2/routers/connectors.py:795
+      source: src/nexus/server/api/v2/routers/connectors.py:792
   profiles:
     lite: supported
     sandbox: supported
@@ -2613,7 +2617,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/connectors/write/{mount_path:path}
-      source: src/nexus/server/api/v2/routers/connectors.py:959
+      source: src/nexus/server/api/v2/routers/connectors.py:957
   profiles:
     lite: supported
     sandbox: supported
@@ -2630,7 +2634,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/connectors/{name}/capabilities
-      source: src/nexus/server/api/v2/routers/connectors.py:275
+      source: src/nexus/server/api/v2/routers/connectors.py:280
   profiles:
     lite: supported
     sandbox: supported
@@ -2681,7 +2685,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_pipe
-      source: src/nexus/remote/kernel_client.py:705
+      source: src/nexus/remote/kernel_client.py:715
   profiles:
     lite: supported
     sandbox: supported
@@ -2715,7 +2719,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_stream
-      source: src/nexus/remote/kernel_client.py:722
+      source: src/nexus/remote/kernel_client.py:732
   profiles:
     lite: supported
     sandbox: supported
@@ -3034,21 +3038,22 @@ operations:
   owning_issue: null
 - id: delete.agent
   module: agent_log
-  summary: ''
+  summary: Delete an agent registration, revoke keys, and clean related permissions when available.
   transports:
     grpc_expose:
       name: delete_agent
-      source: src/nexus/services/agents/agent_rpc_service.py:607
+      source: src/nexus/services/agents/agent_rpc_service.py:641
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus agent delete alice_bot --yes; RPC: await nx.service("agent_rpc").delete_agent("alice_bot")'
+  correctness_test: tests/unit/services/test_agent_registration.py:260
+  perf_class: control
+  perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
+    and :92
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: delete.batch
   module: filesystem
   summary: Sandbox local workspace filesystem surface. The daemon mounts the operator workspace at /zone/local; CLI parity
@@ -3056,7 +3061,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1433
+      source: src/nexus/core/nexus_fs_metadata.py:1440
   profiles:
     lite: supported
     sandbox: supported
@@ -3145,7 +3150,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_pipe
-      source: src/nexus/remote/kernel_client.py:708
+      source: src/nexus/remote/kernel_client.py:718
   profiles:
     lite: supported
     sandbox: supported
@@ -3162,7 +3167,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_stream
-      source: src/nexus/remote/kernel_client.py:750
+      source: src/nexus/remote/kernel_client.py:760
   profiles:
     lite: supported
     sandbox: supported
@@ -3175,21 +3180,22 @@ operations:
   owning_issue: null
 - id: diff.versions
   module: versioning
-  summary: ''
+  summary: Compare two file versions by metadata or content.
   transports:
     grpc_expose:
       name: diff_versions
       source: src/nexus/bricks/versioning/version_service.py:363
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus versions diff /workspace/hello.txt --v1 1 --v2 2 --mode metadata; RPC: diff_versions(path="/workspace/hello.txt",
+    v1=1, v2=2)'
+  correctness_test: tests/e2e/server/test_extracted_services_e2e.py:93
+  perf_class: hot
+  perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: discovery.get_tool_details
   module: discovery
   summary: MCP discovery tool details are filtered through the caller's ReBAC-derived tool namespace; invisible tools return
@@ -3267,7 +3273,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_post_hooks
-      source: src/nexus/remote/kernel_client.py:511
+      source: src/nexus/remote/kernel_client.py:518
   profiles:
     lite: supported
     sandbox: supported
@@ -3284,7 +3290,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks
-      source: src/nexus/remote/kernel_client.py:518
+      source: src/nexus/remote/kernel_client.py:525
   profiles:
     lite: supported
     sandbox: supported
@@ -3301,7 +3307,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks_batch_stat
-      source: src/nexus/remote/kernel_client.py:546
+      source: src/nexus/remote/kernel_client.py:553
   profiles:
     lite: supported
     sandbox: supported
@@ -3763,10 +3769,10 @@ operations:
   transports:
     grpc_expose:
       name: exists_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1328
+      source: src/nexus/core/nexus_fs_metadata.py:1335
     sdk:
       name: KernelClient.exists_batch
-      source: src/nexus/remote/kernel_client.py:572
+      source: src/nexus/remote/kernel_client.py:579
   profiles:
     lite: supported
     sandbox: supported
@@ -4328,7 +4334,7 @@ operations:
       source: src/nexus/server/_kernel_syscall_dispatch.py:52
     grpc_expose:
       name: list
-      source: src/nexus/bricks/search/search_service.py:459
+      source: src/nexus/bricks/search/search_service.py:460
   profiles:
     lite: supported
     sandbox: supported
@@ -4675,7 +4681,7 @@ operations:
       source: src/nexus/cli/commands/file_ops.py:1
     grpc_expose:
       name: stat
-      source: src/nexus/core/nexus_fs_metadata.py:1108
+      source: src/nexus/core/nexus_fs_metadata.py:1115
   profiles:
     lite: supported
     sandbox: supported
@@ -4824,7 +4830,7 @@ operations:
   transports:
     grpc_expose:
       name: flush_write_observer
-      source: src/nexus/core/nexus_fs_metadata.py:2057
+      source: src/nexus/core/nexus_fs_metadata.py:2064
   profiles:
     lite: supported
     sandbox: supported
@@ -4925,8 +4931,25 @@ operations:
   summary: ''
   transports:
     sdk:
-      name: ShareLinksClient.get
-      source: src/nexus/remote/domain/share_links.py:34
+      name: _AgentRegistryProxy.get
+      source: src/nexus/remote/kernel_client.py:1054
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.heartbeat
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: _AgentRegistryProxy.heartbeat
+      source: src/nexus/remote/kernel_client.py:1080
   profiles:
     lite: supported
     sandbox: supported
@@ -4977,7 +5000,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.open
-      source: src/nexus/remote/kernel_client.py:120
+      source: src/nexus/remote/kernel_client.py:122
   profiles:
     lite: supported
     sandbox: supported
@@ -5011,7 +5034,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register
-      source: src/nexus/remote/kernel_client.py:971
+      source: src/nexus/remote/kernel_client.py:1015
   profiles:
     lite: supported
     sandbox: supported
@@ -5063,6 +5086,23 @@ operations:
     sdk:
       name: SandboxClient.run
       source: src/nexus/remote/domain/sandbox.py:40
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.signal
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: _AgentRegistryProxy.signal
+      source: src/nexus/remote/kernel_client.py:1057
   profiles:
     lite: supported
     sandbox: supported
@@ -5147,7 +5187,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister
-      source: src/nexus/remote/kernel_client.py:974
+      source: src/nexus/remote/kernel_client.py:1048
   profiles:
     lite: supported
     sandbox: supported
@@ -5222,21 +5262,22 @@ operations:
   owning_issue: null
 - id: get.agent
   module: agent_log
-  summary: ''
+  summary: Fetch one registered agent and enrich it from its config when available.
   transports:
     grpc_expose:
       name: get_agent
-      source: src/nexus/services/agents/agent_rpc_service.py:553
+      source: src/nexus/services/agents/agent_rpc_service.py:587
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus agent info alice_bot; RPC: await nx.service("agent_rpc").get_agent("alice_bot")'
+  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:33
+  perf_class: control
+  perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
+    and :92
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: get.auth_url
   module: auth
   summary: ''
@@ -5263,7 +5304,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:627
     sdk:
       name: KernelClient.get_content_id
-      source: src/nexus/remote/kernel_client.py:563
+      source: src/nexus/remote/kernel_client.py:570
   profiles:
     lite: supported
     sandbox: supported
@@ -5331,7 +5372,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_mount_points
-      source: src/nexus/remote/kernel_client.py:577
+      source: src/nexus/remote/kernel_client.py:584
   profiles:
     lite: supported
     sandbox: supported
@@ -5453,7 +5494,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:268
     sdk:
       name: KernelClient.get_top_level_mounts
-      source: src/nexus/remote/kernel_client.py:581
+      source: src/nexus/remote/kernel_client.py:591
   profiles:
     lite: supported
     sandbox: supported
@@ -5466,45 +5507,46 @@ operations:
   owning_issue: null
 - id: get.version
   module: versioning
-  summary: ''
+  summary: Fetch content for a specific file version.
   transports:
     grpc_expose:
       name: get_version
       source: src/nexus/bricks/versioning/version_service.py:123
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus versions get /workspace/hello.txt --version 1; RPC: get_version(path="/workspace/hello.txt",
+    version=1)'
+  correctness_test: tests/e2e/server/test_extracted_services_e2e.py:85
+  perf_class: hot
+  perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: get.workspace_info
   module: workspace
-  summary: ''
+  summary: Return one registered workspace configuration or null.
   transports:
     grpc_expose:
       name: get_workspace_info
       source: src/nexus/services/workspace/workspace_rpc_service.py:360
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace info /workspace/project; RPC: get_workspace_info("/workspace/project")'
+  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:183
+  perf_class: control
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: get.xattr
   module: filesystem
   summary: ''
   transports:
     sdk:
       name: KernelClient.get_xattr
-      source: src/nexus/remote/kernel_client.py:678
+      source: src/nexus/remote/kernel_client.py:688
   profiles:
     lite: supported
     sandbox: supported
@@ -5521,7 +5563,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_xattr_bulk
-      source: src/nexus/remote/kernel_client.py:693
+      source: src/nexus/remote/kernel_client.py:703
   profiles:
     lite: supported
     sandbox: supported
@@ -5538,7 +5580,7 @@ operations:
   transports:
     grpc_expose:
       name: glob_batch
-      source: src/nexus/bricks/search/search_service.py:1882
+      source: src/nexus/bricks/search/search_service.py:1951
   profiles:
     lite: supported
     sandbox: supported
@@ -5546,7 +5588,8 @@ operations:
   usage_example: 'RPC: glob_batch(patterns=["**/*.py","**/*.md"], path="/workspace")'
   correctness_test: tests/integration/services/test_search_service.py::TestGlobBatch::test_glob_batch_reuses_listing_for_multiple_patterns
   perf_class: hot
-  perf_link: tests/benchmarks/test_search_benchmarks.py covers glob matching latency; glob_batch shares one listing across patterns
+  perf_link: tests/benchmarks/test_search_benchmarks.py covers glob matching latency; glob_batch shares one listing across
+    patterns
   gap_issue: null
   owning_issue: 4129
 - id: governance.alerts
@@ -5742,7 +5785,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_pipe
-      source: src/nexus/remote/kernel_client.py:714
+      source: src/nexus/remote/kernel_client.py:724
   profiles:
     lite: supported
     sandbox: supported
@@ -5759,7 +5802,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_stream
-      source: src/nexus/remote/kernel_client.py:725
+      source: src/nexus/remote/kernel_client.py:735
   profiles:
     lite: supported
     sandbox: supported
@@ -5828,7 +5871,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.hook_count
-      source: src/nexus/remote/kernel_client.py:508
+      source: src/nexus/remote/kernel_client.py:515
   profiles:
     lite: supported
     sandbox: supported
@@ -6001,7 +6044,7 @@ operations:
   transports:
     grpc_expose:
       name: initialize_semantic_search
-      source: src/nexus/bricks/search/search_service.py:4150
+      source: src/nexus/bricks/search/search_service.py:4392
   profiles:
     lite: supported
     sandbox: supported
@@ -6019,7 +6062,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.is_directory
-      source: src/nexus/remote/kernel_client.py:554
+      source: src/nexus/remote/kernel_client.py:561
   profiles:
     lite: supported
     sandbox: supported
@@ -6168,24 +6211,24 @@ operations:
   owning_issue: null
 - id: list.agents
   module: agent_log
-  summary: ''
+  summary: List registered agent entities with API-key inheritance state.
   transports:
     grpc_expose:
       name: list_agents
-      source: src/nexus/services/agents/agent_rpc_service.py:497
+      source: src/nexus/services/agents/agent_rpc_service.py:531
     sdk:
       name: _AgentRegistryProxy.list_agents
-      source: src/nexus/remote/kernel_client.py:977
+      source: src/nexus/remote/kernel_client.py:1083
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus agent list; RPC: nx.service("agent_rpc").list_agents()'
+  correctness_test: tests/unit/services/test_agent_rpc_service_lifecycle.py:60
+  perf_class: hot
+  perf_link: tests/benchmarks/test_lifecycle_surface_latency.py:92
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: list.connectors
   module: mount
   summary: List connector backend types available for dynamic mounts, optionally filtered by category.
@@ -6312,6 +6355,23 @@ operations:
   perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
   owning_issue: 4134
+- id: list.processes
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: _AgentRegistryProxy.list_processes
+      source: src/nexus/remote/kernel_client.py:1086
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: list.providers
   module: filesystem
   summary: ''
@@ -6382,21 +6442,21 @@ operations:
   owning_issue: null
 - id: list.versions
   module: versioning
-  summary: ''
+  summary: List file version history.
   transports:
     grpc_expose:
       name: list_versions
       source: src/nexus/bricks/versioning/version_service.py:205
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus versions history /workspace/hello.txt; RPC: list_versions({"path":"/workspace/hello.txt"})'
+  correctness_test: tests/e2e/server/test_extracted_services_e2e.py:66
+  perf_class: hot
+  perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: list.workflows
   module: workflows
   summary: ''
@@ -6416,21 +6476,21 @@ operations:
   owning_issue: null
 - id: list.workspaces
   module: workspace
-  summary: ''
+  summary: List workspaces visible to the authenticated user and zone.
   transports:
     grpc_expose:
       name: list_workspaces
       source: src/nexus/services/workspace/workspace_rpc_service.py:341
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace list; RPC: list_workspaces(context=OperationContext(user_id="alice", zone_id="root"))'
+  correctness_test: tests/unit/core/test_nexus_fs_list_workspaces.py:65
+  perf_class: hot
+  perf_link: tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: load.mount
   module: mount
   summary: Load a saved mount configuration and activate it through the normal add_mount path.
@@ -6452,21 +6512,21 @@ operations:
   owning_issue: 4136
 - id: load.workspace_config
   module: workspace
-  summary: ''
+  summary: Bulk-load workspace registrations from configuration.
   transports:
     grpc_expose:
       name: load_workspace_config
       source: src/nexus/services/workspace/workspace_rpc_service.py:260
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace config load ./workspaces.json; RPC: load_workspace_config(workspaces=[{"path":"/workspace/project"}])'
+  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:157
+  perf_class: setup
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: locks.api_v2
   module: filesystem
   summary: ''
@@ -6645,7 +6705,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_list_mounts
-      source: src/nexus/bricks/mcp/mcp_service.py:139
+      source: src/nexus/bricks/mcp/mcp_service.py:144
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6665,7 +6725,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_list_tools
-      source: src/nexus/bricks/mcp/mcp_service.py:205
+      source: src/nexus/bricks/mcp/mcp_service.py:210
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6701,7 +6761,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_mount
-      source: src/nexus/bricks/mcp/mcp_service.py:297
+      source: src/nexus/bricks/mcp/mcp_service.py:300
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6774,7 +6834,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_sync
-      source: src/nexus/bricks/mcp/mcp_service.py:469
+      source: src/nexus/bricks/mcp/mcp_service.py:472
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6814,7 +6874,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_unmount
-      source: src/nexus/bricks/mcp/mcp_service.py:420
+      source: src/nexus/bricks/mcp/mcp_service.py:423
   profiles:
     lite: unavailable
     sandbox: supported
@@ -6835,7 +6895,7 @@ operations:
   transports:
     grpc_expose:
       name: metadata_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1338
+      source: src/nexus/core/nexus_fs_metadata.py:1345
   profiles:
     lite: supported
     sandbox: supported
@@ -6853,7 +6913,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.metastore_list_paginated
-      source: src/nexus/remote/kernel_client.py:589
+      source: src/nexus/remote/kernel_client.py:599
   profiles:
     lite: supported
     sandbox: supported
@@ -7432,7 +7492,7 @@ operations:
   transports:
     grpc_expose:
       name: oauth_exchange_code
-      source: src/nexus/bricks/auth/oauth/credential_service.py:149
+      source: src/nexus/bricks/auth/oauth/credential_service.py:148
   profiles:
     lite: supported
     sandbox: supported
@@ -7468,7 +7528,7 @@ operations:
   transports:
     grpc_expose:
       name: oauth_list_credentials
-      source: src/nexus/bricks/auth/oauth/credential_service.py:245
+      source: src/nexus/bricks/auth/oauth/credential_service.py:244
   profiles:
     lite: supported
     sandbox: supported
@@ -7504,7 +7564,7 @@ operations:
   transports:
     grpc_expose:
       name: oauth_revoke_credential
-      source: src/nexus/bricks/auth/oauth/credential_service.py:290
+      source: src/nexus/bricks/auth/oauth/credential_service.py:289
   profiles:
     lite: supported
     sandbox: supported
@@ -7522,7 +7582,7 @@ operations:
   transports:
     grpc_expose:
       name: oauth_test_credential
-      source: src/nexus/bricks/auth/oauth/credential_service.py:371
+      source: src/nexus/bricks/auth/oauth/credential_service.py:372
   profiles:
     lite: supported
     sandbox: supported
@@ -8540,7 +8600,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1600
     sdk:
       name: KernelClient.read_batch
-      source: src/nexus/remote/kernel_client.py:423
+      source: src/nexus/remote/kernel_client.py:430
   profiles:
     lite: supported
     sandbox: supported
@@ -8849,11 +8909,29 @@ operations:
   owning_issue: null
 - id: register.agent
   module: agent_log
-  summary: ''
+  summary: Register an agent, create its config path, and optionally provision identity/API-key material.
   transports:
     grpc_expose:
       name: register_agent
       source: src/nexus/services/agents/agent_rpc_service.py:326
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: 'RPC: await nx.service("agent_rpc").register_agent("alice_bot", "Alice Bot", context={"user_id":"alice","zone_id":"root"})'
+  correctness_test: tests/unit/services/test_agent_registration.py:93
+  perf_class: control
+  perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
+    and :92
+  gap_issue: null
+  owning_issue: 4137
+- id: register.external
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: _AgentRegistryProxy.register_external
+      source: src/nexus/remote/kernel_client.py:1018
   profiles:
     lite: supported
     sandbox: supported
@@ -8870,7 +8948,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_hook
-      source: src/nexus/remote/kernel_client.py:525
+      source: src/nexus/remote/kernel_client.py:532
   profiles:
     lite: supported
     sandbox: supported
@@ -8904,7 +8982,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_native_hook
-      source: src/nexus/remote/kernel_client.py:772
+      source: src/nexus/remote/kernel_client.py:782
   profiles:
     lite: supported
     sandbox: supported
@@ -8917,55 +8995,56 @@ operations:
   owning_issue: null
 - id: register.workspace
   module: workspace
-  summary: ''
+  summary: Register a path as a workspace and create the path if needed.
   transports:
     grpc_expose:
       name: register_workspace
       source: src/nexus/services/workspace/workspace_rpc_service.py:290
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace register /workspace/project --name project; RPC: await register_workspace(path="/workspace/project",
+    name="project")'
+  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:165
+  perf_class: setup
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: registry.workspaces
   module: workspace
-  summary: ''
+  summary: HTTP workspace registry create/list endpoint.
   transports:
     http:
       name: POST /api/v2/registry/workspaces
       source: src/nexus/server/api/v2/routers/workspace.py:219
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: POST /api/v2/registry/workspaces {"path":"/workspace/project"}; GET /api/v2/registry/workspaces'
+  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:165
+  perf_class: control
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: registry.workspaces_{path:path}
   module: workspace
-  summary: ''
+  summary: HTTP workspace registry update endpoint for one path.
   transports:
     http:
       name: PATCH /api/v2/registry/workspaces/{path:path}
       source: src/nexus/server/api/v2/routers/workspace.py:290
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: PATCH /api/v2/registry/workspaces/workspace/project {"name":"Project"}'
+  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:205
+  perf_class: control
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: remove.mount
   module: mount
   summary: Deactivate a backend mount and clean up routing, metadata, and permission tuples.
@@ -8992,7 +9071,7 @@ operations:
   transports:
     grpc_expose:
       name: rename_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1572
+      source: src/nexus/core/nexus_fs_metadata.py:1579
   profiles:
     lite: supported
     sandbox: supported
@@ -9130,7 +9209,7 @@ operations:
   transports:
     http:
       name: POST /api/nfs/{method}
-      source: src/nexus/server/api/core/rpc.py:45
+      source: src/nexus/server/api/core/rpc.py:46
   profiles:
     lite: supported
     sandbox: supported
@@ -9393,7 +9472,7 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: glob
-      source: src/nexus/bricks/search/search_service.py:1697
+      source: src/nexus/bricks/search/search_service.py:1766
     http:
       name: POST /api/v2/search/glob
       source: src/nexus/server/api/v2/routers/search.py:1221
@@ -9420,7 +9499,7 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: grep
-      source: src/nexus/bricks/search/search_service.py:1939
+      source: src/nexus/bricks/search/search_service.py:2008
     http:
       name: POST /api/v2/search/grep
       source: src/nexus/server/api/v2/routers/search.py:1100
@@ -9906,7 +9985,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search
-      source: src/nexus/bricks/search/search_service.py:3750
+      source: src/nexus/bricks/search/search_service.py:3985
     mcp:
       name: nexus_semantic_search
       source: src/nexus/config/tool_profiles.yaml:1
@@ -9927,7 +10006,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_index
-      source: src/nexus/bricks/search/search_service.py:4065
+      source: src/nexus/bricks/search/search_service.py:4307
   profiles:
     lite: supported
     sandbox: supported
@@ -9944,7 +10023,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_stats
-      source: src/nexus/bricks/search/search_service.py:4102
+      source: src/nexus/bricks/search/search_service.py:4344
   profiles:
     lite: supported
     sandbox: supported
@@ -9961,7 +10040,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_close_all
-      source: src/nexus/remote/kernel_client.py:500
+      source: src/nexus/remote/kernel_client.py:507
   profiles:
     lite: supported
     sandbox: supported
@@ -9978,7 +10057,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_enlist
-      source: src/nexus/remote/kernel_client.py:487
+      source: src/nexus/remote/kernel_client.py:494
   profiles:
     lite: supported
     sandbox: supported
@@ -9995,7 +10074,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_lookup
-      source: src/nexus/remote/kernel_client.py:475
+      source: src/nexus/remote/kernel_client.py:482
   profiles:
     lite: supported
     sandbox: supported
@@ -10012,7 +10091,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_mark_bootstrapped
-      source: src/nexus/remote/kernel_client.py:472
+      source: src/nexus/remote/kernel_client.py:479
   profiles:
     lite: supported
     sandbox: supported
@@ -10029,7 +10108,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_start_all
-      source: src/nexus/remote/kernel_client.py:469
+      source: src/nexus/remote/kernel_client.py:476
   profiles:
     lite: supported
     sandbox: supported
@@ -10046,7 +10125,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_stop_all
-      source: src/nexus/remote/kernel_client.py:497
+      source: src/nexus/remote/kernel_client.py:504
   profiles:
     lite: supported
     sandbox: supported
@@ -10063,7 +10142,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_swap
-      source: src/nexus/remote/kernel_client.py:479
+      source: src/nexus/remote/kernel_client.py:486
   profiles:
     lite: supported
     sandbox: supported
@@ -10080,7 +10159,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_unregister
-      source: src/nexus/remote/kernel_client.py:659
+      source: src/nexus/remote/kernel_client.py:669
   profiles:
     lite: supported
     sandbox: supported
@@ -10097,7 +10176,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_hook_count
-      source: src/nexus/remote/kernel_client.py:542
+      source: src/nexus/remote/kernel_client.py:549
   profiles:
     lite: supported
     sandbox: supported
@@ -10114,7 +10193,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_metastore_path
-      source: src/nexus/remote/kernel_client.py:760
+      source: src/nexus/remote/kernel_client.py:770
   profiles:
     lite: supported
     sandbox: supported
@@ -10131,7 +10210,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_permission_provider
-      source: src/nexus/remote/kernel_client.py:776
+      source: src/nexus/remote/kernel_client.py:786
   profiles:
     lite: supported
     sandbox: supported
@@ -10165,7 +10244,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_vfs_lock
-      source: src/nexus/remote/kernel_client.py:768
+      source: src/nexus/remote/kernel_client.py:778
   profiles:
     lite: supported
     sandbox: supported
@@ -10182,7 +10261,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_xattr
-      source: src/nexus/remote/kernel_client.py:686
+      source: src/nexus/remote/kernel_client.py:696
   profiles:
     lite: supported
     sandbox: supported
@@ -10229,174 +10308,181 @@ operations:
   owning_issue: 4134
 - id: snapshot.begin
   module: snapshot
-  summary: ''
+  summary: Begin a transactional snapshot through the workspace RPC service facade.
   transports:
     grpc_expose:
       name: snapshot_begin
       source: src/nexus/services/workspace/workspace_rpc_service.py:196
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: snapshot_begin(agent_id="alice", zone_id="root", description="Before migration")'
+  correctness_test: tests/unit/services/snapshot/test_service.py:86
+  perf_class: hot
+  perf_link: transactional snapshot create/restore is path-count dependent; service conflict/rollback tests plus entries guardrail
+    in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshot.cli
   module: snapshot
-  summary: ''
+  summary: CLI group for transactional snapshot create/list/info/entries/commit/restore.
   transports:
     cli:
       name: nexus snapshot
       source: src/nexus/cli/commands/snapshots.py:1
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus snapshot create --description "Before migration"; nexus snapshot info TXN; nexus snapshot entries
+    TXN; nexus snapshot commit TXN; nexus snapshot restore TXN'
+  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:184
+  perf_class: control
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshot.commit
   module: snapshot
-  summary: ''
+  summary: Commit a transactional snapshot.
   transports:
     grpc_expose:
       name: snapshot_commit
       source: src/nexus/services/workspace/workspace_rpc_service.py:223
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus snapshot commit TXN; RPC: await snapshot_commit(transaction_id="TXN")'
+  correctness_test: tests/unit/server/rpc/services/test_snapshots_rpc.py:61
+  perf_class: hot
+  perf_link: transactional snapshot create/restore is path-count dependent; service conflict/rollback tests plus entries guardrail
+    in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshot.create
   module: snapshot
-  summary: ''
+  summary: Create a transactional snapshot.
   transports:
     grpc_expose:
       name: snapshot_create
-      source: src/nexus/server/rpc/services/snapshots_rpc.py:20
+      source: src/nexus/server/rpc/services/snapshots_rpc.py:34
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus snapshot create --description "Before migration"; RPC: await snapshot_create(description="Before
+    migration")'
+  correctness_test: tests/unit/services/snapshot/test_service.py:86
+  perf_class: hot
+  perf_link: transactional snapshot create/restore is path-count dependent; service conflict/rollback tests plus entries guardrail
+    in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshot.get
   module: snapshot
-  summary: ''
+  summary: Get one snapshot transaction by id.
   transports:
     grpc_expose:
       name: snapshot_get
-      source: src/nexus/server/rpc/services/snapshots_rpc.py:45
+      source: src/nexus/server/rpc/services/snapshots_rpc.py:64
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus snapshot info TXN; RPC: await snapshot_get(transaction_id="TXN")'
+  correctness_test: tests/unit/server/rpc/services/test_snapshots_rpc.py:46
+  perf_class: control
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshot.list
   module: snapshot
-  summary: ''
+  summary: List transactional snapshot records.
   transports:
     grpc_expose:
       name: snapshot_list
-      source: src/nexus/server/rpc/services/snapshots_rpc.py:32
+      source: src/nexus/server/rpc/services/snapshots_rpc.py:49
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus snapshot list; RPC: await snapshot_list()'
+  correctness_test: tests/unit/services/snapshot/test_service.py:523
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshot.list_entries
   module: snapshot
-  summary: ''
+  summary: List paths captured in a snapshot transaction.
   transports:
     grpc_expose:
       name: snapshot_list_entries
-      source: src/nexus/server/rpc/services/snapshots_rpc.py:57
+      source: src/nexus/server/rpc/services/snapshots_rpc.py:76
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus snapshot entries TXN; RPC: await snapshot_list_entries(transaction_id="TXN")'
+  correctness_test: tests/unit/server/rpc/services/test_snapshots_rpc.py:69
+  perf_class: hot
+  perf_link: tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshot.restore
   module: snapshot
-  summary: ''
+  summary: Rollback a transactional snapshot transaction.
   transports:
     grpc_expose:
       name: snapshot_restore
-      source: src/nexus/server/rpc/services/snapshots_rpc.py:40
+      source: src/nexus/server/rpc/services/snapshots_rpc.py:59
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus snapshot restore TXN; RPC: await snapshot_restore(txn_id="TXN")'
+  correctness_test: tests/unit/services/snapshot/test_service.py:367
+  perf_class: hot
+  perf_link: transactional snapshot create/restore is path-count dependent; service conflict/rollback tests plus entries guardrail
+    in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshot.rollback
   module: snapshot
-  summary: ''
+  summary: Rollback a transactional snapshot through the workspace RPC service facade.
   transports:
     grpc_expose:
       name: snapshot_rollback
       source: src/nexus/services/workspace/workspace_rpc_service.py:237
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: snapshot_rollback(snapshot_id="TXN")'
+  correctness_test: tests/unit/services/snapshot/test_service.py:367
+  perf_class: hot
+  perf_link: transactional snapshot create/restore is path-count dependent; service conflict/rollback tests plus entries guardrail
+    in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshots.api_v2
   module: snapshot
-  summary: ''
+  summary: HTTP transactional snapshot create/list endpoint.
   transports:
     http:
       name: POST /api/v2/snapshots
       source: src/nexus/server/api/v2/routers/snapshots.py:176
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: POST /api/v2/snapshots; GET /api/v2/snapshots'
+  correctness_test: tests/e2e/server/test_cli_commands_e2e.py:268
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshots.get
   module: snapshot
   summary: ''
@@ -10433,147 +10519,147 @@ operations:
   owning_issue: null
 - id: snapshots.txn_id
   module: snapshot
-  summary: ''
+  summary: HTTP transactional snapshot get endpoint discovered from router-local path.
   transports:
     http:
       name: GET /{txn_id}
       source: src/nexus/server/api/v2/routers/snapshots.py:241
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: GET /{txn_id}'
+  correctness_test: tests/e2e/server/test_cli_commands_e2e.py:268
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshots.txn_id_commit
   module: snapshot
-  summary: ''
+  summary: HTTP transactional snapshot commit endpoint discovered from router-local path.
   transports:
     http:
       name: POST /{txn_id}/commit
       source: src/nexus/server/api/v2/routers/snapshots.py:263
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: POST /{txn_id}/commit'
+  correctness_test: tests/e2e/server/test_cli_commands_e2e.py:268
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshots.txn_id_entries
   module: snapshot
-  summary: ''
+  summary: HTTP transactional snapshot entries endpoint discovered from router-local path.
   transports:
     http:
       name: GET /{txn_id}/entries
       source: src/nexus/server/api/v2/routers/snapshots.py:340
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: GET /{txn_id}/entries'
+  correctness_test: tests/e2e/server/test_cli_commands_e2e.py:268
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshots.txn_id_rollback
   module: snapshot
-  summary: ''
+  summary: HTTP transactional snapshot rollback endpoint discovered from router-local path.
   transports:
     http:
       name: POST /{txn_id}/rollback
       source: src/nexus/server/api/v2/routers/snapshots.py:310
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: POST /{txn_id}/rollback'
+  correctness_test: tests/e2e/server/test_cli_commands_e2e.py:292
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshots.{txn_id}
   module: snapshot
-  summary: ''
+  summary: HTTP transactional snapshot get endpoint.
   transports:
     http:
       name: GET /api/v2/snapshots/{txn_id}
       source: src/nexus/server/api/v2/routers/snapshots.py:241
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: GET /api/v2/snapshots/{txn_id}'
+  correctness_test: tests/e2e/server/test_cli_commands_e2e.py:268
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshots.{txn_id}_commit
   module: snapshot
-  summary: ''
+  summary: HTTP transactional snapshot commit endpoint.
   transports:
     http:
       name: POST /api/v2/snapshots/{txn_id}/commit
       source: src/nexus/server/api/v2/routers/snapshots.py:263
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: POST /api/v2/snapshots/{txn_id}/commit'
+  correctness_test: tests/e2e/server/test_cli_commands_e2e.py:268
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshots.{txn_id}_entries
   module: snapshot
-  summary: ''
+  summary: HTTP transactional snapshot entries endpoint.
   transports:
     http:
       name: GET /api/v2/snapshots/{txn_id}/entries
       source: src/nexus/server/api/v2/routers/snapshots.py:340
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: GET /api/v2/snapshots/{txn_id}/entries'
+  correctness_test: tests/e2e/server/test_cli_commands_e2e.py:268
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: snapshots.{txn_id}_rollback
   module: snapshot
-  summary: ''
+  summary: HTTP transactional snapshot rollback endpoint.
   transports:
     http:
       name: POST /api/v2/snapshots/{txn_id}/rollback
       source: src/nexus/server/api/v2/routers/snapshots.py:310
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: POST /api/v2/snapshots/{txn_id}/rollback'
+  correctness_test: tests/e2e/server/test_cli_commands_e2e.py:292
+  perf_class: hot
+  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: stat.batch
   module: filesystem
   summary: ''
   transports:
     sdk:
       name: KernelClient.stat_batch
-      source: src/nexus/remote/kernel_client.py:456
+      source: src/nexus/remote/kernel_client.py:463
   profiles:
     lite: supported
     sandbox: supported
@@ -10590,7 +10676,7 @@ operations:
   transports:
     grpc_expose:
       name: stat_bulk
-      source: src/nexus/core/nexus_fs_metadata.py:1196
+      source: src/nexus/core/nexus_fs_metadata.py:1203
   profiles:
     lite: supported
     sandbox: supported
@@ -10607,7 +10693,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_collect_all
-      source: src/nexus/remote/kernel_client.py:743
+      source: src/nexus/remote/kernel_client.py:753
   profiles:
     lite: supported
     sandbox: supported
@@ -10641,7 +10727,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at
-      source: src/nexus/remote/kernel_client.py:740
+      source: src/nexus/remote/kernel_client.py:750
   profiles:
     lite: supported
     sandbox: supported
@@ -10658,7 +10744,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at_blocking
-      source: src/nexus/remote/kernel_client.py:728
+      source: src/nexus/remote/kernel_client.py:738
   profiles:
     lite: supported
     sandbox: supported
@@ -10675,7 +10761,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_write_nowait
-      source: src/nexus/remote/kernel_client.py:737
+      source: src/nexus/remote/kernel_client.py:747
   profiles:
     lite: supported
     sandbox: supported
@@ -10828,7 +10914,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_copy
-      source: src/nexus/remote/kernel_client.py:361
+      source: src/nexus/remote/kernel_client.py:368
   profiles:
     lite: supported
     sandbox: supported
@@ -10845,7 +10931,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_lock
-      source: src/nexus/remote/kernel_client.py:396
+      source: src/nexus/remote/kernel_client.py:403
   profiles:
     lite: supported
     sandbox: supported
@@ -10862,7 +10948,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_mkdir
-      source: src/nexus/remote/kernel_client.py:340
+      source: src/nexus/remote/kernel_client.py:347
   profiles:
     lite: supported
     sandbox: supported
@@ -10879,7 +10965,24 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_read
-      source: src/nexus/remote/kernel_client.py:248
+      source: src/nexus/remote/kernel_client.py:250
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sys.read_raw
+  module: nexus_fs
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.sys_read_raw
+      source: src/nexus/remote/kernel_client.py:286
   profiles:
     lite: supported
     sandbox: supported
@@ -10896,7 +10999,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_readdir
-      source: src/nexus/remote/kernel_client.py:373
+      source: src/nexus/remote/kernel_client.py:380
   profiles:
     lite: supported
     sandbox: supported
@@ -10913,7 +11016,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_rename
-      source: src/nexus/remote/kernel_client.py:349
+      source: src/nexus/remote/kernel_client.py:356
   profiles:
     lite: supported
     sandbox: supported
@@ -10930,7 +11033,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_setattr
-      source: src/nexus/remote/kernel_client.py:326
+      source: src/nexus/remote/kernel_client.py:333
   profiles:
     lite: supported
     sandbox: supported
@@ -10947,7 +11050,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_stat
-      source: src/nexus/remote/kernel_client.py:300
+      source: src/nexus/remote/kernel_client.py:307
   profiles:
     lite: supported
     sandbox: supported
@@ -10964,7 +11067,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_unlink
-      source: src/nexus/remote/kernel_client.py:333
+      source: src/nexus/remote/kernel_client.py:340
   profiles:
     lite: supported
     sandbox: supported
@@ -10981,7 +11084,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_unlock
-      source: src/nexus/remote/kernel_client.py:419
+      source: src/nexus/remote/kernel_client.py:426
   profiles:
     lite: supported
     sandbox: supported
@@ -11001,7 +11104,7 @@ operations:
       source: src/nexus/core/nexus_fs_watch.py:26
     sdk:
       name: KernelClient.sys_watch
-      source: src/nexus/remote/kernel_client.py:463
+      source: src/nexus/remote/kernel_client.py:470
   profiles:
     lite: supported
     sandbox: supported
@@ -11018,7 +11121,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_write
-      source: src/nexus/remote/kernel_client.py:284
+      source: src/nexus/remote/kernel_client.py:291
   profiles:
     lite: supported
     sandbox: supported
@@ -11103,7 +11206,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_lookup
-      source: src/nexus/remote/kernel_client.py:670
+      source: src/nexus/remote/kernel_client.py:680
   profiles:
     lite: supported
     sandbox: supported
@@ -11120,7 +11223,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_register
-      source: src/nexus/remote/kernel_client.py:667
+      source: src/nexus/remote/kernel_client.py:677
   profiles:
     lite: supported
     sandbox: supported
@@ -11137,7 +11240,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_unregister
-      source: src/nexus/remote/kernel_client.py:673
+      source: src/nexus/remote/kernel_client.py:683
   profiles:
     lite: supported
     sandbox: supported
@@ -11507,13 +11610,30 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: unregister.external
+  module: uncategorized
+  summary: ''
+  transports:
+    sdk:
+      name: _AgentRegistryProxy.unregister_external
+      source: src/nexus/remote/kernel_client.py:1051
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: unregister.hook
   module: uncategorized
   summary: ''
   transports:
     sdk:
       name: KernelClient.unregister_hook
-      source: src/nexus/remote/kernel_client.py:530
+      source: src/nexus/remote/kernel_client.py:537
   profiles:
     lite: supported
     sandbox: supported
@@ -11526,38 +11646,40 @@ operations:
   owning_issue: null
 - id: unregister.workspace
   module: workspace
-  summary: ''
+  summary: Remove workspace registry entry without deleting files.
   transports:
     grpc_expose:
       name: unregister_workspace
       source: src/nexus/services/workspace/workspace_rpc_service.py:324
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace unregister /workspace/project --yes; RPC: unregister_workspace("/workspace/project")'
+  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:238
+  perf_class: control
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: update.agent
   module: agent_log
-  summary: ''
+  summary: Update stored agent configuration fields and metadata.
   transports:
     grpc_expose:
       name: update_agent
-      source: src/nexus/services/agents/agent_rpc_service.py:414
+      source: src/nexus/services/agents/agent_rpc_service.py:442
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus agent update alice_bot --description "Planner" --metadata tier=gold; RPC: update_agent("alice_bot",
+    metadata={"tier":"gold"})'
+  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:33
+  perf_class: control
+  perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
+    and :92
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: update.key
   module: auth
   summary: ''
@@ -11594,13 +11716,13 @@ operations:
     and covered by connector/search benchmarks when enabled.
   gap_issue: null
   owning_issue: 4136
-- id: update.workspace
-  module: workspace
+- id: update.state
+  module: filesystem
   summary: ''
   transports:
-    grpc_expose:
-      name: update_workspace
-      source: src/nexus/services/workspace/workspace_rpc_service.py:329
+    sdk:
+      name: _AgentRegistryProxy.update_state
+      source: src/nexus/remote/kernel_client.py:1069
   profiles:
     lite: supported
     sandbox: supported
@@ -11611,6 +11733,24 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: update.workspace
+  module: workspace
+  summary: Update workspace name, description, or metadata.
+  transports:
+    grpc_expose:
+      name: update_workspace
+      source: src/nexus/services/workspace/workspace_rpc_service.py:329
+  profiles:
+    lite: unavailable
+    sandbox: unavailable
+    full: supported
+  usage_example: 'CLI: nexus workspace update /workspace/project --metadata owner=alice; RPC: update_workspace("/workspace/project",
+    metadata={"owner":"alice"})'
+  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:117
+  perf_class: control
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
+  gap_issue: null
+  owning_issue: 4137
 - id: upload.cancel
   module: upload
   summary: Cancel an in-flight TUS upload.
@@ -11644,21 +11784,22 @@ operations:
   owning_issue: null
 - id: versioning.rollback
   module: versioning
-  summary: ''
+  summary: Rollback a file to a previous version and create a new version entry.
   transports:
     grpc_expose:
       name: rollback
       source: src/nexus/bricks/versioning/version_service.py:268
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus versions rollback /workspace/hello.txt --version 1 --yes; RPC: rollback(path="/workspace/hello.txt",
+    version=1)'
+  correctness_test: tests/unit/services/test_version_service.py:247
+  perf_class: hot
+  perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: versioning.undo
   module: versioning
   summary: ''
@@ -11678,38 +11819,39 @@ operations:
   owning_issue: null
 - id: versioning.version
   module: versioning
-  summary: ''
+  summary: Legacy singular version command alias row; users should prefer nexus versions.
   transports:
     cli:
       name: nexus version
       source: src/nexus/cli/commands/inspect.py:1
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus versions history /workspace/hello.txt'
+  correctness_test: tests/e2e/server/test_extracted_services_e2e.py:66
+  perf_class: control
+  perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: versioning.versions
   module: versioning
-  summary: ''
+  summary: CLI group for file version history, get, diff, and rollback.
   transports:
     cli:
       name: nexus versions
       source: src/nexus/cli/commands/versions.py:1
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus versions history /workspace/hello.txt; nexus versions get /workspace/hello.txt --version 1; nexus
+    versions diff /workspace/hello.txt --v1 1 --v2 2'
+  correctness_test: tests/e2e/server/test_extracted_services_e2e.py:66
+  perf_class: hot
+  perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: workflows.api_v2
   module: workflows
   summary: ''
@@ -11950,140 +12092,147 @@ operations:
   owning_issue: null
 - id: workspace.cli
   module: workspace
-  summary: ''
+  summary: CLI group for workspace registry, config loading, snapshots, restore, diff, and log.
   transports:
     cli:
       name: nexus workspace
       source: src/nexus/cli/commands/workspace.py:1
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace register /workspace/project --name project; nexus workspace update /workspace/project
+    --metadata owner=alice; nexus workspace config load ./workspaces.json'
+  correctness_test: tests/unit/cli/test_lifecycle_surface_cli.py:117
+  perf_class: control
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: workspace.diff
   module: workspace
-  summary: ''
+  summary: Compare two workspace snapshots.
   transports:
     grpc_expose:
       name: workspace_diff
       source: src/nexus/services/workspace/workspace_rpc_service.py:141
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace diff /workspace/project --snapshot1 1 --snapshot2 2; RPC: workspace_diff(workspace_path="/workspace/project",
+    snapshot_1=1, snapshot_2=2)'
+  correctness_test: tests/unit/services/snapshot/test_service.py:310
+  perf_class: hot
+  perf_link: workspace snapshot/diff/restore are size-dependent; representative lifecycle guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:114
+    and snapshot guardrail at :153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: workspace.get
   module: workspace
-  summary: ''
+  summary: HTTP workspace registry get endpoint for one path.
   transports:
     http:
       name: 'GET '
       source: src/nexus/server/api/v2/routers/workspace.py:197
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: GET /api/v2/registry/workspaces/workspace/project'
+  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:183
+  perf_class: control
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: workspace.log
   module: workspace
-  summary: ''
+  summary: List snapshot history for a registered workspace.
   transports:
     grpc_expose:
       name: workspace_log
       source: src/nexus/services/workspace/workspace_rpc_service.py:119
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace log /workspace/project; RPC: workspace_log(workspace_path="/workspace/project")'
+  correctness_test: tests/unit/services/snapshot/test_service.py:523
+  perf_class: hot
+  perf_link: workspace snapshot/diff/restore are size-dependent; representative lifecycle guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:114
+    and snapshot guardrail at :153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: workspace.path:path
   module: workspace
-  summary: ''
+  summary: HTTP workspace registry update endpoint discovered from router-local path.
   transports:
     http:
       name: PATCH /{path:path}
       source: src/nexus/server/api/v2/routers/workspace.py:290
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: PATCH /api/v2/registry/workspaces/{path:path}'
+  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:205
+  perf_class: control
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: workspace.post
   module: workspace
-  summary: ''
+  summary: HTTP workspace registry create endpoint discovered from router-local path.
   transports:
     http:
       name: 'POST '
       source: src/nexus/server/api/v2/routers/workspace.py:219
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'HTTP: POST /api/v2/registry/workspaces'
+  correctness_test: tests/e2e/server/test_workspace_registry_api_e2e.py:165
+  perf_class: control
+  perf_link: setup/control-plane workspace registry path; list guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:114
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: workspace.restore
   module: workspace
-  summary: ''
+  summary: Restore a registered workspace to a numbered snapshot.
   transports:
     grpc_expose:
       name: workspace_restore
       source: src/nexus/services/workspace/workspace_rpc_service.py:98
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace restore /workspace/project --snapshot 1 --yes; RPC: workspace_restore(workspace_path="/workspace/project",
+    snapshot_number=1)'
+  correctness_test: tests/unit/services/snapshot/test_service.py:367
+  perf_class: hot
+  perf_link: workspace snapshot/diff/restore are size-dependent; representative lifecycle guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:114
+    and snapshot guardrail at :153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: workspace.snapshot
   module: workspace
-  summary: ''
+  summary: Create a numbered snapshot for a registered workspace.
   transports:
     grpc_expose:
       name: workspace_snapshot
       source: src/nexus/services/workspace/workspace_rpc_service.py:71
   profiles:
-    lite: supported
-    sandbox: supported
+    lite: unavailable
+    sandbox: unavailable
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'CLI: nexus workspace snapshot /workspace/project --description "Before refactor"; RPC: workspace_snapshot(workspace_path="/workspace/project")'
+  correctness_test: tests/unit/services/snapshot/test_service.py:86
+  perf_class: hot
+  perf_link: workspace snapshot/diff/restore are size-dependent; representative lifecycle guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:114
+    and snapshot guardrail at :153
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4137
 - id: write.batch
   module: filesystem
   summary: ''
@@ -12093,7 +12242,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1438
     sdk:
       name: KernelClient.write_batch
-      source: src/nexus/remote/kernel_client.py:780
+      source: src/nexus/remote/kernel_client.py:790
   profiles:
     lite: supported
     sandbox: supported
@@ -13984,6 +14133,14 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: fs.heartbeat
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: fs.list
   has:
   - sdk
@@ -14041,6 +14198,14 @@ parity_warnings:
   - http
   - mcp
 - operation_id: fs.run
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: fs.signal
   has:
   - sdk
   missing:
@@ -14385,6 +14550,14 @@ parity_warnings:
   - http
   - mcp
 - operation_id: list.mounts
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: list.processes
   has:
   - sdk
   missing:
@@ -14944,6 +15117,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: register.external
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: register.hook
   has:
   - sdk
@@ -15576,6 +15757,14 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: sys.read_raw
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: sys.readdir
   has:
   - sdk
@@ -15864,6 +16053,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: unregister.external
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: unregister.hook
   has:
   - sdk
@@ -15873,6 +16070,14 @@ parity_warnings:
   - http
   - mcp
 - operation_id: update.key
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: update.state
   has:
   - sdk
   missing:

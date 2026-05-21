@@ -15,6 +15,7 @@ Call RPC for metadata/service operations.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
@@ -22,6 +23,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import IO, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -280,6 +282,11 @@ class KernelClient:
                 )
         content = self._transport.read_file(path, content_id="", read_timeout=self._timeout)
         return _SysReadResult(data=content, post_hook_needed=self.hook_count("read") > 0)
+
+    def sys_read_raw(self, path: str, zone_id: str = ROOT_ZONE_ID) -> bytes:  # noqa: ARG002
+        """Read raw file bytes for compatibility with versioning/parsers services."""
+        assert self._transport is not None
+        return self._transport.read_file(path, content_id="", read_timeout=self._timeout)
 
     def sys_write(
         self,
@@ -794,6 +801,7 @@ class KernelClient:
             return [_BatchWriteItemResult(r) if isinstance(r, dict) else r for r in result]
         return []
 
+    @property
     def agent_registry(self) -> Any:
         """Return agent registry proxy."""
         return _AgentRegistryProxy(self)
@@ -966,19 +974,136 @@ class _BatchWriteItemResult:
 
 
 class _AgentRegistryProxy:
-    """Thin proxy for agent registry operations via gRPC."""
+    """Proxy for kernel AgentRegistry operations via gRPC."""
 
     def __init__(self, client: KernelClient) -> None:
         self._client = client
 
+    @staticmethod
+    def _descriptor(raw: Any) -> Any:
+        if raw is None or not isinstance(raw, dict):
+            return raw
+
+        data = dict(raw)
+        state = data.get("state")
+        if isinstance(state, str):
+            from nexus.contracts.process_types import AgentState
+
+            with contextlib.suppress(ValueError):
+                data["state"] = AgentState(state.lower())
+
+        kind = data.get("kind")
+        if isinstance(kind, str):
+            from nexus.contracts.process_types import AgentKind
+
+            with contextlib.suppress(ValueError):
+                data["kind"] = AgentKind(kind.lower())
+
+        raw_labels = data.get("labels")
+        labels: dict[str, Any] = raw_labels if isinstance(raw_labels, dict) else {}
+        raw_capabilities = labels.get("capabilities", "")
+        if isinstance(raw_capabilities, str):
+            data["capabilities"] = [
+                capability for capability in raw_capabilities.split(",") if capability
+            ]
+        elif isinstance(raw_capabilities, list):
+            data["capabilities"] = raw_capabilities
+        else:
+            data["capabilities"] = []
+
+        return SimpleNamespace(**data)
+
     def register(self, **kwargs: Any) -> Any:
-        return self._client._call("agent_register", kwargs)
+        return self._descriptor(self._client._call("agent_register", kwargs))
+
+    def register_external(
+        self,
+        name: str,
+        owner_id: str,
+        zone_id: str,
+        *,
+        connection_id: str,
+        host_pid: int | None = None,
+        remote_addr: str | None = None,
+        protocol: str = "grpc",
+        parent_pid: str | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> Any:
+        return self._descriptor(
+            self._client._call(
+                "agent_register_external",
+                {
+                    "name": name,
+                    "owner_id": owner_id,
+                    "zone_id": zone_id,
+                    "connection_id": connection_id,
+                    "host_pid": host_pid,
+                    "remote_addr": remote_addr,
+                    "protocol": protocol,
+                    "parent_pid": parent_pid,
+                    "labels": labels or {},
+                },
+            )
+        )
 
     def unregister(self, pid: str) -> Any:
         return self._client._call("agent_unregister", {"pid": pid})
 
+    def unregister_external(self, pid: str) -> None:
+        self._client._call("agent_unregister_external", {"pid": pid})
+
+    def get(self, pid: str) -> Any:
+        return self._descriptor(self._client._call("agent_get", {"pid": pid}))
+
+    def signal(self, pid: str, sig: Any, *, payload: dict[str, Any] | None = None) -> Any:
+        return self._descriptor(
+            self._client._call(
+                "agent_signal",
+                {
+                    "pid": pid,
+                    "sig": str(sig),
+                    "payload": payload or {},
+                },
+            )
+        )
+
+    def update_state(self, pid: str, state: Any) -> Any:
+        return self._descriptor(
+            self._client._call(
+                "agent_update_state",
+                {
+                    "pid": pid,
+                    "state": str(state),
+                },
+            )
+        )
+
+    def heartbeat(self, pid: str) -> Any:
+        return self._descriptor(self._client._call("agent_heartbeat", {"pid": pid}))
+
     def list_agents(self) -> Any:
-        return self._client._call("agent_list", {})
+        return self.list_processes()
+
+    def list_processes(
+        self,
+        *,
+        zone_id: str | None = None,
+        owner_id: str | None = None,
+        kind: Any | None = None,
+        state: Any | None = None,
+    ) -> list[Any]:
+        raw = self._client._call(
+            "agent_list",
+            {
+                "zone_id": zone_id,
+                "owner_id": owner_id,
+                "kind": str(kind) if kind is not None else None,
+                "state": str(state) if state is not None else None,
+            },
+        )
+        if not isinstance(raw, list):
+            return []
+        return [self._descriptor(item) for item in raw]
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -988,7 +1113,16 @@ def _find_free_port() -> int:
     """Find a free TCP port on localhost."""
     import socket
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        port: int = s.getsockname()[1]
-        return port
+    reserved_ports: set[int] = set()
+    for env_name in ("NEXUS_GRPC_PORT", "NEXUS_APPROVALS_GRPC_PORT"):
+        raw = os.environ.get(env_name, "").strip()
+        if raw:
+            with contextlib.suppress(ValueError):
+                reserved_ports.add(int(raw))
+
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port: int = s.getsockname()[1]
+        if port not in reserved_ports:
+            return port

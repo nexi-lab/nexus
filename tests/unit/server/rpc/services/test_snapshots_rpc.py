@@ -13,14 +13,14 @@ import pytest
 from nexus.server.rpc.services.snapshots_rpc import SnapshotsRPCService
 
 
-@dataclass
+@dataclass(slots=True)
 class _FakeTxn:
     transaction_id: str = "txn-001"
     status: str = "active"
     description: str = "test"
 
 
-@dataclass
+@dataclass(slots=True)
 class _FakeEntry:
     path: str = "/corp/file.txt"
     operation: str = "write"
@@ -30,6 +30,8 @@ class _FakeEntry:
 @pytest.fixture()
 def snapshot_service():
     svc = AsyncMock()
+    svc.begin = AsyncMock(return_value=_FakeTxn())
+    svc.list_transactions = AsyncMock(return_value=[_FakeTxn()])
     svc.get_transaction = AsyncMock(return_value=_FakeTxn())
     svc.commit = AsyncMock(return_value=_FakeTxn(status="committed"))
     svc.list_entries = AsyncMock(return_value=[_FakeEntry(), _FakeEntry(path="/corp/other.txt")])
@@ -54,6 +56,33 @@ class TestSnapshotGet:
         snapshot_service.get_transaction.return_value = None
         result = await svc.snapshot_get(transaction_id="missing")
         assert result["found"] is False
+
+
+class TestSnapshotCreate:
+    @pytest.mark.asyncio
+    async def test_create_passes_context_zone_and_agent(self, svc, snapshot_service):
+        result = await svc.snapshot_create(
+            description="test",
+            ttl_seconds=60,
+            context={"zone_id": "ops", "agent_id": "agent-1"},
+        )
+
+        assert result["transaction_id"] == "txn-001"
+        snapshot_service.begin.assert_awaited_once_with(
+            zone_id="ops",
+            agent_id="agent-1",
+            description="test",
+            ttl_seconds=60,
+        )
+
+
+class TestSnapshotList:
+    @pytest.mark.asyncio
+    async def test_list_passes_context_zone(self, svc, snapshot_service):
+        result = await svc.snapshot_list(context={"zone_id": "ops"})
+
+        assert result["count"] == 1
+        snapshot_service.list_transactions.assert_awaited_once_with(zone_id="ops")
 
 
 class TestSnapshotCommit:

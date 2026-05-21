@@ -347,13 +347,41 @@ class AgentRPCService:
         self._ensure_agent_registry()
         assert self._agent_registry is not None
 
-        desc = self._agent_registry.register_external(
-            name=name,
-            owner_id=user_id,
-            zone_id=zone_id,
-            connection_id=agent_id,
-            labels={"capabilities": ",".join(capabilities or [])},
-        )
+        entity_registered = False
+        try:
+            if self._entity_registry is not None:
+                existing = self._entity_registry.get_entity("agent", agent_id)
+                if existing is not None:
+                    raise ValueError(f"Agent already exists: {agent_id}")
+                entity_metadata: dict[str, Any] = {
+                    "name": name,
+                    "zone_id": zone_id,
+                }
+                if description is not None:
+                    entity_metadata["description"] = description
+                if metadata is not None:
+                    entity_metadata["metadata"] = metadata
+                self._entity_registry.register_entity(
+                    entity_type="agent",
+                    entity_id=agent_id,
+                    parent_type="user",
+                    parent_id=user_id,
+                    entity_metadata=entity_metadata,
+                )
+                entity_registered = True
+
+            desc = self._agent_registry.register_external(
+                name=name,
+                owner_id=user_id,
+                zone_id=zone_id,
+                connection_id=agent_id,
+                labels={"capabilities": ",".join(capabilities or [])},
+            )
+        except Exception:
+            if entity_registered and self._entity_registry is not None:
+                with contextlib.suppress(Exception):
+                    self._entity_registry.delete_entity("agent", agent_id)
+            raise
         from datetime import UTC as _UTC
         from datetime import datetime as _dt
 
@@ -443,8 +471,14 @@ class AgentRPCService:
         existing_content = self._vfs.sys_read(config_path, context=ctx)
         if isinstance(existing_content, dict):
             existing_config = existing_content
+        elif isinstance(existing_content, str):
+            existing_config = yaml.safe_load(existing_content)
         else:
-            existing_config = yaml.safe_load(existing_content.decode("utf-8"))
+            raw_content = getattr(existing_content, "data", existing_content)
+            if isinstance(raw_content, str):
+                existing_config = yaml.safe_load(raw_content)
+            else:
+                existing_config = yaml.safe_load(raw_content.decode("utf-8"))
 
         if name is not None:
             existing_config["name"] = name
@@ -459,9 +493,9 @@ class AgentRPCService:
         self._vfs.write(config_path, updated_yaml.encode("utf-8"), context=ctx)
 
         if self._entity_registry and (name is not None or description is not None):
-            entity = self._entity_registry.get_entity("agent", agent_id)
-            if entity and entity.entity_metadata:
-                try:
+            try:
+                entity = self._entity_registry.get_entity("agent", agent_id)
+                if entity and entity.entity_metadata:
                     entity_meta = json.loads(entity.entity_metadata)
                     if name is not None:
                         entity_meta["name"] = name
@@ -482,8 +516,8 @@ class AgentRPCService:
                         )
                         session.execute(stmt)
                         session.commit()
-                except Exception as e:
-                    logger.warning("Failed to update entity registry: %s", e)
+            except Exception as e:
+                logger.warning("Failed to update entity registry: %s", e)
 
         return {
             "agent_id": agent_id,
@@ -703,6 +737,9 @@ class AgentRPCService:
         assert self._agent_registry is not None
         try:
             self._agent_registry.unregister_external(agent_id)
+            if self._entity_registry is not None:
+                with contextlib.suppress(Exception):
+                    self._entity_registry.delete_entity("agent", agent_id)
             return True
         except Exception:
             logger.warning("Failed to unregister process %s", agent_id)

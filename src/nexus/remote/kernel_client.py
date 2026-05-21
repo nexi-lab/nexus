@@ -575,7 +575,10 @@ class KernelClient:
         return [self.sys_stat(p, zone_id=zid) is not None for p in paths]
 
     def get_mount_points(self) -> list[str]:
-        """Return empty — mount points are kernel-internal."""
+        """Return zone-canonical mount points from the subprocess kernel."""
+        result = self._call("get_mount_points", {})
+        if isinstance(result, list):
+            return [str(p) for p in result]
         return []
 
     def get_top_level_mounts(self, zone_id: str = "") -> list[str]:

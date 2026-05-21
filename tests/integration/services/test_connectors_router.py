@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from nexus.backends.base.registry import ConnectorInfo
 from nexus.contracts.backend_features import BackendFeature
-from nexus.server.api.v2.routers.connectors import router
+from nexus.server.api.v2.routers.connectors import _operation_context_from_auth, router
 from nexus.server.dependencies import require_auth
 
 # ---------------------------------------------------------------------------
@@ -45,6 +45,34 @@ def _make_connector_info(
         backend_features=backend_features or frozenset(),
         service_name=name,
     )
+
+
+class TestConnectorAuthContext:
+    """Auth context passed into connector mount lifecycle calls."""
+
+    def test_preserves_authenticated_principal_and_zone_perms(self) -> None:
+        context = _operation_context_from_auth(
+            {
+                "authenticated": True,
+                "subject_type": "agent",
+                "subject_id": "agent-123",
+                "is_admin": False,
+                "zone_id": "zone-a",
+                "zone_perms": [["zone-a", "r"], ["zone-b", "rw"]],
+                "agent_generation": 7,
+            }
+        )
+
+        assert context.user_id == "agent-123"
+        assert context.subject_type == "agent"
+        assert context.subject_id == "agent-123"
+        assert context.agent_id == "agent-123"
+        assert context.is_admin is False
+        assert context.is_system is False
+        assert context.zone_id == "root"
+        assert context.zone_perms == (("zone-a", "r"), ("zone-b", "rw"))
+        assert context.zone_set == ("zone-a", "zone-b")
+        assert context.agent_generation == 7
 
 
 # ---------------------------------------------------------------------------

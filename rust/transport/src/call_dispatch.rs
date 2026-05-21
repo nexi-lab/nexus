@@ -38,6 +38,7 @@ pub fn dispatch(
         "sys_unlock" => do_sys_unlock(kernel, &params),
         "sys_watch" => do_sys_watch(kernel, &params),
         "stat_batch" => do_stat_batch(kernel, &params, ctx),
+        "get_mount_points" => ok_json(serde_json::json!(kernel.get_mount_points())),
 
         // Service lifecycle — no-ops for subprocess mode (the Rust
         // binary manages its own service lifecycle).

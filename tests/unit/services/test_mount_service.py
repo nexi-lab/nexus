@@ -6,6 +6,7 @@ pytest-asyncio dependency.
 """
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -387,6 +388,69 @@ class TestSavedMounts:
 
         with pytest.raises(RuntimeError, match="Mount manager not available"):
             asyncio.run(service.delete_saved_mount("/mnt/test"))
+
+    def test_load_mount_activates_saved_config(self, mount_service, mock_mount_manager):
+        """load_mount reads stored config and activates it through add_mount."""
+        mock_mount_manager.get_mount.return_value = {
+            "mount_point": "/mnt/saved",
+            "backend_type": "path_local",
+            "backend_config": {"root_path": "/tmp/saved"},
+        }
+        mount_service.add_mount = MagicMock(
+            side_effect=lambda **kwargs: asyncio.sleep(0, result=kwargs["mount_point"])
+        )
+
+        result = asyncio.run(mount_service.load_mount("/mnt/saved"))
+
+        assert result == "/mnt/saved"
+        mount_service.add_mount.assert_called_once_with(
+            mount_point="/mnt/saved",
+            backend_type="path_local",
+            backend_config={"root_path": "/tmp/saved"},
+        )
+
+
+class TestConnectorDiscovery:
+    """Tests for connector discovery RPC surface."""
+
+    def test_list_connectors_filters_by_category(self, mount_service):
+        """list_connectors delegates category filtering to ConnectorRegistry."""
+        with patch("nexus.backends.base.registry.ConnectorRegistry") as mock_registry:
+            mock_registry.list_by_category.return_value = [
+                SimpleNamespace(
+                    name="hn",
+                    description="Hacker News",
+                    category="api",
+                    runtime_deps=[],
+                    user_scoped=False,
+                ),
+            ]
+
+            result = asyncio.run(mount_service.list_connectors(category="api"))
+
+        assert [item["name"] for item in result] == ["hn"]
+        mock_registry.list_by_category.assert_called_once_with("api")
+
+
+class TestMountUpdateAndReauth:
+    """Stable behavior for update/reauth RPC surfaces."""
+
+    def test_update_mount_reports_no_change_without_runtime_backend(self, mount_service):
+        """update_mount preserves a stable no-op result when DLC has no Python backend."""
+        mount_service._check_permission = MagicMock(return_value=True)
+        mount_service._dlc._kernel.sys_stat.return_value = {"entry_type": 2}
+
+        result = asyncio.run(mount_service.update_mount("/mnt/saved", {"api_url": "v2"}))
+
+        assert result == {"updated": False, "mount_point": "/mnt/saved", "changed_keys": []}
+
+    def test_reauth_mount_reports_unavailable_without_runtime_backend(self, mount_service):
+        """reauth_mount has a stable unavailable error when no Python backend is retained."""
+        mount_service._check_permission = MagicMock(return_value=True)
+        mount_service._dlc._kernel.sys_stat.return_value = {"entry_type": 2}
+
+        with pytest.raises(ValueError, match="No Python backend available"):
+            asyncio.run(mount_service.reauth_mount("/mnt/saved", provider="google"))
 
 
 # =============================================================================

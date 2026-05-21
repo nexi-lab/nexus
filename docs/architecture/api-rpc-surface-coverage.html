@@ -1196,10 +1196,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="auth.oauth" data-op-text="auth.oauth  nexus oauth ">
+<div class="op" data-op-id="auth.oauth" data-op-text="auth.oauth CLI command group for OAuth credential discovery, setup, validation, and revocation. nexus oauth ">
   <div class="op-header">
     <span class="op-id">auth.oauth</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; CLI command group for OAuth credential discovery, setup, validation, and revocation.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus oauth</span></span>
@@ -1210,10 +1210,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus oauth list; nexus oauth setup-gdrive --user-email alice@example.com; RPC: oauth_list_credentials/oauth_get_auth_url/oauth_exchange_code provide the same lifecycle.</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_auth_cli.py; tests/unit/services/test_oauth_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/cli/test_auth_cli.py; tests/unit/services/test_oauth_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -1721,10 +1721,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="connectors.auth_init" data-op-text="connectors.auth_init  POST /api/v2/connectors/auth/init ">
+<div class="op" data-op-id="connectors.auth_init" data-op-text="connectors.auth_init Start connector authentication flow and return the next OAuth or secret-collection step. POST /api/v2/connectors/auth/init ">
   <div class="op-header">
     <span class="op-id">connectors.auth_init</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Start connector authentication flow and return the next OAuth or secret-collection step.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/connectors/auth/init</span></span>
@@ -1735,17 +1735,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus oauth setup-gdrive --user-email alice@example.com; RPC: POST /api/v2/connectors/auth/init starts connector auth for UI clients.</code></span>
+    <span>test: <a href="../../tests/integration/services/test_connectors_auth.py; tests/unit/services/test_oauth_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/integration/services/test_connectors_auth.py; tests/unit/services/test_oauth_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="connectors.auth_status" data-op-text="connectors.auth_status  GET /api/v2/connectors/auth/status ">
+<div class="op" data-op-id="connectors.auth_status" data-op-text="connectors.auth_status Report whether a connector has usable stored, native, or missing credentials for the caller. GET /api/v2/connectors/auth/status ">
   <div class="op-header">
     <span class="op-id">connectors.auth_status</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Report whether a connector has usable stored, native, or missing credentials for the caller.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/connectors/auth/status</span></span>
@@ -1756,10 +1756,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus oauth test google alice@example.com; RPC: GET /api/v2/connectors/auth/status reports authed, expired, missing, or unavailable states.</code></span>
+    <span>test: <a href="../../tests/integration/services/test_connectors_auth.py; tests/unit/auth/test_unified_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/integration/services/test_connectors_auth.py; tests/unit/auth/test_unified_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -2225,10 +2225,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="oauth.exchange_code" data-op-text="oauth.exchange_code  oauth_exchange_code ">
+<div class="op" data-op-id="oauth.exchange_code" data-op-text="oauth.exchange_code Exchange an OAuth authorization code for encrypted stored credentials scoped to user and zone. oauth_exchange_code ">
   <div class="op-header">
     <span class="op-id">oauth.exchange_code</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Exchange an OAuth authorization code for encrypted stored credentials scoped to user and zone.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>oauth_exchange_code</span></span>
@@ -2239,17 +2239,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus oauth setup-gdrive --user-email alice@example.com completes code exchange; RPC: oauth_exchange_code(provider=&#34;google-drive&#34;, code=&#34;4/...&#34;, user_email=&#34;alice@example.com&#34;) stores the credential.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="oauth.get_auth_url" data-op-text="oauth.get_auth_url  oauth_get_auth_url ">
+<div class="op" data-op-id="oauth.get_auth_url" data-op-text="oauth.get_auth_url Create an OAuth authorization URL and PKCE state for a provider. oauth_get_auth_url ">
   <div class="op-header">
     <span class="op-id">oauth.get_auth_url</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Create an OAuth authorization URL and PKCE state for a provider.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>oauth_get_auth_url</span></span>
@@ -2260,17 +2260,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus oauth setup-gdrive --user-email alice@example.com opens the provider flow; RPC: oauth_get_auth_url(provider=&#34;google-drive&#34;, redirect_uri=&#34;http://localhost:2026/oauth/callback&#34;) returns auth_url and state.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="oauth.list_credentials" data-op-text="oauth.list_credentials  oauth_list_credentials ">
+<div class="op" data-op-id="oauth.list_credentials" data-op-text="oauth.list_credentials List non-revoked OAuth credentials visible to the caller, with admin/user filtering. oauth_list_credentials ">
   <div class="op-header">
     <span class="op-id">oauth.list_credentials</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List non-revoked OAuth credentials visible to the caller, with admin/user filtering.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>oauth_list_credentials</span></span>
@@ -2281,17 +2281,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus oauth list --zone-id org_acme; RPC: oauth_list_credentials(provider=&#34;google-drive&#34;) returns stored credential metadata without tokens.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="oauth.list_providers" data-op-text="oauth.list_providers  oauth_list_providers ">
+<div class="op" data-op-id="oauth.list_providers" data-op-text="oauth.list_providers List configured OAuth providers, scopes, PKCE requirements, and display metadata. oauth_list_providers ">
   <div class="op-header">
     <span class="op-id">oauth.list_providers</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List configured OAuth providers, scopes, PKCE requirements, and display metadata.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>oauth_list_providers</span></span>
@@ -2302,17 +2302,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus oauth list shows stored credentials; RPC: oauth_list_providers() returns available OAuth provider definitions for setup UI.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="oauth.revoke_credential" data-op-text="oauth.revoke_credential  oauth_revoke_credential ">
+<div class="op" data-op-id="oauth.revoke_credential" data-op-text="oauth.revoke_credential Revoke a stored OAuth credential after ownership checks. oauth_revoke_credential ">
   <div class="op-header">
     <span class="op-id">oauth.revoke_credential</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Revoke a stored OAuth credential after ownership checks.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>oauth_revoke_credential</span></span>
@@ -2323,17 +2323,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus oauth revoke google alice@example.com; RPC: oauth_revoke_credential(provider=&#34;google&#34;, user_email=&#34;alice@example.com&#34;) returns success=true.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="oauth.test_credential" data-op-text="oauth.test_credential  oauth_test_credential ">
+<div class="op" data-op-id="oauth.test_credential" data-op-text="oauth.test_credential Validate an OAuth credential and report whether it can be used or refreshed. oauth_test_credential ">
   <div class="op-header">
     <span class="op-id">oauth.test_credential</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Validate an OAuth credential and report whether it can be used or refreshed.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>oauth_test_credential</span></span>
@@ -2344,10 +2344,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus oauth test google alice@example.com; RPC: oauth_test_credential(provider=&#34;google&#34;, user_email=&#34;alice@example.com&#34;) returns valid/error metadata.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_oauth_service.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6545,10 +6545,10 @@ graph TB
           </span>
         </summary>
         <div class="module-body">
-<div class="op" data-op-id="add.mount" data-op-text="add.mount  add_mount ">
+<div class="op" data-op-id="add.mount" data-op-text="add.mount Activate a backend connector under a Nexus virtual path and grant the creator owner permissions. add_mount ">
   <div class="op-header">
     <span class="op-id">add.mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Activate a backend connector under a Nexus virtual path and grant the creator owner permissions.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>add_mount</span></span>
@@ -6559,17 +6559,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts add /sources/hn hn &#39;{}&#39;; RPC: add_mount(mount_point=&#39;/sources/hn&#39;, backend_type=&#39;hn&#39;, backend_config={}) returns &#39;/sources/hn&#39;.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="connectors.api_v2" data-op-text="connectors.api_v2  GET /api/v2/connectors ">
+<div class="op" data-op-id="connectors.api_v2" data-op-text="connectors.api_v2 HTTP endpoint listing registered connector types and capabilities for mount selection. GET /api/v2/connectors ">
   <div class="op-header">
     <span class="op-id">connectors.api_v2</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP endpoint listing registered connector types and capabilities for mount selection.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/connectors</span></span>
@@ -6580,17 +6580,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus connectors list --json; RPC: GET /api/v2/connectors returns connectors used by list_connectors(category).</code></span>
+    <span>test: <a href="../../tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="connectors.available" data-op-text="connectors.available  GET /api/v2/connectors/available ">
+<div class="op" data-op-id="connectors.available" data-op-text="connectors.available HTTP endpoint listing connectors with current auth status for the caller. GET /api/v2/connectors/available ">
   <div class="op-header">
     <span class="op-id">connectors.available</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP endpoint listing connectors with current auth status for the caller.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/connectors/available</span></span>
@@ -6601,10 +6601,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus connectors list shows available types; RPC: GET /api/v2/connectors/available includes auth_status/auth_source for connector setup UI.</code></span>
+    <span>test: <a href="../../tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6629,10 +6629,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="connectors.mount" data-op-text="connectors.mount  POST /api/v2/connectors/mount ">
+<div class="op" data-op-id="connectors.mount" data-op-text="connectors.mount HTTP connector mount endpoint used by the mounts CLI to attach an external backend path. POST /api/v2/connectors/mount ">
   <div class="op-header">
     <span class="op-id">connectors.mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP connector mount endpoint used by the mounts CLI to attach an external backend path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/connectors/mount</span></span>
@@ -6643,17 +6643,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts add /sources/hn hn &#39;{}&#39;; RPC: POST /api/v2/connectors/mount with connector_type, mount_point, and config returns mounted=true.</code></span>
+    <span>test: <a href="../../tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="connectors.mounts" data-op-text="connectors.mounts  GET /api/v2/connectors/mounts ">
+<div class="op" data-op-id="connectors.mounts" data-op-text="connectors.mounts HTTP endpoint listing mounted connectors for remote CLI and UI clients. GET /api/v2/connectors/mounts ">
   <div class="op-header">
     <span class="op-id">connectors.mounts</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP endpoint listing mounted connectors for remote CLI and UI clients.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>GET /api/v2/connectors/mounts</span></span>
@@ -6664,10 +6664,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts list --json; RPC: GET /api/v2/connectors/mounts returns mounted connector records.</code></span>
+    <span>test: <a href="../../tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6776,10 +6776,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="connectors.unmount" data-op-text="connectors.unmount  POST /api/v2/connectors/unmount ">
+<div class="op" data-op-id="connectors.unmount" data-op-text="connectors.unmount HTTP endpoint used by the mounts CLI to remove an active connector mount. POST /api/v2/connectors/unmount ">
   <div class="op-header">
     <span class="op-id">connectors.unmount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP endpoint used by the mounts CLI to remove an active connector mount.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/connectors/unmount</span></span>
@@ -6790,10 +6790,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts remove /sources/hn; RPC: POST /api/v2/connectors/unmount removes the mount_point.</code></span>
+    <span>test: <a href="../../tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -6881,10 +6881,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="delete.saved_mount" data-op-text="delete.saved_mount  delete_saved_mount ">
+<div class="op" data-op-id="delete.saved_mount" data-op-text="delete.saved_mount Delete persisted mount configuration without necessarily deactivating an active runtime mount. delete_saved_mount ">
   <div class="op-header">
     <span class="op-id">delete.saved_mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Delete persisted mount configuration without necessarily deactivating an active runtime mount.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>delete_saved_mount</span></span>
@@ -6895,10 +6895,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: no dedicated saved-delete command yet, use nexus mounts remove for runtime cleanup; RPC: delete_saved_mount(mount_point=&#34;/sources/hn&#34;) removes stored config.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -7029,10 +7029,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="list.connectors" data-op-text="list.connectors  list_connectors ">
+<div class="op" data-op-id="list.connectors" data-op-text="list.connectors List connector backend types available for dynamic mounts, optionally filtered by category. list_connectors ">
   <div class="op-header">
     <span class="op-id">list.connectors</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List connector backend types available for dynamic mounts, optionally filtered by category.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_connectors</span></span>
@@ -7043,17 +7043,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus connectors list --category api --json; RPC: list_connectors(category=&#34;api&#34;) returns connector metadata and user_scoped flags.</code></span>
+    <span>test: <a href="../../tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="list.mounts" data-op-text="list.mounts  list_mounts MCPClient.list_mounts ">
+<div class="op" data-op-id="list.mounts" data-op-text="list.mounts List active backend mounts visible to the caller after permission filtering. list_mounts MCPClient.list_mounts ">
   <div class="op-header">
     <span class="op-id">list.mounts</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List active backend mounts visible to the caller after permission filtering.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>list_mounts</span></span>
@@ -7065,10 +7065,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts list --json; RPC: list_mounts() returns [{&#34;mount_point&#34;: &#34;/sources/hn&#34;}] for visible mounts.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -7093,10 +7093,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="load.mount" data-op-text="load.mount  load_mount ">
+<div class="op" data-op-id="load.mount" data-op-text="load.mount Load a saved mount configuration and activate it through the normal add_mount path. load_mount ">
   <div class="op-header">
     <span class="op-id">load.mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Load a saved mount configuration and activate it through the normal add_mount path.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>load_mount</span></span>
@@ -7107,17 +7107,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: no dedicated saved-load command yet, use nexus mounts add for normal UX; RPC: load_mount(mount_point=&#34;/sources/hn&#34;) activates stored config.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mount.connectors" data-op-text="mount.connectors  nexus connectors ">
+<div class="op" data-op-id="mount.connectors" data-op-text="mount.connectors CLI command group for discovering connector types before mounting external sources. nexus connectors ">
   <div class="op-header">
     <span class="op-id">mount.connectors</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; CLI command group for discovering connector types before mounting external sources.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus connectors</span></span>
@@ -7128,10 +7128,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus connectors list --category api; RPC: list_connectors(category=&#34;api&#34;) returns the same connector inventory shape.</code></span>
+    <span>test: <a href="../../tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/integration/services/test_connectors_router.py; tests/integration/services/test_connectors_auth.py; tests/unit/cli/test_json_contract.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -7156,10 +7156,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mount.mounts" data-op-text="mount.mounts  nexus mounts ">
+<div class="op" data-op-id="mount.mounts" data-op-text="mount.mounts CLI command group for connector mount lifecycle: add, list, info, remove, update, and reauth. nexus mounts ">
   <div class="op-header">
     <span class="op-id">mount.mounts</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; CLI command group for connector mount lifecycle: add, list, info, remove, update, and reauth.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus mounts</span></span>
@@ -7170,10 +7170,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts add /sources/hn hn &#39;{}&#39; &amp;&amp; nexus mounts list --json; RPC: add_mount/list_mounts/remove_mount provide the equivalent lifecycle.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -7261,10 +7261,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="reauth.mount" data-op-text="reauth.mount  reauth_mount ">
+<div class="op" data-op-id="reauth.mount" data-op-text="reauth.mount Refresh or rotate OAuth credentials for a mounted connector when a runtime backend supports token refresh. reauth_mount ">
   <div class="op-header">
     <span class="op-id">reauth.mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Refresh or rotate OAuth credentials for a mounted connector when a runtime backend supports token refresh.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>reauth_mount</span></span>
@@ -7275,17 +7275,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts reauth /sources/drive --provider google --email alice@example.com; RPC: reauth_mount(mount_point=&#34;/sources/drive&#34;, provider=&#34;google&#34;, user_email=&#34;alice@example.com&#34;) refreshes or returns a stable unavailable error.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="remove.mount" data-op-text="remove.mount  remove_mount ">
+<div class="op" data-op-id="remove.mount" data-op-text="remove.mount Deactivate a backend mount and clean up routing, metadata, and permission tuples. remove_mount ">
   <div class="op-header">
     <span class="op-id">remove.mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Deactivate a backend mount and clean up routing, metadata, and permission tuples.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>remove_mount</span></span>
@@ -7296,17 +7296,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts remove /sources/hn; RPC: remove_mount(mount_point=&#39;/sources/hn&#39;) returns removal details with removed=true.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="save.mount" data-op-text="save.mount  save_mount ">
+<div class="op" data-op-id="save.mount" data-op-text="save.mount Persist a mount configuration so it can be loaded on demand or restored after restart. save_mount ">
   <div class="op-header">
     <span class="op-id">save.mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Persist a mount configuration so it can be loaded on demand or restored after restart.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>save_mount</span></span>
@@ -7317,17 +7317,17 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts add /sources/hn hn &#39;{}&#39; persists through the connector HTTP path; RPC: save_mount(&#39;/sources/hn&#39;, &#39;hn&#39;, {}) stores reusable config.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="update.mount" data-op-text="update.mount  update_mount ">
+<div class="op" data-op-id="update.mount" data-op-text="update.mount Attempt to update runtime mount backend configuration while preserving mount metadata and permissions. update_mount ">
   <div class="op-header">
     <span class="op-id">update.mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Attempt to update runtime mount backend configuration while preserving mount metadata and permissions.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>update_mount</span></span>
@@ -7338,10 +7338,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mounts update /sources/crm &#39;{&#34;api_url&#34;:&#34;https://crm-v2.internal&#34;}&#39;; RPC: update_mount(&#39;/sources/crm&#39;, {&#39;api_url&#39;: &#39;https://crm-v2.internal&#39;}) returns changed_keys or a stable no-change result.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -9691,64 +9691,64 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mcp.connect" data-op-text="mcp.connect  mcp_connect ">
+<div class="op" data-op-id="mcp.connect" data-op-text="mcp.connect Create a hosted MCP provider connection, reusing stored OAuth credentials when possible. mcp_connect ">
   <div class="op-header">
     <span class="op-id">mcp.connect</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Create a hosted MCP provider connection, reusing stored OAuth credentials when possible.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>mcp_connect</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-unavailable">lite</span>
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mcp serve --transport http exposes the MCP frontend; RPC: mcp_connect(provider=&#34;google_drive&#34;, redirect_url=&#34;http://localhost:2026/oauth/callback&#34;) returns strata_url or oauth_url.</code></span>
+    <span>test: <a href="../../tests/unit/services/test_smoke.py; tests/unit/bricks/mcp/test_oauth_mappings.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/services/test_smoke.py; tests/unit/bricks/mcp/test_oauth_mappings.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mcp.list_mounts" data-op-text="mcp.list_mounts  mcp_list_mounts ">
+<div class="op" data-op-id="mcp.list_mounts" data-op-text="mcp.list_mounts List configured MCP server mounts, optionally filtered by user/zone/system tier. mcp_list_mounts ">
   <div class="op-header">
     <span class="op-id">mcp.list_mounts</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; List configured MCP server mounts, optionally filtered by user/zone/system tier.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>mcp_list_mounts</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-unavailable">lite</span>
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mcp serve --transport http then MCP clients can inspect mounted tools; RPC: mcp_list_mounts(include_unmounted=true, tier=&#34;system&#34;) returns mount metadata.</code></span>
+    <span>test: <a href="../../tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mcp.list_tools" data-op-text="mcp.list_tools List mounted MCP tools; the sandbox tool namespace middleware filters the visible set by ReBAC /tools/... grants. mcp_list_tools ">
+<div class="op" data-op-id="mcp.list_tools" data-op-text="mcp.list_tools List mounted MCP tools; the tool namespace middleware filters the visible set by ReBAC /tools/... grants. mcp_list_tools ">
   <div class="op-header">
     <span class="op-id">mcp.list_tools</span>
-    <span class="op-summary">&mdash; List mounted MCP tools; the sandbox tool namespace middleware filters the visible set by ReBAC /tools/... grants.</span>
+    <span class="op-summary">&mdash; List mounted MCP tools; the tool namespace middleware filters the visible set by ReBAC /tools/... grants.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>mcp_list_tools</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-unavailable">lite</span>
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <code>RPC/MCP: mcp_list_tools(&#34;github&#34;) or MCP tools/list returns only tools visible to the current subject after profile grants are materialized.</code></span>
-    <span>test: <a href="../../tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial">tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial</a></span>
+    <span>usage: <code>CLI: nexus mcp serve --transport http exposes tools/list to MCP clients; RPC: mcp_list_tools(&#34;github&#34;) returns only tools visible to the current subject after profile grants are materialized.</code></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
     <span>perf: hot</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4128">#4128</a></span>
     <span>gap: &mdash;</span>
@@ -9775,45 +9775,45 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mcp.mount" data-op-text="mcp.mount  mcp_mount ">
+<div class="op" data-op-id="mcp.mount" data-op-text="mcp.mount Mount an external MCP server over stdio, SSE, HTTP, or Klavis and discover its tools. mcp_mount ">
   <div class="op-header">
     <span class="op-id">mcp.mount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Mount an external MCP server over stdio, SSE, HTTP, or Klavis and discover its tools.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>mcp_mount</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-unavailable">lite</span>
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mcp serve exposes the frontend while MCP mount administration is RPC/HTTP; RPC: mcp_mount(name=&#34;github&#34;, url=&#34;https://mcp.example.com/sse&#34;, transport=&#34;sse&#34;) returns mounted=true and tool_count.</code></span>
+    <span>test: <a href="../../tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mcp.mounts" data-op-text="mcp.mounts  POST /api/v2/mcp/mounts ">
+<div class="op" data-op-id="mcp.mounts" data-op-text="mcp.mounts HTTP admin endpoint for creating MCP mounts with bearer/admin checks and SSRF validation delegated to MCPService. POST /api/v2/mcp/mounts ">
   <div class="op-header">
     <span class="op-id">mcp.mounts</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; HTTP admin endpoint for creating MCP mounts with bearer/admin checks and SSRF validation delegated to MCPService.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="http"><span class="label">HTTP</span> <span>POST /api/v2/mcp/mounts</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-unavailable">lite</span>
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: nexus mcp serve --transport http runs the frontend; RPC: POST /api/v2/mcp/mounts calls mcp_mount for admin users and rejects missing/non-admin bearers.</code></span>
+    <span>test: <a href="../../tests/unit/server/api/v2/test_mcp_router.py; tests/integration/mcp/test_ssrf_wiring.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/server/api/v2/test_mcp_router.py; tests/integration/mcp/test_ssrf_wiring.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: setup</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -9859,24 +9859,24 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mcp.sync" data-op-text="mcp.sync  mcp_sync ">
+<div class="op" data-op-id="mcp.sync" data-op-text="mcp.sync Refresh tool definitions from a mounted MCP server after its advertised tools change. mcp_sync ">
   <div class="op-header">
     <span class="op-id">mcp.sync</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Refresh tool definitions from a mounted MCP server after its advertised tools change.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>mcp_sync</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-unavailable">lite</span>
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: restart or keep nexus mcp serve running for clients; RPC: mcp_sync(name=&#34;github&#34;) refreshes tool files and returns tool_count.</code></span>
+    <span>test: <a href="../../tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -9901,24 +9901,24 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="mcp.unmount" data-op-text="mcp.unmount  mcp_unmount ">
+<div class="op" data-op-id="mcp.unmount" data-op-text="mcp.unmount Unmount an MCP server and close its active client/subprocess connection. mcp_unmount ">
   <div class="op-header">
     <span class="op-id">mcp.unmount</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Unmount an MCP server and close its active client/subprocess connection.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>mcp_unmount</span></span>
   </div>
   <div class="meta-row">
     <span class="profiles">
-<span class="profile-badge profile-supported">lite</span>
+<span class="profile-badge profile-unavailable">lite</span>
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>CLI: stop nexus mcp serve to remove the frontend process; RPC: mcp_unmount(name=&#34;github&#34;) returns success=true for an existing mount.</code></span>
+    <span>test: <a href="../../tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py">tests/unit/server/api/v2/test_mcp_router.py; tests/e2e/server/test_extracted_services_e2e.py; tests/e2e/self_contained/mcp/test_mcp_http_audit.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4136">#4136</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>

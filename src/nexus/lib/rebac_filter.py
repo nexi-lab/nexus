@@ -37,6 +37,7 @@ def apply_rebac_filter(
     auth_result: dict[str, Any],
     zone_id: str,
     path_extractor: Any | None = None,
+    operation_context: Any | None = None,
 ) -> tuple[list[Any], float]:
     """Apply ReBAC file-level permission filtering to search results.
 
@@ -49,11 +50,16 @@ def apply_rebac_filter(
         zone_id: Zone ID for ReBAC scope.
         path_extractor: Callable ``(result) -> str`` that extracts the file
             path from a result element.  Defaults to ``lambda r: r.path``.
+        operation_context: Optional OperationContext.  When supplied, use the
+            same ``filter_list`` permission chain as filesystem list/read
+            operations so inherited directory grants behave identically.
     """
     if permission_enforcer is None:
         return results, 0.0
 
-    if not hasattr(permission_enforcer, "filter_search_results"):
+    use_filter_list = operation_context is not None and hasattr(permission_enforcer, "filter_list")
+    use_search_filter = hasattr(permission_enforcer, "filter_search_results")
+    if not use_filter_list and not use_search_filter:
         return results, 0.0
 
     if path_extractor is None:
@@ -75,12 +81,32 @@ def apply_rebac_filter(
             unique_abs_paths.append(abs_path)
 
     filter_start = time.perf_counter()
-    permitted_abs = permission_enforcer.filter_search_results(
-        unique_abs_paths,
-        user_id=user_id,
-        zone_id=zone_id,
-        is_admin=is_admin,
-    )
+    if use_filter_list:
+        permitted_abs = permission_enforcer.filter_list(unique_abs_paths, operation_context)
+        check_permission = getattr(permission_enforcer, "check", None)
+        if callable(check_permission):
+            permitted_set = set(permitted_abs)
+            denied_by_fast_path = [p for p in unique_abs_paths if p not in permitted_set]
+            if denied_by_fast_path:
+                from nexus.contracts.types import Permission
+
+                for denied_path in denied_by_fast_path:
+                    try:
+                        if check_permission(denied_path, Permission.READ, operation_context):
+                            permitted_abs.append(denied_path)
+                    except Exception:
+                        logger.debug(
+                            "[SEARCH-REBAC] exact read fallback denied %s",
+                            denied_path,
+                            exc_info=True,
+                        )
+    else:
+        permitted_abs = permission_enforcer.filter_search_results(
+            unique_abs_paths,
+            user_id=user_id,
+            zone_id=zone_id,
+            is_admin=is_admin,
+        )
     filter_ms = (time.perf_counter() - filter_start) * 1000
 
     logger.debug(

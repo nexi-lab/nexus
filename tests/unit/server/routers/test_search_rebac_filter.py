@@ -238,6 +238,71 @@ class TestApplyRebacFilterBehaviour:
         call = enforcer.filter_search_results.call_args
         assert call.args[0] == ["/a.py"]
 
+    def test_operation_context_uses_filter_list_for_inherited_directory_grants(self) -> None:
+        """Search filtering must match list/read inheritance semantics.
+
+        ``filter_search_results`` checks only exact paths; ``filter_list``
+        runs the full strategy chain, including directory inheritance.
+        """
+        results = [
+            _StubResult("/workspace/demo/herb/customers/cust-002.md", marker="inherited"),
+            _StubResult("/workspace/private/secret.md", marker="denied"),
+        ]
+        op_context = object()
+        enforcer = MagicMock()
+        enforcer.filter_list = MagicMock(
+            return_value=["/workspace/demo/herb/customers/cust-002.md"]
+        )
+        enforcer.filter_search_results = MagicMock(return_value=[])
+        enforcer.check = None
+
+        filtered, _ = _apply_rebac_filter(
+            results=results,
+            permission_enforcer=enforcer,
+            auth_result=_auth(),
+            zone_id=ROOT_ZONE_ID,
+            operation_context=op_context,
+        )
+
+        assert [r.marker for r in filtered] == ["inherited"]
+        enforcer.filter_list.assert_called_once_with(
+            [
+                "/workspace/demo/herb/customers/cust-002.md",
+                "/workspace/private/secret.md",
+            ],
+            op_context,
+        )
+        enforcer.filter_search_results.assert_not_called()
+
+    def test_operation_context_falls_back_to_exact_read_check_for_fast_path_denials(self) -> None:
+        """A stale or incomplete list fast path must not hide readable hits."""
+        results = [
+            _StubResult("/workspace/demo/herb/customers/cust-002.md", marker="granted"),
+            _StubResult("/workspace/private/secret.md", marker="denied"),
+        ]
+        op_context = object()
+        enforcer = MagicMock()
+        enforcer.filter_list = MagicMock(return_value=[])
+        enforcer.filter_search_results = MagicMock(return_value=[])
+
+        def exact_check(path: str, _permission: Any, context: Any) -> bool:
+            assert context is op_context
+            return path == "/workspace/demo/herb/customers/cust-002.md"
+
+        enforcer.check = MagicMock(side_effect=exact_check)
+
+        filtered, _ = _apply_rebac_filter(
+            results=results,
+            permission_enforcer=enforcer,
+            auth_result=_auth(),
+            zone_id=ROOT_ZONE_ID,
+            operation_context=op_context,
+        )
+
+        assert [r.marker for r in filtered] == ["granted"]
+        assert enforcer.check.call_count == 2
+        enforcer.filter_search_results.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # _apply_rebac_filter — auth_result extraction

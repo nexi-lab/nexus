@@ -793,36 +793,35 @@ class MetadataMixin:
 
         if _unlink_result.hit:
             # Rust handled the full operation (§12e: DT_DIR handled via internal sys_rmdir).
-            if _unlink_result.post_hook_needed:
-                et = _unlink_result.entry_type
-                if et == DT_DIR:
-                    from nexus.contracts.vfs_hooks import RmdirHookContext
+            et = _unlink_result.entry_type
+            if et == DT_DIR:
+                from nexus.contracts.vfs_hooks import RmdirHookContext
 
-                    ctx = self._resolve_cred(context)
-                    self._kernel.dispatch_post_hooks(
-                        "rmdir",
-                        RmdirHookContext(
-                            path=path,
-                            context=ctx,
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            recursive=recursive,
-                            metadata=_pre_delete_meta,
-                        ),
-                    )
-                else:
-                    from nexus.contracts.vfs_hooks import DeleteHookContext
+                ctx = self._resolve_cred(context)
+                self._kernel.dispatch_post_hooks(
+                    "rmdir",
+                    RmdirHookContext(
+                        path=path,
+                        context=ctx,
+                        zone_id=zone_id,
+                        agent_id=agent_id,
+                        recursive=recursive,
+                        metadata=_pre_delete_meta,
+                    ),
+                )
+            else:
+                from nexus.contracts.vfs_hooks import DeleteHookContext
 
-                    self._kernel.dispatch_post_hooks(
-                        "delete",
-                        DeleteHookContext(
-                            path=path,
-                            context=context,
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            metadata=_pre_delete_meta,
-                        ),
-                    )
+                self._kernel.dispatch_post_hooks(
+                    "delete",
+                    DeleteHookContext(
+                        path=path,
+                        context=context,
+                        zone_id=zone_id,
+                        agent_id=agent_id,
+                        metadata=_pre_delete_meta,
+                    ),
+                )
             if _unlink_result.entry_type == DT_MOUNT:
                 self._forget_mounted_backend_instance(path)
             emit_op_completed(

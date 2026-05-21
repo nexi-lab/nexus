@@ -1013,6 +1013,7 @@ async def create_mcp_server(
             auth_result,
             zone_id,
             path_extractor=lambda p: p,
+            operation_context=op_context,
         )
         post_filter_count = len(filtered_paths)
         total = post_filter_count
@@ -1196,6 +1197,7 @@ async def create_mcp_server(
             auth_result,
             zone_id,
             path_extractor=lambda r: r.get("file", ""),
+            operation_context=op_context,
         )
         post_filter_count = len(filtered_results)
 

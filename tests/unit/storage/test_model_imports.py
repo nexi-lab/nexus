@@ -105,6 +105,8 @@ EXPECTED_MODELS = [
     "IndexedDirectoryModel",
     # Global path+title index for lightweight locate() (Issue #3725)
     "DocumentSkeletonModel",
+    # Path context cache for search/path metadata (Issue #3773)
+    "PathContextModel",
 ]
 
 

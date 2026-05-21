@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.exceptions import NexusPermissionError
+from nexus.contracts.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import VFSOperations, parse_operation_context
 
@@ -319,6 +319,38 @@ class AgentRPCService:
         if self._entity_registry is None:
             raise RuntimeError("EntityRegistry not available")
 
+    def _cleanup_partial_agent_registration(
+        self,
+        agent_id: str,
+        agent_dir: str,
+        zone_id: str,
+        context: dict | None,
+        *,
+        entity_registered: bool,
+        process_registered: bool,
+    ) -> None:
+        if process_registered and self._agent_registry is not None:
+            with contextlib.suppress(Exception):
+                self._agent_registry.unregister_external(agent_id)
+
+        if self._rmdir_fn is not None:
+            try:
+                ctx = parse_operation_context(context)
+                if self._vfs.access(agent_dir, context=ctx):
+                    self._rmdir_fn(agent_dir, recursive=True, context=ctx, is_admin=True)
+            except Exception as e:
+                logger.warning("Failed to cleanup partial agent directory %s: %s", agent_dir, e)
+
+        if self._wallet_provisioner is not None:
+            cleanup_fn = getattr(self._wallet_provisioner, "cleanup", None)
+            if cleanup_fn is not None:
+                with contextlib.suppress(Exception):
+                    cleanup_fn(agent_id, zone_id)
+
+        if entity_registered and self._entity_registry is not None:
+            with contextlib.suppress(Exception):
+                self._entity_registry.delete_entity("agent", agent_id)
+
     # ------------------------------------------------------------------
     # Public RPC Methods — Agent Management
     # ------------------------------------------------------------------
@@ -348,6 +380,7 @@ class AgentRPCService:
         assert self._agent_registry is not None
 
         entity_registered = False
+        process_registered = False
         try:
             if self._entity_registry is not None:
                 existing = self._entity_registry.get_entity("agent", agent_id)
@@ -377,67 +410,80 @@ class AgentRPCService:
                 connection_id=agent_id,
                 labels={"capabilities": ",".join(capabilities or [])},
             )
+            process_registered = True
         except Exception:
             if entity_registered and self._entity_registry is not None:
                 with contextlib.suppress(Exception):
                     self._entity_registry.delete_entity("agent", agent_id)
             raise
-        from datetime import UTC as _UTC
-        from datetime import datetime as _dt
 
-        agent = {
-            "agent_id": agent_id,
-            "owner_id": user_id,
-            "zone_id": zone_id,
-            "name": name,
-            "state": str(desc.state),
-            "generation": desc.generation,
-            "created_at": _dt.fromtimestamp(desc.created_at_ms / 1000, tz=_UTC).isoformat(),
-            "updated_at": _dt.fromtimestamp(desc.updated_at_ms / 1000, tz=_UTC).isoformat(),
-        }
+        try:
+            from datetime import UTC as _UTC
+            from datetime import datetime as _dt
 
-        agent_did = self._provision_agent_identity(agent_id, agent, logger)
-        self._provision_agent_wallet(agent_id, zone_id, logger)
+            agent = {
+                "agent_id": agent_id,
+                "owner_id": user_id,
+                "zone_id": zone_id,
+                "name": name,
+                "state": str(desc.state),
+                "generation": desc.generation,
+                "created_at": _dt.fromtimestamp(desc.created_at_ms / 1000, tz=_UTC).isoformat(),
+                "updated_at": _dt.fromtimestamp(desc.updated_at_ms / 1000, tz=_UTC).isoformat(),
+            }
 
-        config_path = f"{agent_dir}/config.yaml"
-        config_data = self._create_agent_config_data(
-            agent_id,
-            name,
-            user_id,
-            description,
-            agent.get("created_at"),
-            metadata,
-        )
-        await self._create_agent_directory(
-            agent_id, user_id, agent_dir, config_path, config_data, context
-        )
-        agent["config_path"] = config_path
+            agent_did = self._provision_agent_identity(agent_id, agent, logger)
+            self._provision_agent_wallet(agent_id, zone_id, logger)
 
-        self._grant_agent_self_permission(agent_id, agent_dir, zone_id, context, logger)
-
-        if agent_did:
-            await self._write_agent_identity_document(
-                agent_id, agent_did, agent_dir, context, logger
-            )
-
-        if generate_api_key:
-            await self._provision_agent_api_key(
+            config_path = f"{agent_dir}/config.yaml"
+            config_data = self._create_agent_config_data(
                 agent_id,
-                user_id,
                 name,
+                user_id,
                 description,
+                agent.get("created_at"),
                 metadata,
-                agent,
-                config_path,
-                context,
-                logger,
             )
-        else:
-            agent["has_api_key"] = False
+            await self._create_agent_directory(
+                agent_id, user_id, agent_dir, config_path, config_data, context
+            )
+            agent["config_path"] = config_path
 
-        if capabilities:
-            agent["capabilities"] = list(capabilities)
-        return dict(agent)
+            self._grant_agent_self_permission(agent_id, agent_dir, zone_id, context, logger)
+
+            if agent_did:
+                await self._write_agent_identity_document(
+                    agent_id, agent_did, agent_dir, context, logger
+                )
+
+            if generate_api_key:
+                await self._provision_agent_api_key(
+                    agent_id,
+                    user_id,
+                    name,
+                    description,
+                    metadata,
+                    agent,
+                    config_path,
+                    context,
+                    logger,
+                )
+            else:
+                agent["has_api_key"] = False
+
+            if capabilities:
+                agent["capabilities"] = list(capabilities)
+            return dict(agent)
+        except Exception:
+            self._cleanup_partial_agent_registration(
+                agent_id,
+                agent_dir,
+                zone_id,
+                context,
+                entity_registered=entity_registered,
+                process_registered=process_registered,
+            )
+            raise
 
     @rpc_expose(description="Update agent configuration")
     async def update_agent(
@@ -737,13 +783,19 @@ class AgentRPCService:
         assert self._agent_registry is not None
         try:
             self._agent_registry.unregister_external(agent_id)
-            if self._entity_registry is not None:
-                with contextlib.suppress(Exception):
-                    self._entity_registry.delete_entity("agent", agent_id)
-            return True
-        except Exception:
-            logger.warning("Failed to unregister process %s", agent_id)
-            return False
+        except NexusFileNotFoundError:
+            logger.info("Process registry entry already missing for agent %s", agent_id)
+        except Exception as e:
+            if "not found" in str(e).lower():
+                logger.info("Process registry entry already missing for agent %s", agent_id)
+            else:
+                logger.warning("Failed to unregister process %s", agent_id)
+                return False
+
+        if self._entity_registry is not None:
+            with contextlib.suppress(Exception):
+                self._entity_registry.delete_entity("agent", agent_id)
+        return True
 
     # ------------------------------------------------------------------
     # Public RPC Methods — Agent Lifecycle

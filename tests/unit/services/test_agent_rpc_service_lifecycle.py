@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.process_types import AgentSignal, AgentState, InvalidTransitionError
 from nexus.services.agents.agent_rpc_service import AgentRPCService
 
@@ -93,7 +94,7 @@ def test_list_agents_returns_entity_registry_rows() -> None:
     ]
 
 
-def test_agent_heartbeat_records_liveness(rpc) -> None:
+def test_agent_heartbeat_records_liveness(rpc: tuple[AgentRPCService, _Registry]) -> None:
     service, registry = rpc
 
     result = service.agent_heartbeat("alice")
@@ -103,7 +104,9 @@ def test_agent_heartbeat_records_liveness(rpc) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_agent_transition_rejects_stale_generation(rpc) -> None:
+async def test_agent_transition_rejects_stale_generation(
+    rpc: tuple[AgentRPCService, _Registry],
+) -> None:
     service, _registry = rpc
 
     with pytest.raises(InvalidTransitionError, match="stale generation"):
@@ -111,7 +114,9 @@ async def test_agent_transition_rejects_stale_generation(rpc) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_agent_transition_signals_target_state(rpc) -> None:
+async def test_agent_transition_signals_target_state(
+    rpc: tuple[AgentRPCService, _Registry],
+) -> None:
     service, registry = rpc
 
     result = await service.agent_transition("alice", "IDLE", expected_generation=7)
@@ -163,3 +168,61 @@ async def test_register_agent_persists_entity_registry_row() -> None:
             "metadata": {"issue": "4137"},
         },
     )
+
+
+@pytest.mark.asyncio()
+async def test_register_agent_cleans_registry_rows_when_late_side_effect_fails() -> None:
+    kernel = MagicMock()
+    kernel.sys_stat.return_value = None
+    registry = MagicMock()
+    registry.register_external.return_value = SimpleNamespace(
+        state=AgentState.REGISTERED,
+        generation=1,
+        created_at_ms=1_700_000_000_000,
+        updated_at_ms=1_700_000_000_000,
+    )
+    entity_registry = MagicMock()
+    entity_registry.get_entity.return_value = None
+    service = AgentRPCService(
+        vfs=MagicMock(),
+        metastore=kernel,
+        session_factory=MagicMock(),
+        agent_registry=registry,
+        entity_registry=entity_registry,
+    )
+
+    with pytest.raises(RuntimeError, match="API key creator not injected"):
+        await service.register_agent(
+            agent_id="admin,bob",
+            name="Bob",
+            generate_api_key=True,
+            context={"user_id": "admin", "zone_id": "root"},
+        )
+
+    registry.unregister_external.assert_called_once_with("admin,bob")
+    entity_registry.delete_entity.assert_called_once_with("agent", "admin,bob")
+
+
+@pytest.mark.asyncio()
+async def test_delete_agent_removes_entity_when_process_registry_entry_is_missing() -> None:
+    session = MagicMock()
+    session.execute.return_value = SimpleNamespace(rowcount=0)
+    registry = MagicMock()
+    registry.unregister_external.side_effect = NexusFileNotFoundError("admin,bob")
+    entity_registry = MagicMock()
+    service = AgentRPCService(
+        vfs=MagicMock(),
+        metastore=MagicMock(),
+        session_factory=MagicMock(return_value=session),
+        agent_registry=registry,
+        entity_registry=entity_registry,
+    )
+
+    result = await service.delete_agent(
+        "admin,bob",
+        {"user_id": "admin", "zone_id": "root"},
+    )
+
+    assert result is True
+    registry.unregister_external.assert_called_once_with("admin,bob")
+    entity_registry.delete_entity.assert_called_once_with("agent", "admin,bob")

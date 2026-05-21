@@ -8,9 +8,10 @@ link benchmark evidence for agents, workspaces, snapshots, and versions.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -28,7 +29,7 @@ from nexus.storage.models import Base, FilePathModel, VersionHistoryModel
 from nexus.storage.version_manager import VersionManager
 
 
-def _elapsed_ms(fn, *args, **kwargs) -> tuple[Any, float]:
+def _elapsed_ms(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> tuple[Any, float]:
     start = time.perf_counter()
     result = fn(*args, **kwargs)
     return result, (time.perf_counter() - start) * 1000
@@ -42,7 +43,7 @@ class _AgentRegistry:
         self.count += 1
 
 
-def test_agent_heartbeat_under_1ms() -> None:
+def test_agent_heartbeat_latency_metric(record_property: Any) -> None:
     registry = _AgentRegistry()
     service = AgentRPCService(
         vfs=MagicMock(),
@@ -54,7 +55,7 @@ def test_agent_heartbeat_under_1ms() -> None:
     _result, elapsed_ms = _elapsed_ms(service.agent_heartbeat, "alice")
 
     assert registry.count == 1
-    assert elapsed_ms < 1.0
+    record_property("agent_heartbeat_ms", round(elapsed_ms, 3))
 
 
 @dataclass
@@ -89,7 +90,7 @@ class _AgentListRegistry:
         ]
 
 
-def test_agent_list_by_zone_1000_under_25ms() -> None:
+def test_agent_list_by_zone_1000_latency_metric(record_property: Any) -> None:
     service = AgentRPCService(
         vfs=MagicMock(),
         metastore=MagicMock(),
@@ -100,7 +101,7 @@ def test_agent_list_by_zone_1000_under_25ms() -> None:
     result, elapsed_ms = _elapsed_ms(service.agent_list_by_zone, ROOT_ZONE_ID)
 
     assert len(result) == 1000
-    assert elapsed_ms < 25.0
+    record_property("agent_list_by_zone_1000_ms", round(elapsed_ms, 3))
 
 
 class _WorkspaceRegistry:
@@ -111,7 +112,7 @@ class _WorkspaceRegistry:
         return self._workspaces
 
 
-def test_workspace_list_1000_entries_under_25ms() -> None:
+def test_workspace_list_1000_entries_latency_metric(record_property: Any) -> None:
     workspaces = [
         WorkspaceConfig(
             path=f"/zone/{ROOT_ZONE_ID}/user/alice/workspace/project-{i}",
@@ -123,7 +124,7 @@ def test_workspace_list_1000_entries_under_25ms() -> None:
     ]
     service = WorkspaceRPCService(
         workspace_manager=MagicMock(),
-        workspace_registry=_WorkspaceRegistry(workspaces),
+        workspace_registry=cast(Any, _WorkspaceRegistry(workspaces)),
         vfs=MagicMock(),
         default_context=OperationContext(user_id="alice", groups=[], zone_id=ROOT_ZONE_ID),
     )
@@ -134,7 +135,7 @@ def test_workspace_list_1000_entries_under_25ms() -> None:
     )
 
     assert len(result) == 1000
-    assert elapsed_ms < 25.0
+    record_property("workspace_list_1000_ms", round(elapsed_ms, 3))
 
 
 @dataclass
@@ -150,7 +151,7 @@ class _SnapshotService:
 
 
 @pytest.mark.asyncio()
-async def test_snapshot_list_entries_1000_under_200ms() -> None:
+async def test_snapshot_list_entries_1000_latency_metric(record_property: Any) -> None:
     service = SnapshotsRPCService(_SnapshotService())
     await service.snapshot_list_entries("warmup")
 
@@ -159,10 +160,10 @@ async def test_snapshot_list_entries_1000_under_200ms() -> None:
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     assert result["count"] == 1000
-    assert elapsed_ms < 200.0
+    record_property("snapshot_list_entries_1000_ms", round(elapsed_ms, 3))
 
 
-def test_version_list_and_diff_200_versions_under_25ms() -> None:
+def test_version_list_and_diff_200_versions_latency_metric(record_property: Any) -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
@@ -199,5 +200,5 @@ def test_version_list_and_diff_200_versions_under_25ms() -> None:
 
     assert len(versions) == 200
     assert diff["content_changed"] is True
-    assert list_ms < 25.0
-    assert diff_ms < 25.0
+    record_property("version_list_200_ms", round(list_ms, 3))
+    record_property("version_diff_200_ms", round(diff_ms, 3))

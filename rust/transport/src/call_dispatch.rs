@@ -187,7 +187,11 @@ fn kernel_err_to_payload(err: KernelError) -> Vec<u8> {
 fn agent_err_to_payload(err: AgentError) -> Vec<u8> {
     let code = match &err {
         AgentError::NotFound(_) => RpcErrorCode::FileNotFound,
-        _ => RpcErrorCode::InternalError,
+        AgentError::AlreadyExists(_) | AgentError::InvalidTransition { .. } => {
+            RpcErrorCode::Conflict
+        }
+        AgentError::InvalidKind(_) | AgentError::Protocol(_) => RpcErrorCode::ValidationError,
+        AgentError::PidExhausted => RpcErrorCode::InternalError,
     };
     encode_rpc_error(code, &err.to_string())
 }
@@ -370,7 +374,7 @@ fn do_agent_update_state(
         .and_then(|s| AgentState::from_str(&s))
         .ok_or_else(|| {
             call_err(
-                RpcErrorCode::InternalError,
+                RpcErrorCode::ValidationError,
                 "invalid or missing agent state",
             )
         })?;
@@ -397,7 +401,7 @@ fn do_agent_signal(kernel: &Arc<Kernel>, params: &serde_json::Value) -> Result<V
         .and_then(|s| AgentSignal::from_str(&s))
         .ok_or_else(|| {
             call_err(
-                RpcErrorCode::InternalError,
+                RpcErrorCode::ValidationError,
                 "invalid or missing agent signal",
             )
         })?;
@@ -1192,6 +1196,11 @@ mod tests {
         payload.get("result").cloned().expect("result envelope")
     }
 
+    fn error_payload(response: kernel::kernel::vfs_proto::CallResponse) -> serde_json::Value {
+        assert!(response.is_error, "response did not carry an error payload");
+        serde_json::from_slice(&response.payload).expect("error JSON")
+    }
+
     struct DenyBlockedWriteHook;
 
     impl NativeInterceptHook for DenyBlockedWriteHook {
@@ -1393,5 +1402,52 @@ mod tests {
         .into_inner();
         assert_eq!(result_payload(unregister), serde_json::json!(true));
         assert!(kernel.agent_registry().get("admin,e2e").is_none());
+    }
+
+    #[test]
+    fn agent_registry_dispatch_maps_lifecycle_errors_to_client_codes() {
+        let kernel = Arc::new(Kernel::new());
+        let ctx = OperationContext::new("admin", kernel::ROOT_ZONE_ID, true, None, true);
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "name": "E2E Agent",
+            "owner_id": "admin",
+            "zone_id": kernel::ROOT_ZONE_ID,
+            "connection_id": "admin,e2e",
+        }))
+        .expect("payload");
+
+        let registered = dispatch(&kernel, &ctx, "agent_register_external", &payload)
+            .expect("dispatch")
+            .into_inner();
+        assert!(!registered.is_error, "register returned error payload");
+
+        let duplicate = dispatch(&kernel, &ctx, "agent_register_external", &payload)
+            .expect("dispatch")
+            .into_inner();
+        let duplicate = error_payload(duplicate);
+        assert_eq!(duplicate["code"], serde_json::json!(-32006));
+
+        let invalid_signal_payload = serde_json::to_vec(&serde_json::json!({
+            "pid": "admin,e2e",
+            "sig": "NOPE",
+        }))
+        .expect("payload");
+        let invalid_signal = dispatch(&kernel, &ctx, "agent_signal", &invalid_signal_payload)
+            .expect("dispatch")
+            .into_inner();
+        let invalid_signal = error_payload(invalid_signal);
+        assert_eq!(invalid_signal["code"], serde_json::json!(-32005));
+
+        let invalid_transition_payload = serde_json::to_vec(&serde_json::json!({
+            "pid": "admin,e2e",
+            "sig": "SIGSTOP",
+        }))
+        .expect("payload");
+        let invalid_transition =
+            dispatch(&kernel, &ctx, "agent_signal", &invalid_transition_payload)
+                .expect("dispatch")
+                .into_inner();
+        let invalid_transition = error_payload(invalid_transition);
+        assert_eq!(invalid_transition["code"], serde_json::json!(-32006));
     }
 }

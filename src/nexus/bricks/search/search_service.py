@@ -1108,54 +1108,13 @@ class SearchService:
         if self._nexus_fs is None:
             return []
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
-        root = list_prefix or "/"
         entries = self._nexus_fs.sys_readdir(
-            root,
+            list_prefix or "/",
             recursive=True,
             details=True,
             context=ctx,
         )
-
-        # Some live kernel backends currently return only direct children for a
-        # parent recursive read, while a recursive read of each child directory
-        # returns that directory's descendants. Search callers require true
-        # recursive coverage, so complete the tree through the same syscall
-        # boundary instead of dropping nested files from grep/glob.
-        from collections import deque
-
-        by_path: dict[str, dict[str, Any]] = {}
-        pending_dirs: deque[str] = deque()
-
-        def _remember(raw: Any) -> None:
-            if not isinstance(raw, dict):
-                return
-            path = raw.get("path")
-            if not isinstance(path, str) or not path or path in by_path:
-                return
-            by_path[path] = raw
-            if _entry_is_dir(raw):
-                pending_dirs.append(path)
-
-        for entry in entries:
-            _remember(entry)
-
-        max_entries = 100_000
-        while pending_dirs and len(by_path) < max_entries:
-            directory = pending_dirs.popleft()
-            try:
-                child_entries = self._nexus_fs.sys_readdir(
-                    directory,
-                    recursive=False,
-                    details=True,
-                    context=ctx,
-                )
-            except Exception as exc:
-                logger.debug("recursive sys_readdir expansion skipped for %s: %s", directory, exc)
-                continue
-            for child in child_entries:
-                _remember(child)
-
-        return list(by_path.values())
+        return [e for e in entries if isinstance(e, dict)]
 
     def _list_slow_path(
         self,

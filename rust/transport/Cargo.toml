@@ -19,7 +19,7 @@ contracts = { workspace = true }
 # (mimalloc allocator, connectors HTTP, py-hook adapters) off in this
 # rlib; the cdylib pulls them via its own kernel dep.
 kernel = { workspace = true }
-backends = { workspace = true, default-features = false, features = ["driver-path-local"] }
+backends = { workspace = true, default-features = false, features = ["driver-path-local", "driver-remote"] }
 # `services::auth::AuthProvider` trait consumed by grpc.rs for auth
 # resolution. No feature flags — auth module is always compiled.
 services = { workspace = true }

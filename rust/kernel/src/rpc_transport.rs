@@ -7,6 +7,7 @@
 //! Issue #1133: Unified gRPC transport.
 //! Issue #1202: gRPC for REMOTE profile.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -72,6 +73,14 @@ impl RpcTransport {
         &self.runtime
     }
 
+    fn block_on<F: Future>(&self, future: F) -> F::Output {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.runtime.handle().block_on(future))
+        } else {
+            self.runtime.block_on(future)
+        }
+    }
+
     fn build_channel(
         address: &str,
         tls: Option<&TlsConfig>,
@@ -115,7 +124,7 @@ impl RpcTransport {
 
     /// Generic Call RPC — method name + JSON payload.
     pub fn call(&self, method: &str, payload: &[u8]) -> Result<(Vec<u8>, bool), String> {
-        self.runtime.block_on(self.call_async(method, payload))
+        self.block_on(self.call_async(method, payload))
     }
 
     async fn call_async(&self, method: &str, payload: &[u8]) -> Result<(Vec<u8>, bool), String> {
@@ -146,7 +155,7 @@ impl RpcTransport {
 
     /// Typed Read RPC — raw bytes, no base64.
     pub fn read(&self, path: &str, content_id: &str) -> Result<ReadResult, String> {
-        self.runtime.block_on(self.read_async(path, content_id))
+        self.block_on(self.read_async(path, content_id))
     }
 
     async fn read_async(&self, path: &str, content_id: &str) -> Result<ReadResult, String> {
@@ -191,8 +200,7 @@ impl RpcTransport {
         content: &[u8],
         content_id: &str,
     ) -> Result<WriteRpcResult, String> {
-        self.runtime
-            .block_on(self.write_async(path, content, content_id))
+        self.block_on(self.write_async(path, content, content_id))
     }
 
     async fn write_async(
@@ -237,7 +245,7 @@ impl RpcTransport {
 
     /// Typed Delete RPC.
     pub fn delete(&self, path: &str, recursive: bool) -> Result<bool, String> {
-        self.runtime.block_on(self.delete_async(path, recursive))
+        self.block_on(self.delete_async(path, recursive))
     }
 
     async fn delete_async(&self, path: &str, recursive: bool) -> Result<bool, String> {
@@ -262,7 +270,7 @@ impl RpcTransport {
     /// Health check — returns (version, zone_id, uptime_seconds).
     #[allow(dead_code)]
     pub fn ping(&self) -> Result<(String, String, i64), String> {
-        self.runtime.block_on(self.ping_async())
+        self.block_on(self.ping_async())
     }
 
     #[allow(dead_code)]

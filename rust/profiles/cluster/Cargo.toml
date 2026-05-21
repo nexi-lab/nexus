@@ -22,7 +22,7 @@ contracts = { workspace = true }
 # `default-features = false` drops every other driver and the connector
 # HTTP stack so the binary stays at the sudowork target size.
 kernel = { workspace = true }
-backends = { workspace = true, default-features = false, features = ["driver-path-local"] }
+backends = { workspace = true, default-features = false, features = ["driver-path-local", "driver-remote"] }
 # VFS gRPC server — pure Rust content I/O on a separate port.
 # No python feature — cluster binary has zero PyO3.
 transport = { workspace = true }

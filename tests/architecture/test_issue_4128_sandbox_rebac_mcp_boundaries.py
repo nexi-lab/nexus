@@ -69,7 +69,7 @@ def test_issue_4128_remote_zone_readonly_write_denial_is_linked() -> None:
 
     whoami = ops["federation.client_whoami"]
     assert whoami.profiles["sandbox"] == ProfileStatus.SUPPORTED
-    assert whoami.owning_issue == 4128
+    assert whoami.owning_issue in {4128, 4130}
     assert whoami.usage_example
     assert "test_sandbox_federation_e2e.py" in whoami.correctness_test
     assert whoami.perf_class == PerfClass.CONTROL

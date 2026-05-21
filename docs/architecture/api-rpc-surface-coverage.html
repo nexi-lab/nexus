@@ -168,7 +168,7 @@
     <a href="#m-portability">portability<span class="count">3</span></a>
 
     <h2>Deployment topology</h2>
-    <a href="#m-hub">hub<span class="count">2</span></a>
+    <a href="#m-hub">hub<span class="count">3</span></a>
     <a href="#m-federation">federation<span class="count">13</span></a>
     <a href="#m-zone">zone<span class="count">14</span></a>
     <a href="#m-daemon">daemon<span class="count">4</span></a>
@@ -184,8 +184,8 @@
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
       <div class="stat"><div class="stat-value">28</div><div class="stat-label">bricks</div></div>
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">transports</div></div>
-      <div class="stat"><div class="stat-value">692</div><div class="stat-label">operations</div></div>
-      <div class="stat"><div class="stat-value">14</div><div class="stat-label">missing</div></div>
+      <div class="stat"><div class="stat-value">693</div><div class="stat-label">operations</div></div>
+      <div class="stat"><div class="stat-value">13</div><div class="stat-label">missing</div></div>
     </div>
 
     <input id="search" placeholder="Search by op-id, brick, transport name, or summary..." />
@@ -8989,7 +8989,7 @@ graph TB
 <span class="profile-badge profile-supported">full</span>
     </span>
     <span>usage: <code>MCP: nexus_semantic_search(query=&#34;auth flow&#34;, search_mode=&#34;hybrid&#34;, limit=5)</code></span>
-    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch</a></span>
+    <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch; tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch; tests/unit/bricks/search/test_federated_degraded.py::TestSearchServiceSandboxFallback">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch; tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch; tests/unit/bricks/search/test_federated_degraded.py::TestSearchServiceSandboxFallback</a></span>
     <span>perf: hot</span>
     <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4129">#4129</a></span>
     <span>gap: &mdash;</span>
@@ -12476,7 +12476,7 @@ graph TB
           <span class="mod-name">hub</span>
           <span class="mod-desc">&mdash; Shared Nexus instance that other nodes connect to. Manages multi-tenant zones + admin RPCs.</span>
           <span class="mod-meta">
-            <span>2 ops</span>
+            <span>3 ops</span>
           </span>
         </summary>
         <div class="module-body">
@@ -12519,6 +12519,28 @@ graph TB
     <span>test: <span class="todo">TODO</span></span>
     <span>perf: <span class="todo">TODO</span></span>
     <span>owner: &mdash;</span>
+    <span>gap: &mdash;</span>
+  </div>
+</div>
+<div class="op" data-op-id="hub.status" data-op-text="hub.status Hub health and zone/token status surface. Local `--detail` includes zones, tokens, rate limits, and search; `--remote` calls the hub MCP admin tool. nexus hub status nexus_hub_status ">
+  <div class="op-header">
+    <span class="op-id">hub.status</span>
+    <span class="op-summary">&mdash; Hub health and zone/token status surface. Local `--detail` includes zones, tokens, rate limits, and search; `--remote` calls the hub MCP admin tool.</span>
+  </div>
+  <div class="transports">
+    <span class="transport-pill" data-t="cli"><span class="label">CLI</span> <span>nexus hub status</span></span>
+    <span class="transport-pill" data-t="mcp"><span class="label">MCP</span> <span>nexus_hub_status</span></span>
+  </div>
+  <div class="meta-row">
+    <span class="profiles">
+<span class="profile-badge profile-unavailable">lite</span>
+<span class="profile-badge profile-supported">sandbox</span>
+<span class="profile-badge profile-supported">full</span>
+    </span>
+    <span>usage: <code>CLI: nexus hub status --detail --json; remote hub: nexus hub status --remote https://hub.example.com/mcp --admin-token &#34;$NEXUS_HUB_ADMIN_TOKEN&#34; --json</code></span>
+    <span>test: <a href="../../tests/unit/cli/test_hub.py::test_hub_status_detail_json_includes_token_last_seen_and_zones; tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json; tests/e2e/self_contained/cli/test_hub_flow.py::test_hub_end_to_end_token_lifecycle">tests/unit/cli/test_hub.py::test_hub_status_detail_json_includes_token_last_seen_and_zones; tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json; tests/e2e/self_contained/cli/test_hub_flow.py::test_hub_end_to_end_token_lifecycle</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4130">#4130</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -12569,16 +12591,16 @@ graph TB
 <span class="profile-badge profile-supported">full</span>
     </span>
     <span>usage: <code>RPC: federation_client_whoami({}) with the sandbox hub token returns zones like [{&#34;zone_id&#34;:&#34;company&#34;,&#34;permission&#34;:&#34;r&#34;},{&#34;zone_id&#34;:&#34;shared&#34;,&#34;permission&#34;:&#34;rw&#34;}].</code></span>
-    <span>test: <a href="../../tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones">tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones</a></span>
+    <span>test: <a href="../../tests/unit/grpc/test_federation_whoami_rpc.py::TestFederationClientWhoami; tests/unit/remote/test_federation_handshake.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones">tests/unit/grpc/test_federation_whoami_rpc.py::TestFederationClientWhoami; tests/unit/remote/test_federation_handshake.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxFederationBoot::test_federation_whoami_returns_both_zones</a></span>
     <span>perf: control</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4128">#4128</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4130">#4130</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="federation.cluster_info" data-op-text="federation.cluster_info  federation_cluster_info ">
+<div class="op" data-op-id="federation.cluster_info" data-op-text="federation.cluster_info Federation zone topology/status RPC used by `nexus federation info &lt;zone-id&gt;` to show leader and membership state. federation_cluster_info ">
   <div class="op-header">
     <span class="op-id">federation.cluster_info</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Federation zone topology/status RPC used by `nexus federation info &lt;zone-id&gt;` to show leader and membership state.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_cluster_info</span></span>
@@ -12589,10 +12611,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: federation_cluster_info({&#34;zone_id&#34;:&#34;corp&#34;}); CLI equivalent: nexus federation info &lt;zone-id&gt;</code></span>
+    <span>test: <a href="../../tests/e2e/docker/test_federation_e2e.py::TestFederationCLIWorkflow::test_status_zones_info_consistent_view">tests/e2e/docker/test_federation_e2e.py::TestFederationCLIWorkflow::test_status_zones_info_consistent_view</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4130">#4130</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -12680,10 +12702,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="federation.list_zones" data-op-text="federation.list_zones  federation_list_zones ">
+<div class="op" data-op-id="federation.list_zones" data-op-text="federation.list_zones Federation zone listing RPC used by `nexus federation zones` and operator status workflows. federation_list_zones ">
   <div class="op-header">
     <span class="op-id">federation.list_zones</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Federation zone listing RPC used by `nexus federation zones` and operator status workflows.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>federation_list_zones</span></span>
@@ -12694,10 +12716,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: federation_list_zones({}); CLI equivalent: nexus federation zones</code></span>
+    <span>test: <a href="../../tests/e2e/docker/test_federation_e2e.py::TestFederationCLIWorkflow::test_status_zones_info_consistent_view">tests/e2e/docker/test_federation_e2e.py::TestFederationCLIWorkflow::test_status_zones_info_consistent_view</a></span>
+    <span>perf: control</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4130">#4130</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -15277,7 +15299,7 @@ graph TB
     </section>
 
     <section>
-      <h2 class="section">&sect;5 Wanted but missing (14)</h2>
+      <h2 class="section">&sect;5 Wanted but missing (13)</h2>
       <p>Capabilities the architecture suggests should exist but currently don't. Subissues should open gap issues for each and link via the row's <code>gap_issue</code> field.</p>
       <details class="module">
         <summary>
@@ -15376,7 +15398,7 @@ graph TB
       <details class="module">
         <summary>
           <span class="mod-name">hub</span>
-          <span class="mod-desc">&mdash; 2 missing surface(s)</span>
+          <span class="mod-desc">&mdash; 1 missing surface(s)</span>
         </summary>
         <div class="module-body">
           <div class="op">
@@ -15391,20 +15413,6 @@ graph TB
                 <span class="profile-badge profile-other">full: missing_needed</span>
               </span>
 <span><em>WANTED: Lowers adoption barrier for hub-mode users.</em></span>              <span>gap: <span class="todo">open one</span></span>
-            </div>
-          </div>
-          <div class="op">
-            <div class="op-header">
-              <span class="op-id">hub.status</span>
-              <span class="op-summary">&mdash; `nexus hub status`: show connected nodes, zones served, federation peers.</span>
-            </div>
-            <div class="meta-row">
-              <span class="profiles">
-                <span class="profile-badge profile-other">lite: missing_needed</span>
-                <span class="profile-badge profile-other">sandbox: missing_needed</span>
-                <span class="profile-badge profile-other">full: missing_needed</span>
-              </span>
-<span><em>WANTED: Hub-mode operators currently have no top-level health view.</em></span>              <span>gap: <span class="todo">open one</span></span>
             </div>
           </div>
         </div>

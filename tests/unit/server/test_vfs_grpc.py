@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from nexus.grpc.vfs import vfs_pb2
-from nexus.lib.rpc_codec import encode_rpc_message
+from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.lifespan import vfs_grpc
 
 
@@ -83,4 +83,46 @@ async def test_write_forwards_content_id_as_if_match(monkeypatch: pytest.MonkeyP
             "if_match": "old-content",
         },
         "token": "sk-test",
+    }
+
+
+@pytest.mark.asyncio
+async def test_call_serializes_slotted_syscall_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    class SlottedSyscallResult:
+        __slots__ = ("created", "entry_type", "path")
+
+        def __init__(self) -> None:
+            self.path = "/zone/shared/note.txt"
+            self.created = True
+            self.entry_type = 1
+
+    app = SimpleNamespace(state=SimpleNamespace())
+    servicer = vfs_grpc.VFSGrpcServicer(app)
+
+    async def _dispatch(
+        _method: str,
+        _params: dict[str, Any],
+        _token: str,
+        **_kwargs: Any,
+    ) -> SlottedSyscallResult:
+        return SlottedSyscallResult()
+
+    monkeypatch.setattr(servicer, "_dispatch", _dispatch)
+
+    response = await servicer.Call(
+        vfs_pb2.CallRequest(
+            method="sys_setattr",
+            payload=encode_rpc_message({"path": "/zone/shared/note.txt"}),
+            auth_token="sk-test",
+        ),
+        _FakeGrpcContext(),
+    )
+
+    assert response.is_error is False
+    assert decode_rpc_message(response.payload) == {
+        "result": {
+            "created": True,
+            "entry_type": 1,
+            "path": "/zone/shared/note.txt",
+        }
     }

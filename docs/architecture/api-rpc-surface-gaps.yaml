@@ -23,11 +23,6 @@ missing_operations:
     summary: "Add a node to the raft cluster."
     wanted_why: "HA cluster expansion has no external surface yet."
 
-  - id: hub.status
-    module: hub
-    summary: "`nexus hub status`: show connected nodes, zones served, federation peers."
-    wanted_why: "Hub-mode operators currently have no top-level health view."
-
   - id: hub.deploy
     module: hub
     summary: "Bootstrap a hub deployment from CLI (currently helm/manual)."

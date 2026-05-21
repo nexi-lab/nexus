@@ -527,6 +527,112 @@ and source evidence is JSON output (`--json`), where `semantic_degraded`,
 Human-mode source/degraded formatting is a UX enhancement, not a blocker for
 the documented agent workflow.
 
+### Sandbox local + company hub federation workflow
+
+**Goal:** give an agent one searchable context plane that includes the local
+checkout plus hub-served company knowledge, while keeping writes scoped to the
+local workspace or to hub zones whose token grants `rw`.
+
+Start the sandbox with a local workspace and a hub token:
+
+```bash
+export NEXUS_HUB_TOKEN="nk_live_agent_scoped"
+nexus up --profile sandbox --workspace ~/app --hub-url grpc://hub.example.com:2028 --hub-token "$NEXUS_HUB_TOKEN"
+nexus ready --timeout 60
+```
+
+Hub and zone status are operator surfaces, not sandbox data-path calls. From a
+machine that can administer the hub, use either the local hub CLI or the remote
+MCP admin tool:
+
+```bash
+nexus hub status --detail --json
+nexus hub status --remote https://hub.example.com/mcp --admin-token "$NEXUS_HUB_ADMIN_TOKEN" --json
+nexus hub zone list --json
+nexus federation status
+nexus federation zones
+nexus federation info <zone-id>
+```
+
+Equivalent RPC / SDK shape:
+
+```python
+from nexus.contracts.exceptions import ZoneReadOnlyError
+
+
+async def use_local_and_hub_context(nx):
+    # The sandbox startup handshake calls this RPC with the hub token.
+    grants = nx.call_rpc("federation_client_whoami", {})
+    assert {"zone_id": "company", "permission": "r"} in grants["zones"]
+    assert {"zone_id": "shared", "permission": "rw"} in grants["zones"]
+
+    nx.write("/zone/local/notes/plan.md", b"local draft")
+    assert nx.read("/zone/local/notes/plan.md") == b"local draft"
+
+    company_policy = nx.read("/zone/company/policies/rate-limit.md")
+
+    try:
+        nx.write("/zone/company/policies/rate-limit.md", b"blocked")
+    except ZoneReadOnlyError:
+        pass
+
+    nx.write("/zone/shared/runbooks/new-runbook.md", b"shared edit")
+
+    search = nx.service("search")
+    hits = await search.semantic_search(
+        query="rate limit",
+        path="/",
+        search_mode="hybrid",
+        limit=5,
+    )
+    assert all(hit.get("zone_id") or hit.get("zone_qualified_path") for hit in hits)
+    return company_policy, hits
+```
+
+**Expected behavior:**
+
+- **Success:** the handshake returns the token's hub grants, the daemon mounts
+  the local workspace at `/zone/local`, read-only company knowledge at
+  `/zone/company`, and read-write shared knowledge at `/zone/shared`. Search
+  results carry `zone_id` and cross-zone dedup/source labels such as
+  `zone_qualified_path` so callers can tell which zone produced the hit.
+- **Denied:** writes to a read-only hub zone fail before a transport mutation
+  is attempted. Writes to `/zone/local` stay on local disk, and writes to an
+  `rw` hub zone go through the hub transport.
+- **Unavailable:** a bad token or unreachable hub does not prevent local work.
+  The handshake is logged as failed, remote zones are not mounted, and the
+  sandbox continues in local-only mode. Search may return local BM25S fallback
+  hits with `semantic_degraded=true` when all semantic peers are unavailable.
+
+**Correctness assertions:** `federation_client_whoami` must return exactly the
+remote zone IDs and `r` / `rw` grants used by the mount table; a write through
+`/zone/company` must be denied; a write through `/zone/shared` must be readable
+from the hub; and hub-down startup must keep `/zone/local` usable. These are
+covered by
+`tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py`,
+`tests/unit/remote/test_federation_handshake.py`,
+`tests/unit/backends/test_remote_zone.py`, and
+`tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch`.
+
+**Performance classification:** handshake and hub status are control-plane
+paths. Local workspace read/write/list remain the hot file paths benchmarked in
+`tests/benchmarks/bench_read_write_overhead.py`. Remote hub reads and
+federated search fanout are hot once the agent is running; synthetic guardrails
+live in `tests/benchmarks/bench_sandbox_federation_latency.py`
+(`TestSandboxFederationHandshakeLatency`, `TestSandboxFederationReadLatency`,
+`TestFederatedSearchFanoutLatency`, and
+`TestSandboxHubDownDegradedLatency`). The benchmark budgets are for local
+dispatch overhead only; live hub latency depends on the network and the hub's
+storage/search backend.
+
+**Missing-surface gate verdict:** no new build issue is required for #4130.
+The zone-status concern is covered by `nexus hub status --detail --json`,
+`nexus hub status --remote ... --json`, `nexus hub zone list`, and the
+cluster federation views `nexus federation status`, `nexus federation zones`,
+and `nexus federation info <zone-id>`. The remaining `hub.deploy` gap is a
+separate hub rollout convenience, not a blocker for the sandbox federation
+workflow.
+
 ### Sandbox ReBAC, hub-zone, and MCP tool boundaries
 
 **Goal:** let an agent platform owner prove what a sandboxed agent may read,

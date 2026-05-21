@@ -33,9 +33,9 @@ jobs:
             artifact_name: nexusd-cluster-linux-x86_64
             binary: nexusd-cluster
             # Real measured size after kernel + slim backends + VFS Call
-            # file API surface: ~12.02 MiB. Keep a tight 128 KiB headroom
-            # rather than masking large regressions.
-            max_size_bytes: 12713984  # 12.125 MiB
+            # file API surface + remote-zone backend support: ~12.64 MiB.
+            # Keep ~128 KiB headroom rather than masking large regressions.
+            max_size_bytes: 13369344  # 12.75 MiB
           - os: macos-14
             artifact_name: nexusd-cluster-macos-arm64
             binary: nexusd-cluster

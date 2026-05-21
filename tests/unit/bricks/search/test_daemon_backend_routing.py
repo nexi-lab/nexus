@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from types import MethodType
+from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -44,6 +44,33 @@ def _daemon_with_backend_result(search_type_seen: list[str]):
     daemon._search_via_backends = MethodType(_search_via_backends, daemon)
     daemon._keyword_search = MethodType(_keyword_search, daemon)
     return daemon
+
+
+def test_engine_dialect_name_prefers_async_engine_dialect():
+    from nexus.bricks.search.daemon import SearchDaemon
+
+    engine = SimpleNamespace(
+        dialect=SimpleNamespace(name="sqlite"),
+        sync_engine=SimpleNamespace(dialect=SimpleNamespace(name="postgresql")),
+    )
+
+    assert SearchDaemon._engine_dialect_name(engine) == "sqlite"
+
+
+def test_engine_dialect_name_falls_back_to_sync_engine_dialect():
+    from nexus.bricks.search.daemon import SearchDaemon
+
+    engine = SimpleNamespace(
+        sync_engine=SimpleNamespace(dialect=SimpleNamespace(name="PostgreSQL"))
+    )
+
+    assert SearchDaemon._engine_dialect_name(engine) == "postgresql"
+
+
+def test_engine_dialect_name_handles_missing_engine():
+    from nexus.bricks.search.daemon import SearchDaemon
+
+    assert SearchDaemon._engine_dialect_name(None) == ""
 
 
 @pytest.mark.asyncio

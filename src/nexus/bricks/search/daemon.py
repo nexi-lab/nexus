@@ -1024,6 +1024,19 @@ class SearchDaemon:
 
         return None, "none"
 
+    @staticmethod
+    def _engine_dialect_name(engine: Any | None) -> str:
+        """Return a normalized SQLAlchemy engine dialect name."""
+
+        def dialect_name(candidate: Any | None) -> str:
+            if candidate is None:
+                return ""
+            dialect = getattr(candidate, "dialect", None)
+            name = getattr(dialect, "name", "")
+            return str(name).lower() if name else ""
+
+        return dialect_name(engine) or dialect_name(getattr(engine, "sync_engine", None))
+
     async def _init_database_pool(self) -> None:
         """Initialize and warm the database connection pool."""
         # If session factory was injected via __init__, skip engine creation
@@ -2367,14 +2380,7 @@ class SearchDaemon:
             return []
 
         try:
-            dialect_name = (
-                getattr(getattr(self._async_engine, "dialect", None), "name", "")
-                or getattr(
-                    getattr(getattr(self._async_engine, "sync_engine", None), "dialect", None),
-                    "name",
-                    "",
-                )
-            ).lower()
+            dialect_name = self._engine_dialect_name(self._async_engine)
 
             if dialect_name == "sqlite":
                 return await self._search_fts_sqlite(query, limit, path_filter, zone_id=zone_id)

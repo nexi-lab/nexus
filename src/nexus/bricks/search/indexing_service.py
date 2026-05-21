@@ -483,15 +483,17 @@ class IndexingService:
                 or 0
             )
 
+        vector_db_stats = self._vector_db.get_stats() if self._vector_db is not None else None
         return {
             "total_chunks": total_chunks,
             "indexed_files": indexed_files,
+            "total_files": indexed_files,
             "embedding_provider": (
                 self._embedding_provider.__class__.__name__
                 if self._embedding_provider is not None
                 else None
             ),
-            "vector_db": self._vector_db.get_stats(),
+            "vector_db": vector_db_stats,
         }
 
     # ------------------------------------------------------------------

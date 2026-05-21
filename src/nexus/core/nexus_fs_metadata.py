@@ -1000,7 +1000,14 @@ class MetadataMixin:
 
         # Rust handles all entry types (files, dirs, mounts, external storage).
         # Dispatch POST hooks with reconstructed metadata for audit trail.
-        if _rename_result.post_hook_needed:
+        post_hook_needed = bool(_rename_result.post_hook_needed)
+        if not post_hook_needed:
+            try:
+                post_hook_needed = bool(self._kernel.hook_count("rename") > 0)
+            except Exception:
+                post_hook_needed = False
+
+        if post_hook_needed:
             from nexus.contracts.metadata import FileMetadata as _FM
             from nexus.contracts.vfs_hooks import RenameHookContext
 

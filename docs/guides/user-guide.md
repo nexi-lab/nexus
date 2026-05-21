@@ -425,6 +425,108 @@ are hot local edit paths. Guidance benchmarks live in
 `TestSandboxBootIndexerInitialWalk`. Rename/delete/mkdir/rmdir are tested
 behaviorally and treated as non-hot local edit mutations.
 
+### Sandbox search workflow (local context and degraded semantics)
+
+**Goal:** let an agent find local workspace context quickly in the sandbox
+profile and tell whether a semantic-looking answer came from local vectors,
+federated peers, or a keyword-only fallback.
+
+**Why this profile:** sandbox search is intentionally local-first. `glob` and
+`grep` run over the mounted workspace. Semantic search tries the local
+sqlite-vec vector lane when it is wired, fuses it with BM25S keyword results
+in hybrid mode, and reports `semantic_degraded=true` when the answer degraded
+to keyword-only BM25S because there were no peers or no usable vector lane.
+
+CLI examples:
+
+```bash
+nexus glob "**/*.py" /workspace --plain
+nexus grep "TODO" /workspace --search-mode raw --json
+nexus search init
+nexus search index /workspace
+nexus search stats
+nexus search query "auth flow" --mode hybrid --json
+```
+
+The equivalent SDK/RPC shape is the `SearchService` RPC surface. A direct
+semantic call is `nx.service("search").semantic_search(...)`:
+
+```python
+async def find_context(nx):
+    search = nx.service("search")
+
+    py_files = search.glob("**/*.py", "/workspace")
+    grouped = search.glob_batch(["**/*.py", "**/*.md"], "/workspace")
+    todos = await search.grep("TODO", path="/workspace", search_mode="raw")
+
+    await search.initialize_semantic_search(embedding_provider=None)
+    await search.semantic_search_index(path="/workspace", recursive=True)
+    stats = await search.semantic_search_stats()
+    hits = await search.semantic_search(
+        query="auth flow",
+        path="/workspace",
+        search_mode="hybrid",
+        limit=5,
+    )
+    return py_files, grouped, todos, stats, hits
+```
+
+MCP agents call the same behavior through tool envelopes:
+
+```text
+nexus_glob(pattern="**/*.py", path="/workspace")
+nexus_grep(pattern="TODO", path="/workspace")
+nexus_semantic_search(query="auth flow", path="/workspace", search_mode="hybrid")
+```
+
+**Success:** `glob` returns matching paths, `grep` returns file/line/content
+matches, `search stats` reports indexed chunks, and `semantic_search` returns
+ranked chunks. Real hybrid results include source score labels such as
+`keyword_score` and `vector_score` so callers can tell which lane contributed.
+
+**Degraded or unavailable:** when sqlite-vec is disabled, empty, or errors,
+or when the sandbox has no reachable semantic peers, semantic results are
+still allowed to fall back to BM25S keyword search. Those results carry
+`semantic_degraded=true` on each item and MCP also surfaces an envelope-level
+`semantic_degraded`. If the search brick is not loaded, MCP returns an
+`unavailable` tool error instead of pretending semantic search succeeded.
+
+**Denied:** file, grep, and semantic results are filtered by the caller's
+operation context and ReBAC path permissions. If the permission filter strips
+all vector-lane hits and only keyword hits remain, the surviving semantic
+response is marked degraded because the user did not receive a real semantic
+match.
+
+**Correctness assertion you can run:** compare CLI JSON with the SDK/RPC
+calls above for the same workspace. The path sets from `nexus glob` and
+`search.glob(...)` should match; `nexus grep --json` and `search.grep(...)`
+should agree on file/line/content tuples; degraded sandbox MCP semantic
+search should include `semantic_degraded=true`. Covered by
+`tests/e2e/self_contained/test_cli_output_e2e.py::TestGlobE2E`,
+`tests/e2e/self_contained/test_cli_output_e2e.py::TestGrepE2E`,
+`tests/integration/services/test_search_service.py::TestGlobBatch`,
+`tests/unit/bricks/search/test_sandbox_hybrid_rrf.py`, and
+`tests/e2e/self_contained/test_sandbox_mcp.py::test_sandbox_mcp_semantic_search_includes_degraded_flag`.
+
+**Performance classification:** `glob`, `grep`, semantic query latency,
+sqlite-vec insert/query, BM25S fallback, and indexing throughput are hot or
+setup paths. Benchmarks live in
+`tests/benchmarks/test_search_benchmarks.py`,
+`tests/benchmarks/test_indexing_benchmarks.py`,
+`tests/benchmarks/test_search_protocol_benchmark.py`, and
+`docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md`. The April benchmark
+reported sandbox hybrid retrieval tied gbrain baseline P@1 at 0.947 on the
+gbrain corpus and passed the HERB QA gate at 8/8 top-5 hits.
+
+**Missing-surface gate verdict:** no additional RPC is required for this
+story: `glob`, `glob_batch`, `grep`, `semantic_search`,
+`semantic_search_index`, `semantic_search_stats`, and
+`initialize_semantic_search` exist. The required CLI display path for degraded
+and source evidence is JSON output (`--json`), where `semantic_degraded`,
+`keyword_score`, and `vector_score` are visible when returned by the service.
+Human-mode source/degraded formatting is a UX enhancement, not a blocker for
+the documented agent workflow.
+
 ### Sandbox ReBAC, hub-zone, and MCP tool boundaries
 
 **Goal:** let an agent platform owner prove what a sandboxed agent may read,

@@ -18,6 +18,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
@@ -1108,13 +1109,81 @@ class SearchService:
         if self._nexus_fs is None:
             return []
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
-        entries = self._nexus_fs.sys_readdir(
-            list_prefix or "/",
-            recursive=True,
-            details=True,
-            context=ctx,
-        )
-        return [e for e in entries if isinstance(e, dict)]
+        root = list_prefix or "/"
+        seen: set[str] = set()
+        out: list[dict[str, Any]] = []
+        pending: list[tuple[str, int]] = [(root, 0)]
+
+        def _stat_entry(path: str) -> dict[str, Any] | None:
+            try:
+                stat = self._nexus_fs.sys_stat(path, context=ctx)
+            except Exception:
+                return None
+            if not isinstance(stat, dict) or not stat:
+                return None
+            return {
+                "path": stat.get("path", path),
+                "size": stat.get("size", 0),
+                "content_id": stat.get("content_id"),
+                "entry_type": stat.get("entry_type", 1 if stat.get("is_directory") else 0),
+                "zone_id": stat.get("zone_id"),
+                "owner_id": stat.get("owner_id"),
+                "mime_type": stat.get("mime_type"),
+                "created_at": stat.get("created_at"),
+                "modified_at": stat.get("modified_at"),
+                "version": stat.get("version", 1),
+                "gen": stat.get("gen", 0),
+            }
+
+        while pending:
+            current, depth = pending.pop(0)
+            if depth >= LIST_PARALLEL_MAX_DEPTH:
+                logger.warning(
+                    "[LIST-PARALLEL] Hit max depth %s at %s, truncating traversal",
+                    LIST_PARALLEL_MAX_DEPTH,
+                    current,
+                )
+                continue
+            try:
+                entries = self._nexus_fs.sys_readdir(
+                    current,
+                    recursive=False,
+                    details=True,
+                    context=ctx,
+                )
+            except Exception:
+                entries = []
+
+            # The real sandbox kernel currently returns no detail rows for
+            # root but can return path-only rows; recover details through
+            # sys_stat while staying on the syscall surface.
+            if not entries and current == "/":
+                try:
+                    paths = self._nexus_fs.sys_readdir(
+                        current,
+                        recursive=False,
+                        details=False,
+                        context=ctx,
+                    )
+                except Exception:
+                    paths = []
+                entries = [
+                    stat
+                    for path in paths
+                    if isinstance(path, str)
+                    for stat in [_stat_entry(path)]
+                    if stat is not None
+                ]
+
+            for entry in entries:
+                if isinstance(entry, dict):
+                    path = str(entry.get("path") or "")
+                    if path and path not in seen:
+                        seen.add(path)
+                        out.append(entry)
+                        if _entry_is_dir(entry):
+                            pending.append((path, depth + 1))
+        return out
 
     def _list_slow_path(
         self,
@@ -3179,6 +3248,151 @@ class SearchService:
         stale_count = len(normalised) - len(visible)
         return visible, stale_count
 
+    def _filter_existing_search_paths(
+        self,
+        paths: builtins.list[str],
+        context: "OperationContext | None",
+    ) -> builtins.list[str]:
+        """Drop search hits whose file no longer exists in the VFS.
+
+        Search backends and SQL path rows can lag the authoritative kernel
+        namespace, especially around delete propagation. Result sets are small,
+        so check the namespace before permission checks instead of returning
+        stale hits while background cleanup catches up.
+        """
+        if not paths:
+            return paths
+
+        unique = list(dict.fromkeys(p for p in paths if p))
+        if not unique:
+            return []
+
+        candidates = unique
+        if self._record_store is not None:
+            try:
+                from sqlalchemy import select
+
+                from nexus.storage.models import FilePathModel
+
+                zone_id = getattr(context, "zone_id", None) if context is not None else None
+                stmt = select(FilePathModel.virtual_path).where(
+                    FilePathModel.virtual_path.in_(unique),
+                    FilePathModel.deleted_at.is_(None),
+                )
+                if zone_id:
+                    stmt = stmt.where(FilePathModel.zone_id == zone_id)
+
+                session = self._record_store.session_factory()
+                try:
+                    candidates = list(session.execute(stmt).scalars().all())
+                finally:
+                    session.close()
+            except Exception:
+                logger.debug("Search hit SQL existence filter failed", exc_info=True)
+
+        existing = self._filter_paths_existing_in_vfs(candidates, context)
+        if existing is None:
+            existing = set(candidates)
+
+        return [p for p in paths if p in existing]
+
+    def _filter_paths_existing_in_vfs(
+        self,
+        paths: builtins.list[str],
+        context: "OperationContext | None",
+    ) -> set[str] | None:
+        if self._nexus_fs is None:
+            return None
+
+        existing: set[str] = set()
+        for path in paths:
+            try:
+                stat = self._nexus_fs.sys_stat(path, context=context)
+            except TypeError:
+                stat = self._nexus_fs.sys_stat(path)
+            except Exception:
+                logger.debug("Search hit VFS existence check dropped %s", path, exc_info=True)
+                continue
+            if stat is not None:
+                existing.add(path)
+
+        return existing
+
+    def _filter_readable_search_paths(
+        self,
+        paths: builtins.list[str],
+        context: "OperationContext | None",
+    ) -> builtins.list[str]:
+        """Filter small search result sets by authoritative read access.
+
+        ``filter_list`` is optimized for list/glob/grep-scale workloads and may
+        use caches or bulk shortcuts. Search post-filtering only handles the
+        top few hits, so fall back to direct ``check`` for any paths the bulk
+        path denies. This preserves inherited directory grants without making
+        large tree scans slower.
+        """
+        if not paths:
+            return []
+
+        existing_paths = self._filter_existing_search_paths(paths, context)
+        if not self._enforce_permissions or self._permission_enforcer is None or context is None:
+            return existing_paths
+
+        unique = list(dict.fromkeys(p for p in existing_paths if p))
+        accessible: set[str] = set()
+
+        subject_type = "user"
+        subject_id = getattr(context, "user_id", None) or getattr(context, "subject_id", None)
+        with suppress(Exception):
+            subject_type, subject_id = context.get_subject()
+
+        search_filter = getattr(self._permission_enforcer, "filter_search_results", None)
+        if callable(search_filter) and subject_type == "user" and subject_id:
+            try:
+                accessible.update(
+                    search_filter(
+                        unique,
+                        user_id=subject_id,
+                        zone_id=getattr(context, "zone_id", None) or ROOT_ZONE_ID,
+                        is_admin=bool(getattr(context, "is_admin", False)),
+                    )
+                )
+            except Exception:
+                logger.debug("Search-specific permission filter failed", exc_info=True)
+
+        if not accessible:
+            try:
+                accessible.update(self._permission_enforcer.filter_list(unique, context))
+            except Exception:
+                logger.debug("Search permission filter_list failed", exc_info=True)
+
+        for path in unique:
+            if path in accessible:
+                continue
+            try:
+                if self._permission_enforcer.check(path, Permission.READ, context):
+                    accessible.add(path)
+            except Exception:
+                logger.debug("Search direct permission check denied %s", path, exc_info=True)
+
+        return [p for p in existing_paths if p in accessible]
+
+    def _filter_hit_dicts_by_read_permission(
+        self,
+        hits: builtins.list[dict[str, Any]],
+        context: "OperationContext | None",
+    ) -> builtins.list[dict[str, Any]]:
+        if not self._enforce_permissions or self._permission_enforcer is None or not hits:
+            return hits
+
+        readable = set(
+            self._filter_readable_search_paths(
+                [str(h.get("path", "")) for h in hits],
+                context,
+            )
+        )
+        return [h for h in hits if h.get("path", "") in readable]
+
     # =========================================================================
     # Semantic Search (inlined from SemanticSearchMixin, Issue #1287, #2075)
     # =========================================================================
@@ -3354,7 +3568,9 @@ class SearchService:
             from nexus.server.path_utils import unscope_internal_path as _unscope
 
             db_path = _unscope(path) if path != "/" else None
-            fetch_limit = limit * 3 if self._permission_enforcer else limit
+            fetch_limit = (
+                limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
+            )
             results = await backend.search(
                 query=query,
                 limit=fetch_limit,
@@ -3390,10 +3606,8 @@ class SearchService:
                 entry["context"] = ctx_val
             hits.append(entry)
 
-        if self._permission_enforcer and hits and context is not None:
-            all_paths = [h["path"] for h in hits]
-            accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-            hits = [h for h in hits if h["path"] in accessible]
+        if self._enforce_permissions and self._permission_enforcer and hits and context is not None:
+            hits = self._filter_hit_dicts_by_read_permission(hits, context)
 
         return hits[:limit] if hits else None
 
@@ -3449,7 +3663,7 @@ class SearchService:
         # Permission filtering happens after fusion, so account for that
         # too when an enforcer is active.
         per_lane_limit = limit * 3
-        if self._permission_enforcer:
+        if self._enforce_permissions and self._permission_enforcer:
             per_lane_limit = max(per_lane_limit, limit * 5)
 
         async def _vec_lane() -> builtins.list[Any]:
@@ -3484,40 +3698,49 @@ class SearchService:
             # a wired daemon — the daemon itself decides whether
             # BM25S, FTS, or txtai answers.
             daemon = getattr(self, "_search_daemon", None)
-            if daemon is None:
-                return []
-            try:
-                rows = await daemon.search(
-                    query=query,
-                    search_type="keyword",
-                    limit=per_lane_limit,
-                    path_filter=db_path,
-                    zone_id=zone_id,
+            if daemon is not None:
+                try:
+                    rows = await daemon.search(
+                        query=query,
+                        search_type="keyword",
+                        limit=per_lane_limit,
+                        path_filter=db_path,
+                        zone_id=zone_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[SearchService] SANDBOX hybrid: keyword lane failed (%s); "
+                        "falling back to SQL chunk keyword search",
+                        exc,
+                    )
+                else:
+                    out: builtins.list[dict[str, Any]] = []
+                    for r in rows:
+                        entry: dict[str, Any] = {
+                            "path": r.path,
+                            "chunk_text": getattr(r, "chunk_text", ""),
+                            "score": round(r.score, 4),
+                            "chunk_index": getattr(r, "chunk_index", 0),
+                            "start_offset": getattr(r, "start_offset", 0) or 0,
+                            "end_offset": getattr(r, "end_offset", 0) or 0,
+                            "line_start": getattr(r, "line_start", 0) or 0,
+                            "line_end": getattr(r, "line_end", 0) or 0,
+                        }
+                        ctx_val = getattr(r, "context", None)
+                        if ctx_val is not None:
+                            entry["context"] = ctx_val
+                        out.append(entry)
+                    if out:
+                        return out
+
+            if self._record_store is not None:
+                return await self._sql_chunk_search(
+                    query,
+                    path,
+                    per_lane_limit,
+                    context=context,
                 )
-            except Exception as exc:
-                logger.warning(
-                    "[SearchService] SANDBOX hybrid: keyword lane failed (%s); "
-                    "fusion will use vec-only",
-                    exc,
-                )
-                return []
-            out: builtins.list[dict[str, Any]] = []
-            for r in rows:
-                entry: dict[str, Any] = {
-                    "path": r.path,
-                    "chunk_text": getattr(r, "chunk_text", ""),
-                    "score": round(r.score, 4),
-                    "chunk_index": getattr(r, "chunk_index", 0),
-                    "start_offset": getattr(r, "start_offset", 0) or 0,
-                    "end_offset": getattr(r, "end_offset", 0) or 0,
-                    "line_start": getattr(r, "line_start", 0) or 0,
-                    "line_end": getattr(r, "line_end", 0) or 0,
-                }
-                ctx_val = getattr(r, "context", None)
-                if ctx_val is not None:
-                    entry["context"] = ctx_val
-                out.append(entry)
-            return out
+            return []
 
         vec_results, kw_results = await asyncio.gather(_vec_lane(), _kw_lane())
         if not vec_results and not kw_results:
@@ -3545,14 +3768,17 @@ class SearchService:
             keyword_results=kw_results,
             vector_results=vec_results,
             config=FusionConfig(method=FusionMethod.RRF),
-            limit=limit if not self._permission_enforcer else limit * 3,
+            limit=(limit * 3 if self._enforce_permissions and self._permission_enforcer else limit),
             id_key=None,  # use path:chunk_index — no chunk_id stamped here
         )
 
-        if self._permission_enforcer and fused and context is not None:
-            all_paths = [h.get("path", "") for h in fused]
-            accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-            fused = [h for h in fused if h.get("path", "") in accessible]
+        if (
+            self._enforce_permissions
+            and self._permission_enforcer
+            and fused
+            and context is not None
+        ):
+            fused = self._filter_hit_dicts_by_read_permission(fused, context)
 
         # Codex review R2 (high): recompute degradation AFTER
         # permission filtering. If every fused row that originated in
@@ -3681,7 +3907,9 @@ class SearchService:
             # Prefer the daemon's keyword path (BM25S when available).
             daemon = getattr(self, "_search_daemon", None)
             if daemon is not None and getattr(daemon, "_backend", None) is not None:
-                fetch_limit = limit * 3 if self._permission_enforcer else limit
+                fetch_limit = (
+                    limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
+                )
                 zone_id = getattr(context, "zone_id", None) if context else None
                 from nexus.server.path_utils import unscope_internal_path as _unscope
 
@@ -3710,10 +3938,13 @@ class SearchService:
                         entry["context"] = ctx_val
                     hits.append(entry)
 
-                if self._permission_enforcer and hits and context is not None:
-                    all_paths = [h["path"] for h in hits]
-                    accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-                    hits = [h for h in hits if h["path"] in accessible]
+                if (
+                    self._enforce_permissions
+                    and self._permission_enforcer
+                    and hits
+                    and context is not None
+                ):
+                    hits = self._filter_hit_dicts_by_read_permission(hits, context)
 
                 return hits[:limit]
 
@@ -3736,6 +3967,8 @@ class SearchService:
             if isinstance(r, dict):
                 if degraded:
                     r["semantic_degraded"] = True
+                    r.setdefault("keyword_score", r.get("score"))
+                    r.setdefault("vector_score", None)
                 out.append(r)
             else:
                 # _bm25s_call emits dicts; non-dict can come from a real
@@ -3744,6 +3977,8 @@ class SearchService:
                 entry: dict[str, Any] = {"path": getattr(r, "path", "")}
                 if degraded:
                     entry["semantic_degraded"] = True
+                    entry["keyword_score"] = getattr(r, "score", None)
+                    entry["vector_score"] = None
                 out.append(entry)
         return out
 
@@ -3874,7 +4109,9 @@ class SearchService:
         )
         if daemon is not None and (_has_legacy_backend or _has_new_backends):
             # Over-fetch to compensate for permission filtering
-            fetch_limit = limit * 3 if self._permission_enforcer else limit
+            fetch_limit = (
+                limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
+            )
             zone_id = getattr(context, "zone_id", None) if context else None
             # RPC may scope paths as /zone/{id}/...; daemon stores unscoped.
             from nexus.server.path_utils import unscope_internal_path as _unscope
@@ -3908,10 +4145,13 @@ class SearchService:
                 hits.append(entry)
 
             # Filter by read permission — only return files the caller can access
-            if self._permission_enforcer and hits and context is not None:
-                all_paths = [h["path"] for h in hits]
-                accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-                hits = [h for h in hits if h["path"] in accessible]
+            if (
+                self._enforce_permissions
+                and self._permission_enforcer
+                and hits
+                and context is not None
+            ):
+                hits = self._filter_hit_dicts_by_read_permission(hits, context)
 
             return hits[:limit]
 
@@ -4000,10 +4240,10 @@ class SearchService:
         }
         for i, kw in enumerate(keywords[:5]):  # max 5 keywords
             key = f"kw{i}"
-            conditions.append(f"dc.chunk_text ILIKE :{key}")
+            conditions.append(f"LOWER(dc.chunk_text) LIKE :{key}")
             bind_params[key] = f"%{kw}%"
 
-        where_clause = " OR ".join(conditions)
+        where_clause = "(" + " OR ".join(conditions) + ")"
         sql = sa_text(f"""
             SELECT dc.chunk_text, dc.chunk_index, dc.start_offset,
                    dc.end_offset, dc.line_start, dc.line_end,
@@ -4011,6 +4251,7 @@ class SearchService:
             FROM document_chunks dc
             JOIN file_paths fp ON dc.path_id = fp.path_id
             WHERE fp.virtual_path LIKE :path_prefix
+              AND fp.deleted_at IS NULL
               AND {where_clause}
             LIMIT :lim
         """)
@@ -4031,12 +4272,15 @@ class SearchService:
 
         hits = []
         for i, row in enumerate(rows):
+            score = round(1.0 - (i * 0.05), 4)
             hits.append(
                 {
                     "path": row.virtual_path if hasattr(row, "virtual_path") else row[6],
                     "chunk_index": row.chunk_index if hasattr(row, "chunk_index") else row[1],
                     "chunk_text": row.chunk_text if hasattr(row, "chunk_text") else row[0],
-                    "score": round(1.0 - (i * 0.05), 4),
+                    "score": score,
+                    "keyword_score": score,
+                    "vector_score": None,
                     "start_offset": row.start_offset if hasattr(row, "start_offset") else row[2],
                     "end_offset": row.end_offset if hasattr(row, "end_offset") else row[3],
                     "line_start": row.line_start if hasattr(row, "line_start") else row[4],
@@ -4048,7 +4292,7 @@ class SearchService:
         # Fail closed when permissions must be enforced but no valid context
         # was supplied — callers that can legitimately bypass (admin/internal)
         # use ``enforce_permissions=False`` at SearchService construction.
-        if self._permission_enforcer is not None and hits:
+        if self._enforce_permissions and self._permission_enforcer is not None and hits:
             if context is None:
                 if self._enforce_permissions:
                     logger.warning(
@@ -4057,9 +4301,7 @@ class SearchService:
                     )
                     return []
             else:
-                all_paths = [h["path"] for h in hits]
-                accessible = set(self._permission_enforcer.filter_list(all_paths, context))
-                hits = [h for h in hits if h["path"] in accessible]
+                hits = self._filter_hit_dicts_by_read_permission(hits, context)
         return hits
 
     @rpc_expose(description="Index documents for semantic search")

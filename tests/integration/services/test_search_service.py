@@ -47,6 +47,7 @@ def mock_permission_enforcer():
     """
     enforcer = MagicMock()
     enforcer.check_permission.return_value = True
+    enforcer.check.return_value = True
     enforcer.filter_list = MagicMock(side_effect=lambda paths, context: list(paths))
     return enforcer
 
@@ -171,6 +172,79 @@ class TestSearchServiceInit:
         mock_record_store = MagicMock()
         svc = SearchService(metadata_store=mock_metadata_store, record_store=mock_record_store)
         assert svc._record_store is mock_record_store
+
+    def test_search_hit_filter_uses_direct_check_for_inherited_grants(
+        self, service, mock_permission_enforcer, context
+    ):
+        """Search post-filtering must keep hits readable via parent inheritance."""
+        inherited_hit = {"path": "/workspace/demo/herb/customers/cust-002.md"}
+        denied_hit = {"path": "/workspace/demo/restricted/internal.md"}
+        mock_permission_enforcer.filter_search_results.return_value = []
+        mock_permission_enforcer.filter_list.side_effect = None
+        mock_permission_enforcer.filter_list.return_value = []
+        mock_permission_enforcer.check.side_effect = lambda path, _permission, _context: (
+            path == inherited_hit["path"]
+        )
+
+        filtered = service._filter_hit_dicts_by_read_permission(
+            [inherited_hit, denied_hit],
+            context,
+        )
+
+        assert filtered == [inherited_hit]
+
+    def test_search_hit_filter_drops_deleted_file_rows(self, mock_metadata_store, context):
+        """Stale backend hits should not survive after the file row is deleted."""
+
+        class _Result:
+            def scalars(self):
+                return self
+
+            def all(self):
+                return ["/workspace/demo/live.md"]
+
+        session = MagicMock()
+        session.execute.return_value = _Result()
+        record_store = MagicMock()
+        record_store.session_factory.return_value = session
+        svc = SearchService(metadata_store=mock_metadata_store, record_store=record_store)
+
+        assert svc._filter_existing_search_paths(
+            ["/workspace/demo/live.md", "/workspace/demo/deleted.md"],
+            context,
+        ) == ["/workspace/demo/live.md"]
+
+    def test_search_hit_filter_drops_paths_missing_from_vfs(self, mock_metadata_store, context):
+        """A live SQL row is not enough when the authoritative VFS path is gone."""
+
+        class _Result:
+            def scalars(self):
+                return self
+
+            def all(self):
+                return [
+                    "/workspace/demo/live.md",
+                    "/workspace/demo/deleted.md",
+                ]
+
+        session = MagicMock()
+        session.execute.return_value = _Result()
+        record_store = MagicMock()
+        record_store.session_factory.return_value = session
+        nexus_fs = MagicMock()
+        nexus_fs.sys_stat.side_effect = lambda path, context=None: (
+            {"path": path} if path == "/workspace/demo/live.md" else None
+        )
+        svc = SearchService(
+            metadata_store=mock_metadata_store,
+            record_store=record_store,
+            nexus_fs=nexus_fs,
+        )
+
+        assert svc._filter_existing_search_paths(
+            ["/workspace/demo/live.md", "/workspace/demo/deleted.md"],
+            context,
+        ) == ["/workspace/demo/live.md"]
 
     def test_list_slow_path_passes_zone_id_to_tiger_pushdown(
         self, mock_metadata_store, mock_permission_enforcer, mock_dlc, mock_gateway
@@ -454,6 +528,29 @@ class TestGlobHelpers:
         prefixes = service._get_namespace_prefixes()
         assert "workspace/" in prefixes
         assert "shared/" in prefixes
+
+
+class TestGlobBatch:
+    """Tests for the RPC-exposed glob_batch helper."""
+
+    def test_glob_batch_reuses_listing_for_multiple_patterns(self, service, context):
+        """Each pattern is matched against one shared recursive listing."""
+        with patch.object(
+            service,
+            "list",
+            return_value=[
+                "/workspace/src/main.py",
+                "/workspace/src/util.py",
+                "/workspace/docs/readme.md",
+            ],
+        ) as mock_list:
+            results = service.glob_batch(["**/*.py", "**/*.md"], "/workspace", context=context)
+
+        mock_list.assert_called_once_with("/workspace", recursive=True, context=context)
+        assert results == {
+            "**/*.md": ["/workspace/docs/readme.md"],
+            "**/*.py": ["/workspace/src/main.py", "/workspace/src/util.py"],
+        }
 
 
 # =============================================================================

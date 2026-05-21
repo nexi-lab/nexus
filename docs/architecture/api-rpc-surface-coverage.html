@@ -8547,10 +8547,10 @@ graph TB
     <span>gap: &mdash;</span>
   </div>
 </div>
-<div class="op" data-op-id="glob.batch" data-op-text="glob.batch  glob_batch ">
+<div class="op" data-op-id="glob.batch" data-op-text="glob.batch Execute several glob patterns through one RPC call while sharing the recursive file listing. glob_batch ">
   <div class="op-header">
     <span class="op-id">glob.batch</span>
-    <span class="op-summary">&mdash; (no summary yet)</span>
+    <span class="op-summary">&mdash; Execute several glob patterns through one RPC call while sharing the recursive file listing.</span>
   </div>
   <div class="transports">
     <span class="transport-pill" data-t="expose"><span class="label">expose</span> <span>glob_batch</span></span>
@@ -8561,10 +8561,10 @@ graph TB
 <span class="profile-badge profile-supported">sandbox</span>
 <span class="profile-badge profile-supported">full</span>
     </span>
-    <span>usage: <span class="todo">TODO</span></span>
-    <span>test: <span class="todo">TODO</span></span>
-    <span>perf: <span class="todo">TODO</span></span>
-    <span>owner: &mdash;</span>
+    <span>usage: <code>RPC: glob_batch(patterns=[&#34;**/*.py&#34;,&#34;**/*.md&#34;], path=&#34;/workspace&#34;)</code></span>
+    <span>test: <a href="../../tests/integration/services/test_search_service.py::TestGlobBatch::test_glob_batch_reuses_listing_for_multiple_patterns">tests/integration/services/test_search_service.py::TestGlobBatch::test_glob_batch_reuses_listing_for_multiple_patterns</a></span>
+    <span>perf: hot</span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4129">#4129</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8585,7 +8585,7 @@ graph TB
     <span>usage: <code>RPC: initialize_semantic_search(embedding_provider=&#34;openai&#34;)</code></span>
     <span>test: <a href="../../tests/integration/services/test_search_semantic.py::TestInitializeSemanticSearch">tests/integration/services/test_search_semantic.py::TestInitializeSemanticSearch</a></span>
     <span>perf: setup</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4129">#4129</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8648,7 +8648,7 @@ graph TB
     <span>usage: <code>nexus search query &#34;auth flow&#34; --mode hybrid --limit 5</code></span>
     <span>test: <a href="../../tests/unit/cli/test_search_index_cli.py; tests/unit/cli/test_commands_smoke.py">tests/unit/cli/test_search_index_cli.py; tests/unit/cli/test_commands_smoke.py</a></span>
     <span>perf: not_perf_sensitive</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4129">#4129</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8693,7 +8693,7 @@ graph TB
     <span>usage: <code>nexus glob &#34;**/*.py&#34; /workspace --plain; POST /api/v2/search/glob</code></span>
     <span>test: <a href="../../tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
     <span>perf: hot</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4129">#4129</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8717,7 +8717,7 @@ graph TB
     <span>usage: <code>nexus grep &#34;TODO&#34; /workspace --search-mode raw; POST /api/v2/search/grep</code></span>
     <span>test: <a href="../../tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py; tests/e2e/self_contained/test_search_surface_live_e2e.py">tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py; tests/e2e/self_contained/test_search_surface_live_e2e.py</a></span>
     <span>perf: hot</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4129">#4129</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -8991,7 +8991,7 @@ graph TB
     <span>usage: <code>MCP: nexus_semantic_search(query=&#34;auth flow&#34;, search_mode=&#34;hybrid&#34;, limit=5)</code></span>
     <span>test: <a href="../../tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch">tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch</a></span>
     <span>perf: hot</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4129">#4129</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -9012,7 +9012,7 @@ graph TB
     <span>usage: <code>RPC: semantic_search_index(path=&#34;/workspace/docs&#34;, recursive=True)</code></span>
     <span>test: <a href="../../tests/integration/services/test_search_semantic.py::TestSemanticSearchIndex; tests/unit/server/rpc/handlers/test_semantic_search_index.py">tests/integration/services/test_search_semantic.py::TestSemanticSearchIndex; tests/unit/server/rpc/handlers/test_semantic_search_index.py</a></span>
     <span>perf: setup</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4129">#4129</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>
@@ -9033,7 +9033,7 @@ graph TB
     <span>usage: <code>RPC: semantic_search_stats()</code></span>
     <span>test: <a href="../../tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/integration/bricks/search/test_search_service.py">tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/integration/bricks/search/test_search_service.py</a></span>
     <span>perf: not_perf_sensitive</span>
-    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4135">#4135</a></span>
+    <span>owner: <a href="https://github.com/nexi-lab/nexus/issues/4129">#4129</a></span>
     <span>gap: &mdash;</span>
   </div>
 </div>

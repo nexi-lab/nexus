@@ -5513,7 +5513,7 @@ operations:
   owning_issue: null
 - id: glob.batch
   module: search
-  summary: ''
+  summary: Execute several glob patterns through one RPC call while sharing the recursive file listing.
   transports:
     grpc_expose:
       name: glob_batch
@@ -5522,12 +5522,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: glob_batch(patterns=["**/*.py","**/*.md"], path="/workspace")'
+  correctness_test: tests/integration/services/test_search_service.py::TestGlobBatch::test_glob_batch_reuses_listing_for_multiple_patterns
+  perf_class: hot
+  perf_link: tests/benchmarks/test_search_benchmarks.py covers glob matching latency; glob_batch shares one listing across patterns
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4129
 - id: governance.alerts
   module: governance
   summary: ''
@@ -5982,7 +5982,7 @@ operations:
   perf_link: setup operation; indexing/query hot paths are benchmarked separately in tests/benchmarks/test_indexing_benchmarks.py
     and tests/benchmarks/test_search_protocol_benchmark.py
   gap_issue: null
-  owning_issue: 4135
+  owning_issue: 4129
 - id: is.directory
   module: uncategorized
   summary: ''
@@ -9295,7 +9295,7 @@ operations:
   perf_class: not_perf_sensitive
   perf_link: thin CLI wrapper; underlying grep/query/index paths carry the performance classification
   gap_issue: null
-  owning_issue: 4135
+  owning_issue: 4129
 - id: search.expand
   module: search
   summary: HTTP query-expansion endpoint for improving weak search queries through provider-backed expansion.
@@ -9340,7 +9340,7 @@ operations:
   perf_class: hot
   perf_link: tests/benchmarks/test_search_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
-  owning_issue: 4135
+  owning_issue: 4129
 - id: search.grep
   module: search
   summary: Find accessible text matches by regex or literal search, including raw and parsed search modes.
@@ -9367,7 +9367,7 @@ operations:
   perf_class: hot
   perf_link: tests/benchmarks/test_search_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
-  owning_issue: 4135
+  owning_issue: 4129
 - id: search.grep_section
   module: search
   summary: 'Section-aware grep: `nexus grep PATTERN /file.md --in-section ''## API''`. Lets users target markdown / code section
@@ -9849,7 +9849,7 @@ operations:
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md
   gap_issue: null
-  owning_issue: 4135
+  owning_issue: 4129
 - id: semantic.search_index
   module: search
   summary: RPC semantic-search indexing entry point for paths and directories.
@@ -9866,7 +9866,7 @@ operations:
   perf_class: setup
   perf_link: tests/benchmarks/test_indexing_benchmarks.py
   gap_issue: null
-  owning_issue: 4135
+  owning_issue: 4129
 - id: semantic.search_stats
   module: search
   summary: RPC semantic-search statistics entry point.
@@ -9883,7 +9883,7 @@ operations:
   perf_class: not_perf_sensitive
   perf_link: stats/control endpoint; no dedicated latency benchmark is required
   gap_issue: null
-  owning_issue: 4135
+  owning_issue: 4129
 - id: service.close_all
   module: uncategorized
   summary: ''

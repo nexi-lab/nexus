@@ -603,8 +603,17 @@ async def search_query_batch(
     fetch_queries: list[dict[str, Any]] = []
     for q_spec in raw_queries:
         orig_limit = max(1, int(q_spec.get("limit", 10)))
+        query_text = str(q_spec.get("query") or q_spec.get("q") or "")
+        path_filter = q_spec.get("path_filter", q_spec.get("path"))
         requested_limits.append(orig_limit)
-        fetch_queries.append({**q_spec, "limit": orig_limit * overfetch_multiplier})
+        fetch_queries.append(
+            {
+                **q_spec,
+                "query": query_text,
+                "path_filter": path_filter,
+                "limit": orig_limit * overfetch_multiplier,
+            }
+        )
 
     t0 = time.perf_counter()
     raw_results = await search_daemon.batch_search(fetch_queries, zone_id=zone_id)
@@ -635,7 +644,7 @@ async def search_query_batch(
             formatted.append(entry)
         response_queries.append(
             {
-                "query": q_spec.get("q", ""),
+                "query": q_spec.get("q") or q_spec.get("query", ""),
                 "results": formatted,
                 "total": len(formatted),
             }

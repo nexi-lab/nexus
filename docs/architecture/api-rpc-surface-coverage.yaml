@@ -4447,7 +4447,7 @@ operations:
   owning_issue: null
 - id: filesystem.path_context
   module: filesystem
-  summary: ''
+  summary: Manage path-level descriptions that the search daemon can attach to retrieval results.
   transports:
     cli:
       name: nexus path-context
@@ -4456,12 +4456,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus path-context set src/nexus/bricks/search "Search, semantic indexing, RRF, and parser-backed retrieval"
+  correctness_test: tests/unit/cli/test_path_context_cli.py; tests/integration/server/api/v2/routers/test_path_contexts_router.py
+  perf_class: control
+  perf_link: control-plane or setup operation; outside the per-query hot path, so no dedicated latency benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: filesystem.profile
   module: filesystem
   summary: ''
@@ -5517,7 +5517,7 @@ operations:
   transports:
     grpc_expose:
       name: glob_batch
-      source: src/nexus/bricks/search/search_service.py:1882
+      source: src/nexus/bricks/search/search_service.py:1923
   profiles:
     lite: supported
     sandbox: supported
@@ -5967,21 +5967,22 @@ operations:
   owning_issue: null
 - id: initialize.semantic_search
   module: search
-  summary: ''
+  summary: Initialize semantic-search dependencies from RPC/control-plane configuration.
   transports:
     grpc_expose:
       name: initialize_semantic_search
-      source: src/nexus/bricks/search/search_service.py:4150
+      source: src/nexus/bricks/search/search_service.py:4191
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: initialize_semantic_search(embedding_provider="openai")'
+  correctness_test: tests/integration/services/test_search_semantic.py::TestInitializeSemanticSearch
+  perf_class: setup
+  perf_link: setup operation; indexing/query hot paths are benchmarked separately in tests/benchmarks/test_indexing_benchmarks.py
+    and tests/benchmarks/test_search_protocol_benchmark.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: is.directory
   module: uncategorized
   summary: ''
@@ -7555,32 +7556,33 @@ operations:
   owning_issue: null
 - id: parsers.list
   module: parsers
-  summary: Enumerate registered parsers + their detected formats.
+  summary: Missing parser introspection surface for listing registered parser providers and formats.
   transports: {}
   profiles:
     lite: missing_needed
     sandbox: missing_needed
     full: missing_needed
-  usage_example: 'WANTED: Parsers brick has rich plugin system but no introspection surface.'
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
+  usage_example: 'WANTED: nexus parsers list'
+  correctness_test: 'Gap issue #4187 defines parser list, provider availability, unsupported-provider, and parity tests.'
+  perf_class: control
+  perf_link: 'Gap issue #4187 classifies parser list as control-plane work with no hot-path benchmark requirement.'
+  gap_issue: 4187
+  owning_issue: 4135
 - id: parsers.run_parse
   module: parsers
-  summary: Force-parse a path with a given parser (debug/inspection).
+  summary: Missing run-parse surface for forcing a parser on a path and inspecting normalized output.
   transports: {}
   profiles:
     lite: missing_needed
     sandbox: missing_needed
     full: missing_needed
-  usage_example: 'WANTED: Useful for parser debugging; currently requires Python REPL.'
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
+  usage_example: 'WANTED: nexus parsers run /workspace/report.pdf --provider pdf-inspector --format markdown'
+  correctness_test: 'Gap issue #4187 defines markdown/text parse, structure metadata, unavailable-provider, access-denied,
+    and parity tests.'
+  perf_class: setup
+  perf_link: 'Gap issue #4187 requires timeout/large-document guard coverage for direct parse debugging.'
+  gap_issue: 4187
+  owning_issue: 4135
 - id: password_vault.api_v2
   module: secrets
   summary: ''
@@ -7872,7 +7874,7 @@ operations:
   owning_issue: null
 - id: path_contexts.api_v2
   module: filesystem
-  summary: ''
+  summary: HTTP API for zone-scoped path-context CRUD used to annotate search results.
   transports:
     http:
       name: PUT /api/v2/path-contexts/
@@ -7881,12 +7883,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: PUT /api/v2/path-contexts/ {"path_prefix":"src/nexus/bricks/search","description":"Search brick"}
+  correctness_test: tests/integration/server/api/v2/routers/test_path_contexts_router.py; tests/integration/bricks/search/test_path_context.py;
+    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: path_contexts.delete
   module: filesystem
   summary: ''
@@ -7899,9 +7902,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
   owning_issue: null
 - id: path_contexts.get
@@ -7916,9 +7919,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
   owning_issue: null
 - id: path_contexts.put
@@ -7933,9 +7936,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
   owning_issue: null
 - id: pay.approvals
@@ -9278,7 +9281,7 @@ operations:
   owning_issue: null
 - id: search.cli
   module: search
-  summary: ''
+  summary: CLI command group for search init, index, query, and stats workflows.
   transports:
     cli:
       name: nexus search
@@ -9287,75 +9290,84 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus search query "auth flow" --mode hybrid --limit 5
+  correctness_test: tests/unit/cli/test_search_index_cli.py; tests/unit/cli/test_commands_smoke.py
+  perf_class: not_perf_sensitive
+  perf_link: thin CLI wrapper; underlying grep/query/index paths carry the performance classification
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.expand
   module: search
-  summary: ''
+  summary: HTTP query-expansion endpoint for improving weak search queries through provider-backed expansion.
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1313
+      source: src/nexus/server/api/v2/routers/search.py:1322
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/expand {"query":"kubernetes deployment troubleshooting"}
+  correctness_test: tests/e2e/server/test_query_expansion_e2e.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: provider-dependent expansion path; tests/e2e/self_contained/test_search_surface_live_e2e.py verifies no-key failure
+    path
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.glob
   module: search
-  summary: ''
+  summary: Find accessible file paths by glob pattern across CLI, HTTP, RPC, and MCP surfaces.
   transports:
     cli:
       name: nexus glob
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: glob
-      source: src/nexus/bricks/search/search_service.py:1697
+      source: src/nexus/bricks/search/search_service.py:1738
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1194
+      source: src/nexus/server/api/v2/routers/search.py:1203
+    mcp:
+      name: nexus_glob
+      source: src/nexus/config/tool_profiles.yaml:1
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus glob "**/*.py" /workspace --plain; POST /api/v2/search/glob
+  correctness_test: tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py;
+    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: hot
+  perf_link: tests/benchmarks/test_search_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.grep
   module: search
-  summary: ''
+  summary: Find accessible text matches by regex or literal search, including raw and parsed search modes.
   transports:
     cli:
       name: nexus grep
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: grep
-      source: src/nexus/bricks/search/search_service.py:1939
+      source: src/nexus/bricks/search/search_service.py:1980
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1073
+      source: src/nexus/server/api/v2/routers/search.py:1082
+    mcp:
+      name: nexus_grep
+      source: src/nexus/config/tool_profiles.yaml:1
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus grep "TODO" /workspace --search-mode raw; POST /api/v2/search/grep
+  correctness_test: tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py;
+    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: hot
+  perf_link: tests/benchmarks/test_search_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.grep_section
   module: search
   summary: 'Section-aware grep: `nexus grep PATTERN /file.md --in-section ''## API''`. Lets users target markdown / code section
@@ -9365,15 +9377,15 @@ operations:
     lite: missing_needed
     sandbox: missing_needed
     full: missing_needed
-  usage_example: 'WANTED: Users commonly want to grep within a heading scope; current grep is whole-file only.'
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
+  usage_example: 'WANTED: nexus grep PATTERN /workspace/spec.md --in-section "## API"'
+  correctness_test: 'Gap issue #4186 defines required section fixture, missing-section, ReBAC, and parity tests.'
+  perf_class: hot
+  perf_link: 'Gap issue #4186 requires grep benchmarks proving section scoping avoids repeated full-document parsing.'
+  gap_issue: 4186
+  owning_issue: 4135
 - id: search.health
   module: search
-  summary: ''
+  summary: Report whether the search daemon is initialized and healthy.
   transports:
     http:
       name: GET /api/v2/search/health
@@ -9382,117 +9394,119 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: GET /api/v2/search/health
+  correctness_test: tests/integration/services/test_search_router.py::TestSearchQueryEndpoint::test_health_endpoint; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: not_perf_sensitive
+  perf_link: health probe; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.index
   module: search
-  summary: ''
+  summary: Explicitly index supplied documents through the server-side search daemon.
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1256
+      source: src/nexus/server/api/v2/routers/search.py:1265
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/index {"documents":[{"path":"/docs/a.md","content":"..."}]}
+  correctness_test: tests/integration/bricks/search/test_indexing_service.py; tests/integration/search/test_zone_isolation.py;
+    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: setup
+  perf_link: tests/benchmarks/test_indexing_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.index_directory
   module: search
-  summary: ''
+  summary: Register or unregister a directory as indexed for a zone-scoped search daemon.
   transports:
     http:
       name: POST /api/v2/search/index-directory
-      source: src/nexus/server/api/v2/routers/search.py:1455
+      source: src/nexus/server/api/v2/routers/search.py:1464
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/index-directory {"path":"/workspace/docs","action":"add"}
+  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.indexed_dirs
   module: search
-  summary: ''
+  summary: List zone-scoped directories currently registered for search indexing.
   transports:
     http:
       name: GET /api/v2/search/indexed-dirs
-      source: src/nexus/server/api/v2/routers/search.py:1673
+      source: src/nexus/server/api/v2/routers/search.py:1682
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: GET /api/v2/search/indexed-dirs?zone_id=root
+  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py::test_policy3_overlapping_directories_coexist; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.indexing_mode
   module: search
-  summary: ''
+  summary: Switch a zone between all-files and scoped-directory search indexing modes.
   transports:
     http:
       name: POST /api/v2/search/indexing-mode
-      source: src/nexus/server/api/v2/routers/search.py:1710
+      source: src/nexus/server/api/v2/routers/search.py:1719
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/indexing-mode {"zone_id":"root","mode":"scoped"}
+  correctness_test: tests/unit/bricks/search/test_daemon_scope_crud.py::test_set_zone_indexing_mode_toggle; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.locate
   module: search
-  summary: ''
+  summary: Locate likely files or skeleton candidates by query while preserving permission filtering.
   transports:
     http:
       name: POST /api/v2/search/locate
-      source: src/nexus/server/api/v2/routers/search.py:1891
+      source: src/nexus/server/api/v2/routers/search.py:1900
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/locate {"q":"authentication"}
+  correctness_test: tests/integration/bricks/search/test_skeleton_rebac.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: hot
+  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.purge_unscoped
   module: search
-  summary: ''
+  summary: Remove unscoped vector chunks after switching a zone to scoped indexing.
   transports:
     http:
       name: POST /api/v2/search/purge-unscoped
-      source: src/nexus/server/api/v2/routers/search.py:1837
+      source: src/nexus/server/api/v2/routers/search.py:1846
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/purge-unscoped {"zone_id":"root"}
+  correctness_test: tests/unit/bricks/search/test_daemon_sqlite_vec_wiring.py; tests/unit/bricks/search/test_indexing_sqlite_vec_sidewrite.py;
+    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.query
   module: search
-  summary: ''
+  summary: HTTP query endpoint for keyword, semantic, hybrid, graph, and federated retrieval.
   transports:
     http:
       name: GET /api/v2/search/query
@@ -9501,15 +9515,16 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: GET /api/v2/search/query?q=database%20migration&type=hybrid&limit=5
+  correctness_test: tests/integration/services/test_search_router.py; tests/integration/bricks/search/test_fusion.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py;
+    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: hot
+  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.query_batch
   module: search
-  summary: ''
+  summary: Bulk query endpoint used by benchmarks and evaluations to run multiple daemon searches together.
   transports:
     http:
       name: POST /api/v2/search/query/batch
@@ -9518,32 +9533,33 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/query/batch {"queries":[{"q":"auth"},{"q":"billing"}]}
+  correctness_test: tests/integration/bricks/search/test_daemon_context_attach.py::TestBatchSearchContextAttach; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: hot
+  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.refresh
   module: search
-  summary: ''
+  summary: Notify the daemon that a file changed so search indexes can refresh.
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1292
+      source: src/nexus/server/api/v2/routers/search.py:1301
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: POST /api/v2/search/refresh {"path":"/workspace/docs/readme.md","change_type":"update"}
+  correctness_test: tests/integration/search/test_zone_isolation.py; tests/integration/bricks/search/test_search_mutation_flow.py;
+    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: control
+  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.reindex
   module: search
-  summary: ''
+  summary: CLI workflow for rebuilding search indexes from durable filesystem mutation state.
   transports:
     cli:
       name: nexus reindex
@@ -9552,15 +9568,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus reindex --zone-id root --limit 1000
+  correctness_test: tests/integration/bricks/search/test_search_mutation_flow.py; tests/unit/bricks/search/test_pipeline_scope_gate.py
+  perf_class: setup
+  perf_link: tests/benchmarks/test_indexing_benchmarks.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.stats
   module: search
-  summary: ''
+  summary: Expose search daemon and semantic indexing statistics.
   transports:
     http:
       name: GET /api/v2/search/stats
@@ -9569,12 +9585,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: GET /api/v2/search/stats; nexus search stats
+  correctness_test: tests/integration/bricks/search/test_search_service.py::test_semantic_search_stats_prefers_search_daemon;
+    tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_class: not_perf_sensitive
+  perf_link: stats endpoint; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: secrets.api_v2
   module: secrets
   summary: ''
@@ -9815,11 +9832,11 @@ operations:
   owning_issue: null
 - id: semantic.search
   module: search
-  summary: ''
+  summary: RPC/MCP semantic and hybrid search over indexed documents.
   transports:
     grpc_expose:
       name: semantic_search
-      source: src/nexus/bricks/search/search_service.py:3750
+      source: src/nexus/bricks/search/search_service.py:3791
     mcp:
       name: nexus_semantic_search
       source: src/nexus/config/tool_profiles.yaml:1
@@ -9827,46 +9844,46 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'MCP: nexus_semantic_search(query="auth flow", search_mode="hybrid", limit=5)'
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch
+  perf_class: hot
+  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: semantic.search_index
   module: search
-  summary: ''
+  summary: RPC semantic-search indexing entry point for paths and directories.
   transports:
     grpc_expose:
       name: semantic_search_index
-      source: src/nexus/bricks/search/search_service.py:4065
+      source: src/nexus/bricks/search/search_service.py:4106
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: semantic_search_index(path="/workspace/docs", recursive=True)'
+  correctness_test: tests/integration/services/test_search_semantic.py::TestSemanticSearchIndex; tests/unit/server/rpc/handlers/test_semantic_search_index.py
+  perf_class: setup
+  perf_link: tests/benchmarks/test_indexing_benchmarks.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: semantic.search_stats
   module: search
-  summary: ''
+  summary: RPC semantic-search statistics entry point.
   transports:
     grpc_expose:
       name: semantic_search_stats
-      source: src/nexus/bricks/search/search_service.py:4102
+      source: src/nexus/bricks/search/search_service.py:4143
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: 'RPC: semantic_search_stats()'
+  correctness_test: tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/integration/bricks/search/test_search_service.py
+  perf_class: not_perf_sensitive
+  perf_link: stats/control endpoint; no dedicated latency benchmark is required
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: service.close_all
   module: uncategorized
   summary: ''
@@ -15018,17 +15035,17 @@ parity_warnings:
   has:
   - cli
   - http
+  - mcp
   missing:
   - grpc_typed
-  - mcp
   - sdk
 - operation_id: search.grep
   has:
   - cli
   - http
+  - mcp
   missing:
   - grpc_typed
-  - mcp
   - sdk
 - operation_id: search.health
   has:

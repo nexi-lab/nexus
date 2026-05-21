@@ -285,11 +285,11 @@ class TestPaginationEdgeCases:
     @pytest.mark.asyncio
     async def test_pagination_with_special_characters(self, nexus_fs):
         """Should handle paths with special characters."""
-        nexus_fs.write("/test/file with spaces.txt", "content")
-        nexus_fs.write("/test/file-with-dashes.txt", "content")
-        nexus_fs.write("/test/file_with_underscores.txt", "content")
+        nexus_fs.write("/test_special/file with spaces.txt", "content")
+        nexus_fs.write("/test_special/file-with-dashes.txt", "content")
+        nexus_fs.write("/test_special/file_with_underscores.txt", "content")
 
-        result = nexus_fs.sys_readdir(path="/test/", limit=10)
+        result = nexus_fs.sys_readdir(path="/test_special/", limit=10)
 
         assert len(result.items) == 3
 

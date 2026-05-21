@@ -9,6 +9,7 @@ Examples:
     gRPC "VFS.Read"                      -> "fs.read"
     HTTP POST /api/v1/fs/read            -> "fs.read"
     MCP  "nexus_fs_read"                 -> "fs.read"
+    MCP  "nexus_grep"                    -> "search.grep"
     SDK  NexusClient.read                -> "fs.read"
 
 Unmapped names should be added as overrides in api-rpc-surface-overrides.yaml.
@@ -29,6 +30,12 @@ _GRPC_SERVICE_TO_MODULE = {
 
 # SDK method name prefix -> module (when method doesn't carry module explicitly)
 _SDK_DEFAULT_MODULE = "fs"
+
+# Some early MCP tools predate the `nexus_<module>_<verb>` naming convention.
+_BARE_MCP_TOOL_OVERRIDES = {
+    "glob": "search.glob",
+    "grep": "search.grep",
+}
 
 
 def _to_snake(s: str) -> str:
@@ -74,6 +81,8 @@ def normalize_mcp(tool_name: str) -> str:
     if not tool_name.startswith("nexus_"):
         raise ValueError(f"unrecognized MCP tool name: {tool_name!r}")
     rest = tool_name[len("nexus_") :]
+    if rest in _BARE_MCP_TOOL_OVERRIDES:
+        return _BARE_MCP_TOOL_OVERRIDES[rest]
     parts = rest.split("_", 1)
     if len(parts) != 2:
         raise ValueError(f"MCP name needs module+verb: {tool_name!r}")

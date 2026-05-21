@@ -56,7 +56,12 @@ def upgrade() -> None:
     # 2. Create indexed_directories table.
     op.create_table(
         "indexed_directories",
-        sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
+        sa.Column(
+            "id",
+            sa.BigInteger().with_variant(sa.Integer(), "sqlite"),
+            primary_key=True,
+            autoincrement=True,
+        ),
         sa.Column("zone_id", sa.String(255), nullable=False),
         sa.Column("directory_path", sa.Text, nullable=False),
         sa.Column(

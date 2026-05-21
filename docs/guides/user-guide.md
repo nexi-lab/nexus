@@ -850,6 +850,24 @@ Think about search in three layers:
 2. parsed text extraction: PDFs, docs, and other formats
 3. semantic and hybrid retrieval: `nexus search ...`
 
+Search surface coverage matrix:
+
+| Task | CLI | HTTP/RPC surface | Use when |
+|------|-----|------------------|----------|
+| Find paths | `nexus glob "**/*.py" /workspace` | `POST /api/v2/search/glob`, RPC `SearchService.glob`, MCP `nexus_glob` | You need file names, not file contents. |
+| Find exact text | `nexus grep "TODO" /workspace` | `POST /api/v2/search/grep`, RPC `SearchService.grep`, MCP `nexus_grep` | You know the token or regex to match. |
+| Query retrieved chunks | `nexus search query "auth flow" --mode hybrid` | `GET /api/v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks, not only exact text. |
+| Build or refresh indexes | `nexus search init`, `nexus search index`, `nexus reindex` | `POST /api/v2/search/index`, `/refresh`, `/index-directory`, `/indexing-mode` | You are preparing a corpus or changing indexing scope. |
+| Explain ranking context | `nexus path-context set src/nexus/bricks/search "Hybrid search brick"` | `PUT /api/v2/path-contexts/` | You want path-level descriptions attached to retrieval results. |
+
+Expected outcomes are deliberately boring:
+
+- success returns paths, grep items, or ranked chunks inside the normal response envelope
+- permission denial filters paths or candidates and reports truncation/denial metadata where the endpoint supports it
+- unavailable providers return a clear unavailable/configuration error instead of pretending semantic or parsed search ran
+
+Correctness is covered by the search router, grep/glob, semantic-search, parser, path-context, and RRF tests. Performance-sensitive rows are classified in `docs/architecture/api-rpc-surface-coverage.yaml`; grep/glob and query paths are hot, indexing is setup work, and health/stats/control endpoints are not performance sensitive. Retrieval-quality benchmark notes live in `docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md`.
+
 ### 5.1 Find files and text first
 
 ```bash
@@ -863,6 +881,15 @@ Parser providers are auto-discovered from environment variables:
 - `UNSTRUCTURED_API_KEY`
 - `LLAMA_CLOUD_API_KEY`
 - local pdf-inspector fallback
+
+Parsed grep uses parser output when possible. Raw grep is better for code and
+plain text; parsed grep is better for PDFs, Office documents, and markdown
+structure. The section-aware grep flow is not available yet; track build issue #4186
+for `nexus grep PATTERN PATH --in-section "## API"`.
+
+The parser introspection and direct run-parse commands are also not exposed yet.
+Track build issue #4187 for `nexus parsers list` and
+`nexus parsers run PATH --provider ...` surfaces.
 
 ### 5.2 Initialize semantic search
 
@@ -897,6 +924,20 @@ nexus search stats
 ```bash
 nexus search query "How does authentication work?" --path /workspace
 nexus search query "database migration" --mode hybrid --limit 5
+curl -H "Authorization: Bearer $NEXUS_API_KEY" \
+  "$NEXUS_URL/api/v2/search/query?q=database%20migration&type=hybrid&limit=5"
+```
+
+Hybrid search fuses exact, vector, and provider-backed sources with RRF where
+multiple ranked lists are available. RRF makes the final order depend on rank
+agreement instead of raw score scale, which is why exact text hits and semantic
+neighbors can both appear near the top.
+
+Use `nexus path-context` when the result path alone is ambiguous:
+
+```bash
+nexus path-context set src/nexus/bricks/search "Search, semantic indexing, RRF, and parser-backed retrieval"
+nexus path-context list
 ```
 
 ### 5.5 Start the server-side search daemon

@@ -8,7 +8,7 @@ PermissionEnforcer, DriverLifecycleCoordinator (DLC), and NexusFSGateway.
 """
 
 import re
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -327,6 +327,24 @@ class TestGatewayDelegation:
         svc = SearchService(metadata_store=mock_metadata_store)
         with pytest.raises(NotImplementedError, match="gateway not provided"):
             await svc._read("/test.txt")
+
+    def test_sys_readdir_entries_delegates_recursive_listing(self, service, mock_gateway):
+        """Recursive expansion belongs to sys_readdir, not SearchService."""
+        expected_entries = [
+            {"path": "/workspace/src", "entry_type": 1},
+            {"path": "/workspace/src/main.py", "entry_type": 0},
+        ]
+        mock_gateway.sys_readdir.return_value = expected_entries
+
+        entries = service._sys_readdir_entries("/workspace")
+
+        assert entries == expected_entries
+        mock_gateway.sys_readdir.assert_called_once_with(
+            "/workspace",
+            recursive=True,
+            details=True,
+            context=ANY,
+        )
 
     async def test_read_converts_str_to_bytes(self, service, mock_gateway):
         """_read converts string response to bytes."""

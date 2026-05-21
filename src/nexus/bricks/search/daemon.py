@@ -1024,6 +1024,19 @@ class SearchDaemon:
 
         return None, "none"
 
+    @staticmethod
+    def _engine_dialect_name(engine: Any | None) -> str:
+        """Return a normalized SQLAlchemy engine dialect name."""
+
+        def dialect_name(candidate: Any | None) -> str:
+            if candidate is None:
+                return ""
+            dialect = getattr(candidate, "dialect", None)
+            name = getattr(dialect, "name", "")
+            return str(name).lower() if name else ""
+
+        return dialect_name(engine) or dialect_name(getattr(engine, "sync_engine", None))
+
     async def _init_database_pool(self) -> None:
         """Initialize and warm the database connection pool."""
         # If session factory was injected via __init__, skip engine creation
@@ -2007,11 +2020,11 @@ class SearchDaemon:
 
         Issue #3699: writes are owned by ``ChunkStore.replace_document_chunks``
         via the indexing pipeline. Each document is treated as ``(path,
-        text)`` — we resolve ``path_id`` from ``file_paths`` and dispatch
-        to ``IndexingPipeline.index_document`` which chunks, embeds, and
+        text)`` — we resolve ``path_id`` from ``file_paths`` and dispatch to
+        ``IndexingPipeline.index_document`` which chunks, embeds, and
         bulk-inserts into ``document_chunks``. Failures bubble up so the
-        HTTP boundary returns 500 (Decision #18) instead of silently
-        returning count=0.
+        HTTP boundary returns 500 (Decision #18) instead of silently returning
+        count=0.
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
@@ -2046,8 +2059,10 @@ class SearchDaemon:
 
             # Resolve path_id from file_paths so the indexing pipeline can
             # write document_chunks. Without a path_id we cannot persist —
-            # surface that as an exception so the caller (router) returns
-            # 500 instead of silently dropping the doc.
+            # skip rather than fail so best-effort callers in mount/connector
+            # wiring don't error out. The search daemon is a READER of
+            # filesystem metadata — it must not create or modify file_paths
+            # rows (that ownership belongs to the kernel/metastore).
             path_id: str | None = None
             if self._async_session is not None:
                 async with self._async_session() as session:
@@ -2365,57 +2380,141 @@ class SearchDaemon:
             return []
 
         try:
-            from sqlalchemy import text
+            dialect_name = self._engine_dialect_name(self._async_engine)
 
-            async with self._async_session() as session:
-                # Build WHERE clause dynamically to avoid asyncpg
-                # AmbiguousParameterError with IS NULL patterns
-                where_parts = [
-                    "to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)"
-                ]
-                params: dict[str, Any] = {"query": query, "limit": limit}
-                if path_filter:
-                    where_parts.append("fp.virtual_path LIKE :path_pattern")
-                    params["path_pattern"] = f"{path_filter}%"
-                if zone_id:
-                    where_parts.append("fp.zone_id = :zone_id")
-                    params["zone_id"] = zone_id
-
-                where_clause = " AND ".join(where_parts)
-                sql = text(f"""
-                    SELECT
-                        c.chunk_index, c.chunk_text,
-                        c.start_offset, c.end_offset, c.line_start, c.line_end,
-                        fp.virtual_path,
-                        ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
-                    FROM document_chunks c
-                    JOIN file_paths fp ON c.path_id = fp.path_id
-                    WHERE {where_clause}
-                    ORDER BY score DESC
-                    LIMIT :limit
-                """)
-
-                result = await session.execute(sql, params)
-
-                return [
-                    SearchResult(
-                        path=row.virtual_path,
-                        chunk_index=row.chunk_index,
-                        chunk_text=row.chunk_text,
-                        score=float(row.score),
-                        start_offset=row.start_offset,
-                        end_offset=row.end_offset,
-                        line_start=row.line_start,
-                        line_end=row.line_end,
-                        keyword_score=float(row.score),
-                        search_type="keyword",
-                    )
-                    for row in result
-                ]
+            if dialect_name == "sqlite":
+                return await self._search_fts_sqlite(query, limit, path_filter, zone_id=zone_id)
+            return await self._search_fts_postgres(query, limit, path_filter, zone_id=zone_id)
 
         except Exception as e:
             logger.error(f"FTS search error: {e}")
             return []
+
+    async def _search_fts_sqlite(
+        self,
+        query: str,
+        limit: int,
+        path_filter: str | None,
+        *,
+        zone_id: str | None = None,
+    ) -> list[SearchResult]:
+        """FTS search using SQLite LIKE fallback."""
+        assert self._async_session is not None  # guarded by caller
+
+        import re
+
+        from sqlalchemy import text
+
+        terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
+        if not terms:
+            return []
+
+        sqlite_params: dict[str, Any] = {"limit": limit}
+        where_parts = ["fp.deleted_at IS NULL"]
+        score_parts: list[str] = []
+        for index, term in enumerate(terms):
+            key = f"term_{index}"
+            sqlite_params[key] = f"%{term}%"
+            where_parts.append(f"LOWER(c.chunk_text) LIKE :{key}")
+            score_parts.append(f"CASE WHEN LOWER(c.chunk_text) LIKE :{key} THEN 1.0 ELSE 0.0 END")
+        if path_filter:
+            where_parts.append("fp.virtual_path LIKE :path_pattern")
+            sqlite_params["path_pattern"] = f"{path_filter}%"
+        if zone_id:
+            where_parts.append("fp.zone_id = :zone_id")
+            sqlite_params["zone_id"] = zone_id
+
+        where_clause = " AND ".join(where_parts)
+        score_expr = " + ".join(score_parts) or "1.0"
+        sql = text(f"""
+            SELECT
+                c.chunk_index, c.chunk_text,
+                c.start_offset, c.end_offset, c.line_start, c.line_end,
+                fp.virtual_path,
+                ({score_expr}) as score
+            FROM document_chunks c
+            JOIN file_paths fp ON c.path_id = fp.path_id
+            WHERE {where_clause}
+            ORDER BY score DESC, fp.virtual_path ASC, c.chunk_index ASC
+            LIMIT :limit
+        """)
+
+        async with self._async_session() as session:
+            result = await session.execute(sql, sqlite_params)
+
+            return [
+                SearchResult(
+                    path=row.virtual_path,
+                    chunk_index=row.chunk_index,
+                    chunk_text=row.chunk_text,
+                    score=float(row.score),
+                    start_offset=row.start_offset,
+                    end_offset=row.end_offset,
+                    line_start=row.line_start,
+                    line_end=row.line_end,
+                    keyword_score=float(row.score),
+                    search_type="keyword",
+                )
+                for row in result
+            ]
+
+    async def _search_fts_postgres(
+        self,
+        query: str,
+        limit: int,
+        path_filter: str | None,
+        *,
+        zone_id: str | None = None,
+    ) -> list[SearchResult]:
+        """FTS search using PostgreSQL tsvector."""
+        assert self._async_session is not None  # guarded by caller
+
+        from sqlalchemy import text
+
+        # Build WHERE clause dynamically to avoid asyncpg
+        # AmbiguousParameterError with IS NULL patterns
+        where_parts = ["to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)"]
+        pg_params: dict[str, Any] = {"query": query, "limit": limit}
+        if path_filter:
+            where_parts.append("fp.virtual_path LIKE :path_pattern")
+            pg_params["path_pattern"] = f"{path_filter}%"
+        if zone_id:
+            where_parts.append("fp.zone_id = :zone_id")
+            pg_params["zone_id"] = zone_id
+        where_parts.append("fp.deleted_at IS NULL")
+
+        where_clause = " AND ".join(where_parts)
+        sql = text(f"""
+            SELECT
+                c.chunk_index, c.chunk_text,
+                c.start_offset, c.end_offset, c.line_start, c.line_end,
+                fp.virtual_path,
+                ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
+            FROM document_chunks c
+            JOIN file_paths fp ON c.path_id = fp.path_id
+            WHERE {where_clause}
+            ORDER BY score DESC
+            LIMIT :limit
+        """)
+
+        async with self._async_session() as session:
+            result = await session.execute(sql, pg_params)
+
+            return [
+                SearchResult(
+                    path=row.virtual_path,
+                    chunk_index=row.chunk_index,
+                    chunk_text=row.chunk_text,
+                    score=float(row.score),
+                    start_offset=row.start_offset,
+                    end_offset=row.end_offset,
+                    line_start=row.line_start,
+                    line_end=row.line_end,
+                    keyword_score=float(row.score),
+                    search_type="keyword",
+                )
+                for row in result
+            ]
 
     async def _get_query_embedding(self, query: str) -> list[float] | None:
         """Get embedding for query text (legacy fallback path).

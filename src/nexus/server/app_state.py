@@ -183,8 +183,12 @@ def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
     All services accessed via ServiceRegistry.
     """
     # Direct NexusFS attrs
+    perm_config = getattr(nexus_fs, "_perm_config", None)
+    permissions_enabled = bool(getattr(perm_config, "enforce", True))
     app.state.permission_enforcer = (
-        nexus_fs.service("permission_enforcer") if hasattr(nexus_fs, "service") else None
+        nexus_fs.service("permission_enforcer")
+        if permissions_enabled and hasattr(nexus_fs, "service")
+        else None
     )
 
     # Helper: safe service() call (handles mocks without service())

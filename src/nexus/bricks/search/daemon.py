@@ -2441,22 +2441,7 @@ class SearchDaemon:
 
         async with self._async_session() as session:
             result = await session.execute(sql, sqlite_params)
-
-            return [
-                SearchResult(
-                    path=row.virtual_path,
-                    chunk_index=row.chunk_index,
-                    chunk_text=row.chunk_text,
-                    score=float(row.score),
-                    start_offset=row.start_offset,
-                    end_offset=row.end_offset,
-                    line_start=row.line_start,
-                    line_end=row.line_end,
-                    keyword_score=float(row.score),
-                    search_type="keyword",
-                )
-                for row in result
-            ]
+            return self._fts_rows_to_results(result)
 
     async def _search_fts_postgres(
         self,
@@ -2499,22 +2484,26 @@ class SearchDaemon:
 
         async with self._async_session() as session:
             result = await session.execute(sql, pg_params)
+            return self._fts_rows_to_results(result)
 
-            return [
-                SearchResult(
-                    path=row.virtual_path,
-                    chunk_index=row.chunk_index,
-                    chunk_text=row.chunk_text,
-                    score=float(row.score),
-                    start_offset=row.start_offset,
-                    end_offset=row.end_offset,
-                    line_start=row.line_start,
-                    line_end=row.line_end,
-                    keyword_score=float(row.score),
-                    search_type="keyword",
-                )
-                for row in result
-            ]
+    @staticmethod
+    def _fts_rows_to_results(result: Any) -> list[SearchResult]:
+        """Map SQL result rows to SearchResult objects (shared by sqlite/postgres)."""
+        return [
+            SearchResult(
+                path=row.virtual_path,
+                chunk_index=row.chunk_index,
+                chunk_text=row.chunk_text,
+                score=float(row.score),
+                start_offset=row.start_offset,
+                end_offset=row.end_offset,
+                line_start=row.line_start,
+                line_end=row.line_end,
+                keyword_score=float(row.score),
+                search_type="keyword",
+            )
+            for row in result
+        ]
 
     async def _get_query_embedding(self, query: str) -> list[float] | None:
         """Get embedding for query text (legacy fallback path).

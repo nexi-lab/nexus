@@ -491,7 +491,7 @@ class TestSandboxHubTokenEnvVar:
         kwargs = mock_bootstrapper_cls.call_args.kwargs
         assert kwargs.get("workspace") == workspace
 
-    def test_workspace_boot_attaches_health_state_to_filesystem(
+    def test_workspace_boot_passes_health_state_to_bootstrapper(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
@@ -500,7 +500,6 @@ class TestSandboxHubTokenEnvVar:
         workspace.mkdir()
 
         mock_connect, mock_nx, mock_create_app, mock_run_server = _make_server_mocks(monkeypatch)
-        mock_nx._health_state = None
         captured: dict = {}
 
         def _capture_bootstrapper(**kwargs):
@@ -521,8 +520,9 @@ class TestSandboxHubTokenEnvVar:
             )
 
         assert result.exit_code == 0, f"Unexpected exit: {result.output}"
+        # health_state is a fresh dict created by daemon, not read from NexusFS
+        assert isinstance(captured["health_state"], dict)
         assert captured["health_state"]["status"] == "indexing"
-        assert mock_nx._health_state is captured["health_state"]
 
 
 # ---------------------------------------------------------------------------

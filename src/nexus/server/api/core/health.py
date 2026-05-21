@@ -41,11 +41,13 @@ async def health_check(request: Request) -> HealthResponse | Any:
     if nx_fs:
         enforce_permissions = getattr(getattr(nx_fs, "_perm_config", None), "enforce", None)
         enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
-        health_state = getattr(nx_fs, "_health_state", None)
-        if isinstance(health_state, dict):
-            raw_status = health_state.get("status")
-            if isinstance(raw_status, str):
-                workspace_index_status = raw_status
+    # Read workspace index status from app.state (set by daemon main,
+    # not from NexusFS — health_state is daemon lifecycle, not kernel).
+    health_state = getattr(request.app.state, "health_state", None)
+    if isinstance(health_state, dict):
+        raw_status = health_state.get("status")
+        if isinstance(raw_status, str):
+            workspace_index_status = raw_status
 
         # The kernel process manages federation internally; if it
         # responds to gRPC, it's ready.

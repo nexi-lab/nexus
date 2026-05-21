@@ -336,6 +336,17 @@ pub struct HookIdentity {
     pub is_admin: bool,
 }
 
+impl From<&crate::kernel::OperationContext> for HookIdentity {
+    fn from(ctx: &crate::kernel::OperationContext) -> Self {
+        Self {
+            user_id: ctx.user_id.clone(),
+            zone_id: ctx.zone_id.clone(),
+            agent_id: ctx.agent_id.clone().unwrap_or_default(),
+            is_admin: ctx.is_admin,
+        }
+    }
+}
+
 /// ReadHookContext — pre/post read intercept.
 #[derive(Debug, Clone)]
 pub struct ReadHookCtx {

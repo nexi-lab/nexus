@@ -908,13 +908,7 @@ def main(
             _search_daemon = getattr(nx, "_search_daemon", None)
             if _search_daemon is None:
                 _search_daemon = getattr(nx, "search_daemon", None)
-            _health_state_raw: dict[str, Any] | None = getattr(nx, "_health_state", None)
-            _health_state: dict[str, Any] = (
-                _health_state_raw if _health_state_raw is not None else {"status": "indexing"}
-            )
-            if _health_state_raw is None:
-                nx_dynamic: Any = nx
-                nx_dynamic._health_state = _health_state
+            _health_state: dict[str, Any] = {"status": "indexing"}
             bootstrapper = SandboxBootstrapper(
                 workspace=_workspace_path,
                 hub_url=hub_url,
@@ -996,6 +990,11 @@ def main(
             auth_provider=auth_provider,
             database_url=database_url,
         )
+
+        # Expose health_state on app.state so the /health endpoint can read
+        # it without reaching into NexusFS internals (boundary hygiene).
+        # Only sandbox profile uses _health_state; other profiles get None.
+        app.state.health_state = locals().get("_health_state")
 
         # --- Ready file -----------------------------------------------------
         # Atomic write (temp + os.replace) so a concurrent ``nexus ready``
